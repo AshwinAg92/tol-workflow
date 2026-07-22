@@ -39,6 +39,7 @@
     .q:last-child { margin-bottom:0; }
     label.qlabel { display:block; font-size:14px; color:#3A2418; margin-bottom:2px; font-weight:700; }
     .qdesc { font-size:12px; color:#B29578; margin-bottom:8px; }
+    .opt { font-weight:400; font-size:12px; color:#B29578; }
     input, select, textarea {
       width:100%;
       padding:11px 12px;
@@ -135,8 +136,8 @@
         </div>
 
         <div class="q">
-          <label class="qlabel">What is the occasion?</label>
-          <select id="occasion" required></select>
+          <label class="qlabel">What is the occasion? <span class="opt">(optional)</span></label>
+          <select id="occasion"></select>
         </div>
 
         <div class="q">
@@ -150,9 +151,9 @@
         </div>
 
         <div class="q">
-          <label class="qlabel">Tell us about your event</label>
+          <label class="qlabel">Tell us about your event <span class="opt">(optional)</span></label>
           <div class="qdesc">Anything you'd like us to know?</div>
-          <textarea id="details" required placeholder="Share any details that would help us plan..."></textarea>
+          <textarea id="details" placeholder="Share any details that would help us plan..."></textarea>
         </div>
 
         <div class="q">
