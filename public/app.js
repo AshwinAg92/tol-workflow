@@ -108,7 +108,7 @@ function renderLeadsLog(main) {
     <div class="filter-row" id="filterRow"></div>
     <div class="table leads-table">
       <div class="table-head leads-table-row">
-        <span>Query</span><span>Format</span><span>City</span><span>Date</span><span>Stage</span>
+        <span>Query</span><span>Format</span><span>City</span><span>Date</span><span>Email</span><span>Stage</span>
       </div>
       <div id="leadsRows"></div>
     </div>
@@ -137,11 +137,32 @@ function renderLeadsLog(main) {
           <span>${packageName(l.event_type)}</span>
           <span>${l.city || "—"}</span>
           <span class="mono">${fmtDate(l.date)}</span>
-          <span class="tag" style="color:${STAGE_COLOR[l.stage]}">${l.stage}</span>
+          <span class="muted small">${l.email || "—"}</span>
+          <span>
+            <select class="stage-select" data-lead-id="${l.id}" style="color:${STAGE_COLOR[l.stage]}">
+              ${CONFIG.stages.map((s) => `<option value="${s}" ${s === l.stage ? "selected" : ""}>${s}</option>`).join("")}
+            </select>
+          </span>
         </div>
       `));
     });
   }
+
+  main.querySelectorAll(".stage-select").forEach((sel) => {
+    sel.addEventListener("change", async () => {
+      const leadId = sel.dataset.leadId;
+      const newStage = sel.value;
+      sel.disabled = true;
+      try {
+        await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ stage: newStage }) });
+        await refreshLeads();
+        renderMain();
+      } catch (err) {
+        alert(err.message);
+        renderMain();
+      }
+    });
+  });
 
   main.querySelector("#newLeadBtn").addEventListener("click", openNewLeadModal);
   main.querySelector("#copyLinkBtn").addEventListener("click", () => {
