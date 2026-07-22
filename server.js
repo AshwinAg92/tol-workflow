@@ -71,9 +71,15 @@ app.post("/api/leads", (req, res) => {
   res.status(201).json(created);
 
   // Fire both emails after responding, so the person submitting the form
-  // isn't kept waiting on an SMTP round trip. Failures are logged, never thrown.
-  sendLeadConfirmationEmail(created).catch((err) => console.error("Confirmation email failed:", err.message));
-  sendTeamNotificationEmail(created).catch((err) => console.error("Team notification email failed:", err.message));
+  // isn't kept waiting on an SMTP round trip. These functions resolve (never
+  // reject) even on failure, so we log the actual result here rather than
+  // relying on .catch() — otherwise a wrong password or bad host fails silently.
+  sendLeadConfirmationEmail(created)
+    .then((r) => console.log("Confirmation email:", r.sent ? "sent" : `NOT sent — ${r.reason}`))
+    .catch((err) => console.error("Confirmation email threw:", err.message));
+  sendTeamNotificationEmail(created)
+    .then((r) => console.log("Team notification email:", r.sent ? "sent" : `NOT sent — ${r.reason}`))
+    .catch((err) => console.error("Team notification email threw:", err.message));
 });
 
 app.patch("/api/leads/:id", (req, res) => {
