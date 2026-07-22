@@ -6,7 +6,7 @@ const fs = require("fs");
 const multer = require("multer");
 const { v4: uuid } = require("uuid");
 const db = require("./db");
-const { STAGES, PACKAGES, ADDONS, TEAM } = require("./config");
+const { STAGES, PACKAGES, ADDONS, TEAM, EXPERIENCES, OCCASIONS, GUEST_RANGES, HOW_HEARD } = require("./config");
 const { sendQuoteEmail } = require("./mailer");
 
 const UPLOAD_DIR = path.join(__dirname, "uploads");
@@ -29,7 +29,15 @@ const packageName = (id) => PACKAGES.find((p) => p.id === id)?.name || id;
 
 // ---------- Config (so the frontend never hardcodes pricing) ----------
 app.get("/api/config", (req, res) => {
-  res.json({ stages: STAGES, packages: PACKAGES, addons: ADDONS });
+  res.json({
+    stages: STAGES,
+    packages: PACKAGES,
+    addons: ADDONS,
+    experiences: EXPERIENCES,
+    occasions: OCCASIONS,
+    guestRanges: GUEST_RANGES,
+    howHeard: HOW_HEARD,
+  });
 });
 
 // ---------- Leads ----------
@@ -40,15 +48,25 @@ app.get("/api/leads", (req, res) => {
 
 // Public lead-capture endpoint — this is the form link you'd share with a new query.
 app.post("/api/leads", (req, res) => {
-  const { name, phone, email, eventType, city, date, budget, notes } = req.body;
+  const {
+    name, phone, email, eventType, city, date, budget, notes,
+    venue, occasion, guestRange, details, howHeard, whatsappOptin,
+  } = req.body;
   if (!name || !eventType || !date) {
     return res.status(400).json({ error: "name, eventType, and date are required" });
   }
   const id = uuid();
   db.prepare(`
-    INSERT INTO leads (id, name, phone, email, event_type, city, date, budget, stage, advance, notes, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'New', 0, ?, ?)
-  `).run(id, name, phone || null, email || null, eventType, city || null, date, budget || null, notes || null, new Date().toISOString());
+    INSERT INTO leads (
+      id, name, phone, email, event_type, city, date, budget, stage, advance, notes, created_at,
+      venue, occasion, guest_range, details, how_heard, whatsapp_optin
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'New', 0, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id, name, phone || null, email || null, eventType, city || null, date, budget || null, notes || null, new Date().toISOString(),
+    venue || null, occasion || null, guestRange || null,
+    details || null, howHeard || null, whatsappOptin ? 1 : 0
+  );
   const created = db.prepare("SELECT * FROM leads WHERE id = ?").get(id);
   res.status(201).json(created);
 });
