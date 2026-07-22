@@ -27,8 +27,8 @@ const TEAM = [
 
 // Options specific to the public enquiry form.
 const EXPERIENCES = [
-  { id: "pheras", name: "💍 Musical Pheras" },
-  { id: "jam", name: "🎶 Bhajan Jamming" },
+  { id: "pheras", name: "Musical Pheras" },
+  { id: "jam", name: "Bhajan Jamming" },
   { id: "both", name: "Both" },
   { id: "satsang", name: "Devotional Satsang" },
   { id: "shraddhanjali", name: "Shraddhanjali Satsang" },
@@ -39,7 +39,7 @@ const OCCASIONS = [
   "Corporate Event", "Spiritual Gathering / Satsang", "Temple Event", "Private Celebration", "Other",
 ];
 
-const GUEST_RANGES = ["Under 50", "50–100", "100–200", "200–500", "500+"];
+const GUEST_RANGES = ["Under 200", "200–500", "500–1000", "1000+"];
 
 const HOW_HEARD = [
   "Instagram", "Facebook", "YouTube", "Google", "Linktree", "Friend/Family", "Previous Event", "Wedding Planner", "Other",
