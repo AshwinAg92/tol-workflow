@@ -138,11 +138,6 @@
         </div>
 
         <div class="q">
-          <label class="qlabel">Event Venue</label>
-          <input id="venue" placeholder="e.g. name of hall / hotel / home" />
-        </div>
-
-        <div class="q">
           <label class="qlabel">Approximate number of guests</label>
           <select id="guestRange" required></select>
         </div>
@@ -150,7 +145,7 @@
         <div class="q">
           <label class="qlabel">Tell us about your event</label>
           <div class="qdesc">Anything you'd like us to know?</div>
-          <textarea id="details" placeholder="Share any details that would help us plan..."></textarea>
+          <textarea id="details" required placeholder="Share any details that would help us plan..."></textarea>
         </div>
 
         <div class="q">
@@ -207,7 +202,6 @@
         eventType: experienceSelect.value,
         city: document.getElementById("city").value,
         date: document.getElementById("date").value,
-        venue: document.getElementById("venue").value,
         occasion: occasionSelect.value,
         guestRange: guestRangeSelect.value,
         details: document.getElementById("details").value,
