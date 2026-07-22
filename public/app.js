@@ -5,6 +5,7 @@ let TEAM = [];
 let TASKS = [];
 let currentTab = "dashboard";
 let leadsFilter = "all";
+let leadsStageFilter = "all";
 let calYear = 2026, calMonth = 9; // September 2026, 1-indexed
 
 const STAGE_COLOR = {
@@ -72,6 +73,15 @@ function renderNav() {
   document.getElementById("sidebarFoot").textContent = "Live — SQLite backend";
 }
 
+// Jump from a dashboard card straight to the matching filtered Leads list.
+function goToLeads(stage) {
+  leadsFilter = "all";
+  leadsStageFilter = stage;
+  currentTab = "leads";
+  renderNav();
+  renderMain();
+}
+
 // ---------- Mala progress ----------
 function malaHtml(stage) {
   const order = ["New", "Quoted", "Follow-up", "Confirmed", "Completed"];
@@ -83,7 +93,8 @@ function malaHtml(stage) {
 
 // ---------- Leads log ----------
 function renderLeadsLog(main) {
-  const filtered = leadsFilter === "all" ? LEADS : LEADS.filter((l) => l.event_type === leadsFilter);
+  const filtered = (leadsFilter === "all" ? LEADS : LEADS.filter((l) => l.event_type === leadsFilter))
+    .filter((l) => leadsStageFilter === "all" || l.stage === leadsStageFilter);
   const countFor = (id) => LEADS.filter((l) => l.event_type === id).length;
   const shareLink = `${window.location.origin}/lead-form.html`;
 
@@ -105,6 +116,11 @@ function renderLeadsLog(main) {
       <p class="muted small" style="margin-top:8px;">Submissions land here automatically as a new lead in "New".</p>
     </div>
 
+    ${leadsStageFilter !== "all" ? `
+      <button class="filter-chip filter-chip-active" id="clearStageFilter" style="margin-bottom:10px;">
+        Stage: ${leadsStageFilter} ✕
+      </button>
+    ` : ""}
     <div class="filter-row" id="filterRow"></div>
     <div class="table leads-table">
       <div class="table-head leads-table-row">
@@ -113,6 +129,9 @@ function renderLeadsLog(main) {
       <div id="leadsRows"></div>
     </div>
   `;
+
+  const clearBtn = main.querySelector("#clearStageFilter");
+  if (clearBtn) clearBtn.addEventListener("click", () => { leadsStageFilter = "all"; renderMain(); });
 
   const filterRow = main.querySelector("#filterRow");
   const allChip = el(`<button class="filter-chip${leadsFilter === "all" ? " filter-chip-active" : ""}">All <span class="mono">${LEADS.length}</span></button>`);
@@ -435,42 +454,43 @@ async function renderAccounts(main) {
 async function renderDashboard(main) {
   const data = await api("/api/dashboard");
   main.innerHTML = `
-    <div class="view-head"><div><h2>Dashboard</h2><p class="muted">Everything that needs your attention, at a glance.</p></div></div>
+    <div class="view-head"><div><h2>Dashboard</h2><p class="muted">The three things that matter today — click any card to see the list.</p></div></div>
     <div class="dash-stats">
-      <div class="card dash-stat"><div class="muted">New queries</div><div class="mono big">${data.newLeadsCount}</div></div>
-      <div class="card dash-stat"><div class="muted">Awaiting follow-up</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${data.pendingFollowUps.length}</div></div>
-      <div class="card dash-stat"><div class="muted">Outstanding balance</div><div class="mono big" style="color:${STAGE_COLOR.Quoted}">${inr(data.outstanding)}</div></div>
+      <button class="card dash-stat dash-stat-click" id="statNew"><div class="muted">New queries</div><div class="mono big">${data.newLeadsCount}</div></button>
+      <button class="card dash-stat dash-stat-click" id="statFollowup"><div class="muted">Awaiting follow-up</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${data.pendingFollowUps.length}</div></button>
+      <button class="card dash-stat dash-stat-click" id="statUpcoming"><div class="muted">Upcoming events</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${data.upcomingEvents.length}</div></button>
     </div>
     <div class="dash-grid">
       <div class="card">
         <div class="section-label">Upcoming events</div>
         ${data.upcomingEvents.length === 0 ? `<p class="muted small">Nothing confirmed and upcoming yet.</p>` : data.upcomingEvents.map((l) => `
-          <div class="dash-list-item">
+          <div class="dash-list-item dash-list-item-click" data-lead-id="${l.id}">
             <div>${l.name} — <span class="mono">${fmtDate(l.date)}</span></div>
             <div class="muted">${packageName(l.event_type)} · ${l.city || ""}</div>
           </div>
         `).join("")}
       </div>
       <div class="card">
-        <div class="section-label">Tasks due soon</div>
-        ${data.tasksDueSoon.length === 0 ? `<p class="muted small">Nothing due in the next 7 days.</p>` : data.tasksDueSoon.map((t) => `
-          <div class="dash-list-item">
-            <div>${t.title}</div>
-            <div class="muted">${t.due_date ? fmtDate(t.due_date) : "No due date"}</div>
+        <div class="section-label">Leads waiting on a follow-up</div>
+        ${data.pendingFollowUps.length === 0 ? `<p class="muted small">No one's waiting on you right now.</p>` : data.pendingFollowUps.map((l) => `
+          <div class="dash-list-item dash-list-item-click" data-lead-id="${l.id}">
+            <div>${l.name} <span class="muted">— ${packageName(l.event_type)}</span></div>
+            <div class="muted">${fmtDate(l.date)} · ${l.city || ""}</div>
           </div>
         `).join("")}
       </div>
     </div>
-    <div class="card">
-      <div class="section-label">Leads waiting on a follow-up</div>
-      ${data.pendingFollowUps.length === 0 ? `<p class="muted small">No one's waiting on you right now.</p>` : data.pendingFollowUps.map((l) => `
-        <div class="dash-list-item">
-          <div>${l.name} <span class="muted">— ${packageName(l.event_type)}</span></div>
-          <div class="muted">${fmtDate(l.date)} · ${l.city || ""}</div>
-        </div>
-      `).join("")}
-    </div>
   `;
+
+  main.querySelector("#statNew").addEventListener("click", () => goToLeads("New"));
+  main.querySelector("#statFollowup").addEventListener("click", () => goToLeads("Follow-up"));
+  main.querySelector("#statUpcoming").addEventListener("click", () => goToLeads("Confirmed"));
+  main.querySelectorAll(".dash-list-item-click").forEach((row) => {
+    row.addEventListener("click", () => {
+      const lead = LEADS.find((l) => l.id === row.dataset.leadId);
+      goToLeads(lead ? lead.stage : "all");
+    });
+  });
 }
 
 // ---------- Tasks ----------
