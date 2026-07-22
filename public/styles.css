@@ -96,7 +96,7 @@ nav { display:flex; flex-direction:column; gap:2px; }
 .table-head { color:#8A8578; font-weight:600; border-bottom:1px solid #EAE3D4; }
 .table-row { border-bottom:1px solid #EFE9DC; }
 .table-row:last-child { border-bottom:none; }
-.leads-table-row { grid-template-columns:2.2fr 1.3fr 1fr 1fr 0.8fr; }
+.leads-table-row { grid-template-columns:2fr 1.1fr 0.9fr 0.9fr 1.4fr 1.1fr; }
 
 .filter-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
 .filter-chip { background:#EAE3D4; border:none; border-radius:20px; padding:7px 13px; font-size:12.5px; cursor:pointer; font-family:inherit; color:#5C5748; display:flex; gap:6px; }
@@ -132,4 +132,3 @@ select.stage-select { width:auto; padding:4px 6px; font-size:12px; border-radius
 .doc-name a { color:#2A2620; text-decoration:none; font-weight:600; }
 .doc-name a:hover { color:#C98B3D; }
 .upload-form { display:flex; gap:8px; align-items:center; margin-bottom:16px; flex-wrap:wrap; }
-
