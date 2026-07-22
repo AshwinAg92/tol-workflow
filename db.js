@@ -52,6 +52,23 @@ db.exec(`
   );
 `);
 
+// One-time migration: add new columns to the leads table if they don't exist yet.
+// Safe to run every time the server starts — it only adds what's missing, never touches existing data.
+const existingCols = db.prepare("PRAGMA table_info(leads)").all().map((c) => c.name);
+const newCols = [
+  ["venue", "TEXT"],
+  ["occasion", "TEXT"],
+  ["guest_range", "TEXT"],
+  ["details", "TEXT"],
+  ["how_heard", "TEXT"],
+  ["whatsapp_optin", "INTEGER DEFAULT 0"],
+];
+newCols.forEach(([col, type]) => {
+  if (!existingCols.includes(col)) {
+    db.exec(`ALTER TABLE leads ADD COLUMN ${col} ${type}`);
+  }
+});
+
 // One-time seed: only runs if tables are empty, so restarting the server never wipes real data.
 const leadCount = db.prepare("SELECT COUNT(*) AS c FROM leads").get().c;
 const teamCount = db.prepare("SELECT COUNT(*) AS c FROM team").get().c;
