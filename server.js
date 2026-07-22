@@ -7,7 +7,6 @@ const multer = require("multer");
 const { v4: uuid } = require("uuid");
 const db = require("./db");
 const { STAGES, PACKAGES, ADDONS, TEAM, EXPERIENCES, OCCASIONS, GUEST_RANGES, HOW_HEARD } = require("./config");
-const { sendQuoteEmail, sendLeadConfirmationEmail, sendTeamNotificationEmail } = require("./mailer");
 
 const UPLOAD_DIR = path.join(__dirname, "uploads");
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -69,17 +68,8 @@ app.post("/api/leads", (req, res) => {
   );
   const created = db.prepare("SELECT * FROM leads WHERE id = ?").get(id);
   res.status(201).json(created);
-
-  // Fire both emails after responding, so the person submitting the form
-  // isn't kept waiting on an SMTP round trip. These functions resolve (never
-  // reject) even on failure, so we log the actual result here rather than
-  // relying on .catch() — otherwise a wrong password or bad host fails silently.
-  sendLeadConfirmationEmail(created)
-    .then((r) => console.log("Confirmation email:", r.sent ? "sent" : `NOT sent — ${r.reason}`))
-    .catch((err) => console.error("Confirmation email threw:", err.message));
-  sendTeamNotificationEmail(created)
-    .then((r) => console.log("Team notification email:", r.sent ? "sent" : `NOT sent — ${r.reason}`))
-    .catch((err) => console.error("Team notification email threw:", err.message));
+  // New leads show up immediately in the Leads tab and dashboard "new leads"
+  // count — no email/notification needed, the team works off the app directly.
 });
 
 app.patch("/api/leads/:id", (req, res) => {
@@ -103,7 +93,8 @@ app.patch("/api/leads/:id", (req, res) => {
 });
 
 // ---------- Quotation ----------
-// Computes the total from selected package/addon ids, emails it if SMTP is configured,
+// Computes the total from selected package/addon ids, builds a WhatsApp
+// click-to-chat link pre-filled with the quote so staff can send it manually,
 // and always returns the preview text so the UI can show/copy it either way.
 app.post("/api/leads/:id/quote", async (req, res) => {
   const lead = db.prepare("SELECT * FROM leads WHERE id = ?").get(req.params.id);
@@ -133,17 +124,25 @@ app.post("/api/leads/:id/quote", async (req, res) => {
   const newStage = lead.stage === "New" ? "Quoted" : lead.stage;
   db.prepare("UPDATE leads SET quote_amount = ?, stage = ? WHERE id = ?").run(total, newStage, lead.id);
 
-  let emailResult = { sent: false, reason: "SMTP not configured — preview only" };
-  if (lead.email) {
-    emailResult = await sendQuoteEmail({ to: lead.email, subject, body });
-  }
+  // WhatsApp click-to-chat needs just digits (country code + number, no + or spaces).
+  const digitsOnly = (lead.phone || "").replace(/\D/g, "");
+  const whatsapp = digitsOnly
+    ? { link: `https://wa.me/${digitsOnly}?text=${encodeURIComponent(body)}` }
+    : { link: null, reason: "No phone number on file for this lead" };
+
+  // mailto: opens whatever email app/account is already logged in on the
+  // staff member's device, pre-filled — no SMTP/API involved, so it always works.
+  const mailto = lead.email
+    ? { link: `mailto:${lead.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` }
+    : { link: null, reason: "No email on file for this lead" };
 
   res.json({
     lead: db.prepare("SELECT * FROM leads WHERE id = ?").get(lead.id),
     total,
     subject,
     body,
-    email: emailResult,
+    whatsapp,
+    mailto,
   });
 });
 
