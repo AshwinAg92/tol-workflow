@@ -1,0 +1,20 @@
+{
+  "name": "tol-workflow",
+  "version": "1.0.0",
+  "description": "Together Out Loud — lead-to-booking workflow app",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "seed": "node seed.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.9.14",
+    "uuid": "^9.0.1"
+  }
+}
