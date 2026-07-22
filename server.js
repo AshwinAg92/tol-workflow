@@ -7,7 +7,7 @@ const multer = require("multer");
 const { v4: uuid } = require("uuid");
 const db = require("./db");
 const { STAGES, PACKAGES, ADDONS, TEAM, EXPERIENCES, OCCASIONS, GUEST_RANGES, HOW_HEARD } = require("./config");
-const { sendQuoteEmail } = require("./mailer");
+const { sendQuoteEmail, sendLeadConfirmationEmail, sendTeamNotificationEmail } = require("./mailer");
 
 const UPLOAD_DIR = path.join(__dirname, "uploads");
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -69,6 +69,11 @@ app.post("/api/leads", (req, res) => {
   );
   const created = db.prepare("SELECT * FROM leads WHERE id = ?").get(id);
   res.status(201).json(created);
+
+  // Fire both emails after responding, so the person submitting the form
+  // isn't kept waiting on an SMTP round trip. Failures are logged, never thrown.
+  sendLeadConfirmationEmail(created).catch((err) => console.error("Confirmation email failed:", err.message));
+  sendTeamNotificationEmail(created).catch((err) => console.error("Team notification email failed:", err.message));
 });
 
 app.patch("/api/leads/:id", (req, res) => {
