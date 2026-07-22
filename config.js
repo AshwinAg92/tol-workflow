@@ -25,4 +25,23 @@ const TEAM = [
   { id: "t4", name: "Neha", role: "Accounts" },
 ];
 
-module.exports = { STAGES, PACKAGES, ADDONS, TEAM };
+// Options specific to the public enquiry form.
+const EXPERIENCES = [
+  { id: "jam", name: "🎶 Bhajan Jamming" },
+  { id: "pheras", name: "💍 Musical Pheras" },
+  { id: "both", name: "Both" },
+  { id: "guidance", name: "Need guidance" },
+];
+
+const OCCASIONS = [
+  "Wedding", "Engagement", "Sangeet", "Reception", "Housewarming", "Birthday",
+  "Corporate Event", "Spiritual Gathering / Satsang", "Temple Event", "Private Celebration", "Other",
+];
+
+const GUEST_RANGES = ["Under 50", "50–100", "100–200", "200–500", "500+"];
+
+const HOW_HEARD = [
+  "Instagram", "Facebook", "YouTube", "Google", "Linktree", "Friend/Family", "Previous Event", "Wedding Planner", "Other",
+];
+
+module.exports = { STAGES, PACKAGES, ADDONS, TEAM, EXPERIENCES, OCCASIONS, GUEST_RANGES, HOW_HEARD };
