@@ -1,230 +1,48 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Enquiry Form — Together, Out Loud</title>
-  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      margin:0;
-      background:#FEF6ED;
-      font-family:'Nunito',sans-serif;
-      color:#3A2418;
-      display:flex;
-      justify-content:center;
-      padding:36px 16px 60px;
-    }
-    .wrap { max-width:480px; width:100%; }
-    .logo-wrap { text-align:center; margin-bottom:4px; }
-    .logo-wrap img { width:170px; max-width:55%; height:auto; }
-    .tagline {
-      font-family:'Caveat',cursive;
-      font-weight:700;
-      font-size:25px;
-      color:#C7401E;
-      text-align:center;
-      margin:2px 0 4px;
-    }
-    .subhead { text-align:center; font-size:13px; color:#8A6A54; margin-bottom:22px; }
-    .card {
-      background:#FFFFFF;
-      border-radius:16px;
-      padding:26px 24px;
-      box-shadow:0 4px 18px rgba(199,64,30,0.08);
-      border:1px solid #F6E4D2;
-    }
-    .q { margin-bottom:20px; }
-    .q:last-child { margin-bottom:0; }
-    label.qlabel { display:block; font-size:14px; color:#3A2418; margin-bottom:2px; font-weight:700; }
-    .qdesc { font-size:12px; color:#B29578; margin-bottom:8px; }
-    input, select, textarea {
-      width:100%;
-      padding:11px 12px;
-      border:1.5px solid #F0DCC8;
-      border-radius:9px;
-      font-size:14.5px;
-      font-family:'Nunito',sans-serif;
-      background:#FFFDFA;
-      color:#3A2418;
-      transition:border-color 0.15s;
-    }
-    textarea { resize:vertical; min-height:80px; }
-    input:focus, select:focus, textarea:focus { outline:none; border-color:#C7401E; }
-    .check-group { display:flex; flex-direction:column; gap:8px; margin-top:4px; }
-    .check-row, .radio-row {
-      display:flex; align-items:center; gap:9px; font-size:14px;
-      background:#FFFDFA; border:1.5px solid #F0DCC8; border-radius:9px; padding:9px 12px;
-      cursor:pointer;
-    }
-    .check-row input, .radio-row input { width:auto; }
-    .radio-group { display:flex; gap:10px; margin-top:4px; }
-    .radio-group .radio-row { flex:1; justify-content:center; }
-    button {
-      margin-top:26px;
-      width:100%;
-      background:#C7401E;
-      color:#FEF6ED;
-      border:none;
-      padding:13px;
-      border-radius:10px;
-      font-weight:700;
-      font-size:15px;
-      cursor:pointer;
-      font-family:'Nunito',sans-serif;
-      letter-spacing:0.01em;
-      transition:background 0.15s;
-    }
-    button:hover:not(:disabled) { background:#AD3517; }
-    button:disabled { opacity:0.5; cursor:not-allowed; }
-    .done { display:none; text-align:center; padding:26px 6px; }
-    .done .tagline { margin-bottom:8px; }
-    .done p { color:#6B5344; font-size:14.5px; line-height:1.5; }
-    .error {
-      color:#AD3517;
-      background:#FCEEDA;
-      border-radius:8px;
-      font-size:13px;
-      margin-top:14px;
-      padding:9px 12px;
-      display:none;
-    }
-    .foot-note { text-align:center; font-size:12px; color:#B29578; margin-top:18px; }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="logo-wrap"><img src="/logo.png" alt="Together, Out Loud" /></div>
-    <div class="tagline">Together, Out Loud — Enquiry Form</div>
-    <div class="subhead">Tell us about your event and we'll be in touch within 24 hours.</div>
+// Shared business config — edit these to change pricing, stages, formats, or team.
 
-    <div class="card">
-      <form id="leadForm">
-        <div class="q">
-          <label class="qlabel">Full Name</label>
-          <input id="name" required placeholder="e.g. Priya Sharma" />
-        </div>
+const STAGES = ["New", "Quoted", "Follow-up", "Confirmed", "Completed", "Cancelled"];
 
-        <div class="q">
-          <label class="qlabel">Mobile Number</label>
-          <input id="phone" type="tel" required placeholder="+91 ..." />
-        </div>
+const PACKAGES = [
+  { id: "jam", name: "Bhajan Jamming", rate: 60000 },
+  { id: "club", name: "Bhajan Clubbing", rate: 120000 },
+  { id: "pheras", name: "Musical Pheras", rate: 100000 },
+  { id: "bollywood", name: "Bollywood Jamming", rate: 80000 },
+  { id: "satsang", name: "Devotional Satsang", rate: 55000 },
+  { id: "shraddhanjali", name: "Shraddhanjali Satsang", rate: 50000 },
+];
 
-        <div class="q">
-          <label class="qlabel">Email Address</label>
-          <input id="email" type="email" required placeholder="name@example.com" />
-        </div>
+const ADDONS = [
+  { id: "sound", name: "Sound & PA", rate: 15000 },
+  { id: "lights", name: "Lighting", rate: 12000 },
+  { id: "stage", name: "Stage setup", rate: 18000 },
+  { id: "travel", name: "Travel & accommodation", rate: null, note: "billed at actuals" },
+];
 
-        <div class="q">
-          <label class="qlabel">City</label>
-          <div class="qdesc">Where is your event?</div>
-          <input id="city" required placeholder="e.g. Siliguri" />
-        </div>
+const TEAM = [
+  { id: "t1", name: "Ashwin", role: "Lead & Performer" },
+  { id: "t2", name: "Divya", role: "Client Relations" },
+  { id: "t3", name: "Karan", role: "Logistics & Sound" },
+  { id: "t4", name: "Neha", role: "Accounts" },
+];
 
-        <div class="q">
-          <label class="qlabel">Which experience are you interested in?</label>
-          <select id="experience" required></select>
-        </div>
+// Options specific to the public enquiry form.
+const EXPERIENCES = [
+  { id: "pheras", name: "Musical Pheras" },
+  { id: "jam", name: "Bhajan Jamming" },
+  { id: "both", name: "Both" },
+  { id: "satsang", name: "Devotional Satsang" },
+  { id: "shraddhanjali", name: "Shraddhanjali Satsang" },
+];
 
-        <div class="q">
-          <label class="qlabel">What is the occasion?</label>
-          <select id="occasion" required></select>
-        </div>
+const OCCASIONS = [
+  "Wedding", "Engagement", "Sangeet", "Reception", "Housewarming", "Birthday",
+  "Corporate Event", "Spiritual Gathering / Satsang", "Temple Event", "Private Celebration", "Other",
+];
 
-        <div class="q">
-          <label class="qlabel">Event Date</label>
-          <input id="date" type="date" required />
-        </div>
+const GUEST_RANGES = ["Under 200", "200–500", "500–1000", "1000+"];
 
-        <div class="q">
-          <label class="qlabel">Approximate number of guests</label>
-          <select id="guestRange" required></select>
-        </div>
+const HOW_HEARD = [
+  "Instagram", "Facebook", "YouTube", "Google", "Linktree", "Friend/Family", "Previous Event", "Wedding Planner", "Other",
+];
 
-        <div class="q">
-          <label class="qlabel">Tell us about your event</label>
-          <div class="qdesc">Anything you'd like us to know?</div>
-          <textarea id="details" required placeholder="Share any details that would help us plan..."></textarea>
-        </div>
-
-        <div class="q">
-          <label class="qlabel">How did you hear about us?</label>
-          <select id="howHeard" required></select>
-        </div>
-
-        <div class="q">
-          <label class="qlabel">Would you like us to contact you on WhatsApp?</label>
-          <div class="radio-group">
-            <label class="radio-row"><input type="radio" name="whatsapp" value="yes" checked /> Yes</label>
-            <label class="radio-row"><input type="radio" name="whatsapp" value="no" /> No</label>
-          </div>
-        </div>
-
-        <button type="submit" id="submitBtn">Send enquiry</button>
-        <div class="error" id="errorMsg"></div>
-      </form>
-      <div class="done" id="doneMsg">
-        <div class="tagline">Thank you for your enquiry! ❤️</div>
-        <p>We've received your details. Our team will get in touch with you within 24 hours to discuss your event and help create a memorable musical experience.</p>
-      </div>
-    </div>
-    <div class="foot-note">Together, Out Loud — Bhajan Jamming · Musical Pheras · Devotional Satsang</div>
-  </div>
-
-  <script>
-    const experienceSelect = document.getElementById("experience");
-    const occasionSelect = document.getElementById("occasion");
-    const guestRangeSelect = document.getElementById("guestRange");
-    const howHeardSelect = document.getElementById("howHeard");
-
-    fetch("/api/config").then(r => r.json()).then(cfg => {
-      experienceSelect.innerHTML = cfg.experiences.map(e => `<option value="${e.id}">${e.name}</option>`).join("");
-      occasionSelect.innerHTML = cfg.occasions.map(o => `<option value="${o}">${o}</option>`).join("");
-      guestRangeSelect.innerHTML = cfg.guestRanges.map(g => `<option value="${g}">${g}</option>`).join("");
-      howHeardSelect.innerHTML = cfg.howHeard.map(h => `<option value="${h}">${h}</option>`).join("");
-    });
-
-    document.getElementById("leadForm").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const btn = document.getElementById("submitBtn");
-      const errorMsg = document.getElementById("errorMsg");
-      errorMsg.style.display = "none";
-      btn.disabled = true;
-      btn.textContent = "Sending…";
-
-      const whatsappOptin = document.querySelector('input[name="whatsapp"]:checked').value === "yes";
-
-      const payload = {
-        name: document.getElementById("name").value,
-        phone: document.getElementById("phone").value,
-        email: document.getElementById("email").value,
-        eventType: experienceSelect.value,
-        city: document.getElementById("city").value,
-        date: document.getElementById("date").value,
-        occasion: occasionSelect.value,
-        guestRange: guestRangeSelect.value,
-        details: document.getElementById("details").value,
-        howHeard: howHeardSelect.value,
-        whatsappOptin: whatsappOptin,
-      };
-
-      try {
-        const res = await fetch("/api/leads", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) throw new Error((await res.json()).error || "Something went wrong");
-        document.getElementById("leadForm").style.display = "none";
-        document.getElementById("doneMsg").style.display = "block";
-      } catch (err) {
-        errorMsg.textContent = err.message;
-        errorMsg.style.display = "block";
-        btn.disabled = false;
-        btn.textContent = "Send enquiry";
-      }
-    });
-  </script>
-</body>
-</html>
+module.exports = { STAGES, PACKAGES, ADDONS, TEAM, EXPERIENCES, OCCASIONS, GUEST_RANGES, HOW_HEARD };
