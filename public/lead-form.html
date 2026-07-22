@@ -61,6 +61,9 @@
     .check-row input, .radio-row input { width:auto; }
     .radio-group { display:flex; gap:10px; margin-top:4px; }
     .radio-group .radio-row { flex:1; justify-content:center; }
+    .phone-row { display:flex; gap:8px; }
+    .phone-row .country-code { flex:0 0 108px; }
+    .phone-row input { flex:1; }
     button {
       margin-top:26px;
       width:100%;
@@ -108,7 +111,10 @@
 
         <div class="q">
           <label class="qlabel">Mobile Number</label>
-          <input id="phone" type="tel" required placeholder="+91 ..." />
+          <div class="phone-row">
+            <select id="countryCode" class="country-code"></select>
+            <input id="phone" type="tel" required placeholder="98765 43210" />
+          </div>
         </div>
 
         <div class="q">
@@ -177,6 +183,41 @@
     const occasionSelect = document.getElementById("occasion");
     const guestRangeSelect = document.getElementById("guestRange");
     const howHeardSelect = document.getElementById("howHeard");
+    const countryCodeSelect = document.getElementById("countryCode");
+
+    const COUNTRY_CODES = [
+      { code: "+91", label: "🇮🇳 +91 India" },
+      { code: "+1", label: "🇺🇸 +1 USA/Canada" },
+      { code: "+44", label: "🇬🇧 +44 UK" },
+      { code: "+61", label: "🇦🇺 +61 Australia" },
+      { code: "+971", label: "🇦🇪 +971 UAE" },
+      { code: "+966", label: "🇸🇦 +966 Saudi Arabia" },
+      { code: "+65", label: "🇸🇬 +65 Singapore" },
+      { code: "+60", label: "🇲🇾 +60 Malaysia" },
+      { code: "+974", label: "🇶🇦 +974 Qatar" },
+      { code: "+968", label: "🇴🇲 +968 Oman" },
+      { code: "+973", label: "🇧🇭 +973 Bahrain" },
+      { code: "+965", label: "🇰🇼 +965 Kuwait" },
+      { code: "+64", label: "🇳🇿 +64 New Zealand" },
+      { code: "+49", label: "🇩🇪 +49 Germany" },
+      { code: "+33", label: "🇫🇷 +33 France" },
+      { code: "+39", label: "🇮🇹 +39 Italy" },
+      { code: "+34", label: "🇪🇸 +34 Spain" },
+      { code: "+31", label: "🇳🇱 +31 Netherlands" },
+      { code: "+27", label: "🇿🇦 +27 South Africa" },
+      { code: "+94", label: "🇱🇰 +94 Sri Lanka" },
+      { code: "+977", label: "🇳🇵 +977 Nepal" },
+      { code: "+880", label: "🇧🇩 +880 Bangladesh" },
+      { code: "+92", label: "🇵🇰 +92 Pakistan" },
+      { code: "+81", label: "🇯🇵 +81 Japan" },
+      { code: "+82", label: "🇰🇷 +82 South Korea" },
+      { code: "+86", label: "🇨🇳 +86 China" },
+      { code: "+62", label: "🇮🇩 +62 Indonesia" },
+      { code: "+63", label: "🇵🇭 +63 Philippines" },
+      { code: "+66", label: "🇹🇭 +66 Thailand" },
+      { code: "+other", label: "🌐 Other" },
+    ];
+    countryCodeSelect.innerHTML = COUNTRY_CODES.map(c => `<option value="${c.code}">${c.label}</option>`).join("");
 
     fetch("/api/config").then(r => r.json()).then(cfg => {
       experienceSelect.innerHTML = cfg.experiences.map(e => `<option value="${e.id}">${e.name}</option>`).join("");
@@ -194,10 +235,12 @@
       btn.textContent = "Sending…";
 
       const whatsappOptin = document.querySelector('input[name="whatsapp"]:checked').value === "yes";
+      const countryCode = countryCodeSelect.value === "+other" ? "" : countryCodeSelect.value;
+      const fullPhone = `${countryCode} ${document.getElementById("phone").value}`.trim();
 
       const payload = {
         name: document.getElementById("name").value,
-        phone: document.getElementById("phone").value,
+        phone: fullPhone,
         email: document.getElementById("email").value,
         eventType: experienceSelect.value,
         city: document.getElementById("city").value,
