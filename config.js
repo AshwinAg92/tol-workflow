@@ -27,10 +27,11 @@ const TEAM = [
 
 // Options specific to the public enquiry form.
 const EXPERIENCES = [
-  { id: "jam", name: "🎶 Bhajan Jamming" },
   { id: "pheras", name: "💍 Musical Pheras" },
+  { id: "jam", name: "🎶 Bhajan Jamming" },
   { id: "both", name: "Both" },
-  { id: "guidance", name: "Need guidance" },
+  { id: "satsang", name: "Devotional Satsang" },
+  { id: "shraddhanjali", name: "Shraddhanjali Satsang" },
 ];
 
 const OCCASIONS = [
