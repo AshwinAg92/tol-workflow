@@ -1,28 +1,41 @@
-const nodemailer = require("nodemailer");
+// Sends email via the Resend API (HTTPS) instead of raw SMTP sockets.
+// Railway (like many hosts) blocks outbound SMTP ports as an anti-spam measure,
+// which is why the old nodemailer/SMTP setup timed out. Resend works over
+// normal HTTPS, so it isn't affected by that.
+//
+// Setup: create a free account at resend.com, generate an API key, and set
+// RESEND_API_KEY in Railway's Variables tab. Until you verify your own domain
+// on Resend, you can only send FROM their shared "onboarding@resend.dev" address
+// and only TO the email you signed up with — fine for testing, expand later
+// by verifying a domain in the Resend dashboard.
 
-// Every email function here checks for SMTP_HOST/SMTP_USER/SMTP_PASS in .env.
-// Without them, functions just report back that no email was sent — the caller
-// still gets the subject/body to show or copy manually, and nothing crashes.
-
-function getTransporter() {
-  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) return null;
-  return nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: Number(SMTP_PORT) || 587,
-    secure: Number(SMTP_PORT) === 465,
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
-  });
-}
+const RESEND_API_URL = "https://api.resend.com/emails";
+const DEFAULT_FROM = "Together, Out Loud <onboarding@resend.dev>";
 
 async function send({ to, subject, text }) {
-  const transporter = getTransporter();
-  if (!transporter) {
-    return { sent: false, reason: "SMTP not configured — set SMTP_HOST/SMTP_USER/SMTP_PASS in .env to send for real" };
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { sent: false, reason: "RESEND_API_KEY not configured — set it in Railway to send for real" };
   }
   try {
-    await transporter.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, text });
-    return { sent: true };
+    const res = await fetch(RESEND_API_URL, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: process.env.RESEND_FROM || DEFAULT_FROM,
+        to,
+        subject,
+        text,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { sent: false, reason: data.message || `Resend API error (${res.status})` };
+    }
+    return { sent: true, id: data.id };
   } catch (err) {
     return { sent: false, reason: err.message };
   }
@@ -52,10 +65,10 @@ async function sendLeadConfirmationEmail(lead) {
 
 // Internal notification sent to the team's inbox whenever a new enquiry comes in.
 // Set TEAM_NOTIFY_EMAIL in .env to the address that should receive these
-// (falls back to SMTP_FROM/SMTP_USER if not set).
+// (falls back to RESEND_FROM/a fixed address if not set).
 async function sendTeamNotificationEmail(lead) {
-  const notifyTo = process.env.TEAM_NOTIFY_EMAIL || process.env.SMTP_FROM || process.env.SMTP_USER;
-  if (!notifyTo) return { sent: false, reason: "No TEAM_NOTIFY_EMAIL (or SMTP_FROM) configured to notify" };
+  const notifyTo = process.env.TEAM_NOTIFY_EMAIL;
+  if (!notifyTo) return { sent: false, reason: "No TEAM_NOTIFY_EMAIL configured to notify" };
   const text = [
     `New enquiry received:`,
     ``,
