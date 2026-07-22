@@ -112,7 +112,8 @@
         <div class="q">
           <label class="qlabel">Mobile Number</label>
           <div class="phone-row">
-            <select id="countryCode" class="country-code"></select>
+            <input id="countryCode" class="country-code" list="countryCodeList" placeholder="Country or code" autocomplete="off" required />
+            <datalist id="countryCodeList"></datalist>
             <input id="phone" type="tel" required placeholder="98765 43210" />
           </div>
         </div>
@@ -183,8 +184,6 @@
     const occasionSelect = document.getElementById("occasion");
     const guestRangeSelect = document.getElementById("guestRange");
     const howHeardSelect = document.getElementById("howHeard");
-    const countryCodeSelect = document.getElementById("countryCode");
-
     const COUNTRY_CODES = [
       { code: "+91", label: "🇮🇳 +91 India" },
       { code: "+1", label: "🇺🇸 +1 USA/Canada" },
@@ -215,9 +214,22 @@
       { code: "+62", label: "🇮🇩 +62 Indonesia" },
       { code: "+63", label: "🇵🇭 +63 Philippines" },
       { code: "+66", label: "🇹🇭 +66 Thailand" },
-      { code: "+other", label: "🌐 Other" },
     ];
-    countryCodeSelect.innerHTML = COUNTRY_CODES.map(c => `<option value="${c.code}">${c.label}</option>`).join("");
+    const countryCodeInput = document.getElementById("countryCode");
+    const countryCodeList = document.getElementById("countryCodeList");
+    countryCodeList.innerHTML = COUNTRY_CODES.map(c => `<option value="${c.label}"></option>`).join("");
+    countryCodeInput.value = "🇮🇳 +91 India";
+
+    // Pulls just the "+xx" number out of whatever the person typed or picked —
+    // works whether they selected a suggestion or typed a code/country directly.
+    function extractCountryCode(text) {
+      const known = COUNTRY_CODES.find(c => c.label === text);
+      if (known) return known.code;
+      const match = text.match(/\+\d+/);
+      if (match) return match[0];
+      const byName = COUNTRY_CODES.find(c => text && c.label.toLowerCase().includes(text.toLowerCase()));
+      return byName ? byName.code : text.trim();
+    }
 
     fetch("/api/config").then(r => r.json()).then(cfg => {
       experienceSelect.innerHTML = cfg.experiences.map(e => `<option value="${e.id}">${e.name}</option>`).join("");
@@ -235,7 +247,7 @@
       btn.textContent = "Sending…";
 
       const whatsappOptin = document.querySelector('input[name="whatsapp"]:checked').value === "yes";
-      const countryCode = countryCodeSelect.value === "+other" ? "" : countryCodeSelect.value;
+      const countryCode = extractCountryCode(countryCodeInput.value);
       const fullPhone = `${countryCode} ${document.getElementById("phone").value}`.trim();
 
       const payload = {
