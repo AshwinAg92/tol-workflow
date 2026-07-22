@@ -211,10 +211,10 @@ function renderQuotation(main) {
         <div class="section-label">Add-ons</div>
         <div id="addonChecks"></div>
         <div class="total-row"><span>Total</span><span class="mono total-amt" id="totalAmt">₹0</span></div>
-        <button class="btn-primary full" id="sendQuoteBtn">✉ Mark as quoted & send</button>
+        <button class="btn-primary full" id="sendQuoteBtn">💬 Mark as quoted & prepare messages</button>
       </div>
       <div class="card email-preview">
-        <div class="section-label">✉ Email preview</div>
+        <div class="section-label">Message preview</div>
         <div id="emailPreview"></div>
       </div>
     </div>
@@ -255,8 +255,9 @@ function renderQuotation(main) {
 
     const items = [...chosenPackages, ...chosenAddons].map((x) => `<li>${x.name}</li>`).join("") || `<li class="muted">Select a format or add-on</li>`;
     main.querySelector("#emailPreview").innerHTML = lead ? `
-      <div class="email-field"><span class="muted">To</span> ${lead.email || "(no email on file)"}</div>
-      <div class="email-field"><span class="muted">Subject</span> Quotation for ${packageName(lead.event_type)} — Together Out Loud</div>
+      <div class="email-field"><span class="muted">WhatsApp to</span> ${lead.phone || "(no phone on file)"}</div>
+      <div class="email-field"><span class="muted">Email to</span> ${lead.email || "(no email on file)"}</div>
+      <div class="email-field"><span class="muted">Re</span> Quotation for ${packageName(lead.event_type)} — Together Out Loud</div>
       <div class="email-body">Dear ${lead.name.split(" ")[0]},
 
 Thank you for reaching out to Together Out Loud. Here is our quotation for your event on ${fmtDate(lead.date)} in ${lead.city || ""}:
@@ -277,19 +278,26 @@ Excludes travel and accommodation unless noted above. Valid for 7 days.</div>
     if (packageIds.length === 0 && addonIds.length === 0) return;
     const btn = main.querySelector("#sendQuoteBtn");
     btn.disabled = true;
-    btn.textContent = "Sending…";
+    btn.textContent = "Preparing…";
     try {
       const result = await api(`/api/leads/${leadId}/quote`, { method: "POST", body: JSON.stringify({ packageIds, addonIds }) });
       await refreshLeads();
-      const statusHtml = result.email.sent
-        ? `<div class="email-status sent">Sent to ${result.lead.email}</div>`
-        : `<div class="email-status unsent">Not emailed — ${result.email.reason}</div>`;
-      main.querySelector("#emailPreview").insertAdjacentHTML("beforeend", statusHtml);
+
+      const waHtml = result.whatsapp.link
+        ? `<div class="email-status sent">💬 Opened WhatsApp for ${result.lead.phone} — <a href="${result.whatsapp.link}" target="_blank">click here</a> if it didn't open</div>`
+        : `<div class="email-status unsent">💬 Couldn't prepare WhatsApp message — ${result.whatsapp.reason}</div>`;
+
+      const mailHtml = result.mailto.link
+        ? `<div class="email-status sent">✉️ <a href="${result.mailto.link}">Click here to send by email</a> — opens your email app with everything filled in</div>`
+        : `<div class="email-status unsent">✉️ Couldn't prepare email — ${result.mailto.reason}</div>`;
+
+      if (result.whatsapp.link) window.open(result.whatsapp.link, "_blank");
+      main.querySelector("#emailPreview").insertAdjacentHTML("beforeend", waHtml + mailHtml);
     } catch (err) {
       alert(err.message);
     } finally {
       btn.disabled = false;
-      btn.textContent = "✉ Mark as quoted & send";
+      btn.textContent = "💬 Mark as quoted & prepare messages";
     }
   });
 }
