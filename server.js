@@ -512,13 +512,13 @@ app.get("/api/expenses", requireAuth, async (req, res) => {
 });
 
 app.post("/api/expenses", requireAuth, requireAdmin, async (req, res) => {
-  const { leadId, head, amount, paid, notes } = req.body;
+  const { leadId, teamId, head, amount, paid, notes } = req.body;
   if (!head || amount === undefined) return res.status(400).json({ error: "head and amount are required" });
   const id = uuid();
   await pool.query(`
-    INSERT INTO expenses (id, lead_id, head, amount, paid, notes, created_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
-  `, [id, leadId || null, head, Number(amount), paid ? 1 : 0, notes || null, new Date().toISOString()]);
+    INSERT INTO expenses (id, lead_id, team_id, head, amount, paid, notes, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+  `, [id, leadId || null, teamId || null, head, Number(amount), paid ? 1 : 0, notes || null, new Date().toISOString()]);
   res.status(201).json((await pool.query("SELECT * FROM expenses WHERE id = $1", [id])).rows[0]);
 });
 

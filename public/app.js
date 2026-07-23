@@ -212,8 +212,9 @@ function renderLeadsLog(main) {
             </select>
           </span>
           <span style="display:flex; flex-direction:column; gap:4px;">
-            ${l.stage === "Completed" || l.stage === "Cancelled" ? "" : `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>`}
+            ${l.stage === "New" || l.stage === "Follow-up" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
             ${(l.stage === "New" || l.stage === "Follow-up") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
+            ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Final: ${l.final_amount ? inr(l.final_amount) : "—"}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>` : ""}
           </span>
         </div>
       `));
@@ -989,6 +990,7 @@ async function renderAccounts(main) {
     <div class="card" style="margin-bottom:14px;">
       <div class="upload-form" style="margin-bottom:0;">
         <select id="expLead"><option value="">Not tied to a specific event</option>${LEADS.map((l) => `<option value="${l.id}">${l.name} — ${fmtDate(l.date)}</option>`).join("")}</select>
+        <select id="expTeam"><option value="">Not tied to a specific artist</option>${TEAM.map((m) => `<option value="${m.id}">${m.name}</option>`).join("")}</select>
         <input id="expHead" placeholder="e.g. Travel, Lights, Sound, or anything custom" style="flex:1; min-width:160px;" />
         <input id="expAmount" type="number" placeholder="Amount ₹" style="width:130px;" />
         <button class="btn-primary" id="addExpenseBtn">Add</button>
@@ -1044,10 +1046,11 @@ async function renderAccounts(main) {
     expRows.innerHTML = "";
     expenses.forEach((e) => {
       const lead = LEADS.find((l) => l.id === e.lead_id);
+      const member = TEAM.find((m) => m.id === e.team_id);
       expRows.appendChild(el(`
         <div class="table-row" style="grid-template-columns:1.3fr 1.3fr 1fr 1fr 0.6fr;">
           <span>${e.head}</span>
-          <span class="muted">${lead ? lead.name : "General"}</span>
+          <span class="muted">${lead ? lead.name : "General"}${member ? ` · ${member.name}` : ""}</span>
           <span class="right mono">${inr(e.amount)}</span>
           <span><label class="muted small" style="display:flex; align-items:center; gap:5px;"><input type="checkbox" data-exp-paid="${e.id}" ${e.paid ? "checked" : ""} /> Paid</label></span>
           <span><button class="icon-btn" data-delete-exp="${e.id}">✕</button></span>
@@ -1074,7 +1077,12 @@ async function renderAccounts(main) {
     if (!head || !amount) return alert("Enter both a head and an amount.");
     await api("/api/expenses", {
       method: "POST",
-      body: JSON.stringify({ head, amount, leadId: main.querySelector("#expLead").value || null }),
+      body: JSON.stringify({
+        head,
+        amount,
+        leadId: main.querySelector("#expLead").value || null,
+        teamId: main.querySelector("#expTeam").value || null,
+      }),
     });
     renderMain();
   });

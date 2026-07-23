@@ -116,6 +116,14 @@ async function setup() {
     );
   `);
 
+  // Real migrations for columns added AFTER the tables already existed in
+  // production — CREATE TABLE IF NOT EXISTS is a no-op for existing tables,
+  // so any new column must be added explicitly here or it silently never
+  // exists in the live database (this bit us with final_amount and alt_date).
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS final_amount INTEGER`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS alt_date TEXT`);
+  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS team_id TEXT REFERENCES team(id)`);
+
   // Migration: "Quoted" is no longer a distinct stage — a lead moves straight
   // to "Follow-up" once quoted. Move any existing Quoted leads forward so
   // nothing gets stuck on a stage that no longer exists in the UI.
