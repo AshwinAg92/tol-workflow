@@ -1349,12 +1349,26 @@ async function renderDocuments(main) {
 
 function openConfirmEventModal(lead) {
   const root = document.getElementById("modalRoot");
+  const conflict = LEADS.find((l) => l.id !== lead.id && l.stage === "Confirmed" && l.date === lead.date);
+
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
         <div class="modal-head"><h3>Confirm ${lead.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
         <div class="modal-body">
           <p class="muted small">This moves the lead to Confirmed and records the final closed rate.</p>
+          ${conflict ? `
+            <div style="background:#FFF4E5; color:#8A5A1F; padding:10px 12px; border-radius:6px; font-size:13px; margin-bottom:12px;">
+              ⚠️ ${conflict.name} is already Confirmed for ${fmtDate(lead.date)}. Double-check before confirming another event the same day.
+            </div>
+          ` : ""}
+          ${lead.alt_date ? `
+            <label>Event date</label>
+            <select id="ceDateChoice">
+              <option value="${lead.date}">${fmtDate(lead.date)} (original request)${conflict ? " — already booked" : ""}</option>
+              <option value="${lead.alt_date}">${fmtDate(lead.alt_date)} (customer's alternative)</option>
+            </select>
+          ` : ""}
           <label>Final closed rate (₹)</label>
           <input id="ceAmount" type="number" value="${lead.quote_amount || ""}" placeholder="e.g. 145000" />
         </div>
@@ -1368,10 +1382,15 @@ function openConfirmEventModal(lead) {
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
   root.querySelector("#submitModal").addEventListener("click", async () => {
     const finalAmount = root.querySelector("#ceAmount").value;
+    const chosenDate = root.querySelector("#ceDateChoice")?.value || lead.date;
+    const stillConflicting = LEADS.find((l) => l.id !== lead.id && l.stage === "Confirmed" && l.date === chosenDate);
+    if (stillConflicting && !confirm(`${stillConflicting.name} is already Confirmed for this date. Confirm ${lead.name} anyway?`)) {
+      return;
+    }
     try {
-      await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ stage: "Confirmed", finalAmount: finalAmount || null }) });
+      await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ stage: "Confirmed", finalAmount: finalAmount || null, date: chosenDate }) });
       await refreshLeads();
-      openConfirmationMessageModal({ ...lead, stage: "Confirmed", final_amount: finalAmount || null });
+      openConfirmationMessageModal({ ...lead, stage: "Confirmed", final_amount: finalAmount || null, date: chosenDate });
     } catch (err) {
       alert(err.message);
     }
