@@ -93,36 +93,22 @@ app.patch("/api/leads/:id", (req, res) => {
 });
 
 // ---------- Quotation ----------
-// Computes the total from selected package/addon ids, builds a WhatsApp
-// click-to-chat link pre-filled with the quote so staff can send it manually,
-// and always returns the preview text so the UI can show/copy it either way.
+// The quote text is built and edited entirely in the browser (so Ashwin can
+// change wording, amount, or anything else himself without needing a code
+// change). This endpoint just records the amount + stage, and turns the
+// final text into a WhatsApp link and a mailto link.
 app.post("/api/leads/:id/quote", async (req, res) => {
   const lead = db.prepare("SELECT * FROM leads WHERE id = ?").get(req.params.id);
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
-  const { packageIds = [], addonIds = [] } = req.body;
-  const chosenPackages = PACKAGES.filter((p) => packageIds.includes(p.id));
-  const chosenAddons = ADDONS.filter((a) => addonIds.includes(a.id));
-  const total = chosenPackages.reduce((s, p) => s + p.rate, 0) + chosenAddons.reduce((s, a) => s + (a.rate || 0), 0);
+  const { amount, subject, body } = req.body;
+  if (!body || !body.trim()) return res.status(400).json({ error: "Quote text is required" });
 
-  if (total === 0) return res.status(400).json({ error: "Select at least one package or paid add-on" });
-
-  const lines = [...chosenPackages.map((p) => p.name), ...chosenAddons.map((a) => a.name)];
-  const subject = `Quotation for ${chosenPackages.map((p) => p.name).join(" / ") || "your event"} — Together Out Loud`;
-  const body = [
-    `Dear ${lead.name.split(" ")[0] || "there"},`,
-    ``,
-    `Thank you for reaching out to Together Out Loud. Here is our quotation for your event on ${lead.date} in ${lead.city || ""}:`,
-    ``,
-    ...lines.map((l) => `- ${l}`),
-    ``,
-    `Total: ₹${total.toLocaleString("en-IN")}`,
-    ``,
-    `Excludes travel and accommodation unless noted above. Valid for 7 days.`,
-  ].join("\n");
+  const numericAmount = amount !== undefined && amount !== null && amount !== "" ? Number(amount) : null;
+  const finalSubject = subject && subject.trim() ? subject : "Quotation — Together, Out Loud";
 
   const newStage = lead.stage === "New" ? "Quoted" : lead.stage;
-  db.prepare("UPDATE leads SET quote_amount = ?, stage = ? WHERE id = ?").run(total, newStage, lead.id);
+  db.prepare("UPDATE leads SET quote_amount = ?, stage = ? WHERE id = ?").run(numericAmount, newStage, lead.id);
 
   // WhatsApp click-to-chat needs just digits (country code + number, no + or spaces).
   const digitsOnly = (lead.phone || "").replace(/\D/g, "");
@@ -133,14 +119,11 @@ app.post("/api/leads/:id/quote", async (req, res) => {
   // mailto: opens whatever email app/account is already logged in on the
   // staff member's device, pre-filled — no SMTP/API involved, so it always works.
   const mailto = lead.email
-    ? { link: `mailto:${lead.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` }
+    ? { link: `mailto:${lead.email}?subject=${encodeURIComponent(finalSubject)}&body=${encodeURIComponent(body)}` }
     : { link: null, reason: "No email on file for this lead" };
 
   res.json({
     lead: db.prepare("SELECT * FROM leads WHERE id = ?").get(lead.id),
-    total,
-    subject,
-    body,
     whatsapp,
     mailto,
   });

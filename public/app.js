@@ -268,13 +268,55 @@ function renderPipeline(main) {
 }
 
 // ---------- Quotation ----------
+// Fully self-service: Ashwin fills a few fields, hits "Generate", gets an
+// editable draft in the exact wording he uses, tweaks anything he wants,
+// then sends via WhatsApp/email. No code change ever needed to adjust
+// wording, amount, or format — the textarea is the source of truth.
+function buildQuoteText({ format, location, date, guests, duration, setPieces, formatType, charges }) {
+  const amountLine = charges ? `₹${Number(charges).toLocaleString("en-IN")}/-` : "________";
+  return `QUOTATION for ${(format || "").toUpperCase()}
+Together, Out Loud
+
+Location: ${location || ""}
+Date: ${date || ""}
+No. Of Guests: ${guests || ""}
+Duration: ${duration || "75-90 Minutes"}
+
+PERFORMANCE DETAILS
+•  Set: ${setPieces || ""}
+•  Format (Private/Public): ${formatType || ""}
+•  Performance Charges: ${amountLine}
+
+SESSION CONDITIONS
+1. No food, alcohol, or any beverages to be consumed or served during the session.
+2. Session duration will be 75 to 90 minutes.
+
+EXCLUSIONS
+•  Stage Setup
+•  Lights & Sound
+•  Travel, Accommodation (From Previous City of Performance- will be informed 2 months prior)
+•  Food for the Team (All Meals)
+•  Airport/Station Transfers
+
+TERMS
+•  An advance payment is required to confirm and block the date. Booking is confirmed only upon receipt of advance.
+•  This quotation is valid for 7 days from the date of issue. Post validity, charges are subject to revision.
+•  Strictly no consumption of Food or Beverage during the Jamming Session.
+
+We look forward to creating a memorable and deeply immersive musical experience.
+
+Together, Out Loud
+Instagram: https://www.instagram.com/togetheroutloudclub`;
+}
+
 function renderQuotation(main) {
   const quotable = LEADS.filter((l) => l.stage !== "Completed");
-  const preselect = quotable.find((l) => l.id === quotationLeadId) ? quotationLeadId : null;
+  const preselect = quotable.find((l) => l.id === quotationLeadId) ? quotationLeadId : (quotable[0]?.id || null);
   quotationLeadId = null; // one-shot — doesn't stick if the user later opens Quotation from the nav
+
   main.innerHTML = `
     <div class="view-head">
-      <div><h2>Quotation</h2><p class="muted">Pick a lead, choose the format, send the number.</p></div>
+      <div><h2>Quotation</h2><p class="muted">Fill in the details, generate the draft, tweak anything, then send.</p></div>
     </div>
     <div class="quote-grid">
       <div class="card">
@@ -282,16 +324,35 @@ function renderQuotation(main) {
         <select id="leadSelect">
           ${quotable.map((l) => `<option value="${l.id}" ${l.id === preselect ? "selected" : ""}>${l.name} — ${fmtDate(l.date)}</option>`).join("")}
         </select>
-        <div class="section-label">Format</div>
-        <div id="pkgChecks"></div>
-        <div class="section-label">Add-ons</div>
-        <div id="addonChecks"></div>
-        <div class="total-row"><span>Total</span><span class="mono total-amt" id="totalAmt">₹0</span></div>
-        <button class="btn-primary full" id="sendQuoteBtn">💬 Mark as quoted & prepare messages</button>
+        <div class="row-2">
+          <div><label>Location</label><input id="qLocation" placeholder="e.g. Siliguri" /></div>
+          <div><label>Date</label><input id="qDate" placeholder="e.g. 14th September 2026" /></div>
+        </div>
+        <div class="row-2">
+          <div><label>No. of guests</label><input id="qGuests" placeholder="e.g. 80-100" /></div>
+          <div><label>Duration</label><input id="qDuration" value="75-90 Minutes" /></div>
+        </div>
+        <div class="row-2">
+          <div><label>Set</label><input id="qSet" placeholder="e.g. 12-15 songs" /></div>
+          <div><label>Format</label>
+            <select id="qFormatType">
+              <option value="Private">Private</option>
+              <option value="Public">Public</option>
+            </select>
+          </div>
+        </div>
+        <label>Performance charges (₹)</label>
+        <input id="qCharges" type="number" placeholder="e.g. 50000" />
+        <button class="btn-ghost full" id="generateBtn" style="margin-top:12px;">Generate quote draft ↓</button>
       </div>
       <div class="card email-preview">
-        <div class="section-label">Message preview</div>
-        <div id="emailPreview"></div>
+        <div class="section-label">Quote draft — edit anything before sending</div>
+        <label>Subject (for email)</label>
+        <input id="qSubject" placeholder="Quotation — Together, Out Loud" />
+        <label>Message</label>
+        <textarea id="qBody" rows="18" style="width:100%; font-family:'JetBrains Mono',monospace; font-size:12.5px; padding:10px; border:1px solid #DDD5C4; border-radius:6px;"></textarea>
+        <button class="btn-primary full" id="sendQuoteBtn" style="margin-top:12px;">💬 Mark as quoted & prepare messages</button>
+        <div id="sendStatus"></div>
       </div>
     </div>
   `;
@@ -301,62 +362,51 @@ function renderQuotation(main) {
     return;
   }
 
-  const pkgChecks = main.querySelector("#pkgChecks");
-  CONFIG.packages.forEach((p) => {
-    pkgChecks.appendChild(el(`
-      <label class="check-row"><input type="checkbox" data-pkg="${p.id}" />
-        <span>${p.name}</span><span class="mono right">${inr(p.rate)}</span></label>
-    `));
-  });
-  const addonChecks = main.querySelector("#addonChecks");
-  CONFIG.addons.forEach((a) => {
-    addonChecks.appendChild(el(`
-      <label class="check-row"><input type="checkbox" data-addon="${a.id}" />
-        <span>${a.name}</span><span class="mono right muted">${a.rate ? inr(a.rate) : a.note}</span></label>
-    `));
-  });
+  const leadSelect = main.querySelector("#leadSelect");
+  const fields = ["qLocation", "qDate", "qGuests", "qDuration", "qSet", "qFormatType", "qCharges"].map((id) => main.querySelector(`#${id}`));
 
-  const selected = () => ({
-    packageIds: [...main.querySelectorAll("[data-pkg]:checked")].map((c) => c.dataset.pkg),
-    addonIds: [...main.querySelectorAll("[data-addon]:checked")].map((c) => c.dataset.addon),
-  });
-
-  function updatePreview() {
-    const { packageIds, addonIds } = selected();
-    const lead = LEADS.find((l) => l.id === main.querySelector("#leadSelect").value);
-    const chosenPackages = CONFIG.packages.filter((p) => packageIds.includes(p.id));
-    const chosenAddons = CONFIG.addons.filter((a) => addonIds.includes(a.id));
-    const total = chosenPackages.reduce((s, p) => s + p.rate, 0) + chosenAddons.reduce((s, a) => s + (a.rate || 0), 0);
-    main.querySelector("#totalAmt").textContent = inr(total);
-
-    const items = [...chosenPackages, ...chosenAddons].map((x) => `<li>${x.name}</li>`).join("") || `<li class="muted">Select a format or add-on</li>`;
-    main.querySelector("#emailPreview").innerHTML = lead ? `
-      <div class="email-field"><span class="muted">WhatsApp to</span> ${lead.phone || "(no phone on file)"}</div>
-      <div class="email-field"><span class="muted">Email to</span> ${lead.email || "(no email on file)"}</div>
-      <div class="email-field"><span class="muted">Re</span> Quotation for ${packageName(lead.event_type)} — Together Out Loud</div>
-      <div class="email-body">Dear ${lead.name.split(" ")[0]},
-
-Thank you for reaching out to Together Out Loud. Here is our quotation for your event on ${fmtDate(lead.date)} in ${lead.city || ""}:
-<ul style="margin:8px 0;">${items}</ul>
-Total: ${inr(total)}
-
-Excludes travel and accommodation unless noted above. Valid for 7 days.</div>
-    ` : `<p class="muted">Select a lead to preview the email.</p>`;
+  function prefillFromLead() {
+    const lead = LEADS.find((l) => l.id === leadSelect.value);
+    if (!lead) return;
+    main.querySelector("#qLocation").value = lead.city || "";
+    main.querySelector("#qDate").value = fmtDate(lead.date);
+    main.querySelector("#qGuests").value = lead.guest_range || "";
+    main.querySelector("#qSubject").value = `Quotation for ${packageName(lead.event_type)} — Together, Out Loud`;
   }
 
-  main.querySelectorAll("[data-pkg], [data-addon]").forEach((c) => c.addEventListener("change", updatePreview));
-  main.querySelector("#leadSelect").addEventListener("change", updatePreview);
-  updatePreview();
+  function generateDraft() {
+    const lead = LEADS.find((l) => l.id === leadSelect.value);
+    main.querySelector("#qBody").value = buildQuoteText({
+      format: lead ? packageName(lead.event_type) : "",
+      location: main.querySelector("#qLocation").value,
+      date: main.querySelector("#qDate").value,
+      guests: main.querySelector("#qGuests").value,
+      duration: main.querySelector("#qDuration").value,
+      setPieces: main.querySelector("#qSet").value,
+      formatType: main.querySelector("#qFormatType").value,
+      charges: main.querySelector("#qCharges").value,
+    });
+  }
+
+  leadSelect.addEventListener("change", () => { prefillFromLead(); generateDraft(); });
+  main.querySelector("#generateBtn").addEventListener("click", generateDraft);
+  prefillFromLead();
+  generateDraft();
 
   main.querySelector("#sendQuoteBtn").addEventListener("click", async () => {
-    const leadId = main.querySelector("#leadSelect").value;
-    const { packageIds, addonIds } = selected();
-    if (packageIds.length === 0 && addonIds.length === 0) return;
+    const leadId = leadSelect.value;
+    const body = main.querySelector("#qBody").value;
+    const subject = main.querySelector("#qSubject").value;
+    const charges = main.querySelector("#qCharges").value;
+    if (!body.trim()) return;
     const btn = main.querySelector("#sendQuoteBtn");
     btn.disabled = true;
     btn.textContent = "Preparing…";
     try {
-      const result = await api(`/api/leads/${leadId}/quote`, { method: "POST", body: JSON.stringify({ packageIds, addonIds }) });
+      const result = await api(`/api/leads/${leadId}/quote`, {
+        method: "POST",
+        body: JSON.stringify({ amount: charges || null, subject, body }),
+      });
       await refreshLeads();
 
       const waHtml = result.whatsapp.link
@@ -367,8 +417,8 @@ Excludes travel and accommodation unless noted above. Valid for 7 days.</div>
         ? `<div class="email-status sent">✉️ <a href="${result.mailto.link}">Click here to send by email</a> — opens your email app with everything filled in</div>`
         : `<div class="email-status unsent">✉️ Couldn't prepare email — ${result.mailto.reason}</div>`;
 
+      main.querySelector("#sendStatus").innerHTML = waHtml + mailHtml;
       if (result.whatsapp.link) window.open(result.whatsapp.link, "_blank");
-      main.querySelector("#emailPreview").insertAdjacentHTML("beforeend", waHtml + mailHtml);
     } catch (err) {
       alert(err.message);
     } finally {
