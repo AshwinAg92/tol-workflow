@@ -399,6 +399,8 @@ function renderQuotation(main) {
     main.querySelector("#qDate").value = fmtDate(lead.date);
     main.querySelector("#qGuests").value = lead.guest_range || "";
     main.querySelector("#qSubject").value = `Quotation for ${packageName(lead.event_type)} — Together, Out Loud`;
+    main.querySelector("#qSet").value = "";
+    main.querySelector("#qCharges").value = "";
     applyStandardPricing();
   }
 
