@@ -651,33 +651,73 @@ function renderTasks(main) {
 
 // ---------- Documents ----------
 async function renderDocuments(main) {
+  const eventLeads = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed");
   main.innerHTML = `
-    <div class="view-head"><div><h2>Documents</h2><p class="muted">Contracts, invoices, and files, kept against the booking they belong to.</p></div></div>
+    <div class="view-head"><div><h2>Documents</h2><p class="muted">General files, plus files kept against a specific confirmed event.</p></div></div>
     <div class="card" style="margin-bottom:16px;">
       <div class="section-label">Upload a file</div>
       <div class="upload-form">
-        <select id="docLead"><option value="">Not tied to a specific lead</option>${LEADS.map((l) => `<option value="${l.id}">${l.name}</option>`).join("")}</select>
+        <select id="docLead">
+          <option value="">General (not tied to an event)</option>
+          ${eventLeads.map((l) => `<option value="${l.id}">${l.name} — ${fmtDate(l.date)}</option>`).join("")}
+        </select>
         <input type="file" id="docFile" />
         <button class="btn-primary" id="uploadBtn">Upload</button>
       </div>
+      ${eventLeads.length === 0 ? `<p class="muted small" style="margin-top:8px;">No confirmed events yet — once a lead's stage is "Confirmed" or "Completed" it'll show up here to attach files to.</p>` : ""}
     </div>
-    <div class="table"><div id="docRows"></div></div>
+    <div id="docGroups"></div>
   `;
 
   const docs = await api("/api/documents");
-  const rows = main.querySelector("#docRows");
-  if (docs.length === 0) rows.innerHTML = `<div class="board-empty">No documents uploaded yet</div>`;
-  docs.forEach((d) => {
-    const lead = LEADS.find((l) => l.id === d.lead_id);
-    rows.appendChild(el(`
+  const groups = main.querySelector("#docGroups");
+
+  function renderRow(d) {
+    return `
       <div class="doc-row">
-        <div class="doc-name"><a href="${d.url}" target="_blank">${d.original_name}</a>${lead ? ` <span class="muted">— ${lead.name}</span>` : ""}</div>
+        <div class="doc-name"><a href="${d.url}" target="_blank">${d.original_name}</a></div>
         <div class="muted mono">${fmtDate(d.uploaded_at.slice(0, 10))}</div>
         <button class="icon-btn" data-delete-doc="${d.id}">✕</button>
       </div>
-    `));
+    `;
+  }
+
+  const general = docs.filter((d) => !d.lead_id);
+  const byLead = {};
+  docs.filter((d) => d.lead_id).forEach((d) => { (byLead[d.lead_id] = byLead[d.lead_id] || []).push(d); });
+
+  let html = `
+    <div class="card" style="margin-bottom:14px;">
+      <div class="section-label">General documents</div>
+      ${general.length === 0 ? `<p class="muted small">No general documents yet.</p>` : `<div class="table">${general.map(renderRow).join("")}</div>`}
+    </div>
+  `;
+
+  eventLeads.forEach((l) => {
+    const leadDocs = byLead[l.id] || [];
+    html += `
+      <div class="card" style="margin-bottom:14px;">
+        <div class="section-label">${l.name} — <span class="muted">${fmtDate(l.date)} · ${l.city || ""}</span></div>
+        ${leadDocs.length === 0 ? `<p class="muted small">No documents uploaded for this event yet.</p>` : `<div class="table">${leadDocs.map(renderRow).join("")}</div>`}
+      </div>
+    `;
   });
-  rows.querySelectorAll("[data-delete-doc]").forEach((btn) => {
+
+  // Any documents attached to a lead that's no longer Confirmed/Completed (e.g. still New) still show up so nothing's hidden.
+  const orphanLeadIds = Object.keys(byLead).filter((id) => !eventLeads.some((l) => l.id === id));
+  orphanLeadIds.forEach((id) => {
+    const lead = LEADS.find((l) => l.id === id);
+    html += `
+      <div class="card" style="margin-bottom:14px;">
+        <div class="section-label">${lead ? lead.name : "Unknown lead"} <span class="muted">(${lead ? lead.stage : "—"})</span></div>
+        <div class="table">${byLead[id].map(renderRow).join("")}</div>
+      </div>
+    `;
+  });
+
+  groups.innerHTML = html;
+
+  groups.querySelectorAll("[data-delete-doc]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await fetch(`/api/documents/${btn.dataset.deleteDoc}`, { method: "DELETE" });
       renderMain();
