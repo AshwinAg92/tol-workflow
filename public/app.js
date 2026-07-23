@@ -371,7 +371,7 @@ async function renderQuotation(main) {
       <div class="card">
         <label>Lead</label>
         <select id="leadSelect">
-          ${quotable.map((l) => `<option value="${l.id}" ${l.id === preselect ? "selected" : ""}>${l.name} — ${fmtDate(l.date)}</option>`).join("")}
+          ${quotable.map((l) => `<option value="${l.id}" ${l.id === preselect ? "selected" : ""}>${l.name} — ${fmtDate(l.date)}${l.city ? `, ${l.city}` : ""}</option>`).join("")}
         </select>
         <div class="row-2">
           <div><label>Location</label><input id="qLocation" placeholder="e.g. Siliguri" /></div>
@@ -557,9 +557,21 @@ function wireCalendarGrid(container) {
     calCells.appendChild(el(`
       <div class="cal-cell${d ? "" : " cal-cell-empty"}">
         ${d ? `<div class="cal-day">${d}</div>` : ""}
-        ${evs.map((ev) => `<div class="cal-event" title="${ev.name}">${ev.name.split(" ")[0]}</div>`).join("")}
+        ${evs.map((ev) => `<div class="cal-event" data-lead-id="${ev.id}" style="cursor:pointer;" title="Click to open ${ev.name}">${ev.name.split(" ")[0]}</div>`).join("")}
       </div>
     `));
+  });
+  calCells.querySelectorAll(".cal-event").forEach((pill) => {
+    pill.addEventListener("click", () => {
+      const lead = LEADS.find((l) => l.id === pill.dataset.leadId);
+      if (!lead) return;
+      leadsSearch = lead.name;
+      leadsStageFilter = "all";
+      leadsDateFilter = "";
+      currentTab = "leads";
+      renderNav();
+      renderMain();
+    });
   });
 
   container.querySelector("#prevMonth").addEventListener("click", () => { calMonth--; if (calMonth < 1) { calMonth = 12; calYear--; } renderMain(); });
@@ -984,7 +996,7 @@ async function renderAccounts(main) {
       <div class="upload-form" style="margin-bottom:0;">
         <select id="expLead">
           <option value="">Not tied to a specific event</option>
-          ${LEADS.slice().sort((a, b) => new Date(a.date) - new Date(b.date)).map((l) => `<option value="${l.id}">${l.name} — ${fmtDate(l.date)}</option>`).join("")}
+          ${LEADS.slice().sort((a, b) => new Date(a.date) - new Date(b.date)).map((l) => `<option value="${l.id}">${l.name} — ${fmtDate(l.date)}${l.city ? `, ${l.city}` : ""}</option>`).join("")}
         </select>
         <select id="expType">
           <optgroup label="Artist fee">
@@ -1118,7 +1130,10 @@ async function renderAccounts(main) {
 async function renderDashboard(main) {
   const data = await api("/api/dashboard");
   main.innerHTML = `
-    <div class="view-head"><div><h2>Dashboard</h2><p class="muted">The three things that matter today — click any card to see the list.</p></div></div>
+    <div class="view-head">
+      <div><h2>Dashboard</h2><p class="muted">The three things that matter today — click any card to see the list.</p></div>
+      <button class="btn-ghost" id="dashExportBtn">⬇ Export to Excel</button>
+    </div>
     <div class="dash-stats">
       <button class="card dash-stat dash-stat-click" id="statNew"><div class="muted">New queries</div><div class="mono big">${data.newLeadsCount}</div></button>
       <button class="card dash-stat dash-stat-click" id="statFollowup"><div class="muted">Awaiting follow-up</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${data.pendingFollowUps.length}</div></button>
@@ -1151,6 +1166,14 @@ async function renderDashboard(main) {
   `;
 
   wireCalendarGrid(main.querySelector("#dashCalCard"));
+  main.querySelector("#dashExportBtn").addEventListener("click", async () => {
+    const [{ bookings }, expenses] = await Promise.all([api("/api/accounts"), api("/api/expenses")]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(LEADS), "Leads");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(bookings), "Accounts");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expenses), "Expenses");
+    XLSX.writeFile(wb, `TOL-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  });
   main.querySelector("#statNew").addEventListener("click", () => goToLeads("New"));
   main.querySelector("#statFollowup").addEventListener("click", () => goToLeads("Follow-up"));
   main.querySelector("#statUpcoming").addEventListener("click", () => goToLeads("Confirmed"));
@@ -1186,7 +1209,7 @@ function renderTasks(main) {
       <div class="section-label">New task</div>
       <div class="task-form">
         <input type="text" id="taskTitle" placeholder="e.g. Confirm venue booking" />
-        <select id="taskLead"><option value="">No specific lead</option>${LEADS.map((l) => `<option value="${l.id}">${l.name}</option>`).join("")}</select>
+        <select id="taskLead"><option value="">No specific lead</option>${LEADS.slice().sort((a, b) => new Date(a.date) - new Date(b.date)).map((l) => `<option value="${l.id}">${l.name} — ${fmtDate(l.date)}${l.city ? `, ${l.city}` : ""}</option>`).join("")}</select>
         <select id="taskAssignee"><option value="">Unassigned</option>${TEAM.map((m) => `<option value="${m.id}">${m.name}</option>`).join("")}</select>
         <input type="date" id="taskDue" />
         <button class="btn-primary" id="addTaskBtn">Add</button>
@@ -1262,7 +1285,7 @@ async function renderDocuments(main) {
       <div class="upload-form">
         <select id="docLead">
           <option value="">General (not tied to an event)</option>
-          ${eventLeads.map((l) => `<option value="${l.id}">${l.name} — ${fmtDate(l.date)}</option>`).join("")}
+          ${eventLeads.map((l) => `<option value="${l.id}">${l.name} — ${fmtDate(l.date)}${l.city ? `, ${l.city}` : ""}</option>`).join("")}
         </select>
         <input type="file" id="docFile" />
         <button class="btn-primary" id="uploadBtn">Upload</button>
