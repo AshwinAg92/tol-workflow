@@ -7,7 +7,7 @@ let currentTab = "dashboard";
 let leadsFilter = "all";
 let leadsStageFilter = "all";
 let quotationLeadId = null;
-let calYear = 2026, calMonth = 9; // September 2026, 1-indexed
+let calYear = new Date().getFullYear(), calMonth = new Date().getMonth() + 1; // defaults to the real current month
 
 const STAGE_COLOR = {
   New: "#8A8578",
@@ -428,8 +428,20 @@ function renderQuotation(main) {
   });
 }
 
-// ---------- Calendar ----------
-function renderCalendar(main) {
+// ---------- Calendar (shared grid, used by both the Calendar tab and the Dashboard) ----------
+function calendarGridMarkup() {
+  return `
+    <div class="cal-nav">
+      <button class="btn-ghost" id="prevMonth">‹</button>
+      <div class="cal-month" id="calMonthLabel"></div>
+      <button class="btn-ghost" id="nextMonth">›</button>
+    </div>
+    <div class="cal-grid cal-head">${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => `<div>${d}</div>`).join("")}</div>
+    <div class="cal-grid" id="calCells"></div>
+  `;
+}
+
+function wireCalendarGrid(container) {
   const confirmed = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed");
   const first = new Date(calYear, calMonth - 1, 1);
   const startDay = first.getDay();
@@ -443,24 +455,10 @@ function renderCalendar(main) {
       (eventsByDay[d.getDate()] = eventsByDay[d.getDate()] || []).push(l);
     }
   });
-  const monthName = first.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+  container.querySelector("#calMonthLabel").textContent = first.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 
-  main.innerHTML = `
-    <div class="view-head"><div><h2>Calendar</h2><p class="muted">Confirmed and completed events — spot clashes before you quote.</p></div></div>
-    <div class="card">
-      <div class="cal-nav">
-        <button class="btn-ghost" id="prevMonth">‹</button>
-        <div class="cal-month">${monthName}</div>
-        <button class="btn-ghost" id="nextMonth">›</button>
-      </div>
-      <div class="cal-grid cal-head">${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => `<div>${d}</div>`).join("")}</div>
-      <div class="cal-grid" id="calCells"></div>
-    </div>
-    <div class="section-label" style="margin-top:20px;">Upcoming confirmed events</div>
-    <div class="list" id="calList"></div>
-  `;
-
-  const calCells = main.querySelector("#calCells");
+  const calCells = container.querySelector("#calCells");
+  calCells.innerHTML = "";
   cells.forEach((d) => {
     const evs = d ? (eventsByDay[d] || []) : [];
     calCells.appendChild(el(`
@@ -470,6 +468,20 @@ function renderCalendar(main) {
       </div>
     `));
   });
+
+  container.querySelector("#prevMonth").addEventListener("click", () => { calMonth--; if (calMonth < 1) { calMonth = 12; calYear--; } renderMain(); });
+  container.querySelector("#nextMonth").addEventListener("click", () => { calMonth++; if (calMonth > 12) { calMonth = 1; calYear++; } renderMain(); });
+}
+
+function renderCalendar(main) {
+  const confirmed = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed");
+  main.innerHTML = `
+    <div class="view-head"><div><h2>Calendar</h2><p class="muted">Confirmed and completed events — spot clashes before you quote.</p></div></div>
+    <div class="card">${calendarGridMarkup()}</div>
+    <div class="section-label" style="margin-top:20px;">Upcoming confirmed events</div>
+    <div class="list" id="calList"></div>
+  `;
+  wireCalendarGrid(main);
 
   const calList = main.querySelector("#calList");
   if (confirmed.length === 0) calList.innerHTML = `<div class="board-empty">No confirmed events yet</div>`;
@@ -481,9 +493,6 @@ function renderCalendar(main) {
       </div>
     `));
   });
-
-  main.querySelector("#prevMonth").addEventListener("click", () => { calMonth--; if (calMonth < 1) { calMonth = 12; calYear--; } renderMain(); });
-  main.querySelector("#nextMonth").addEventListener("click", () => { calMonth++; if (calMonth > 12) { calMonth = 1; calYear++; } renderMain(); });
 }
 
 // ---------- Team ----------
@@ -546,6 +555,10 @@ async function renderDashboard(main) {
       <button class="card dash-stat dash-stat-click" id="statFollowup"><div class="muted">Awaiting follow-up</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${data.pendingFollowUps.length}</div></button>
       <button class="card dash-stat dash-stat-click" id="statUpcoming"><div class="muted">Upcoming events</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${data.upcomingEvents.length}</div></button>
     </div>
+    <div class="card" id="dashCalCard" style="margin-bottom:16px;">
+      <div class="section-label">Calendar</div>
+      ${calendarGridMarkup()}
+    </div>
     <div class="dash-grid">
       <div class="card">
         <div class="section-label">Upcoming events</div>
@@ -568,6 +581,7 @@ async function renderDashboard(main) {
     </div>
   `;
 
+  wireCalendarGrid(main.querySelector("#dashCalCard"));
   main.querySelector("#statNew").addEventListener("click", () => goToLeads("New"));
   main.querySelector("#statFollowup").addEventListener("click", () => goToLeads("Follow-up"));
   main.querySelector("#statUpcoming").addEventListener("click", () => goToLeads("Confirmed"));
