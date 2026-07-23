@@ -201,7 +201,7 @@ function renderLeadsLog(main) {
     sorted.forEach((l) => {
       rows.appendChild(el(`
         <div class="table-row leads-table-row">
-          <span><div class="lead-name">${l.name}</div><div class="muted small">${l.phone || ""}</div></span>
+          <span><div class="lead-name">${l.name}</div><div class="muted small">${l.phone || ""}</div>${l.alt_date ? `<div class="muted small" style="color:#B6752C;">Alt date: ${fmtDate(l.alt_date)}</div>` : ""}</span>
           <span>${packageName(l.event_type)}</span>
           <span>${l.city || "—"}</span>
           <span class="mono">${fmtDate(l.date)}</span>

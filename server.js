@@ -243,10 +243,19 @@ app.get("/api/leads", requireAuth, async (req, res) => {
 });
 
 // Public lead-capture endpoint — this is the form link you'd share with a new query.
+// Public — lets the enquiry form warn a customer their date is already booked
+// and offer to submit anyway with a flexible alternative date.
+app.get("/api/availability", async (req, res) => {
+  const { date } = req.query;
+  if (!date) return res.status(400).json({ error: "date is required" });
+  const row = (await pool.query("SELECT name FROM leads WHERE date = $1 AND stage = 'Confirmed' LIMIT 1", [date])).rows[0];
+  res.json({ booked: !!row });
+});
+
 app.post("/api/leads", async (req, res) => {
   const {
     name, phone, email, eventType, city, date, budget, notes,
-    venue, occasion, guestRange, details, howHeard, whatsappOptin,
+    venue, occasion, guestRange, details, howHeard, whatsappOptin, altDate,
   } = req.body;
   if (!name || !eventType || !date) {
     return res.status(400).json({ error: "name, eventType, and date are required" });
@@ -255,13 +264,13 @@ app.post("/api/leads", async (req, res) => {
   await pool.query(`
     INSERT INTO leads (
       id, name, phone, email, event_type, city, date, budget, stage, advance, notes, created_at,
-      venue, occasion, guest_range, details, how_heard, whatsapp_optin
+      venue, occasion, guest_range, details, how_heard, whatsapp_optin, alt_date
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'New', 0, $9, $10, $11, $12, $13, $14, $15, $16)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'New', 0, $9, $10, $11, $12, $13, $14, $15, $16, $17)
   `, [
     id, name, phone || null, email || null, eventType, city || null, date, budget || null, notes || null, new Date().toISOString(),
     venue || null, occasion || null, guestRange || null,
-    details || null, howHeard || null, whatsappOptin ? 1 : 0,
+    details || null, howHeard || null, whatsappOptin ? 1 : 0, altDate || null,
   ]);
   const created = (await pool.query("SELECT * FROM leads WHERE id = $1", [id])).rows[0];
   res.status(201).json(created);

@@ -37,7 +37,8 @@ async function setup() {
       guest_range TEXT,
       details TEXT,
       how_heard TEXT,
-      whatsapp_optin INTEGER DEFAULT 0
+      whatsapp_optin INTEGER DEFAULT 0,
+      alt_date TEXT
     );
 
     CREATE TABLE IF NOT EXISTS team (

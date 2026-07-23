@@ -143,6 +143,14 @@
         <div class="q">
           <label class="qlabel">Event Date</label>
           <input id="date" type="date" required />
+          <div id="dateWarning" style="display:none; margin-top:8px; padding:10px; background:#FFF4E5; border-radius:6px; font-size:13px; color:#8A5A1F;">
+            That date already has a confirmed event with us. We may still be able to help — if you're flexible, please share an alternative date below and we'll reach out.
+          </div>
+        </div>
+
+        <div class="q" id="altDateRow" style="display:none;">
+          <label class="qlabel">Alternative date <span class="opt">(if flexible)</span></label>
+          <input id="altDate" type="date" />
         </div>
 
         <div class="q">
@@ -185,6 +193,20 @@
     const occasionSelect = document.getElementById("occasion");
     const guestRangeSelect = document.getElementById("guestRange");
     const howHeardSelect = document.getElementById("howHeard");
+
+    document.getElementById("date").addEventListener("change", async (e) => {
+      const dateWarning = document.getElementById("dateWarning");
+      const altDateRow = document.getElementById("altDateRow");
+      if (!e.target.value) { dateWarning.style.display = "none"; altDateRow.style.display = "none"; return; }
+      try {
+        const res = await fetch(`/api/availability?date=${e.target.value}`);
+        const data = await res.json();
+        dateWarning.style.display = data.booked ? "block" : "none";
+        altDateRow.style.display = data.booked ? "block" : "none";
+      } catch {
+        // If the check fails, just let them submit normally — no need to block the form over it.
+      }
+    });
     const COUNTRY_CODES = [
       { code: "+91", label: "🇮🇳 +91 India" },
       { code: "+1", label: "🇺🇸 +1 USA/Canada" },
@@ -263,6 +285,7 @@
         details: document.getElementById("details").value,
         howHeard: howHeardSelect.value,
         whatsappOptin: whatsappOptin,
+        altDate: document.getElementById("altDate").value || null,
       };
 
       try {
