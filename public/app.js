@@ -7,6 +7,8 @@ let TASKS = [];
 let currentTab = "dashboard";
 let leadsFilter = "all";
 let leadsStageFilter = "all";
+let leadsSearch = "";
+let leadsDateFilter = "";
 let quotationLeadId = null;
 let calYear = new Date().getFullYear(), calMonth = new Date().getMonth() + 1; // defaults to the real current month
 
@@ -34,7 +36,8 @@ const NAV = [
 // ---------- Helpers ----------
 const inr = (n) => (n == null ? "—" : "₹" + Number(n).toLocaleString("en-IN"));
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—";
-const packageName = (id) => CONFIG.packages.find((p) => p.id === id)?.name || id;
+const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+const packageName = (id) => id === "both" ? "Bhajan Jamming & Musical Pheras (Both)" : (CONFIG.packages.find((p) => p.id === id)?.name || id);
 const el = (html) => { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstChild; };
 
 async function api(path, opts) {
@@ -128,7 +131,9 @@ function malaHtml(stage) {
 // ---------- Leads log ----------
 function renderLeadsLog(main) {
   const filtered = (leadsFilter === "all" ? LEADS : LEADS.filter((l) => l.event_type === leadsFilter))
-    .filter((l) => leadsStageFilter === "all" || l.stage === leadsStageFilter);
+    .filter((l) => leadsStageFilter === "all" || l.stage === leadsStageFilter)
+    .filter((l) => !leadsSearch || l.name.toLowerCase().includes(leadsSearch.toLowerCase()))
+    .filter((l) => !leadsDateFilter || l.date === leadsDateFilter);
   const countFor = (id) => LEADS.filter((l) => l.event_type === id).length;
   const shareLink = `${window.location.origin}/lead-form.html`;
 
@@ -150,22 +155,32 @@ function renderLeadsLog(main) {
       <p class="muted small" style="margin-top:8px;">Submissions land here automatically as a new lead in "New".</p>
     </div>
 
-    ${leadsStageFilter !== "all" ? `
-      <button class="filter-chip filter-chip-active" id="clearStageFilter" style="margin-bottom:10px;">
-        Stage: ${leadsStageFilter} ✕
-      </button>
-    ` : ""}
+    <div class="card" style="margin-bottom:14px;">
+      <div class="upload-form" style="margin-bottom:0;">
+        <input id="leadsSearchInput" placeholder="Search by name…" value="${leadsSearch}" style="flex:1; min-width:160px;" />
+        <input id="leadsDateInput" type="date" value="${leadsDateFilter}" />
+        <select id="leadsStageSelect">
+          <option value="all">All stages</option>
+          ${CONFIG.stages.map((s) => `<option value="${s}" ${leadsStageFilter === s ? "selected" : ""}>${s}</option>`).join("")}
+        </select>
+        ${(leadsSearch || leadsDateFilter || leadsStageFilter !== "all") ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
+      </div>
+    </div>
+
     <div class="filter-row" id="filterRow"></div>
     <div class="table leads-table">
       <div class="table-head leads-table-row">
-        <span>Query</span><span>Format</span><span>City</span><span>Date</span><span>Email</span><span>Stage</span><span></span>
+        <span>Query</span><span>Format</span><span>City</span><span>Date</span><span>Submitted</span><span>Stage</span><span></span>
       </div>
       <div id="leadsRows"></div>
     </div>
   `;
 
-  const clearBtn = main.querySelector("#clearStageFilter");
-  if (clearBtn) clearBtn.addEventListener("click", () => { leadsStageFilter = "all"; renderMain(); });
+  main.querySelector("#leadsSearchInput").addEventListener("input", (e) => { leadsSearch = e.target.value; renderMain(); });
+  main.querySelector("#leadsDateInput").addEventListener("change", (e) => { leadsDateFilter = e.target.value; renderMain(); });
+  main.querySelector("#leadsStageSelect").addEventListener("change", (e) => { leadsStageFilter = e.target.value; renderMain(); });
+  const clearAllBtn = main.querySelector("#clearAllFilters");
+  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsDateFilter = ""; leadsStageFilter = "all"; renderMain(); });
 
   const filterRow = main.querySelector("#filterRow");
   const allChip = el(`<button class="filter-chip${leadsFilter === "all" ? " filter-chip-active" : ""}">All <span class="mono">${LEADS.length}</span></button>`);
@@ -181,7 +196,7 @@ function renderLeadsLog(main) {
   const rows = main.querySelector("#leadsRows");
   const sorted = filtered.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   if (sorted.length === 0) {
-    rows.innerHTML = `<div class="board-empty">No queries in this category yet</div>`;
+    rows.innerHTML = `<div class="board-empty">No queries match these filters</div>`;
   } else {
     sorted.forEach((l) => {
       rows.appendChild(el(`
@@ -190,14 +205,15 @@ function renderLeadsLog(main) {
           <span>${packageName(l.event_type)}</span>
           <span>${l.city || "—"}</span>
           <span class="mono">${fmtDate(l.date)}</span>
-          <span class="muted small">${l.email || "—"}</span>
+          <span class="muted small">${fmtDateTime(l.created_at)}</span>
           <span>
             <select class="stage-select" data-lead-id="${l.id}" style="color:${STAGE_COLOR[l.stage]}">
               ${CONFIG.stages.map((s) => `<option value="${s}" ${s === l.stage ? "selected" : ""}>${s}</option>`).join("")}
             </select>
           </span>
-          <span>
-            ${l.stage === "Completed" ? "" : `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>`}
+          <span style="display:flex; flex-direction:column; gap:4px;">
+            ${l.stage === "Completed" || l.stage === "Cancelled" ? "" : `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>`}
+            ${(l.stage === "New" || l.stage === "Follow-up") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
           </span>
         </div>
       `));
@@ -213,10 +229,25 @@ function renderLeadsLog(main) {
     });
   });
 
+  main.querySelectorAll(".followup-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
+      const firstName = (lead.name || "").split(" ")[0] || "there";
+      const msg = `Hi ${firstName}, just following up on your enquiry with Together, Out Loud for ${packageName(lead.event_type)}${lead.date ? ` on ${fmtDate(lead.date)}` : ""}. Let us know if you have any questions or would like to go ahead — happy to help!`;
+      const digitsOnly = (lead.phone || "").replace(/\D/g, "");
+      if (digitsOnly) window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
+    });
+  });
+
   main.querySelectorAll(".stage-select").forEach((sel) => {
     sel.addEventListener("change", async () => {
       const leadId = sel.dataset.leadId;
       const newStage = sel.value;
+      const lead = LEADS.find((l) => l.id === leadId);
+      if (newStage === "Confirmed" && lead.stage !== "Confirmed") {
+        openConfirmEventModal(lead);
+        return;
+      }
       sel.disabled = true;
       try {
         await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ stage: newStage }) });
@@ -326,7 +357,7 @@ Together, Out Loud
 Instagram: https://www.instagram.com/togetheroutloudclub`;
 }
 
-function renderQuotation(main) {
+async function renderQuotation(main) {
   const quotable = LEADS.filter((l) => l.stage !== "Completed");
   const preselect = quotable.find((l) => l.id === quotationLeadId) ? quotationLeadId : (quotable[0]?.id || null);
   quotationLeadId = null; // one-shot — doesn't stick if the user later opens Quotation from the nav
@@ -372,7 +403,37 @@ function renderQuotation(main) {
         <div id="sendStatus"></div>
       </div>
     </div>
+    <div class="section-label" style="margin-top:24px;">Quote history — what's already been sent</div>
+    <div class="table" id="quoteHistoryTable"><div class="board-empty">Loading…</div></div>
   `;
+
+  api("/api/quotes").then((history) => {
+    const historyTable = main.querySelector("#quoteHistoryTable");
+    if (!historyTable) return;
+    if (history.length === 0) {
+      historyTable.innerHTML = `<div class="board-empty">No quotes sent yet</div>`;
+      return;
+    }
+    historyTable.innerHTML = `
+      <div class="table-head" style="grid-template-columns:1.6fr 1fr 1fr 1fr;">
+        <span>Sent to</span><span>Amount</span><span>Date sent</span><span></span>
+      </div>
+      ${history.map((q) => `
+        <div class="table-row" style="grid-template-columns:1.6fr 1fr 1fr 1fr;">
+          <span>${q.lead_name}</span>
+          <span class="mono">${q.amount ? inr(q.amount) : "—"}</span>
+          <span class="muted small">${fmtDateTime(q.created_at)}</span>
+          <span><button class="btn-ghost view-quote-btn" data-quote-id="${q.id}">View</button></span>
+        </div>
+      `).join("")}
+    `;
+    historyTable.querySelectorAll(".view-quote-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const q = history.find((h) => h.id === btn.dataset.quoteId);
+        alert(q.body);
+      });
+    });
+  });
 
   if (quotable.length === 0) {
     main.querySelector(".quote-grid").innerHTML = `<p class="muted">No leads available to quote right now.</p>`;
@@ -1149,6 +1210,71 @@ async function renderDocuments(main) {
 }
 
 
+function openConfirmEventModal(lead) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>Confirm ${lead.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-body">
+          <p class="muted small">This moves the lead to Confirmed and records the final closed rate.</p>
+          <label>Final closed rate (₹)</label>
+          <input id="ceAmount" type="number" value="${lead.quote_amount || ""}" placeholder="e.g. 145000" />
+        </div>
+        <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Confirm event</button></div>
+      </div>
+    </div>
+  `;
+  const close = () => { root.innerHTML = ""; renderMain(); };
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#submitModal").addEventListener("click", async () => {
+    const finalAmount = root.querySelector("#ceAmount").value;
+    try {
+      await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ stage: "Confirmed", finalAmount: finalAmount || null }) });
+      await refreshLeads();
+      openConfirmationMessageModal({ ...lead, stage: "Confirmed", final_amount: finalAmount || null });
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+}
+
+function openConfirmationMessageModal(lead) {
+  const root = document.getElementById("modalRoot");
+  const firstName = (lead.name || "").split(" ")[0] || "there";
+  const amountLine = lead.final_amount ? `\nTotal: ₹${Number(lead.final_amount).toLocaleString("en-IN")}` : "";
+  const message = `Hi ${firstName}, wonderful news — your event with Together, Out Loud (${packageName(lead.event_type)}) on ${fmtDate(lead.date)}${lead.city ? ` in ${lead.city}` : ""} is now confirmed!${amountLine}\n\nWe look forward to creating a memorable experience with you. — Together, Out Loud`;
+  const digitsOnly = (lead.phone || "").replace(/\D/g, "");
+  const waLink = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}` : null;
+  const mailLink = lead.email ? `mailto:${lead.email}?subject=${encodeURIComponent("Your event is confirmed — Together, Out Loud")}&body=${encodeURIComponent(message)}` : null;
+
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>Send confirmation to ${lead.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-body">
+          <textarea id="ceMessage" rows="8" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:13px;">${message}</textarea>
+        </div>
+        <div class="modal-foot">
+          ${waLink ? `<button class="btn-ghost" id="waBtn">💬 WhatsApp</button>` : `<span class="muted small">No phone on file</span>`}
+          ${mailLink ? `<button class="btn-ghost" id="mailBtn">✉️ Email</button>` : ""}
+          <button class="btn-primary" id="doneBtn">Done</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const close = () => { root.innerHTML = ""; renderMain(); };
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#doneBtn").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  if (waLink) root.querySelector("#waBtn").addEventListener("click", () => window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(root.querySelector("#ceMessage").value)}`, "_blank"));
+  if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
+    window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Your event is confirmed — Together, Out Loud")}&body=${encodeURIComponent(root.querySelector("#ceMessage").value)}`;
+  });
+}
+
 function openNewLeadModal() {
   const root = document.getElementById("modalRoot");
   root.innerHTML = `
@@ -1169,6 +1295,10 @@ function openNewLeadModal() {
           <div class="row-2">
             <div><label>Event date</label><input id="mDate" type="date" /></div>
             <div><label>Budget (optional)</label><input id="mBudget" placeholder="e.g. 90000" /></div>
+          </div>
+          <div class="row-2">
+            <div><label>No. of guests</label><select id="mGuests"><option value="">Not specified</option>${CONFIG.guestRanges.map((g) => `<option value="${g}">${g}</option>`).join("")}</select></div>
+            <div></div>
           </div>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Add lead</button></div>
@@ -1193,6 +1323,7 @@ function openNewLeadModal() {
         city: root.querySelector("#mCity").value,
         date,
         budget: root.querySelector("#mBudget").value ? Number(root.querySelector("#mBudget").value) : null,
+        guestRange: root.querySelector("#mGuests").value || null,
       }),
     });
     await refreshLeads();

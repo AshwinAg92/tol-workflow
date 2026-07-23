@@ -27,6 +27,7 @@ async function setup() {
       budget INTEGER,
       stage TEXT NOT NULL DEFAULT 'New',
       quote_amount INTEGER,
+      final_amount INTEGER,
       advance INTEGER DEFAULT 0,
       assigned_to TEXT,
       notes TEXT,
@@ -93,7 +94,31 @@ async function setup() {
       body TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS quotes (
+      id TEXT PRIMARY KEY,
+      lead_id TEXT REFERENCES leads(id),
+      subject TEXT,
+      body TEXT NOT NULL,
+      amount INTEGER,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS expenses (
+      id TEXT PRIMARY KEY,
+      lead_id TEXT REFERENCES leads(id),
+      head TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      paid INTEGER NOT NULL DEFAULT 0,
+      notes TEXT,
+      created_at TEXT NOT NULL
+    );
   `);
+
+  // Migration: "Quoted" is no longer a distinct stage — a lead moves straight
+  // to "Follow-up" once quoted. Move any existing Quoted leads forward so
+  // nothing gets stuck on a stage that no longer exists in the UI.
+  await pool.query(`UPDATE leads SET stage = 'Follow-up' WHERE stage = 'Quoted'`);
 
   // One-time seed: only runs if tables are empty, so restarting the server never wipes real data.
   const teamCount = (await pool.query("SELECT COUNT(*) AS c FROM team")).rows[0].c;
@@ -108,11 +133,11 @@ async function setup() {
     const now = new Date().toISOString();
     const sample = [
       { id: uuid(), name: "Priya & Raj Sharma", phone: "+91 98765 43210", email: "priya.raj@example.com", event_type: "pheras", city: "Siliguri", date: "2026-09-14", budget: 150000, stage: "Confirmed", quote_amount: 145000, advance: 50000, assigned_to: "t2" },
-      { id: uuid(), name: "Anand Bhajan Sangeet Committee", phone: "+91 90000 11223", email: "committee@anandsangeet.org", event_type: "club", city: "Guwahati", date: "2026-08-22", budget: 200000, stage: "Quoted", quote_amount: 185000, advance: 0, assigned_to: "t1" },
+      { id: uuid(), name: "Anand Bhajan Sangeet Committee", phone: "+91 90000 11223", email: "committee@anandsangeet.org", event_type: "club", city: "Guwahati", date: "2026-08-22", budget: 200000, stage: "Follow-up", quote_amount: 185000, advance: 0, assigned_to: "t1" },
       { id: uuid(), name: "Meera Foundation", phone: "+91 99887 65432", email: "events@meerafoundation.in", event_type: "jam", city: "Kolkata", date: "2026-10-05", budget: 90000, stage: "Follow-up", quote_amount: 85000, advance: 0, assigned_to: "t2" },
       { id: uuid(), name: "Kapoor Family (Naming Ceremony)", phone: "+91 91234 56789", email: "kapoorfamily@example.com", event_type: "pheras", city: "Siliguri", date: "2026-09-01", budget: 60000, stage: "New", quote_amount: null, advance: 0, assigned_to: null },
       { id: uuid(), name: "Sunrise Housing Society", phone: "+91 98111 22334", email: "secretary@sunrisehs.in", event_type: "jam", city: "Siliguri", date: "2026-07-30", budget: 70000, stage: "Completed", quote_amount: 68000, advance: 68000, assigned_to: "t3" },
-      { id: uuid(), name: "Shanti Path Trust", phone: "+91 96543 21098", email: "trust@shantipath.org", event_type: "satsang", city: "Kolkata", date: "2026-08-10", budget: 55000, stage: "Quoted", quote_amount: 55000, advance: 0, assigned_to: "t1" },
+      { id: uuid(), name: "Shanti Path Trust", phone: "+91 96543 21098", email: "trust@shantipath.org", event_type: "satsang", city: "Kolkata", date: "2026-08-10", budget: 55000, stage: "Follow-up", quote_amount: 55000, advance: 0, assigned_to: "t1" },
       { id: uuid(), name: "Choudhury Family", phone: "+91 95432 10987", email: "choudhury.family@example.com", event_type: "shraddhanjali", city: "Siliguri", date: "2026-09-20", budget: 50000, stage: "New", quote_amount: null, advance: 0, assigned_to: null },
     ];
     for (const l of sample) {

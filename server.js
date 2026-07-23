@@ -273,11 +273,11 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
-  const fields = ["stage", "assigned_to", "advance", "quote_amount", "notes"];
+  const fields = ["stage", "assigned_to", "advance", "quote_amount", "final_amount", "notes"];
   const updates = [];
   const values = [];
   fields.forEach((f) => {
-    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f;
+    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f;
     if (req.body[key] !== undefined) {
       values.push(req.body[key]);
       updates.push(`${f} = $${values.length}`);
@@ -305,8 +305,12 @@ app.post("/api/leads/:id/quote", requireAuth, async (req, res) => {
   const numericAmount = amount !== undefined && amount !== null && amount !== "" ? Number(amount) : null;
   const finalSubject = subject && subject.trim() ? subject : "Quotation — Together, Out Loud";
 
-  const newStage = lead.stage === "New" ? "Quoted" : lead.stage;
+  const newStage = (lead.stage === "New") ? "Follow-up" : lead.stage;
   await pool.query("UPDATE leads SET quote_amount = $1, stage = $2 WHERE id = $3", [numericAmount, newStage, lead.id]);
+  await pool.query(`
+    INSERT INTO quotes (id, lead_id, subject, body, amount, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6)
+  `, [uuid(), lead.id, finalSubject, body, numericAmount, new Date().toISOString()]);
 
   // WhatsApp click-to-chat needs just digits (country code + number, no + or spaces).
   const digitsOnly = (lead.phone || "").replace(/\D/g, "");
@@ -325,6 +329,16 @@ app.post("/api/leads/:id/quote", requireAuth, async (req, res) => {
     whatsapp,
     mailto,
   });
+});
+
+// History of every quote ever sent, newest first — so Ashwin can see what's gone to whom.
+app.get("/api/quotes", requireAuth, async (req, res) => {
+  const { rows } = await pool.query(`
+    SELECT quotes.*, leads.name AS lead_name, leads.phone AS lead_phone, leads.email AS lead_email
+    FROM quotes JOIN leads ON leads.id = quotes.lead_id
+    ORDER BY quotes.created_at DESC
+  `);
+  res.json(rows);
 });
 
 // ---------- Event assignments (staffing a Confirmed event) ----------
@@ -466,6 +480,58 @@ app.get("/api/accounts", requireAuth, async (req, res) => {
   res.json({ bookings: rows, totals: { ...totals, outstanding: totals.quoted - totals.received } });
 });
 
+// All artist/crew fee assignments across every event — for the Accounts tab's
+// "Artist payments" section, so payment status isn't buried inside Pipeline.
+app.get("/api/assignments", requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await pool.query(`
+    SELECT event_assignments.*, team.name AS team_name, leads.name AS lead_name, leads.date AS lead_date
+    FROM event_assignments
+    JOIN team ON team.id = event_assignments.team_id
+    JOIN leads ON leads.id = event_assignments.lead_id
+    ORDER BY leads.date ASC
+  `);
+  res.json(rows);
+});
+
+// General expenses — travel, lights, or any custom head Ashwin wants to track.
+app.get("/api/expenses", requireAuth, async (req, res) => {
+  const { leadId } = req.query;
+  const { rows } = leadId
+    ? await pool.query("SELECT * FROM expenses WHERE lead_id = $1 ORDER BY created_at DESC", [leadId])
+    : await pool.query("SELECT * FROM expenses ORDER BY created_at DESC");
+  res.json(rows);
+});
+
+app.post("/api/expenses", requireAuth, requireAdmin, async (req, res) => {
+  const { leadId, head, amount, paid, notes } = req.body;
+  if (!head || amount === undefined) return res.status(400).json({ error: "head and amount are required" });
+  const id = uuid();
+  await pool.query(`
+    INSERT INTO expenses (id, lead_id, head, amount, paid, notes, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+  `, [id, leadId || null, head, Number(amount), paid ? 1 : 0, notes || null, new Date().toISOString()]);
+  res.status(201).json((await pool.query("SELECT * FROM expenses WHERE id = $1", [id])).rows[0]);
+});
+
+app.patch("/api/expenses/:id", requireAuth, requireAdmin, async (req, res) => {
+  const exp = (await pool.query("SELECT * FROM expenses WHERE id = $1", [req.params.id])).rows[0];
+  if (!exp) return res.status(404).json({ error: "Expense not found" });
+  const { head, amount, paid, notes } = req.body;
+  await pool.query(`UPDATE expenses SET head = $1, amount = $2, paid = $3, notes = $4 WHERE id = $5`, [
+    head !== undefined ? head : exp.head,
+    amount !== undefined ? Number(amount) : exp.amount,
+    paid !== undefined ? (paid ? 1 : 0) : exp.paid,
+    notes !== undefined ? notes : exp.notes,
+    exp.id,
+  ]);
+  res.json((await pool.query("SELECT * FROM expenses WHERE id = $1", [exp.id])).rows[0]);
+});
+
+app.delete("/api/expenses/:id", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM expenses WHERE id = $1", [req.params.id]);
+  res.status(204).end();
+});
+
 // ---------- Tasks ----------
 app.get("/api/tasks", requireAuth, async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM tasks ORDER BY done ASC, due_date ASC");
@@ -567,7 +633,20 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
   });
 });
 
+// Confirmed events move themselves to Completed once the event date has passed —
+// runs at boot and every hour after. No cron infra needed for this volume of data.
+async function autoCompletePastEvents() {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    await pool.query(`UPDATE leads SET stage = 'Completed' WHERE stage = 'Confirmed' AND date < $1`, [today]);
+  } catch (err) {
+    console.error("autoCompletePastEvents failed:", err.message);
+  }
+}
+
 const PORT = process.env.PORT || 3300;
 ready.then(() => {
   app.listen(PORT, () => console.log(`TOL workflow app running on http://localhost:${PORT}`));
+  autoCompletePastEvents();
+  setInterval(autoCompletePastEvents, 60 * 60 * 1000);
 });
