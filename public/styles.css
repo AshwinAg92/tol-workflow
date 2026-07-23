@@ -68,6 +68,17 @@ nav { display:flex; flex-direction:column; gap:2px; }
 .modal-head { display:flex; justify-content:space-between; align-items:center; padding:16px 18px; border-bottom:1px solid #EAE3D4; }
 .modal-head h3 { font-family:'Fraunces',serif; margin:0; font-size:17px; }
 .modal-body { padding:6px 18px 4px; }
+.modal-body label { display:block; font-size:12px; color:#8A8578; margin-bottom:4px; margin-top:12px; }
+.modal-body input, .modal-body select, .modal-body textarea {
+  display:block; width:100%; padding:9px 10px; border:1px solid #DDD5C4; border-radius:6px;
+  font-size:13px; font-family:inherit; background:#fff; box-sizing:border-box;
+}
+.password-field { position:relative; }
+.password-field input { padding-right:36px; }
+.password-toggle {
+  position:absolute; right:8px; top:50%; transform:translateY(-50%);
+  background:none; border:none; cursor:pointer; font-size:13px; color:#8A8578; padding:2px 4px;
+}
 .modal-foot { display:flex; justify-content:flex-end; gap:10px; padding:14px 18px; border-top:1px solid #EAE3D4; }
 
 .cal-month { font-family:'Fraunces',serif; font-size:16px; margin-bottom:12px; }

@@ -573,6 +573,18 @@ async function renderTeam(main) {
   }
 }
 
+// Wires up any "Show"/"Hide" buttons for password fields inside a given root element.
+function wirePasswordToggles(root) {
+  root.querySelectorAll(".password-toggle").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const input = root.querySelector(`#${btn.dataset.toggleFor}`);
+      const showing = input.type === "text";
+      input.type = showing ? "password" : "text";
+      btn.textContent = showing ? "Show" : "Hide";
+    });
+  });
+}
+
 function openAddMemberModal() {
   const root = document.getElementById("modalRoot");
   root.innerHTML = `
@@ -586,7 +598,12 @@ function openAddMemberModal() {
           <input id="nmRole" placeholder="e.g. Logistics & Sound" />
           <div class="row-2">
             <div><label>Username</label><input id="nmUsername" placeholder="e.g. karan" /></div>
-            <div><label>Password</label><input id="nmPassword" type="password" placeholder="Choose a password" /></div>
+            <div><label>Password</label>
+              <div class="password-field">
+                <input id="nmPassword" type="password" placeholder="Choose a password" />
+                <button type="button" class="password-toggle" data-toggle-for="nmPassword">Show</button>
+              </div>
+            </div>
           </div>
           <label>Access level</label>
           <select id="nmAccess">
@@ -598,6 +615,7 @@ function openAddMemberModal() {
       </div>
     </div>
   `;
+  wirePasswordToggles(root);
   const close = () => (root.innerHTML = "");
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#cancelModal").addEventListener("click", close);
@@ -699,7 +717,10 @@ function openEditLoginModal(user) {
           <label>Username</label>
           <input id="elUsername" value="${user.username}" />
           <label>New password (leave blank to keep unchanged)</label>
-          <input id="elPassword" type="password" placeholder="••••••••" />
+          <div class="password-field">
+            <input id="elPassword" type="password" placeholder="••••••••" />
+            <button type="button" class="password-toggle" data-toggle-for="elPassword">Show</button>
+          </div>
           <label>Access level</label>
           <select id="elAccess">
             <option value="staff" ${user.access_level === "staff" ? "selected" : ""}>Staff — everyday use, can't manage logins</option>
@@ -710,6 +731,7 @@ function openEditLoginModal(user) {
       </div>
     </div>
   `;
+  wirePasswordToggles(root);
   const close = () => (root.innerHTML = "");
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#cancelModal").addEventListener("click", close);
