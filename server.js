@@ -405,8 +405,12 @@ app.patch("/api/assignments/:id", requireAuth, requireAdmin, async (req, res) =>
 app.get("/api/my/events", requireAuth, async (req, res) => {
   if (!req.user.team_id) return res.json([]);
   const { rows } = await pool.query(`
-    SELECT event_assignments.*, leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage
-    FROM event_assignments JOIN leads ON leads.id = event_assignments.lead_id
+    SELECT event_assignments.id, event_assignments.lead_id, event_assignments.team_id, event_assignments.status,
+      leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage,
+      ex.paid AS paid, ex.amount AS fee_amount, ex.payment_date, ex.payment_mode
+    FROM event_assignments
+    JOIN leads ON leads.id = event_assignments.lead_id
+    LEFT JOIN expenses ex ON ex.team_id = event_assignments.team_id AND ex.lead_id = event_assignments.lead_id
     WHERE event_assignments.team_id = $1
     ORDER BY leads.date ASC
   `, [req.user.team_id]);
@@ -512,25 +516,36 @@ app.get("/api/expenses", requireAuth, async (req, res) => {
 });
 
 app.post("/api/expenses", requireAuth, requireAdmin, async (req, res) => {
-  const { leadId, teamId, head, amount, paid, notes } = req.body;
+  const { leadId, teamId, head, amount, paid, notes, paymentDate, paymentMode } = req.body;
   if (!head || amount === undefined) return res.status(400).json({ error: "head and amount are required" });
   const id = uuid();
   await pool.query(`
-    INSERT INTO expenses (id, lead_id, team_id, head, amount, paid, notes, created_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-  `, [id, leadId || null, teamId || null, head, Number(amount), paid ? 1 : 0, notes || null, new Date().toISOString()]);
+    INSERT INTO expenses (id, lead_id, team_id, head, amount, paid, notes, created_at, payment_date, payment_mode)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+  `, [
+    id, leadId || null, teamId || null, head, Number(amount), paid ? 1 : 0, notes || null, new Date().toISOString(),
+    paid ? (paymentDate || new Date().toISOString().slice(0, 10)) : (paymentDate || null),
+    paymentMode || null,
+  ]);
   res.status(201).json((await pool.query("SELECT * FROM expenses WHERE id = $1", [id])).rows[0]);
 });
 
 app.patch("/api/expenses/:id", requireAuth, requireAdmin, async (req, res) => {
   const exp = (await pool.query("SELECT * FROM expenses WHERE id = $1", [req.params.id])).rows[0];
   if (!exp) return res.status(404).json({ error: "Expense not found" });
-  const { head, amount, paid, notes } = req.body;
-  await pool.query(`UPDATE expenses SET head = $1, amount = $2, paid = $3, notes = $4 WHERE id = $5`, [
+  const { head, amount, paid, notes, paymentDate, paymentMode } = req.body;
+  const nowPaid = paid !== undefined ? (paid ? 1 : 0) : exp.paid;
+  // Stamp today's date automatically the moment something is marked paid, if no date was given.
+  const resolvedPaymentDate = paymentDate !== undefined
+    ? paymentDate
+    : (nowPaid && !exp.payment_date ? new Date().toISOString().slice(0, 10) : exp.payment_date);
+  await pool.query(`UPDATE expenses SET head = $1, amount = $2, paid = $3, notes = $4, payment_date = $5, payment_mode = $6 WHERE id = $7`, [
     head !== undefined ? head : exp.head,
     amount !== undefined ? Number(amount) : exp.amount,
-    paid !== undefined ? (paid ? 1 : 0) : exp.paid,
+    nowPaid,
     notes !== undefined ? notes : exp.notes,
+    resolvedPaymentDate,
+    paymentMode !== undefined ? paymentMode : exp.payment_mode,
     exp.id,
   ]);
   res.json((await pool.query("SELECT * FROM expenses WHERE id = $1", [exp.id])).rows[0]);

@@ -959,9 +959,8 @@ async function openAssignTeamModal(leadId) {
 
 // ---------- Accounts ----------
 async function renderAccounts(main) {
-  const [{ bookings, totals }, assignments, expenses] = await Promise.all([
+  const [{ bookings, totals }, expenses] = await Promise.all([
     api("/api/accounts"),
-    api("/api/assignments"),
     api("/api/expenses"),
   ]);
 
@@ -980,13 +979,7 @@ async function renderAccounts(main) {
       <div id="acctRows"></div>
     </div>
 
-    <div class="section-label">Artist / crew payments</div>
-    <div class="table" style="margin-bottom:24px;">
-      <div class="table-head" style="grid-template-columns:1.3fr 1.3fr 1fr 1fr;"><span>Event</span><span>Team member</span><span class="right">Fee (₹)</span><span>Status</span></div>
-      <div id="assignRows"></div>
-    </div>
-
-    <div class="section-label">Other expenses</div>
+    <div class="section-label">Artist fees &amp; other expenses</div>
     <div class="card" style="margin-bottom:14px;">
       <div class="upload-form" style="margin-bottom:0;">
         <select id="expLead">
@@ -1010,7 +1003,9 @@ async function renderAccounts(main) {
       </div>
     </div>
     <div class="table">
-      <div class="table-head" style="grid-template-columns:1.3fr 1.3fr 1fr 1fr 0.6fr;"><span>Head</span><span>Event</span><span class="right">Amount</span><span>Status</span><span></span></div>
+      <div class="table-head" style="grid-template-columns:1.2fr 1.1fr 0.9fr 0.7fr 1fr 0.9fr 0.5fr;">
+        <span>Head</span><span>Event</span><span class="right">Amount</span><span>Paid</span><span>Payment date</span><span>Mode</span><span></span>
+      </div>
       <div id="expenseRows"></div>
     </div>
   `;
@@ -1030,42 +1025,27 @@ async function renderAccounts(main) {
     `));
   });
 
-  const assignRows = main.querySelector("#assignRows");
-  if (assignments.length === 0) assignRows.innerHTML = `<div class="board-empty">No crew assigned to any event yet — use "Team" on a Confirmed/Completed card in Pipeline</div>`;
-  assignments.forEach((a) => {
-    assignRows.appendChild(el(`
-      <div class="table-row" style="grid-template-columns:1.3fr 1.3fr 1fr 1fr;">
-        <span>${a.lead_name} <span class="muted small">— ${fmtDate(a.lead_date)}</span></span>
-        <span>${a.team_name}</span>
-        <span class="right"><input type="number" class="fee-input" data-assign-id="${a.id}" value="${a.fee_amount || ""}" placeholder="Amount" style="width:100px; text-align:right;" /></span>
-        <span><label class="muted small" style="display:flex; align-items:center; gap:5px;"><input type="checkbox" data-assign-paid="${a.id}" ${a.paid ? "checked" : ""} /> Paid</label></span>
-      </div>
-    `));
-  });
-  assignRows.querySelectorAll(".fee-input").forEach((input) => {
-    input.addEventListener("change", async () => {
-      await api(`/api/assignments/${input.dataset.assignId}`, { method: "PATCH", body: JSON.stringify({ feeAmount: input.value || null }) });
-    });
-  });
-  assignRows.querySelectorAll("[data-assign-paid]").forEach((cb) => {
-    cb.addEventListener("change", async () => {
-      await api(`/api/assignments/${cb.dataset.assignPaid}`, { method: "PATCH", body: JSON.stringify({ paid: cb.checked }) });
-    });
-  });
-
   function renderExpenseRows() {
     const expRows = main.querySelector("#expenseRows");
-    if (expenses.length === 0) { expRows.innerHTML = `<div class="board-empty">No other expenses logged yet</div>`; return; }
+    if (expenses.length === 0) { expRows.innerHTML = `<div class="board-empty">No expenses logged yet</div>`; return; }
     expRows.innerHTML = "";
     expenses.forEach((e) => {
       const lead = LEADS.find((l) => l.id === e.lead_id);
       const member = TEAM.find((m) => m.id === e.team_id);
       expRows.appendChild(el(`
-        <div class="table-row" style="grid-template-columns:1.3fr 1.3fr 1fr 1fr 0.6fr;">
+        <div class="table-row" style="grid-template-columns:1.2fr 1.1fr 0.9fr 0.7fr 1fr 0.9fr 0.5fr;">
           <span>${e.head}</span>
           <span class="muted">${lead ? lead.name : "General"}${member ? ` · ${member.name}` : ""}</span>
           <span class="right mono">${inr(e.amount)}</span>
-          <span><label class="muted small" style="display:flex; align-items:center; gap:5px;"><input type="checkbox" data-exp-paid="${e.id}" ${e.paid ? "checked" : ""} /> Paid</label></span>
+          <span><input type="checkbox" data-exp-paid="${e.id}" ${e.paid ? "checked" : ""} /></span>
+          <span><input type="date" class="exp-date" data-exp-id="${e.id}" value="${e.payment_date || ""}" /></span>
+          <span>
+            <select class="exp-mode" data-exp-id="${e.id}">
+              <option value="">—</option>
+              <option value="Cash" ${e.payment_mode === "Cash" ? "selected" : ""}>Cash</option>
+              <option value="UPI" ${e.payment_mode === "UPI" ? "selected" : ""}>UPI</option>
+            </select>
+          </span>
           <span><button class="icon-btn" data-delete-exp="${e.id}">✕</button></span>
         </div>
       `));
@@ -1073,6 +1053,17 @@ async function renderAccounts(main) {
     expRows.querySelectorAll("[data-exp-paid]").forEach((cb) => {
       cb.addEventListener("change", async () => {
         await api(`/api/expenses/${cb.dataset.expPaid}`, { method: "PATCH", body: JSON.stringify({ paid: cb.checked }) });
+        renderMain();
+      });
+    });
+    expRows.querySelectorAll(".exp-date").forEach((input) => {
+      input.addEventListener("change", async () => {
+        await api(`/api/expenses/${input.dataset.expId}`, { method: "PATCH", body: JSON.stringify({ paymentDate: input.value || null }) });
+      });
+    });
+    expRows.querySelectorAll(".exp-mode").forEach((sel) => {
+      sel.addEventListener("change", async () => {
+        await api(`/api/expenses/${sel.dataset.expId}`, { method: "PATCH", body: JSON.stringify({ paymentMode: sel.value || null }) });
       });
     });
     expRows.querySelectorAll("[data-delete-exp]").forEach((btn) => {
@@ -1118,7 +1109,6 @@ async function renderAccounts(main) {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(LEADS), "Leads");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(bookings), "Accounts");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(assignments), "Artist Payments");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expenses), "Expenses");
     XLSX.writeFile(wb, `TOL-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
   });
@@ -1619,6 +1609,7 @@ async function renderPerformerApp() {
         <div class="performer-event-row">
           <span class="muted small">Payment:</span>
           <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
+          ${e.paid && e.payment_date ? `<span class="muted small">on ${fmtDate(e.payment_date)}${e.payment_mode ? ` via ${e.payment_mode}` : ""}</span>` : ""}
         </div>
         ${e.status === "pending" ? `
           <div style="margin-top:10px; display:flex; gap:8px;">
