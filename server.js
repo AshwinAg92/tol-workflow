@@ -153,6 +153,61 @@ app.delete("/api/users/:id", requireAuth, requireAdmin, (req, res) => {
   res.status(204).end();
 });
 
+// Update an existing login — username, access level, and/or password (leave password blank to keep it unchanged).
+app.patch("/api/users/:id", requireAuth, requireAdmin, (req, res) => {
+  const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.params.id);
+  if (!user) return res.status(404).json({ error: "Login not found" });
+  const { username, password, accessLevel } = req.body;
+
+  if (username && username !== user.username) {
+    const existing = db.prepare("SELECT id FROM users WHERE username = ? AND id != ?").get(username, user.id);
+    if (existing) return res.status(400).json({ error: "That username is already taken" });
+  }
+  if (accessLevel && !["admin", "staff"].includes(accessLevel)) {
+    return res.status(400).json({ error: "accessLevel must be 'admin' or 'staff'" });
+  }
+
+  db.prepare(`
+    UPDATE users SET
+      username = ?,
+      access_level = ?,
+      password_hash = ?
+    WHERE id = ?
+  `).run(
+    username || user.username,
+    accessLevel || user.access_level,
+    password ? bcrypt.hashSync(password, 10) : user.password_hash,
+    user.id
+  );
+  res.json({ id: user.id, username: username || user.username, accessLevel: accessLevel || user.access_level });
+});
+
+// Update a team member's own details (name, role/title, phone, email) — admin only.
+app.patch("/api/team/:id", requireAuth, requireAdmin, (req, res) => {
+  const member = db.prepare("SELECT * FROM team WHERE id = ?").get(req.params.id);
+  if (!member) return res.status(404).json({ error: "Team member not found" });
+  const { name, role, phone, email } = req.body;
+  db.prepare(`UPDATE team SET name = ?, role = ?, phone = ?, email = ? WHERE id = ?`).run(
+    name || member.name,
+    role !== undefined ? role : member.role,
+    phone !== undefined ? phone : member.phone,
+    email !== undefined ? email : member.email,
+    member.id
+  );
+  res.json(db.prepare("SELECT * FROM team WHERE id = ?").get(member.id));
+});
+
+// Remove a team member entirely — also removes any login tied to them.
+app.delete("/api/team/:id", requireAuth, requireAdmin, (req, res) => {
+  const linkedUser = db.prepare("SELECT id FROM users WHERE team_id = ?").get(req.params.id);
+  if (linkedUser && linkedUser.id === req.user.id) {
+    return res.status(400).json({ error: "You can't remove your own team entry while logged in as it" });
+  }
+  db.prepare("DELETE FROM users WHERE team_id = ?").run(req.params.id);
+  db.prepare("DELETE FROM team WHERE id = ?").run(req.params.id);
+  res.status(204).end();
+});
+
 // ---------- Config (so the frontend never hardcodes pricing) ----------
 app.get("/api/config", (req, res) => {
   res.json({

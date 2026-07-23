@@ -88,6 +88,14 @@ newCols.forEach(([col, type]) => {
   }
 });
 
+// Same pattern for the team table — adding phone/email so member details can be edited.
+const teamCols = db.prepare("PRAGMA table_info(team)").all().map((c) => c.name);
+[["phone", "TEXT"], ["email", "TEXT"]].forEach(([col, type]) => {
+  if (!teamCols.includes(col)) {
+    db.exec(`ALTER TABLE team ADD COLUMN ${col} ${type}`);
+  }
+});
+
 // One-time seed: only runs if tables are empty, so restarting the server never wipes real data.
 const leadCount = db.prepare("SELECT COUNT(*) AS c FROM leads").get().c;
 const teamCount = db.prepare("SELECT COUNT(*) AS c FROM team").get().c;

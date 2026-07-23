@@ -520,14 +520,22 @@ async function renderTeam(main) {
   TEAM.forEach((m) => {
     grid.appendChild(el(`
       <div class="card team-card">
+        ${isAdmin ? `<button class="icon-btn" data-edit-member="${m.id}" style="float:right;">✎</button>` : ""}
         <div class="team-avatar">${m.name[0]}</div>
         <div class="team-name">${m.name}</div>
-        <div class="muted">${m.role}</div>
+        <div class="muted">${m.role || ""}</div>
+        ${m.phone ? `<div class="muted small">${m.phone}</div>` : ""}
+        ${m.email ? `<div class="muted small">${m.email}</div>` : ""}
         <div class="team-count mono">${m.activeLeads.length} active lead${m.activeLeads.length === 1 ? "" : "s"}</div>
         ${m.activeLeads.map((l) => `<div class="team-lead">› ${l.name}</div>`).join("")}
       </div>
     `));
   });
+  if (isAdmin) {
+    main.querySelectorAll("[data-edit-member]").forEach((btn) => {
+      btn.addEventListener("click", () => openEditMemberModal(TEAM.find((m) => m.id === btn.dataset.editMember)));
+    });
+  }
 
   if (isAdmin) {
     const users = await api("/api/users");
@@ -535,13 +543,19 @@ async function renderTeam(main) {
     if (users.length === 0) userRows.innerHTML = `<div class="board-empty">No logins yet</div>`;
     users.forEach((u) => {
       userRows.appendChild(el(`
-        <div class="table-row" style="grid-template-columns:1.5fr 1fr 1fr 0.6fr;">
+        <div class="table-row" style="grid-template-columns:1.5fr 1fr 1fr 1fr;">
           <span>${u.username}${u.team_name ? ` <span class="muted">— ${u.team_name}</span>` : ""}</span>
           <span class="muted">${u.team_role || "—"}</span>
           <span class="tag">${u.access_level}</span>
-          <span>${u.id === CURRENT_USER.id ? "" : `<button class="icon-btn" data-delete-user="${u.id}">✕</button>`}</span>
+          <span>
+            <button class="icon-btn" data-edit-user="${u.id}">✎</button>
+            ${u.id === CURRENT_USER.id ? "" : `<button class="icon-btn" data-delete-user="${u.id}">✕</button>`}
+          </span>
         </div>
       `));
+    });
+    userRows.querySelectorAll("[data-edit-user]").forEach((btn) => {
+      btn.addEventListener("click", () => openEditLoginModal(users.find((u) => u.id === btn.dataset.editUser)));
     });
     userRows.querySelectorAll("[data-delete-user]").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -601,6 +615,110 @@ function openAddMemberModal() {
       });
       const teamData = await api("/api/team");
       TEAM = teamData;
+      close();
+      renderMain();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+}
+
+function openEditMemberModal(member) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>Edit ${member.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-body">
+          <label>Name</label>
+          <input id="emName" value="${member.name}" />
+          <label>Role / title</label>
+          <input id="emRole" value="${member.role || ""}" />
+          <div class="row-2">
+            <div><label>Phone</label><input id="emPhone" value="${member.phone || ""}" /></div>
+            <div><label>Email</label><input id="emEmail" value="${member.email || ""}" /></div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn-ghost" id="deleteMember" style="color:#A64B3C;">Remove member</button>
+          <button class="btn-ghost" id="cancelModal">Cancel</button>
+          <button class="btn-primary" id="submitModal">Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#submitModal").addEventListener("click", async () => {
+    try {
+      await api(`/api/team/${member.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: root.querySelector("#emName").value,
+          role: root.querySelector("#emRole").value,
+          phone: root.querySelector("#emPhone").value,
+          email: root.querySelector("#emEmail").value,
+        }),
+      });
+      const teamData = await api("/api/team");
+      TEAM = teamData;
+      close();
+      renderMain();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+  root.querySelector("#deleteMember").addEventListener("click", async () => {
+    if (!confirm(`Remove ${member.name} from the team? This also removes their login if they have one.`)) return;
+    try {
+      await api(`/api/team/${member.id}`, { method: "DELETE" });
+      const teamData = await api("/api/team");
+      TEAM = teamData;
+      close();
+      renderMain();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+}
+
+function openEditLoginModal(user) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>Edit login — ${user.username}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-body">
+          <label>Username</label>
+          <input id="elUsername" value="${user.username}" />
+          <label>New password (leave blank to keep unchanged)</label>
+          <input id="elPassword" type="password" placeholder="••••••••" />
+          <label>Access level</label>
+          <select id="elAccess">
+            <option value="staff" ${user.access_level === "staff" ? "selected" : ""}>Staff — everyday use, can't manage logins</option>
+            <option value="admin" ${user.access_level === "admin" ? "selected" : ""}>Admin — full access, including adding/removing logins</option>
+          </select>
+        </div>
+        <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Save</button></div>
+      </div>
+    </div>
+  `;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#submitModal").addEventListener("click", async () => {
+    const username = root.querySelector("#elUsername").value;
+    const password = root.querySelector("#elPassword").value;
+    const accessLevel = root.querySelector("#elAccess").value;
+    if (!username) return alert("Username can't be empty.");
+    try {
+      await api(`/api/users/${user.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ username, password: password || undefined, accessLevel }),
+      });
       close();
       renderMain();
     } catch (err) {
