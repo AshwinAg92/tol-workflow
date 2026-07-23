@@ -240,6 +240,7 @@ function renderLeadsLog(main) {
 
 // ---------- Pipeline ----------
 function renderPipeline(main) {
+  const isAdmin = CURRENT_USER?.accessLevel === "admin";
   const stages = ["New", "Quoted", "Follow-up", "Confirmed", "Completed"];
   main.innerHTML = `
     <div class="view-head">
@@ -271,12 +272,16 @@ function renderPipeline(main) {
           <div class="lead-meta">${packageName(l.event_type)}</div>
           <div class="lead-meta mono">${fmtDate(l.date)} · ${l.city || ""}</div>
           ${malaHtml(l.stage)}
+          ${isAdmin && (stage === "Confirmed" || stage === "Completed") ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:8px; width:100%;">Team</button>` : ""}
         </div>
       `));
     });
     board.appendChild(col);
   });
   main.querySelector("#newLeadBtn2").addEventListener("click", openNewLeadModal);
+  main.querySelectorAll(".assign-team-btn").forEach((btn) => {
+    btn.addEventListener("click", () => openAssignTeamModal(btn.dataset.leadId));
+  });
 }
 
 // ---------- Quotation ----------
@@ -522,6 +527,8 @@ function renderCalendar(main) {
 // ---------- Team ----------
 async function renderTeam(main) {
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
+  const users = isAdmin ? await api("/api/users") : [];
+  const teamIdsWithLogin = new Set(users.map((u) => u.team_id).filter(Boolean));
   main.innerHTML = `
     <div class="view-head">
       <div><h2>Team</h2><p class="muted">Who's carrying which leads right now.</p></div>
@@ -545,6 +552,7 @@ async function renderTeam(main) {
         ${m.email ? `<div class="muted small">${m.email}</div>` : ""}
         <div class="team-count mono">${m.activeLeads.length} active lead${m.activeLeads.length === 1 ? "" : "s"}</div>
         ${m.activeLeads.map((l) => `<div class="team-lead">› ${l.name}</div>`).join("")}
+        ${isAdmin && !teamIdsWithLogin.has(m.id) ? `<button class="btn-ghost full" data-add-login="${m.id}" style="margin-top:10px;">+ Add login</button>` : ""}
       </div>
     `));
   });
@@ -552,10 +560,12 @@ async function renderTeam(main) {
     main.querySelectorAll("[data-edit-member]").forEach((btn) => {
       btn.addEventListener("click", () => openEditMemberModal(TEAM.find((m) => m.id === btn.dataset.editMember)));
     });
+    main.querySelectorAll("[data-add-login]").forEach((btn) => {
+      btn.addEventListener("click", () => openAddLoginForMemberModal(TEAM.find((m) => m.id === btn.dataset.addLogin)));
+    });
   }
 
   if (isAdmin) {
-    const users = await api("/api/users");
     const userRows = main.querySelector("#userRows");
     if (users.length === 0) userRows.innerHTML = `<div class="board-empty">No logins yet</div>`;
     users.forEach((u) => {
@@ -620,6 +630,7 @@ function openAddMemberModal() {
           <label>Access level</label>
           <select id="nmAccess">
             <option value="staff">Staff — everyday use, can't manage logins</option>
+            <option value="performer">Performer — musicians/photographers: just their events, pay status, and event chat</option>
             <option value="admin">Admin — full access, including adding/removing logins</option>
           </select>
         </div>
@@ -650,6 +661,60 @@ function openAddMemberModal() {
       });
       const teamData = await api("/api/team");
       TEAM = teamData;
+      close();
+      renderMain();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+}
+
+function openAddLoginForMemberModal(member) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>Add login for ${member.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-body">
+          <div class="row-2">
+            <div><label>Username</label><input id="alUsername" placeholder="e.g. ${member.name.split(" ")[0].toLowerCase()}" /></div>
+            <div><label>Password</label>
+              <div class="password-field">
+                <input id="alPassword" type="password" placeholder="Choose a password" />
+                <button type="button" class="password-toggle" data-toggle-for="alPassword">Show</button>
+              </div>
+            </div>
+          </div>
+          <label>Access level</label>
+          <select id="alAccess">
+            <option value="staff">Staff — everyday use, can't manage logins</option>
+            <option value="performer">Performer — musicians/photographers: just their events, pay status, and event chat</option>
+            <option value="admin">Admin — full access, including adding/removing logins</option>
+          </select>
+        </div>
+        <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Add login</button></div>
+      </div>
+    </div>
+  `;
+  wirePasswordToggles(root);
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#submitModal").addEventListener("click", async () => {
+    const username = root.querySelector("#alUsername").value;
+    const password = root.querySelector("#alPassword").value;
+    if (!username || !password) return alert("Username and password are required.");
+    try {
+      await api("/api/users", {
+        method: "POST",
+        body: JSON.stringify({
+          existingTeamId: member.id,
+          username,
+          password,
+          accessLevel: root.querySelector("#alAccess").value,
+        }),
+      });
       close();
       renderMain();
     } catch (err) {
@@ -736,6 +801,7 @@ function openEditLoginModal(user) {
           <label>Access level</label>
           <select id="elAccess">
             <option value="staff" ${user.access_level === "staff" ? "selected" : ""}>Staff — everyday use, can't manage logins</option>
+            <option value="performer" ${user.access_level === "performer" ? "selected" : ""}>Performer — musicians/photographers: just their events, pay status, and event chat</option>
             <option value="admin" ${user.access_level === "admin" ? "selected" : ""}>Admin — full access, including adding/removing logins</option>
           </select>
         </div>
@@ -758,6 +824,78 @@ function openEditLoginModal(user) {
         method: "PATCH",
         body: JSON.stringify({ username, password: password || undefined, accessLevel }),
       });
+      close();
+      renderMain();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+}
+
+async function openAssignTeamModal(leadId) {
+  const lead = LEADS.find((l) => l.id === leadId);
+  const assignments = await api(`/api/leads/${leadId}/assignments`);
+  const byTeamId = {};
+  assignments.forEach((a) => (byTeamId[a.team_id] = a));
+
+  const statusLabel = { pending: "Pending response", accepted: "Accepted", declined: "Declined" };
+  const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C" };
+
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>Team for ${lead.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-body">
+          ${TEAM.map((m) => {
+            const a = byTeamId[m.id];
+            return `
+              <label class="check-row" style="align-items:flex-start;">
+                <input type="checkbox" data-team-id="${m.id}" ${a ? "checked" : ""} />
+                <span style="flex:1;">
+                  <div>${m.name} <span class="muted small">— ${m.role || ""}</span></div>
+                  ${a ? `
+                    <div class="muted small" style="color:${statusColor[a.status]};">${statusLabel[a.status]}</div>
+                    <label class="muted small" style="display:flex; align-items:center; gap:5px; margin-top:3px;">
+                      <input type="checkbox" data-paid-for="${a.id}" ${a.paid ? "checked" : ""} /> Paid
+                    </label>
+                  ` : ""}
+                </span>
+              </label>
+            `;
+          }).join("")}
+        </div>
+        <div class="modal-foot">
+          <button class="btn-ghost" id="openChatBtn">💬 Event chat</button>
+          <button class="btn-ghost" id="cancelModal">Close</button>
+          <button class="btn-primary" id="submitModal">Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#openChatBtn").addEventListener("click", () => openEventChat(leadId, lead.name));
+
+  root.querySelectorAll("[data-paid-for]").forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      await api(`/api/assignments/${cb.dataset.paidFor}`, { method: "PATCH", body: JSON.stringify({ paid: cb.checked }) });
+    });
+  });
+
+  root.querySelector("#submitModal").addEventListener("click", async () => {
+    const checked = [...root.querySelectorAll("[data-team-id]:checked")].map((c) => c.dataset.teamId);
+    const unchecked = [...root.querySelectorAll("[data-team-id]:not(:checked)")].map((c) => c.dataset.teamId);
+    try {
+      const newlyChecked = checked.filter((id) => !byTeamId[id]);
+      if (newlyChecked.length > 0) {
+        await api(`/api/leads/${leadId}/assignments`, { method: "POST", body: JSON.stringify({ teamIds: newlyChecked }) });
+      }
+      for (const teamId of unchecked) {
+        if (byTeamId[teamId]) await api(`/api/assignments/${byTeamId[teamId].id}`, { method: "DELETE" });
+      }
       close();
       renderMain();
     } catch (err) {
@@ -1115,12 +1253,141 @@ async function handleLogout() {
   window.location.reload();
 }
 
+// ---------- Performer/photographer view (deliberately minimal) ----------
+async function renderPerformerApp() {
+  const app = document.querySelector(".tol-app");
+  app.innerHTML = `
+    <div class="performer-app">
+      <div class="performer-header">
+        <div class="brand-mark">TOL</div>
+        <div>
+          <div class="brand-name">Together, Out Loud</div>
+          <div class="muted small">${CURRENT_USER.username}</div>
+        </div>
+        <a href="#" id="performerLogout" style="margin-left:auto; color:#C98B3D;">Log out</a>
+      </div>
+      <div class="performer-body" id="performerBody">
+        <p class="muted">Loading your events…</p>
+      </div>
+    </div>
+  `;
+  document.getElementById("performerLogout").addEventListener("click", (e) => { e.preventDefault(); handleLogout(); });
+
+  CONFIG = await api("/api/config");
+  const events = await api("/api/my/events");
+  const body = document.getElementById("performerBody");
+  if (events.length === 0) {
+    body.innerHTML = `<p class="muted" style="padding:20px;">No events assigned to you yet.</p>`;
+    return;
+  }
+  const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined" };
+  const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C" };
+
+  body.innerHTML = events.map((e) => `
+    <div class="card performer-event-card">
+      <div class="performer-event-head">
+        <div>
+          <div class="team-name">${e.lead_name}</div>
+          <div class="muted small">${packageName(e.event_type)} · ${fmtDate(e.date)} · ${e.city || ""}</div>
+        </div>
+        <span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status]}</span>
+      </div>
+      <div class="performer-event-row">
+        <span class="muted small">Payment:</span>
+        <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
+      </div>
+      ${e.status === "pending" ? `
+        <div style="margin-top:10px; display:flex; gap:8px;">
+          <button class="btn-primary" data-respond="${e.id}" data-status="accepted">Accept</button>
+          <button class="btn-ghost" data-respond="${e.id}" data-status="declined">Decline</button>
+        </div>
+      ` : ""}
+      <button class="btn-ghost full" data-chat-lead="${e.lead_id}" data-chat-name="${e.lead_name}" style="margin-top:10px;">💬 Event chat</button>
+    </div>
+  `).join("");
+
+  body.querySelectorAll("[data-respond]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await api(`/api/my/assignments/${btn.dataset.respond}/respond`, { method: "POST", body: JSON.stringify({ status: btn.dataset.status }) });
+      renderPerformerApp();
+    });
+  });
+  body.querySelectorAll("[data-chat-lead]").forEach((btn) => {
+    btn.addEventListener("click", () => openEventChat(btn.dataset.chatLead, btn.dataset.chatName));
+  });
+}
+
+// Shared event-chat modal — used by both the performer view and the admin's Assign Team modal.
+let eventChatInterval = null;
+async function openEventChat(leadId, leadName) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>${leadName} — chat</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-body">
+          <div id="chatMessages" class="chat-messages"></div>
+          <div style="display:flex; gap:8px; margin-top:10px;">
+            <input id="chatInput" placeholder="Message the team…" style="flex:1;" />
+            <button class="btn-primary" id="chatSendBtn">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  const close = () => {
+    if (eventChatInterval) clearInterval(eventChatInterval);
+    eventChatInterval = null;
+    root.innerHTML = "";
+  };
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+
+  async function loadMessages() {
+    let msgs;
+    try {
+      msgs = await api(`/api/my/events/${leadId}/messages`);
+    } catch {
+      return;
+    }
+    const container = root.querySelector("#chatMessages");
+    if (!container) return;
+    container.innerHTML = msgs.length === 0
+      ? `<p class="muted small">No messages yet — say hello.</p>`
+      : msgs.map((m) => `
+          <div style="margin-bottom:8px;">
+            <div class="muted small"><strong>${m.author_name}</strong> · ${new Date(m.created_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</div>
+            <div>${m.body}</div>
+          </div>
+        `).join("");
+    container.scrollTop = container.scrollHeight;
+  }
+
+  root.querySelector("#chatSendBtn").addEventListener("click", async () => {
+    const input = root.querySelector("#chatInput");
+    if (!input.value.trim()) return;
+    await api(`/api/my/events/${leadId}/messages`, { method: "POST", body: JSON.stringify({ body: input.value }) });
+    input.value = "";
+    loadMessages();
+  });
+  root.querySelector("#chatInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") root.querySelector("#chatSendBtn").click();
+  });
+
+  await loadMessages();
+  eventChatInterval = setInterval(loadMessages, 5000);
+}
+
 // ---------- Boot ----------
 (async function init() {
   try {
     CURRENT_USER = await api("/api/auth/me");
   } catch {
     renderLoginScreen();
+    return;
+  }
+  if (CURRENT_USER.accessLevel === "performer") {
+    renderPerformerApp();
     return;
   }
   await loadAll();

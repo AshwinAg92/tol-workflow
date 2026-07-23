@@ -129,14 +129,23 @@ app.get("/api/users", requireAuth, requireAdmin, (req, res) => {
 });
 
 app.post("/api/users", requireAuth, requireAdmin, (req, res) => {
-  const { name, roleTitle, username, password, accessLevel } = req.body;
-  if (!name || !username || !password) return res.status(400).json({ error: "Name, username, and password are required" });
-  if (!["admin", "staff"].includes(accessLevel)) return res.status(400).json({ error: "accessLevel must be 'admin' or 'staff'" });
-  const existing = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
-  if (existing) return res.status(400).json({ error: "That username is already taken" });
+  const { name, roleTitle, username, password, accessLevel, existingTeamId } = req.body;
+  if (!username || !password) return res.status(400).json({ error: "Username and password are required" });
+  if (!existingTeamId && !name) return res.status(400).json({ error: "Name is required for a new team member" });
+  if (!["admin", "staff", "performer"].includes(accessLevel)) return res.status(400).json({ error: "accessLevel must be 'admin', 'staff', or 'performer'" });
+  const existingUser = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
+  if (existingUser) return res.status(400).json({ error: "That username is already taken" });
 
-  const teamId = uuid();
-  db.prepare("INSERT INTO team (id, name, role) VALUES (?, ?, ?)").run(teamId, name, roleTitle || null);
+  let teamId = existingTeamId;
+  if (teamId) {
+    const member = db.prepare("SELECT id FROM team WHERE id = ?").get(teamId);
+    if (!member) return res.status(400).json({ error: "That team member no longer exists" });
+    const alreadyHasLogin = db.prepare("SELECT id FROM users WHERE team_id = ?").get(teamId);
+    if (alreadyHasLogin) return res.status(400).json({ error: "That team member already has a login" });
+  } else {
+    teamId = uuid();
+    db.prepare("INSERT INTO team (id, name, role) VALUES (?, ?, ?)").run(teamId, name, roleTitle || null);
+  }
   const userId = uuid();
   const passwordHash = bcrypt.hashSync(password, 10);
   db.prepare(`
@@ -163,8 +172,8 @@ app.patch("/api/users/:id", requireAuth, requireAdmin, (req, res) => {
     const existing = db.prepare("SELECT id FROM users WHERE username = ? AND id != ?").get(username, user.id);
     if (existing) return res.status(400).json({ error: "That username is already taken" });
   }
-  if (accessLevel && !["admin", "staff"].includes(accessLevel)) {
-    return res.status(400).json({ error: "accessLevel must be 'admin' or 'staff'" });
+  if (accessLevel && !["admin", "staff", "performer"].includes(accessLevel)) {
+    return res.status(400).json({ error: "accessLevel must be 'admin', 'staff', or 'performer'" });
   }
 
   db.prepare(`
@@ -311,6 +320,106 @@ app.post("/api/leads/:id/quote", requireAuth, async (req, res) => {
     mailto,
   });
 });
+// ---------- Event assignments (staffing a Confirmed event) ----------
+// Admin picks which team members are performing; each gets a pending
+// invitation they accept/decline from their own simplified view.
+app.get("/api/leads/:id/assignments", requireAuth, requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT event_assignments.*, team.name AS team_name
+    FROM event_assignments JOIN team ON team.id = event_assignments.team_id
+    WHERE lead_id = ?
+    ORDER BY event_assignments.created_at ASC
+  `).all(req.params.id);
+  res.json(rows);
+});
+
+app.post("/api/leads/:id/assignments", requireAuth, requireAdmin, (req, res) => {
+  const lead = db.prepare("SELECT * FROM leads WHERE id = ?").get(req.params.id);
+  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const { teamIds = [] } = req.body;
+  const existing = db.prepare("SELECT team_id FROM event_assignments WHERE lead_id = ?").all(req.params.id).map((r) => r.team_id);
+  const insert = db.prepare(`
+    INSERT INTO event_assignments (id, lead_id, team_id, status, paid, created_at)
+    VALUES (?, ?, ?, 'pending', 0, ?)
+  `);
+  const now = new Date().toISOString();
+  teamIds.filter((id) => !existing.includes(id)).forEach((teamId) => insert.run(uuid(), req.params.id, teamId, now));
+  const rows = db.prepare(`
+    SELECT event_assignments.*, team.name AS team_name
+    FROM event_assignments JOIN team ON team.id = event_assignments.team_id
+    WHERE lead_id = ?
+  `).all(req.params.id);
+  res.status(201).json(rows);
+});
+
+app.delete("/api/assignments/:id", requireAuth, requireAdmin, (req, res) => {
+  db.prepare("DELETE FROM event_assignments WHERE id = ?").run(req.params.id);
+  res.status(204).end();
+});
+
+// Admin marks a crew member's fee as paid/unpaid for a specific event.
+app.patch("/api/assignments/:id", requireAuth, requireAdmin, (req, res) => {
+  const a = db.prepare("SELECT * FROM event_assignments WHERE id = ?").get(req.params.id);
+  if (!a) return res.status(404).json({ error: "Assignment not found" });
+  const { paid, feeAmount } = req.body;
+  db.prepare("UPDATE event_assignments SET paid = ?, fee_amount = ? WHERE id = ?").run(
+    paid !== undefined ? (paid ? 1 : 0) : a.paid,
+    feeAmount !== undefined ? feeAmount : a.fee_amount,
+    a.id
+  );
+  res.json(db.prepare("SELECT * FROM event_assignments WHERE id = ?").get(a.id));
+});
+
+// ---------- Performer/photographer view — deliberately narrow: only their own events ----------
+app.get("/api/my/events", requireAuth, (req, res) => {
+  if (!req.user.team_id) return res.json([]);
+  const rows = db.prepare(`
+    SELECT event_assignments.*, leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage
+    FROM event_assignments JOIN leads ON leads.id = event_assignments.lead_id
+    WHERE event_assignments.team_id = ?
+    ORDER BY leads.date ASC
+  `).all(req.user.team_id);
+  res.json(rows);
+});
+
+app.post("/api/my/assignments/:id/respond", requireAuth, (req, res) => {
+  const a = db.prepare("SELECT * FROM event_assignments WHERE id = ?").get(req.params.id);
+  if (!a) return res.status(404).json({ error: "Assignment not found" });
+  if (a.team_id !== req.user.team_id) return res.status(403).json({ error: "This invitation isn't yours" });
+  const { status } = req.body;
+  if (!["accepted", "declined"].includes(status)) return res.status(400).json({ error: "status must be 'accepted' or 'declined'" });
+  db.prepare("UPDATE event_assignments SET status = ?, responded_at = ? WHERE id = ?").run(status, new Date().toISOString(), a.id);
+  res.json(db.prepare("SELECT * FROM event_assignments WHERE id = ?").get(a.id));
+});
+
+function canAccessEventChat(req, leadId) {
+  if (req.user.access_level === "admin") return true;
+  if (!req.user.team_id) return false;
+  return !!db.prepare("SELECT id FROM event_assignments WHERE lead_id = ? AND team_id = ?").get(leadId, req.user.team_id);
+}
+
+app.get("/api/my/events/:leadId/messages", requireAuth, (req, res) => {
+  if (!canAccessEventChat(req, req.params.leadId)) return res.status(403).json({ error: "Not part of this event" });
+  const rows = db.prepare("SELECT * FROM event_messages WHERE lead_id = ? ORDER BY created_at ASC").all(req.params.leadId);
+  res.json(rows);
+});
+
+app.post("/api/my/events/:leadId/messages", requireAuth, (req, res) => {
+  if (!canAccessEventChat(req, req.params.leadId)) return res.status(403).json({ error: "Not part of this event" });
+  const { body } = req.body;
+  if (!body || !body.trim()) return res.status(400).json({ error: "Message can't be empty" });
+  const authorName = req.user.team_id
+    ? (db.prepare("SELECT name FROM team WHERE id = ?").get(req.user.team_id)?.name || req.user.username)
+    : req.user.username;
+  const id = uuid();
+  db.prepare(`
+    INSERT INTO event_messages (id, lead_id, author_name, body, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(id, req.params.leadId, authorName, body, new Date().toISOString());
+  res.status(201).json(db.prepare("SELECT * FROM event_messages WHERE id = ?").get(id));
+});
+
+
 // ---------- Team ----------
 app.get("/api/team", requireAuth, (req, res) => {
   const leads = db.prepare("SELECT * FROM leads WHERE stage NOT IN ('Completed', 'Cancelled')").all();

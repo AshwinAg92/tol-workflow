@@ -69,6 +69,28 @@ db.exec(`
     created_at TEXT NOT NULL,
     FOREIGN KEY (team_id) REFERENCES team(id)
   );
+
+  CREATE TABLE IF NOT EXISTS event_assignments (
+    id TEXT PRIMARY KEY,
+    lead_id TEXT NOT NULL,
+    team_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    paid INTEGER NOT NULL DEFAULT 0,
+    fee_amount INTEGER,
+    created_at TEXT NOT NULL,
+    responded_at TEXT,
+    FOREIGN KEY (lead_id) REFERENCES leads(id),
+    FOREIGN KEY (team_id) REFERENCES team(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS event_messages (
+    id TEXT PRIMARY KEY,
+    lead_id TEXT NOT NULL,
+    author_name TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (lead_id) REFERENCES leads(id)
+  );
 `);
 
 // One-time migration: add new columns to the leads table if they don't exist yet.
