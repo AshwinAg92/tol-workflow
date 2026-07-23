@@ -989,9 +989,22 @@ async function renderAccounts(main) {
     <div class="section-label">Other expenses</div>
     <div class="card" style="margin-bottom:14px;">
       <div class="upload-form" style="margin-bottom:0;">
-        <select id="expLead"><option value="">Not tied to a specific event</option>${LEADS.map((l) => `<option value="${l.id}">${l.name} — ${fmtDate(l.date)}</option>`).join("")}</select>
-        <select id="expTeam"><option value="">Not tied to a specific artist</option>${TEAM.map((m) => `<option value="${m.id}">${m.name}</option>`).join("")}</select>
-        <input id="expHead" placeholder="e.g. Travel, Lights, Sound, or anything custom" style="flex:1; min-width:160px;" />
+        <select id="expLead">
+          <option value="">Not tied to a specific event</option>
+          ${LEADS.slice().sort((a, b) => new Date(a.date) - new Date(b.date)).map((l) => `<option value="${l.id}">${l.name} — ${fmtDate(l.date)}</option>`).join("")}
+        </select>
+        <select id="expType">
+          <optgroup label="Artist fee">
+            ${TEAM.map((m) => `<option value="team:${m.id}">${m.name}</option>`).join("")}
+          </optgroup>
+          <optgroup label="Other">
+            <option value="Travel">Travel</option>
+            <option value="Lights">Lights</option>
+            <option value="Sound">Sound</option>
+            <option value="custom">Custom…</option>
+          </optgroup>
+        </select>
+        <input id="expCustomHead" placeholder="Custom expense name" style="display:none; flex:1; min-width:140px;" />
         <input id="expAmount" type="number" placeholder="Amount ₹" style="width:130px;" />
         <button class="btn-primary" id="addExpenseBtn">Add</button>
       </div>
@@ -1071,17 +1084,31 @@ async function renderAccounts(main) {
   }
   renderExpenseRows();
 
+  main.querySelector("#expType").addEventListener("change", (e) => {
+    main.querySelector("#expCustomHead").style.display = e.target.value === "custom" ? "block" : "none";
+  });
+
   main.querySelector("#addExpenseBtn").addEventListener("click", async () => {
-    const head = main.querySelector("#expHead").value;
+    const expType = main.querySelector("#expType").value;
     const amount = main.querySelector("#expAmount").value;
-    if (!head || !amount) return alert("Enter both a head and an amount.");
+    if (!amount) return alert("Enter an amount.");
+    let head, teamId = null;
+    if (expType.startsWith("team:")) {
+      teamId = expType.slice(5);
+      head = `Artist fee — ${TEAM.find((m) => m.id === teamId)?.name || ""}`;
+    } else if (expType === "custom") {
+      head = main.querySelector("#expCustomHead").value;
+      if (!head) return alert("Enter a name for the custom expense.");
+    } else {
+      head = expType;
+    }
     await api("/api/expenses", {
       method: "POST",
       body: JSON.stringify({
         head,
         amount,
         leadId: main.querySelector("#expLead").value || null,
-        teamId: main.querySelector("#expTeam").value || null,
+        teamId,
       }),
     });
     renderMain();
