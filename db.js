@@ -1,6 +1,7 @@
 const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
+const bcrypt = require("bcryptjs");
 const { v4: uuid } = require("uuid");
 const { TEAM } = require("./config");
 
@@ -58,6 +59,16 @@ db.exec(`
     uploaded_at TEXT NOT NULL,
     FOREIGN KEY (lead_id) REFERENCES leads(id)
   );
+
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    team_id TEXT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    access_level TEXT NOT NULL DEFAULT 'staff',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (team_id) REFERENCES team(id)
+  );
 `);
 
 // One-time migration: add new columns to the leads table if they don't exist yet.
@@ -112,6 +123,22 @@ if (leadCount === 0) {
   insertTask.run(uuid(), confirmedLead.id, "Confirm venue booking", "2026-08-20", "t3", 1, now);
   insertTask.run(uuid(), confirmedLead.id, "Finalise Musical Pheras playlist", "2026-09-05", "t1", 0, now);
   insertTask.run(uuid(), confirmedLead.id, "Send final headcount to caterer", "2026-09-10", "t2", 0, now);
+}
+
+// One-time seed: create the first login (admin) account if none exist yet.
+// Username/password come from env vars so Ashwin can set his own; falls back
+// to a default that MUST be changed via the Team tab after first login.
+const userCount = db.prepare("SELECT COUNT(*) AS c FROM users").get().c;
+if (userCount === 0) {
+  const username = process.env.ADMIN_USERNAME || "ashwin";
+  const password = process.env.ADMIN_PASSWORD || "changeme123";
+  const passwordHash = bcrypt.hashSync(password, 10);
+  const firstTeamMember = db.prepare("SELECT id FROM team LIMIT 1").get();
+  db.prepare(`
+    INSERT INTO users (id, team_id, username, password_hash, access_level, created_at)
+    VALUES (?, ?, ?, ?, 'admin', ?)
+  `).run(uuid(), firstTeamMember ? firstTeamMember.id : null, username, passwordHash, new Date().toISOString());
+  console.log(`Seeded initial admin login — username: "${username}". Set ADMIN_USERNAME/ADMIN_PASSWORD env vars to control this, or change the password after logging in.`);
 }
 
 module.exports = db;

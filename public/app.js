@@ -1,4 +1,5 @@
 // ---------- State ----------
+let CURRENT_USER = null;
 let CONFIG = { stages: [], packages: [], addons: [] };
 let LEADS = [];
 let TEAM = [];
@@ -39,6 +40,7 @@ const el = (html) => { const t = document.createElement("template"); t.innerHTML
 async function api(path, opts) {
   const res = await fetch(path, {
     ...opts,
+    credentials: "include",
     headers: { "Content-Type": "application/json", ...(opts?.headers || {}) },
   });
   if (!res.ok) throw new Error((await res.json()).error || "Request failed");
@@ -76,7 +78,12 @@ function renderNav() {
     });
     nav.appendChild(btn);
   });
-  document.getElementById("sidebarFoot").textContent = "Live — SQLite backend";
+  document.getElementById("sidebarFoot").innerHTML = `
+    <div>${CURRENT_USER ? `${CURRENT_USER.username} <span class="muted">(${CURRENT_USER.accessLevel})</span>` : ""}</div>
+    <a href="#" id="logoutLink" style="color:#C98B3D;">Log out</a>
+  `;
+  const logoutLink = document.getElementById("logoutLink");
+  if (logoutLink) logoutLink.addEventListener("click", (e) => { e.preventDefault(); handleLogout(); });
 }
 
 // ---------- Mobile sidebar toggle ----------
@@ -496,10 +503,18 @@ function renderCalendar(main) {
 }
 
 // ---------- Team ----------
-function renderTeam(main) {
+async function renderTeam(main) {
+  const isAdmin = CURRENT_USER?.accessLevel === "admin";
   main.innerHTML = `
-    <div class="view-head"><div><h2>Team</h2><p class="muted">Who's carrying which leads right now.</p></div></div>
+    <div class="view-head">
+      <div><h2>Team</h2><p class="muted">Who's carrying which leads right now.</p></div>
+      ${isAdmin ? `<button class="btn-primary" id="addMemberBtn">+ Add team member</button>` : ""}
+    </div>
     <div class="team-grid" id="teamGrid"></div>
+    ${isAdmin ? `
+      <div class="section-label" style="margin-top:24px;">Logins</div>
+      <div class="table" id="userRows"></div>
+    ` : ""}
   `;
   const grid = main.querySelector("#teamGrid");
   TEAM.forEach((m) => {
@@ -512,6 +527,85 @@ function renderTeam(main) {
         ${m.activeLeads.map((l) => `<div class="team-lead">› ${l.name}</div>`).join("")}
       </div>
     `));
+  });
+
+  if (isAdmin) {
+    const users = await api("/api/users");
+    const userRows = main.querySelector("#userRows");
+    if (users.length === 0) userRows.innerHTML = `<div class="board-empty">No logins yet</div>`;
+    users.forEach((u) => {
+      userRows.appendChild(el(`
+        <div class="table-row" style="grid-template-columns:1.5fr 1fr 1fr 0.6fr;">
+          <span>${u.username}${u.team_name ? ` <span class="muted">— ${u.team_name}</span>` : ""}</span>
+          <span class="muted">${u.team_role || "—"}</span>
+          <span class="tag">${u.access_level}</span>
+          <span>${u.id === CURRENT_USER.id ? "" : `<button class="icon-btn" data-delete-user="${u.id}">✕</button>`}</span>
+        </div>
+      `));
+    });
+    userRows.querySelectorAll("[data-delete-user]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Remove this login? They won't be able to sign in anymore.")) return;
+        await api(`/api/users/${btn.dataset.deleteUser}`, { method: "DELETE" });
+        renderMain();
+      });
+    });
+    main.querySelector("#addMemberBtn").addEventListener("click", openAddMemberModal);
+  }
+}
+
+function openAddMemberModal() {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>Add team member</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-body">
+          <label>Name</label>
+          <input id="nmName" placeholder="e.g. Karan Mehta" />
+          <label>Role / title</label>
+          <input id="nmRole" placeholder="e.g. Logistics & Sound" />
+          <div class="row-2">
+            <div><label>Username</label><input id="nmUsername" placeholder="e.g. karan" /></div>
+            <div><label>Password</label><input id="nmPassword" type="password" placeholder="Choose a password" /></div>
+          </div>
+          <label>Access level</label>
+          <select id="nmAccess">
+            <option value="staff">Staff — everyday use, can't manage logins</option>
+            <option value="admin">Admin — full access, including adding/removing logins</option>
+          </select>
+        </div>
+        <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Add member</button></div>
+      </div>
+    </div>
+  `;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#submitModal").addEventListener("click", async () => {
+    const name = root.querySelector("#nmName").value;
+    const username = root.querySelector("#nmUsername").value;
+    const password = root.querySelector("#nmPassword").value;
+    if (!name || !username || !password) return alert("Name, username, and password are required.");
+    try {
+      await api("/api/users", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          roleTitle: root.querySelector("#nmRole").value,
+          username,
+          password,
+          accessLevel: root.querySelector("#nmAccess").value,
+        }),
+      });
+      const teamData = await api("/api/team");
+      TEAM = teamData;
+      close();
+      renderMain();
+    } catch (err) {
+      alert(err.message);
+    }
   });
 }
 
@@ -824,8 +918,54 @@ function renderMain() {
   else if (currentTab === "accounts") renderAccounts(main);
 }
 
+// ---------- Auth ----------
+function renderLoginScreen(errorMsg) {
+  const app = document.querySelector(".tol-app");
+  app.innerHTML = `
+    <div class="login-screen">
+      <div class="login-card card">
+        <div class="brand-mark" style="margin:0 auto 14px;">TOL</div>
+        <h2 style="text-align:center; margin-bottom:4px;">Together, Out Loud</h2>
+        <p class="muted" style="text-align:center; margin-bottom:20px;">Sign in to the workflow app</p>
+        ${errorMsg ? `<p style="color:#A64B3C; font-size:13px; margin-bottom:10px;">${errorMsg}</p>` : ""}
+        <label>Username</label>
+        <input id="loginUsername" autocomplete="username" />
+        <label>Password</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" />
+        <button class="btn-primary full" id="loginBtn" style="margin-top:16px;">Sign in</button>
+      </div>
+    </div>
+  `;
+  const doLogin = async () => {
+    const username = document.getElementById("loginUsername").value;
+    const password = document.getElementById("loginPassword").value;
+    const btn = document.getElementById("loginBtn");
+    btn.disabled = true;
+    btn.textContent = "Signing in…";
+    try {
+      await api("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+      window.location.reload();
+    } catch (err) {
+      renderLoginScreen(err.message);
+    }
+  };
+  document.getElementById("loginBtn").addEventListener("click", doLogin);
+  document.getElementById("loginPassword").addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+}
+
+async function handleLogout() {
+  await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+  window.location.reload();
+}
+
 // ---------- Boot ----------
 (async function init() {
+  try {
+    CURRENT_USER = await api("/api/auth/me");
+  } catch {
+    renderLoginScreen();
+    return;
+  }
   await loadAll();
   renderNav();
   renderMain();
