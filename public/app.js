@@ -43,7 +43,12 @@ async function api(path, opts) {
     credentials: "include",
     headers: { "Content-Type": "application/json", ...(opts?.headers || {}) },
   });
-  if (!res.ok) throw new Error((await res.json()).error || "Request failed");
+  if (!res.ok) {
+    let message = "Request failed";
+    try { message = (await res.json()).error || message; } catch { /* body wasn't JSON */ }
+    throw new Error(message);
+  }
+  if (res.status === 204) return null; // no body to parse (e.g. DELETE responses)
   return res.json();
 }
 
