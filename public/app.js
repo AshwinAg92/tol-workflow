@@ -917,12 +917,7 @@ async function openAssignTeamModal(leadId) {
                 <input type="checkbox" data-team-id="${m.id}" ${a ? "checked" : ""} />
                 <span style="flex:1;">
                   <div>${m.name} <span class="muted small">— ${m.role || ""}</span></div>
-                  ${a ? `
-                    <div class="muted small" style="color:${statusColor[a.status]};">${statusLabel[a.status]}</div>
-                    <label class="muted small" style="display:flex; align-items:center; gap:5px; margin-top:3px;">
-                      <input type="checkbox" data-paid-for="${a.id}" ${a.paid ? "checked" : ""} /> Paid
-                    </label>
-                  ` : ""}
+                  ${a ? `<div class="muted small" style="color:${statusColor[a.status]};">${statusLabel[a.status]}</div>` : ""}
                 </span>
               </label>
             `;
@@ -941,12 +936,6 @@ async function openAssignTeamModal(leadId) {
   root.querySelector("#cancelModal").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
   root.querySelector("#openChatBtn").addEventListener("click", () => openEventChat(leadId, lead.name));
-
-  root.querySelectorAll("[data-paid-for]").forEach((cb) => {
-    cb.addEventListener("change", async () => {
-      await api(`/api/assignments/${cb.dataset.paidFor}`, { method: "PATCH", body: JSON.stringify({ paid: cb.checked }) });
-    });
-  });
 
   root.querySelector("#submitModal").addEventListener("click", async () => {
     const checked = [...root.querySelectorAll("[data-team-id]:checked")].map((c) => c.dataset.teamId);
@@ -969,31 +958,134 @@ async function openAssignTeamModal(leadId) {
 
 // ---------- Accounts ----------
 async function renderAccounts(main) {
-  const { bookings, totals } = await api("/api/accounts");
+  const [{ bookings, totals }, assignments, expenses] = await Promise.all([
+    api("/api/accounts"),
+    api("/api/assignments"),
+    api("/api/expenses"),
+  ]);
+
   main.innerHTML = `
-    <div class="view-head"><div><h2>Accounts</h2><p class="muted">Quoted, received, and outstanding, per booking.</p></div></div>
+    <div class="view-head">
+      <div><h2>Accounts</h2><p class="muted">Quoted, received, and outstanding, per booking.</p></div>
+      <button class="btn-ghost" id="exportExcelBtn">⬇ Export to Excel</button>
+    </div>
     <div class="accounts-summary">
       <div class="card summary-card"><div class="muted">Total quoted</div><div class="mono big">${inr(totals.quoted)}</div></div>
       <div class="card summary-card"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(totals.received)}</div></div>
       <div class="card summary-card"><div class="muted">Outstanding</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${inr(totals.outstanding)}</div></div>
     </div>
-    <div class="table">
-      <div class="table-head"><span>Booking</span><span>Status</span><span class="right">Quoted</span><span class="right">Received</span><span class="right">Balance</span></div>
+    <div class="table" style="margin-bottom:24px;">
+      <div class="table-head" style="grid-template-columns:1.5fr 1fr 1fr 1fr 1fr 1fr;"><span>Booking</span><span>Status</span><span class="right">Quoted</span><span class="right">Final rate</span><span class="right">Received</span><span class="right">Balance</span></div>
       <div id="acctRows"></div>
     </div>
+
+    <div class="section-label">Artist / crew payments</div>
+    <div class="table" style="margin-bottom:24px;">
+      <div class="table-head" style="grid-template-columns:1.3fr 1.3fr 1fr 1fr;"><span>Event</span><span>Team member</span><span class="right">Fee (₹)</span><span>Status</span></div>
+      <div id="assignRows"></div>
+    </div>
+
+    <div class="section-label">Other expenses</div>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="upload-form" style="margin-bottom:0;">
+        <select id="expLead"><option value="">Not tied to a specific event</option>${LEADS.map((l) => `<option value="${l.id}">${l.name} — ${fmtDate(l.date)}</option>`).join("")}</select>
+        <input id="expHead" placeholder="e.g. Travel, Lights, Sound, or anything custom" style="flex:1; min-width:160px;" />
+        <input id="expAmount" type="number" placeholder="Amount ₹" style="width:130px;" />
+        <button class="btn-primary" id="addExpenseBtn">Add</button>
+      </div>
+    </div>
+    <div class="table">
+      <div class="table-head" style="grid-template-columns:1.3fr 1.3fr 1fr 1fr 0.6fr;"><span>Head</span><span>Event</span><span class="right">Amount</span><span>Status</span><span></span></div>
+      <div id="expenseRows"></div>
+    </div>
   `;
+
   const rows = main.querySelector("#acctRows");
   if (bookings.length === 0) rows.innerHTML = `<div class="board-empty">No quoted bookings yet</div>`;
   bookings.forEach((l) => {
     rows.appendChild(el(`
-      <div class="table-row">
+      <div class="table-row" style="grid-template-columns:1.5fr 1fr 1fr 1fr 1fr 1fr;">
         <span>${l.name}</span>
         <span class="tag" style="color:${STAGE_COLOR[l.stage]}">${l.stage}</span>
         <span class="right mono">${inr(l.quote_amount)}</span>
+        <span class="right mono">${l.final_amount ? inr(l.final_amount) : "—"}</span>
         <span class="right mono">${inr(l.advance)}</span>
-        <span class="right mono">${inr((l.quote_amount || 0) - (l.advance || 0))}</span>
+        <span class="right mono">${inr((l.final_amount || l.quote_amount || 0) - (l.advance || 0))}</span>
       </div>
     `));
+  });
+
+  const assignRows = main.querySelector("#assignRows");
+  if (assignments.length === 0) assignRows.innerHTML = `<div class="board-empty">No crew assigned to any event yet — use "Team" on a Confirmed/Completed card in Pipeline</div>`;
+  assignments.forEach((a) => {
+    assignRows.appendChild(el(`
+      <div class="table-row" style="grid-template-columns:1.3fr 1.3fr 1fr 1fr;">
+        <span>${a.lead_name} <span class="muted small">— ${fmtDate(a.lead_date)}</span></span>
+        <span>${a.team_name}</span>
+        <span class="right"><input type="number" class="fee-input" data-assign-id="${a.id}" value="${a.fee_amount || ""}" placeholder="Amount" style="width:100px; text-align:right;" /></span>
+        <span><label class="muted small" style="display:flex; align-items:center; gap:5px;"><input type="checkbox" data-assign-paid="${a.id}" ${a.paid ? "checked" : ""} /> Paid</label></span>
+      </div>
+    `));
+  });
+  assignRows.querySelectorAll(".fee-input").forEach((input) => {
+    input.addEventListener("change", async () => {
+      await api(`/api/assignments/${input.dataset.assignId}`, { method: "PATCH", body: JSON.stringify({ feeAmount: input.value || null }) });
+    });
+  });
+  assignRows.querySelectorAll("[data-assign-paid]").forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      await api(`/api/assignments/${cb.dataset.assignPaid}`, { method: "PATCH", body: JSON.stringify({ paid: cb.checked }) });
+    });
+  });
+
+  function renderExpenseRows() {
+    const expRows = main.querySelector("#expenseRows");
+    if (expenses.length === 0) { expRows.innerHTML = `<div class="board-empty">No other expenses logged yet</div>`; return; }
+    expRows.innerHTML = "";
+    expenses.forEach((e) => {
+      const lead = LEADS.find((l) => l.id === e.lead_id);
+      expRows.appendChild(el(`
+        <div class="table-row" style="grid-template-columns:1.3fr 1.3fr 1fr 1fr 0.6fr;">
+          <span>${e.head}</span>
+          <span class="muted">${lead ? lead.name : "General"}</span>
+          <span class="right mono">${inr(e.amount)}</span>
+          <span><label class="muted small" style="display:flex; align-items:center; gap:5px;"><input type="checkbox" data-exp-paid="${e.id}" ${e.paid ? "checked" : ""} /> Paid</label></span>
+          <span><button class="icon-btn" data-delete-exp="${e.id}">✕</button></span>
+        </div>
+      `));
+    });
+    expRows.querySelectorAll("[data-exp-paid]").forEach((cb) => {
+      cb.addEventListener("change", async () => {
+        await api(`/api/expenses/${cb.dataset.expPaid}`, { method: "PATCH", body: JSON.stringify({ paid: cb.checked }) });
+      });
+    });
+    expRows.querySelectorAll("[data-delete-exp]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await api(`/api/expenses/${btn.dataset.deleteExp}`, { method: "DELETE" });
+        renderMain();
+      });
+    });
+  }
+  renderExpenseRows();
+
+  main.querySelector("#addExpenseBtn").addEventListener("click", async () => {
+    const head = main.querySelector("#expHead").value;
+    const amount = main.querySelector("#expAmount").value;
+    if (!head || !amount) return alert("Enter both a head and an amount.");
+    await api("/api/expenses", {
+      method: "POST",
+      body: JSON.stringify({ head, amount, leadId: main.querySelector("#expLead").value || null }),
+    });
+    renderMain();
+  });
+
+  main.querySelector("#exportExcelBtn").addEventListener("click", () => {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(LEADS), "Leads");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(bookings), "Accounts");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(assignments), "Artist Payments");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expenses), "Expenses");
+    XLSX.writeFile(wb, `TOL-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
   });
 }
 
