@@ -18,6 +18,17 @@ const ADDONS = [
   { id: "travel", name: "Travel & accommodation", rate: null, note: "billed at actuals" },
 ];
 
+// Fixed pricing by format + number of musicians (Pcs). Used to auto-fill the
+// Performance Charges field in the Quotation builder — still editable by hand
+// for anything outside these standard combinations.
+const PRICING = {
+  pheras: { 6: 150000 },
+  jam: { 4: 140000, 5: 150000 },
+  bollywood: { 4: 140000, 5: 150000 },
+  satsang: { 4: 140000, 5: 150000 },
+  shraddhanjali: { 4: 75000, 5: 85000 },
+};
+
 const TEAM = [
   { id: "t1", name: "Ashwin", role: "Lead & Performer" },
   { id: "t2", name: "Divya", role: "Client Relations" },
@@ -45,4 +56,4 @@ const HOW_HEARD = [
   "Instagram", "Facebook", "YouTube", "Google", "Linktree", "Friend/Family", "Previous Event", "Wedding Planner", "Other",
 ];
 
-module.exports = { STAGES, PACKAGES, ADDONS, TEAM, EXPERIENCES, OCCASIONS, GUEST_RANGES, HOW_HEARD };
+module.exports = { STAGES, PACKAGES, ADDONS, PRICING, TEAM, EXPERIENCES, OCCASIONS, GUEST_RANGES, HOW_HEARD };

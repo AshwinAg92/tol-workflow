@@ -8,7 +8,7 @@ const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const { v4: uuid } = require("uuid");
 const db = require("./db");
-const { STAGES, PACKAGES, ADDONS, TEAM, EXPERIENCES, OCCASIONS, GUEST_RANGES, HOW_HEARD } = require("./config");
+const { STAGES, PACKAGES, ADDONS, PRICING, TEAM, EXPERIENCES, OCCASIONS, GUEST_RANGES, HOW_HEARD } = require("./config");
 
 // ---------- Auth ----------
 // Simple signed-cookie sessions (no extra session-store dependency needed).
@@ -214,6 +214,7 @@ app.get("/api/config", (req, res) => {
     stages: STAGES,
     packages: PACKAGES,
     addons: ADDONS,
+    pricing: PRICING,
     experiences: EXPERIENCES,
     occasions: OCCASIONS,
     guestRanges: GUEST_RANGES,
@@ -223,7 +224,7 @@ app.get("/api/config", (req, res) => {
 
 // ---------- Leads ----------
 app.get("/api/leads", requireAuth, (req, res) => {
-  const rows = db.prepare("SELECT * FROM leads ORDER BY date ASC").all();
+  const rows = db.prepare("SELECT * FROM leads ORDER BY created_at DESC").all();
   res.json(rows);
 });
 

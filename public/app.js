@@ -179,7 +179,7 @@ function renderLeadsLog(main) {
   });
 
   const rows = main.querySelector("#leadsRows");
-  const sorted = filtered.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+  const sorted = filtered.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   if (sorted.length === 0) {
     rows.innerHTML = `<div class="board-empty">No queries in this category yet</div>`;
   } else {
@@ -295,7 +295,7 @@ No. Of Guests: ${guests || ""}
 Duration: ${duration || "75-90 Minutes"}
 
 PERFORMANCE DETAILS
-•  Set: ${setPieces || ""}
+•  Pcs (No. of Musicians): ${setPieces || ""}
 •  Format (Private/Public): ${formatType || ""}
 •  Performance Charges: ${amountLine}
 
@@ -345,7 +345,7 @@ function renderQuotation(main) {
           <div><label>Duration</label><input id="qDuration" value="75-90 Minutes" /></div>
         </div>
         <div class="row-2">
-          <div><label>Set</label><input id="qSet" placeholder="e.g. 12-15 songs" /></div>
+          <div><label>Pcs (No. of Musicians)</label><input id="qSet" type="number" placeholder="e.g. 5" /></div>
           <div><label>Format</label>
             <select id="qFormatType">
               <option value="Private">Private</option>
@@ -377,6 +377,16 @@ function renderQuotation(main) {
   const leadSelect = main.querySelector("#leadSelect");
   const fields = ["qLocation", "qDate", "qGuests", "qDuration", "qSet", "qFormatType", "qCharges"].map((id) => main.querySelector(`#${id}`));
 
+  // Looks up the fixed rate for this lead's format + musician count, if one exists,
+  // and fills it in — still fully editable by hand for anything non-standard.
+  function applyStandardPricing() {
+    const lead = LEADS.find((l) => l.id === leadSelect.value);
+    const pcs = main.querySelector("#qSet").value;
+    if (!lead || !pcs) return;
+    const rate = CONFIG.pricing?.[lead.event_type]?.[pcs];
+    if (rate !== undefined) main.querySelector("#qCharges").value = rate;
+  }
+
   function prefillFromLead() {
     const lead = LEADS.find((l) => l.id === leadSelect.value);
     if (!lead) return;
@@ -384,6 +394,7 @@ function renderQuotation(main) {
     main.querySelector("#qDate").value = fmtDate(lead.date);
     main.querySelector("#qGuests").value = lead.guest_range || "";
     main.querySelector("#qSubject").value = `Quotation for ${packageName(lead.event_type)} — Together, Out Loud`;
+    applyStandardPricing();
   }
 
   function generateDraft() {
@@ -401,6 +412,7 @@ function renderQuotation(main) {
   }
 
   leadSelect.addEventListener("change", () => { prefillFromLead(); generateDraft(); });
+  main.querySelector("#qSet").addEventListener("input", () => { applyStandardPricing(); });
   main.querySelector("#generateBtn").addEventListener("click", generateDraft);
   prefillFromLead();
   generateDraft();
