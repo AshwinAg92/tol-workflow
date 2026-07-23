@@ -647,3 +647,61 @@ function openNewLeadModal() {
             <div><label>Email</label><input id="mEmail" placeholder="name@example.com" /></div>
           </div>
           <div class="row-2">
+          <div><label>Format wanted</label><select id="mType">${CONFIG.packages.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}</select></div>
+            <div><label>City</label><input id="mCity" placeholder="e.g. Siliguri" /></div>
+          </div>
+          <div class="row-2">
+            <div><label>Event date</label><input id="mDate" type="date" /></div>
+            <div><label>Budget (optional)</label><input id="mBudget" placeholder="e.g. 90000" /></div>
+          </div>
+        </div>
+        <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Add lead</button></div>
+      </div>
+    </div>
+  `;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#submitModal").addEventListener("click", async () => {
+    const name = root.querySelector("#mName").value;
+    const date = root.querySelector("#mDate").value;
+    if (!name || !date) return alert("Name and event date are required.");
+    await api("/api/leads", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        phone: root.querySelector("#mPhone").value,
+        email: root.querySelector("#mEmail").value,
+        eventType: root.querySelector("#mType").value,
+        city: root.querySelector("#mCity").value,
+        date,
+        budget: root.querySelector("#mBudget").value ? Number(root.querySelector("#mBudget").value) : null,
+      }),
+    });
+    await refreshLeads();
+    close();
+    renderMain();
+  });
+}
+
+// ---------- Main dispatch ----------
+function renderMain() {
+  const main = document.getElementById("main");
+  if (currentTab === "dashboard") renderDashboard(main);
+  else if (currentTab === "leads") renderLeadsLog(main);
+  else if (currentTab === "pipeline") renderPipeline(main);
+  else if (currentTab === "quotation") renderQuotation(main);
+  else if (currentTab === "tasks") renderTasks(main);
+  else if (currentTab === "documents") renderDocuments(main);
+  else if (currentTab === "calendar") renderCalendar(main);
+  else if (currentTab === "team") renderTeam(main);
+  else if (currentTab === "accounts") renderAccounts(main);
+}
+
+// ---------- Boot ----------
+(async function init() {
+  await loadAll();
+  renderNav();
+  renderMain();
+})();
