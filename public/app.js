@@ -24,7 +24,6 @@ const STAGE_COLOR = {
 const NAV = [
   { id: "dashboard", label: "Dashboard" },
   { id: "leads", label: "Leads" },
-  { id: "pipeline", label: "Pipeline" },
   { id: "quotation", label: "Quotation" },
   { id: "tasks", label: "Tasks & Chats" },
   { id: "documents", label: "Documents" },
@@ -119,15 +118,6 @@ function goToLeads(stage) {
   renderMain();
 }
 
-// ---------- Mala progress ----------
-function malaHtml(stage) {
-  const order = ["New", "Quoted", "Follow-up", "Confirmed", "Completed"];
-  const idx = order.indexOf(stage);
-  return `<div class="mala">${order.map((s, i) =>
-    `<span class="bead" style="${i <= idx ? `background:${STAGE_COLOR[stage]}` : ""}" title="${s}"></span>`
-  ).join("")}</div>`;
-}
-
 // ---------- Leads log ----------
 function renderLeadsLog(main) {
   const filtered = (leadsFilter === "all" ? LEADS : LEADS.filter((l) => l.event_type === leadsFilter))
@@ -214,7 +204,7 @@ function renderLeadsLog(main) {
           <span style="display:flex; flex-direction:column; gap:4px;">
             ${l.stage === "New" || l.stage === "Follow-up" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
             ${(l.stage === "New" || l.stage === "Follow-up") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
-            ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Final: ${l.final_amount ? inr(l.final_amount) : "—"}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>` : ""}
+            ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Final: ${l.final_amount ? inr(l.final_amount) : "—"}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>${CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:4px;">Team</button>` : ""}` : ""}
           </span>
         </div>
       `));
@@ -238,6 +228,10 @@ function renderLeadsLog(main) {
       const digitsOnly = (lead.phone || "").replace(/\D/g, "");
       if (digitsOnly) window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
     });
+  });
+
+  main.querySelectorAll(".assign-team-btn").forEach((btn) => {
+    btn.addEventListener("click", () => openAssignTeamModal(btn.dataset.leadId));
   });
 
   main.querySelectorAll(".stage-select").forEach((sel) => {
@@ -267,52 +261,6 @@ function renderLeadsLog(main) {
     const btn = main.querySelector("#copyLinkBtn");
     btn.textContent = "Copied";
     setTimeout(() => (btn.textContent = "Copy"), 1500);
-  });
-}
-
-// ---------- Pipeline ----------
-function renderPipeline(main) {
-  const isAdmin = CURRENT_USER?.accessLevel === "admin";
-  const stages = ["New", "Quoted", "Follow-up", "Confirmed", "Completed"];
-  main.innerHTML = `
-    <div class="view-head">
-      <div><h2>Pipeline</h2><p class="muted">Every lead, from first message to completed event.</p></div>
-      <button class="btn-primary" id="newLeadBtn2">+ New lead</button>
-    </div>
-    <div class="board" id="board"></div>
-  `;
-  const board = main.querySelector("#board");
-  stages.forEach((stage) => {
-    const items = LEADS.filter((l) => l.stage === stage);
-    const col = el(`
-      <div class="board-col">
-        <div class="board-col-head">
-          <span class="dot" style="background:${STAGE_COLOR[stage]}"></span>
-          <span>${stage}</span><span class="count">${items.length}</span>
-        </div>
-        <div class="colItems"></div>
-      </div>
-    `);
-    const colItems = col.querySelector(".colItems");
-    if (items.length === 0) {
-      colItems.appendChild(el(`<div class="board-empty">No leads here yet</div>`));
-    }
-    items.forEach((l) => {
-      colItems.appendChild(el(`
-        <div class="lead-card">
-          <div class="lead-name">${l.name}</div>
-          <div class="lead-meta">${packageName(l.event_type)}</div>
-          <div class="lead-meta mono">${fmtDate(l.date)} · ${l.city || ""}</div>
-          ${malaHtml(l.stage)}
-          ${isAdmin && (stage === "Confirmed" || stage === "Completed") ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:8px; width:100%;">Team</button>` : ""}
-        </div>
-      `));
-    });
-    board.appendChild(col);
-  });
-  main.querySelector("#newLeadBtn2").addEventListener("click", openNewLeadModal);
-  main.querySelectorAll(".assign-team-btn").forEach((btn) => {
-    btn.addEventListener("click", () => openAssignTeamModal(btn.dataset.leadId));
   });
 }
 
@@ -987,7 +935,7 @@ async function renderAccounts(main) {
       <div class="card summary-card"><div class="muted">Outstanding</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${inr(totals.outstanding)}</div></div>
     </div>
     <div class="table" style="margin-bottom:24px;">
-      <div class="table-head" style="grid-template-columns:1.5fr 1fr 1fr 1fr 1fr 1fr;"><span>Booking</span><span>Status</span><span class="right">Quoted</span><span class="right">Final rate</span><span class="right">Received</span><span class="right">Balance</span></div>
+      <div class="table-head" style="grid-template-columns:1.3fr 0.9fr 0.9fr 0.9fr 1.3fr 0.9fr;"><span>Booking</span><span>Status</span><span class="right">Quoted</span><span class="right">Final rate</span><span>Advance received</span><span class="right">Balance</span></div>
       <div id="acctRows"></div>
     </div>
 
@@ -1023,18 +971,37 @@ async function renderAccounts(main) {
   `;
 
   const rows = main.querySelector("#acctRows");
-  if (bookings.length === 0) rows.innerHTML = `<div class="board-empty">No quoted bookings yet</div>`;
+  if (bookings.length === 0) rows.innerHTML = `<div class="board-empty">No confirmed or completed bookings yet</div>`;
+  const today = new Date().toISOString().slice(0, 10);
   bookings.forEach((l) => {
     rows.appendChild(el(`
-      <div class="table-row" style="grid-template-columns:1.5fr 1fr 1fr 1fr 1fr 1fr;">
+      <div class="table-row" style="grid-template-columns:1.3fr 0.9fr 0.9fr 0.9fr 1.3fr 0.9fr;">
         <span>${l.name}</span>
         <span class="tag" style="color:${STAGE_COLOR[l.stage]}">${l.stage}</span>
         <span class="right mono">${inr(l.quote_amount)}</span>
         <span class="right mono">${l.final_amount ? inr(l.final_amount) : "—"}</span>
-        <span class="right mono">${inr(l.advance)}</span>
+        <span style="display:flex; gap:6px;">
+          <input type="number" class="advance-amount" data-lead-id="${l.id}" value="${l.advance || ""}" placeholder="₹" style="width:90px;" />
+          <input type="date" class="advance-date" data-lead-id="${l.id}" value="${l.advance_date || ""}" max="${today}" />
+        </span>
         <span class="right mono">${inr((l.final_amount || l.quote_amount || 0) - (l.advance || 0))}</span>
       </div>
     `));
+  });
+  rows.querySelectorAll(".advance-amount").forEach((input) => {
+    input.addEventListener("change", async () => {
+      try {
+        await api(`/api/leads/${input.dataset.leadId}`, { method: "PATCH", body: JSON.stringify({ advance: input.value || 0 }) });
+        renderMain();
+      } catch (err) { alert(err.message); }
+    });
+  });
+  rows.querySelectorAll(".advance-date").forEach((input) => {
+    input.addEventListener("change", async () => {
+      try {
+        await api(`/api/leads/${input.dataset.leadId}`, { method: "PATCH", body: JSON.stringify({ advanceDate: input.value || null }) });
+      } catch (err) { alert(err.message); input.value = ""; }
+    });
   });
 
   function renderExpenseRows() {
@@ -1516,7 +1483,6 @@ function renderMain() {
   const main = document.getElementById("main");
   if (currentTab === "dashboard") renderDashboard(main);
   else if (currentTab === "leads") renderLeadsLog(main);
-  else if (currentTab === "pipeline") renderPipeline(main);
   else if (currentTab === "quotation") renderQuotation(main);
   else if (currentTab === "tasks") renderTasks(main);
   else if (currentTab === "documents") renderDocuments(main);

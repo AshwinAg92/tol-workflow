@@ -125,6 +125,7 @@ async function setup() {
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS team_id TEXT REFERENCES team(id)`);
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payment_date TEXT`);
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payment_mode TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS advance_date TEXT`);
 
   // Migration: "Quoted" is no longer a distinct stage — a lead moves straight
   // to "Follow-up" once quoted. Move any existing Quoted leads forward so

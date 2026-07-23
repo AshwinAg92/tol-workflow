@@ -282,11 +282,16 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
-  const fields = ["stage", "assigned_to", "advance", "quote_amount", "final_amount", "notes"];
+  if (req.body.advanceDate) {
+    const today = new Date().toISOString().slice(0, 10);
+    if (req.body.advanceDate > today) return res.status(400).json({ error: "Advance received date can't be in the future" });
+  }
+
+  const fields = ["stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes"];
   const updates = [];
   const values = [];
   fields.forEach((f) => {
-    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f;
+    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f;
     if (req.body[key] !== undefined) {
       values.push(req.body[key]);
       updates.push(`${f} = $${values.length}`);
@@ -481,10 +486,10 @@ app.get("/api/calendar", requireAuth, async (req, res) => {
 
 // ---------- Accounts ----------
 app.get("/api/accounts", requireAuth, async (req, res) => {
-  const rows = (await pool.query("SELECT * FROM leads WHERE quote_amount IS NOT NULL")).rows;
+  const rows = (await pool.query("SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed')")).rows;
   const totals = rows.reduce(
     (acc, l) => {
-      acc.quoted += l.quote_amount || 0;
+      acc.quoted += l.final_amount || l.quote_amount || 0;
       acc.received += l.advance || 0;
       return acc;
     },
@@ -648,13 +653,13 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
   const [upcomingRes, followUpsRes, accountsRes, tasksRes, newLeadsRes] = await Promise.all([
     pool.query(`SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1 ORDER BY date ASC LIMIT 5`, [today]),
     pool.query(`SELECT * FROM leads WHERE stage = 'Follow-up' ORDER BY date ASC`),
-    pool.query(`SELECT quote_amount, advance FROM leads WHERE quote_amount IS NOT NULL`),
+    pool.query(`SELECT final_amount, quote_amount, advance FROM leads WHERE stage IN ('Confirmed', 'Completed')`),
     pool.query(`SELECT * FROM tasks WHERE done = 0 AND (due_date <= $1 OR due_date IS NULL) ORDER BY due_date ASC LIMIT 8`, [weekAhead]),
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage = 'New'`),
   ]);
 
   const totals = accountsRes.rows.reduce(
-    (acc, l) => { acc.quoted += l.quote_amount || 0; acc.received += l.advance || 0; return acc; },
+    (acc, l) => { acc.quoted += l.final_amount || l.quote_amount || 0; acc.received += l.advance || 0; return acc; },
     { quoted: 0, received: 0 }
   );
 
