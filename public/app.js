@@ -247,3 +247,403 @@ function renderPipeline(main) {
 }
 
 // ---------- Quotation ----------
+// ---------- Quotation ----------
+function renderQuotation(main) {
+  const quotable = LEADS.filter((l) => l.stage !== "Completed");
+  const preselect = quotable.find((l) => l.id === quotationLeadId) ? quotationLeadId : null;
+  quotationLeadId = null; // one-shot — doesn't stick if the user later opens Quotation from the nav
+  main.innerHTML = `
+    <div class="view-head">
+      <div><h2>Quotation</h2><p class="muted">Pick a lead, choose the format, send the number.</p></div>
+    </div>
+    <div class="quote-grid">
+      <div class="card">
+        <label>Lead</label>
+        <select id="leadSelect">
+          ${quotable.map((l) => `<option value="${l.id}" ${l.id === preselect ? "selected" : ""}>${l.name} — ${fmtDate(l.date)}</option>`).join("")}
+        </select>
+        <div class="section-label">Format</div>
+        <div id="pkgChecks"></div>
+        <div class="section-label">Add-ons</div>
+        <div id="addonChecks"></div>
+        <div class="total-row"><span>Total</span><span class="mono total-amt" id="totalAmt">₹0</span></div>
+        <button class="btn-primary full" id="sendQuoteBtn">💬 Mark as quoted & prepare messages</button>
+      </div>
+      <div class="card email-preview">
+        <div class="section-label">Message preview</div>
+        <div id="emailPreview"></div>
+      </div>
+    </div>
+  `;
+
+  if (quotable.length === 0) {
+    main.querySelector(".quote-grid").innerHTML = `<p class="muted">No leads available to quote right now.</p>`;
+    return;
+  }
+
+  const pkgChecks = main.querySelector("#pkgChecks");
+  CONFIG.packages.forEach((p) => {
+    pkgChecks.appendChild(el(`
+      <label class="check-row"><input type="checkbox" data-pkg="${p.id}" />
+        <span>${p.name}</span><span class="mono right">${inr(p.rate)}</span></label>
+    `));
+  });
+  const addonChecks = main.querySelector("#addonChecks");
+  CONFIG.addons.forEach((a) => {
+    addonChecks.appendChild(el(`
+      <label class="check-row"><input type="checkbox" data-addon="${a.id}" />
+        <span>${a.name}</span><span class="mono right muted">${a.rate ? inr(a.rate) : a.note}</span></label>
+    `));
+  });
+
+  const selected = () => ({
+    packageIds: [...main.querySelectorAll("[data-pkg]:checked")].map((c) => c.dataset.pkg),
+    addonIds: [...main.querySelectorAll("[data-addon]:checked")].map((c) => c.dataset.addon),
+  });
+
+  function updatePreview() {
+    const { packageIds, addonIds } = selected();
+    const lead = LEADS.find((l) => l.id === main.querySelector("#leadSelect").value);
+    const chosenPackages = CONFIG.packages.filter((p) => packageIds.includes(p.id));
+    const chosenAddons = CONFIG.addons.filter((a) => addonIds.includes(a.id));
+    const total = chosenPackages.reduce((s, p) => s + p.rate, 0) + chosenAddons.reduce((s, a) => s + (a.rate || 0), 0);
+    main.querySelector("#totalAmt").textContent = inr(total);
+
+    const items = [...chosenPackages, ...chosenAddons].map((x) => `<li>${x.name}</li>`).join("") || `<li class="muted">Select a format or add-on</li>`;
+    main.querySelector("#emailPreview").innerHTML = lead ? `
+      <div class="email-field"><span class="muted">WhatsApp to</span> ${lead.phone || "(no phone on file)"}</div>
+      <div class="email-field"><span class="muted">Email to</span> ${lead.email || "(no email on file)"}</div>
+      <div class="email-field"><span class="muted">Re</span> Quotation for ${packageName(lead.event_type)} — Together Out Loud</div>
+      <div class="email-body">Dear ${lead.name.split(" ")[0]},
+
+Thank you for reaching out to Together Out Loud. Here is our quotation for your event on ${fmtDate(lead.date)} in ${lead.city || ""}:
+<ul style="margin:8px 0;">${items}</ul>
+Total: ${inr(total)}
+
+Excludes travel and accommodation unless noted above. Valid for 7 days.</div>
+    ` : `<p class="muted">Select a lead to preview the email.</p>`;
+  }
+
+  main.querySelectorAll("[data-pkg], [data-addon]").forEach((c) => c.addEventListener("change", updatePreview));
+  main.querySelector("#leadSelect").addEventListener("change", updatePreview);
+  updatePreview();
+
+  main.querySelector("#sendQuoteBtn").addEventListener("click", async () => {
+    const leadId = main.querySelector("#leadSelect").value;
+    const { packageIds, addonIds } = selected();
+    if (packageIds.length === 0 && addonIds.length === 0) return;
+    const btn = main.querySelector("#sendQuoteBtn");
+    btn.disabled = true;
+    btn.textContent = "Preparing…";
+    try {
+      const result = await api(`/api/leads/${leadId}/quote`, { method: "POST", body: JSON.stringify({ packageIds, addonIds }) });
+      await refreshLeads();
+
+      const waHtml = result.whatsapp.link
+        ? `<div class="email-status sent">💬 Opened WhatsApp for ${result.lead.phone} — <a href="${result.whatsapp.link}" target="_blank">click here</a> if it didn't open</div>`
+        : `<div class="email-status unsent">💬 Couldn't prepare WhatsApp message — ${result.whatsapp.reason}</div>`;
+
+      const mailHtml = result.mailto.link
+        ? `<div class="email-status sent">✉️ <a href="${result.mailto.link}">Click here to send by email</a> — opens your email app with everything filled in</div>`
+        : `<div class="email-status unsent">✉️ Couldn't prepare email — ${result.mailto.reason}</div>`;
+
+      if (result.whatsapp.link) window.open(result.whatsapp.link, "_blank");
+      main.querySelector("#emailPreview").insertAdjacentHTML("beforeend", waHtml + mailHtml);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "💬 Mark as quoted & prepare messages";
+    }
+  });
+}
+
+// ---------- Calendar ----------
+function renderCalendar(main) {
+  const confirmed = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed");
+  const first = new Date(calYear, calMonth - 1, 1);
+  const startDay = first.getDay();
+  const daysInMonth = new Date(calYear, calMonth, 0).getDate();
+  const cells = Array(startDay).fill(null).concat(Array.from({ length: daysInMonth }, (_, i) => i + 1));
+  const eventsByDay = {};
+  confirmed.forEach((l) => {
+    if (!l.date) return;
+    const d = new Date(l.date + "T00:00:00");
+    if (d.getFullYear() === calYear && d.getMonth() === calMonth - 1) {
+      (eventsByDay[d.getDate()] = eventsByDay[d.getDate()] || []).push(l);
+    }
+  });
+  const monthName = first.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+
+  main.innerHTML = `
+    <div class="view-head"><div><h2>Calendar</h2><p class="muted">Confirmed and completed events — spot clashes before you quote.</p></div></div>
+    <div class="card">
+      <div class="cal-nav">
+        <button class="btn-ghost" id="prevMonth">‹</button>
+        <div class="cal-month">${monthName}</div>
+        <button class="btn-ghost" id="nextMonth">›</button>
+      </div>
+      <div class="cal-grid cal-head">${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => `<div>${d}</div>`).join("")}</div>
+      <div class="cal-grid" id="calCells"></div>
+    </div>
+    <div class="section-label" style="margin-top:20px;">Upcoming confirmed events</div>
+    <div class="list" id="calList"></div>
+  `;
+
+  const calCells = main.querySelector("#calCells");
+  cells.forEach((d) => {
+    const evs = d ? (eventsByDay[d] || []) : [];
+    calCells.appendChild(el(`
+      <div class="cal-cell${d ? "" : " cal-cell-empty"}">
+        ${d ? `<div class="cal-day">${d}</div>` : ""}
+        ${evs.map((ev) => `<div class="cal-event" title="${ev.name}">${ev.name.split(" ")[0]}</div>`).join("")}
+      </div>
+    `));
+  });
+
+  const calList = main.querySelector("#calList");
+  if (confirmed.length === 0) calList.innerHTML = `<div class="board-empty">No confirmed events yet</div>`;
+  confirmed.forEach((l) => {
+    calList.appendChild(el(`
+      <div class="list-row">
+        <span class="mono">${fmtDate(l.date)}</span><span>${l.name}</span><span class="muted">${l.city || ""}</span>
+        <span class="tag" style="color:${STAGE_COLOR[l.stage]}">${l.stage}</span>
+      </div>
+    `));
+  });
+
+  main.querySelector("#prevMonth").addEventListener("click", () => { calMonth--; if (calMonth < 1) { calMonth = 12; calYear--; } renderMain(); });
+  main.querySelector("#nextMonth").addEventListener("click", () => { calMonth++; if (calMonth > 12) { calMonth = 1; calYear++; } renderMain(); });
+}
+
+// ---------- Team ----------
+function renderTeam(main) {
+  main.innerHTML = `
+    <div class="view-head"><div><h2>Team</h2><p class="muted">Who's carrying which leads right now.</p></div></div>
+    <div class="team-grid" id="teamGrid"></div>
+  `;
+  const grid = main.querySelector("#teamGrid");
+  TEAM.forEach((m) => {
+    grid.appendChild(el(`
+      <div class="card team-card">
+        <div class="team-avatar">${m.name[0]}</div>
+        <div class="team-name">${m.name}</div>
+        <div class="muted">${m.role}</div>
+        <div class="team-count mono">${m.activeLeads.length} active lead${m.activeLeads.length === 1 ? "" : "s"}</div>
+        ${m.activeLeads.map((l) => `<div class="team-lead">› ${l.name}</div>`).join("")}
+      </div>
+    `));
+  });
+}
+
+// ---------- Accounts ----------
+async function renderAccounts(main) {
+  const { bookings, totals } = await api("/api/accounts");
+  main.innerHTML = `
+    <div class="view-head"><div><h2>Accounts</h2><p class="muted">Quoted, received, and outstanding, per booking.</p></div></div>
+    <div class="accounts-summary">
+      <div class="card summary-card"><div class="muted">Total quoted</div><div class="mono big">${inr(totals.quoted)}</div></div>
+      <div class="card summary-card"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(totals.received)}</div></div>
+      <div class="card summary-card"><div class="muted">Outstanding</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${inr(totals.outstanding)}</div></div>
+    </div>
+    <div class="table">
+      <div class="table-head"><span>Booking</span><span>Status</span><span class="right">Quoted</span><span class="right">Received</span><span class="right">Balance</span></div>
+      <div id="acctRows"></div>
+    </div>
+  `;
+  const rows = main.querySelector("#acctRows");
+  if (bookings.length === 0) rows.innerHTML = `<div class="board-empty">No quoted bookings yet</div>`;
+  bookings.forEach((l) => {
+    rows.appendChild(el(`
+      <div class="table-row">
+        <span>${l.name}</span>
+        <span class="tag" style="color:${STAGE_COLOR[l.stage]}">${l.stage}</span>
+        <span class="right mono">${inr(l.quote_amount)}</span>
+        <span class="right mono">${inr(l.advance)}</span>
+        <span class="right mono">${inr((l.quote_amount || 0) - (l.advance || 0))}</span>
+      </div>
+    `));
+  });
+}
+// ---------- Dashboard ----------
+async function renderDashboard(main) {
+  const data = await api("/api/dashboard");
+  main.innerHTML = `
+    <div class="view-head"><div><h2>Dashboard</h2><p class="muted">The three things that matter today — click any card to see the list.</p></div></div>
+    <div class="dash-stats">
+      <button class="card dash-stat dash-stat-click" id="statNew"><div class="muted">New queries</div><div class="mono big">${data.newLeadsCount}</div></button>
+      <button class="card dash-stat dash-stat-click" id="statFollowup"><div class="muted">Awaiting follow-up</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${data.pendingFollowUps.length}</div></button>
+      <button class="card dash-stat dash-stat-click" id="statUpcoming"><div class="muted">Upcoming events</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${data.upcomingEvents.length}</div></button>
+    </div>
+    <div class="dash-grid">
+      <div class="card">
+        <div class="section-label">Upcoming events</div>
+        ${data.upcomingEvents.length === 0 ? `<p class="muted small">Nothing confirmed and upcoming yet.</p>` : data.upcomingEvents.map((l) => `
+          <div class="dash-list-item dash-list-item-click" data-lead-id="${l.id}">
+            <div>${l.name} — <span class="mono">${fmtDate(l.date)}</span></div>
+            <div class="muted">${packageName(l.event_type)} · ${l.city || ""}</div>
+          </div>
+        `).join("")}
+      </div>
+      <div class="card">
+        <div class="section-label">Leads waiting on a follow-up</div>
+        ${data.pendingFollowUps.length === 0 ? `<p class="muted small">No one's waiting on you right now.</p>` : data.pendingFollowUps.map((l) => `
+          <div class="dash-list-item dash-list-item-click" data-lead-id="${l.id}">
+            <div>${l.name} <span class="muted">— ${packageName(l.event_type)}</span></div>
+            <div class="muted">${fmtDate(l.date)} · ${l.city || ""}</div>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+
+  main.querySelector("#statNew").addEventListener("click", () => goToLeads("New"));
+  main.querySelector("#statFollowup").addEventListener("click", () => goToLeads("Follow-up"));
+  main.querySelector("#statUpcoming").addEventListener("click", () => goToLeads("Confirmed"));
+  main.querySelectorAll(".dash-list-item-click").forEach((row) => {
+    row.addEventListener("click", () => {
+      const lead = LEADS.find((l) => l.id === row.dataset.leadId);
+      goToLeads(lead ? lead.stage : "all");
+    });
+  });
+}
+
+// ---------- Tasks ----------
+function renderTasks(main) {
+  main.innerHTML = `
+    <div class="view-head"><div><h2>Tasks</h2><p class="muted">The checklist behind each booking — who's doing what, by when.</p></div></div>
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">New task</div>
+      <div class="task-form">
+        <input type="text" id="taskTitle" placeholder="e.g. Confirm venue booking" />
+        <select id="taskLead"><option value="">No specific lead</option>${LEADS.map((l) => `<option value="${l.id}">${l.name}</option>`).join("")}</select>
+        <select id="taskAssignee"><option value="">Unassigned</option>${TEAM.map((m) => `<option value="${m.id}">${m.name}</option>`).join("")}</select>
+        <input type="date" id="taskDue" />
+        <button class="btn-primary" id="addTaskBtn">Add</button>
+      </div>
+    </div>
+    <div class="table">
+      <div id="taskRows"></div>
+    </div>
+  `;
+
+  const rows = main.querySelector("#taskRows");
+  const today = new Date().toISOString().slice(0, 10);
+  if (TASKS.length === 0) rows.innerHTML = `<div class="board-empty">No tasks yet — add one above</div>`;
+
+  TASKS.forEach((t) => {
+    const lead = LEADS.find((l) => l.id === t.lead_id);
+    const assignee = TEAM.find((m) => m.id === t.assigned_to);
+    const overdue = !t.done && t.due_date && t.due_date < today;
+    rows.appendChild(el(`
+      <div class="task-row${t.done ? " done" : ""}">
+        <input type="checkbox" data-task-id="${t.id}" ${t.done ? "checked" : ""} />
+        <div class="task-title">${t.title}${lead ? ` <span class="muted">— ${lead.name}</span>` : ""}</div>
+        <div class="task-meta${overdue ? " task-overdue" : ""}">${t.due_date ? fmtDate(t.due_date) : "No due date"}</div>
+        <div class="task-meta">${assignee ? assignee.name : "Unassigned"}</div>
+        <button class="icon-btn" data-delete-task="${t.id}">✕</button>
+      </div>
+    `));
+  });
+
+  rows.querySelectorAll("[data-task-id]").forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      await api(`/api/tasks/${cb.dataset.taskId}`, { method: "PATCH", body: JSON.stringify({ done: cb.checked }) });
+      await refreshTasks();
+      renderMain();
+    });
+  });
+  rows.querySelectorAll("[data-delete-task]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await api(`/api/tasks/${btn.dataset.deleteTask}`, { method: "DELETE" });
+      await refreshTasks();
+      renderMain();
+    });
+  });
+
+  main.querySelector("#addTaskBtn").addEventListener("click", async () => {
+    const title = main.querySelector("#taskTitle").value;
+    if (!title) return;
+    await api("/api/tasks", {
+      method: "POST",
+      body: JSON.stringify({
+        title,
+        leadId: main.querySelector("#taskLead").value || null,
+        assignedTo: main.querySelector("#taskAssignee").value || null,
+        dueDate: main.querySelector("#taskDue").value || null,
+      }),
+    });
+    await refreshTasks();
+    renderMain();
+  });
+}
+
+// ---------- Documents ----------
+async function renderDocuments(main) {
+  main.innerHTML = `
+    <div class="view-head"><div><h2>Documents</h2><p class="muted">Contracts, invoices, and files, kept against the booking they belong to.</p></div></div>
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">Upload a file</div>
+      <div class="upload-form">
+        <select id="docLead"><option value="">Not tied to a specific lead</option>${LEADS.map((l) => `<option value="${l.id}">${l.name}</option>`).join("")}</select>
+        <input type="file" id="docFile" />
+        <button class="btn-primary" id="uploadBtn">Upload</button>
+      </div>
+    </div>
+    <div class="table"><div id="docRows"></div></div>
+  `;
+
+  const docs = await api("/api/documents");
+  const rows = main.querySelector("#docRows");
+  if (docs.length === 0) rows.innerHTML = `<div class="board-empty">No documents uploaded yet</div>`;
+  docs.forEach((d) => {
+    const lead = LEADS.find((l) => l.id === d.lead_id);
+    rows.appendChild(el(`
+      <div class="doc-row">
+        <div class="doc-name"><a href="${d.url}" target="_blank">${d.original_name}</a>${lead ? ` <span class="muted">— ${lead.name}</span>` : ""}</div>
+        <div class="muted mono">${fmtDate(d.uploaded_at.slice(0, 10))}</div>
+        <button class="icon-btn" data-delete-doc="${d.id}">✕</button>
+      </div>
+    `));
+  });
+  rows.querySelectorAll("[data-delete-doc]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await fetch(`/api/documents/${btn.dataset.deleteDoc}`, { method: "DELETE" });
+      renderMain();
+    });
+  });
+
+  main.querySelector("#uploadBtn").addEventListener("click", async () => {
+    const fileInput = main.querySelector("#docFile");
+    if (!fileInput.files[0]) return alert("Choose a file first.");
+    const formData = new FormData();
+    formData.append("file", fileInput.files[0]);
+    formData.append("leadId", main.querySelector("#docLead").value || "");
+    const btn = main.querySelector("#uploadBtn");
+    btn.disabled = true;
+    btn.textContent = "Uploading…";
+    try {
+      await fetch("/api/documents", { method: "POST", body: formData });
+      renderMain();
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Upload";
+    }
+  });
+}
+
+
+function openNewLeadModal() {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>New lead</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-body">
+          <label>Name / organisation</label>
+          <input id="mName" placeholder="e.g. Priya & Raj Sharma" />
+          <div class="row-2">
+            <div><label>Phone</label><input id="mPhone" placeholder="+91 ..." /></div>
+            <div><label>Email</label><input id="mEmail" placeholder="name@example.com" /></div>
+          </div>
+          <div class="row-2">
