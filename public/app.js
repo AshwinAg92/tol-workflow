@@ -1702,6 +1702,12 @@ async function openEventChat(leadId, leadName) {
 }
 
 // ---------- Boot ----------
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}
+
 (async function init() {
   try {
     CURRENT_USER = await api("/api/auth/me");
