@@ -26,7 +26,7 @@ const NAV = [
   { id: "leads", label: "Leads" },
   { id: "pipeline", label: "Pipeline" },
   { id: "quotation", label: "Quotation" },
-  { id: "tasks", label: "Tasks" },
+  { id: "tasks", label: "Tasks & Chats" },
   { id: "documents", label: "Documents" },
   { id: "calendar", label: "Calendar" },
   { id: "team", label: "Team" },
@@ -1139,8 +1139,24 @@ async function renderDashboard(main) {
 
 // ---------- Tasks ----------
 function renderTasks(main) {
+  const chatEvents = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed");
   main.innerHTML = `
-    <div class="view-head"><div><h2>Tasks</h2><p class="muted">The checklist behind each booking — who's doing what, by when.</p></div></div>
+    <div class="view-head"><div><h2>Tasks &amp; Chats</h2><p class="muted">The checklist behind each booking, and the team chat for each event.</p></div></div>
+
+    <div class="section-label">Team chats</div>
+    <div class="card" style="margin-bottom:20px;">
+      ${chatEvents.length === 0 ? `<p class="muted small">No confirmed events yet — chats appear here once an event is Confirmed.</p>` : chatEvents.map((l) => `
+        <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div>${l.name}</div>
+            <div class="muted small">${packageName(l.event_type)} · ${fmtDate(l.date)} · ${l.city || ""}</div>
+          </div>
+          <button class="btn-ghost open-event-chat-btn" data-lead-id="${l.id}" data-lead-name="${l.name}">💬 Open chat</button>
+        </div>
+      `).join("")}
+    </div>
+
+    <div class="section-label">Tasks</div>
     <div class="card" style="margin-bottom:16px;">
       <div class="section-label">New task</div>
       <div class="task-form">
@@ -1155,6 +1171,10 @@ function renderTasks(main) {
       <div id="taskRows"></div>
     </div>
   `;
+
+  main.querySelectorAll(".open-event-chat-btn").forEach((btn) => {
+    btn.addEventListener("click", () => openEventChat(btn.dataset.leadId, btn.dataset.leadName));
+  });
 
   const rows = main.querySelector("#taskRows");
   const today = new Date().toISOString().slice(0, 10);
@@ -1479,6 +1499,41 @@ async function handleLogout() {
 }
 
 // ---------- Performer/photographer view (deliberately minimal) ----------
+function performerCalendarMarkup(events) {
+  const first = new Date(calYear, calMonth - 1, 1);
+  const startDay = first.getDay();
+  const daysInMonth = new Date(calYear, calMonth, 0).getDate();
+  const cells = Array(startDay).fill(null).concat(Array.from({ length: daysInMonth }, (_, i) => i + 1));
+  const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C" };
+  const byDay = {};
+  events.forEach((e) => {
+    if (!e.date) return;
+    const d = new Date(e.date + "T00:00:00");
+    if (d.getFullYear() === calYear && d.getMonth() === calMonth - 1) {
+      (byDay[d.getDate()] = byDay[d.getDate()] || []).push(e);
+    }
+  });
+  const cellsHtml = cells.map((d) => {
+    const evs = d ? (byDay[d] || []) : [];
+    return `
+      <div class="cal-cell${d ? "" : " cal-cell-empty"}">
+        ${d ? `<div class="cal-day">${d}</div>` : ""}
+        ${evs.map((ev) => `<div class="cal-event" style="background:${statusColor[ev.status]}; color:#fff;" title="${ev.lead_name} (${ev.status})">${ev.lead_name.split(" ")[0]}</div>`).join("")}
+      </div>
+    `;
+  }).join("");
+  return `
+    <div class="cal-nav">
+      <button class="btn-ghost" id="prevMonth">‹</button>
+      <div class="cal-month">${first.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</div>
+      <button class="btn-ghost" id="nextMonth">›</button>
+    </div>
+    <div class="cal-grid cal-head">${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => `<div>${d}</div>`).join("")}</div>
+    <div class="cal-grid">${cellsHtml}</div>
+    <p class="muted small" style="margin-top:8px;">🟢 Confirmed · 🟠 Tentative (awaiting your response) · 🔴 Declined</p>
+  `;
+}
+
 async function renderPerformerApp() {
   const app = document.querySelector(".tol-app");
   app.innerHTML = `
@@ -1499,37 +1554,60 @@ async function renderPerformerApp() {
   document.getElementById("performerLogout").addEventListener("click", (e) => { e.preventDefault(); handleLogout(); });
 
   CONFIG = await api("/api/config");
-  const events = await api("/api/my/events");
+  const [events, tasks] = await Promise.all([api("/api/my/events"), api("/api/my/tasks")]);
   const body = document.getElementById("performerBody");
-  if (events.length === 0) {
-    body.innerHTML = `<p class="muted" style="padding:20px;">No events assigned to you yet.</p>`;
-    return;
-  }
+
   const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined" };
   const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C" };
+  const paidCount = events.filter((e) => e.paid).length;
+  const unpaidCount = events.length - paidCount;
 
-  body.innerHTML = events.map((e) => `
-    <div class="card performer-event-card">
-      <div class="performer-event-head">
-        <div>
-          <div class="team-name">${e.lead_name}</div>
-          <div class="muted small">${packageName(e.event_type)} · ${fmtDate(e.date)} · ${e.city || ""}</div>
-        </div>
-        <span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status]}</span>
-      </div>
-      <div class="performer-event-row">
-        <span class="muted small">Payment:</span>
-        <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
-      </div>
-      ${e.status === "pending" ? `
-        <div style="margin-top:10px; display:flex; gap:8px;">
-          <button class="btn-primary" data-respond="${e.id}" data-status="accepted">Accept</button>
-          <button class="btn-ghost" data-respond="${e.id}" data-status="declined">Decline</button>
-        </div>
-      ` : ""}
-      <button class="btn-ghost full" data-chat-lead="${e.lead_id}" data-chat-name="${e.lead_name}" style="margin-top:10px;">💬 Event chat</button>
+  body.innerHTML = `
+    <div class="dash-stats" style="grid-template-columns:1fr 1fr;">
+      <div class="card dash-stat"><div class="muted">Paid</div><div class="mono big" style="color:#5C8A6B">${paidCount}</div></div>
+      <div class="card dash-stat"><div class="muted">Unpaid</div><div class="mono big" style="color:#A64B3C">${unpaidCount}</div></div>
     </div>
-  `).join("");
+
+    <div class="section-label">Calendar</div>
+    <div class="card" id="perfCalCard" style="margin-bottom:20px;">${performerCalendarMarkup(events)}</div>
+
+    <div class="section-label">Your events</div>
+    ${events.length === 0 ? `<p class="muted small" style="margin-bottom:20px;">No events assigned to you yet.</p>` : events.map((e) => `
+      <div class="card performer-event-card">
+        <div class="performer-event-head">
+          <div>
+            <div class="team-name">${e.lead_name}</div>
+            <div class="muted small">${packageName(e.event_type)} · ${fmtDate(e.date)} · ${e.city || ""}</div>
+          </div>
+          <span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status]}</span>
+        </div>
+        <div class="performer-event-row">
+          <span class="muted small">Payment:</span>
+          <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
+        </div>
+        ${e.status === "pending" ? `
+          <div style="margin-top:10px; display:flex; gap:8px;">
+            <button class="btn-primary" data-respond="${e.id}" data-status="accepted">Accept</button>
+            <button class="btn-ghost" data-respond="${e.id}" data-status="declined">Decline</button>
+          </div>
+        ` : ""}
+        <button class="btn-ghost full" data-chat-lead="${e.lead_id}" data-chat-name="${e.lead_name}" style="margin-top:10px;">💬 Event chat</button>
+      </div>
+    `).join("")}
+
+    <div class="section-label" style="margin-top:20px;">Your tasks</div>
+    <div class="card" id="perfTasksCard">
+      ${tasks.length === 0 ? `<p class="muted small">No tasks assigned to you.</p>` : tasks.map((t) => `
+        <div class="task-row${t.done ? " done" : ""}">
+          <input type="checkbox" data-task-id="${t.id}" ${t.done ? "checked" : ""} />
+          <div class="task-title">${t.title}</div>
+          <div class="task-meta">${t.due_date ? fmtDate(t.due_date) : "No due date"}</div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+
+  wireCalendarGridPerformer(document.getElementById("perfCalCard"), events);
 
   body.querySelectorAll("[data-respond]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -1539,6 +1617,26 @@ async function renderPerformerApp() {
   });
   body.querySelectorAll("[data-chat-lead]").forEach((btn) => {
     btn.addEventListener("click", () => openEventChat(btn.dataset.chatLead, btn.dataset.chatName));
+  });
+  body.querySelectorAll("[data-task-id]").forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      await api(`/api/tasks/${cb.dataset.taskId}`, { method: "PATCH", body: JSON.stringify({ done: cb.checked }) });
+      renderPerformerApp();
+    });
+  });
+}
+
+function wireCalendarGridPerformer(container, events) {
+  if (!container) return;
+  container.querySelector("#prevMonth").addEventListener("click", () => {
+    calMonth--; if (calMonth < 1) { calMonth = 12; calYear--; }
+    container.innerHTML = performerCalendarMarkup(events);
+    wireCalendarGridPerformer(container, events);
+  });
+  container.querySelector("#nextMonth").addEventListener("click", () => {
+    calMonth++; if (calMonth > 12) { calMonth = 1; calYear++; }
+    container.innerHTML = performerCalendarMarkup(events);
+    wireCalendarGridPerformer(container, events);
   });
 }
 

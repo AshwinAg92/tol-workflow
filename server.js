@@ -533,6 +533,15 @@ app.delete("/api/expenses/:id", requireAuth, requireAdmin, async (req, res) => {
 });
 
 // ---------- Tasks ----------
+app.get("/api/my/tasks", requireAuth, async (req, res) => {
+  if (!req.user.team_id) return res.json([]);
+  const { rows } = await pool.query(
+    "SELECT * FROM tasks WHERE assigned_to = $1 ORDER BY done ASC, due_date ASC",
+    [req.user.team_id]
+  );
+  res.json(rows);
+});
+
 app.get("/api/tasks", requireAuth, async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM tasks ORDER BY done ASC, due_date ASC");
   res.json(rows);
@@ -552,6 +561,12 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
 app.patch("/api/tasks/:id", requireAuth, async (req, res) => {
   const task = (await pool.query("SELECT * FROM tasks WHERE id = $1", [req.params.id])).rows[0];
   if (!task) return res.status(404).json({ error: "Task not found" });
+  if (req.user.access_level === "performer") {
+    if (task.assigned_to !== req.user.team_id) return res.status(403).json({ error: "Not your task" });
+    if (req.body.done === undefined || Object.keys(req.body).length > 1) {
+      return res.status(403).json({ error: "You can only mark your own tasks done/not done" });
+    }
+  }
   const fields = { done: "done", title: "title", due_date: "dueDate", assigned_to: "assignedTo" };
   const updates = [];
   const values = [];
