@@ -68,10 +68,31 @@ function renderNav() {
   nav.innerHTML = "";
   NAV.forEach(({ id, label }) => {
     const btn = el(`<button class="nav-item${currentTab === id ? " nav-item-active" : ""}">${label}</button>`);
-    btn.addEventListener("click", () => { currentTab = id; renderNav(); renderMain(); });
+    btn.addEventListener("click", () => {
+      currentTab = id;
+      renderNav();
+      renderMain();
+      closeMobileSidebar();
+    });
     nav.appendChild(btn);
   });
   document.getElementById("sidebarFoot").textContent = "Live — SQLite backend";
+}
+
+// ---------- Mobile sidebar toggle ----------
+function closeMobileSidebar() {
+  document.getElementById("sidebar")?.classList.remove("sidebar-open");
+  document.getElementById("sidebarOverlay")?.classList.remove("active");
+}
+function initMobileNav() {
+  const menuBtn = document.getElementById("mobileMenuBtn");
+  const sidebar = document.getElementById("sidebar");
+  const overlay = document.getElementById("sidebarOverlay");
+  menuBtn?.addEventListener("click", () => {
+    sidebar.classList.add("sidebar-open");
+    overlay.classList.add("active");
+  });
+  overlay?.addEventListener("click", closeMobileSidebar);
 }
 
 // Jump from a dashboard card straight to the matching filtered Leads list.
@@ -246,7 +267,6 @@ function renderPipeline(main) {
   main.querySelector("#newLeadBtn2").addEventListener("click", openNewLeadModal);
 }
 
-// ---------- Quotation ----------
 // ---------- Quotation ----------
 function renderQuotation(main) {
   const quotable = LEADS.filter((l) => l.stage !== "Completed");
@@ -465,6 +485,7 @@ async function renderAccounts(main) {
     `));
   });
 }
+
 // ---------- Dashboard ----------
 async function renderDashboard(main) {
   const data = await api("/api/dashboard");
@@ -647,7 +668,7 @@ function openNewLeadModal() {
             <div><label>Email</label><input id="mEmail" placeholder="name@example.com" /></div>
           </div>
           <div class="row-2">
-          <div><label>Format wanted</label><select id="mType">${CONFIG.packages.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}</select></div>
+            <div><label>Format wanted</label><select id="mType">${CONFIG.packages.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}</select></div>
             <div><label>City</label><input id="mCity" placeholder="e.g. Siliguri" /></div>
           </div>
           <div class="row-2">
@@ -704,4 +725,5 @@ function renderMain() {
   await loadAll();
   renderNav();
   renderMain();
+  initMobileNav();
 })();

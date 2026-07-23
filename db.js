@@ -1,9 +1,17 @@
 const Database = require("better-sqlite3");
 const path = require("path");
+const fs = require("fs");
 const { v4: uuid } = require("uuid");
 const { TEAM } = require("./config");
 
-const db = new Database(path.join(__dirname, "tol.db"));
+// IMPORTANT: this file must live on a persistent Railway Volume, not the app's
+// own project folder — Railway rebuilds the container filesystem from scratch
+// on every deploy, so anything not on a mounted Volume gets wiped each time.
+// Set DB_PATH to the Volume's mount path (e.g. /data/tol.db) in Railway's
+// Variables tab. Falls back to a local file for running this on your own machine.
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, "tol.db");
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 
 db.exec(`
