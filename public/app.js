@@ -604,7 +604,7 @@ function renderLeadsLog(main) {
           <span class="muted small">${fmtDateTime(l.created_at)}</span>
           <span>
             <select class="stage-select" data-lead-id="${l.id}" style="color:${STAGE_COLOR[l.stage]}">
-              ${CONFIG.stages.map((s) => `<option value="${s}" ${s === l.stage ? "selected" : ""}>${s}</option>`).join("")}
+              ${CONFIG.stages.filter((s) => s !== "Completed" || s === l.stage).map((s) => `<option value="${s}" ${s === l.stage ? "selected" : ""}>${s}</option>`).join("")}
             </select>
           </span>
           <span style="display:flex; flex-direction:column; gap:4px;">

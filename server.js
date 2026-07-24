@@ -394,6 +394,14 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     if (req.body.advanceDate > today) return res.status(400).json({ error: "Advance received date can't be in the future" });
   }
 
+  if (req.body.stage === "Completed" && lead.stage !== "Completed") {
+    const today = new Date().toISOString().slice(0, 10);
+    const effectiveDate = req.body.date || lead.date;
+    if (!(effectiveDate < today)) {
+      return res.status(400).json({ error: "Can't mark as Completed until the day after the event date — this happens automatically." });
+    }
+  }
+
   const fields = ["stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes"];
   const updates = [];
   const values = [];
