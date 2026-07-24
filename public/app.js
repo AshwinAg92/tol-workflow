@@ -1052,7 +1052,7 @@ async function renderTeam(main) {
         renderMain();
       });
     });
-    main.querySelector("#addMemberBtn").addEventListener("click", openAddMemberModal);
+    main.querySelector("#addMemberBtn").addEventListener("click", () => openAddMemberModal());
     const clearBtn = main.querySelector("#clearDemoBtn");
     if (clearBtn) {
       clearBtn.addEventListener("click", async () => {
@@ -1156,7 +1156,7 @@ function openAddMemberModal(onCreated) {
       const teamData = await api("/api/team");
       TEAM = teamData;
       close();
-      if (onCreated) onCreated(result);
+      if (typeof onCreated === "function") onCreated(result);
       else renderMain();
     } catch (err) {
       alert(err.message);
