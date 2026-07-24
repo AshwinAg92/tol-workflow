@@ -14,7 +14,7 @@ let calYear = new Date().getFullYear(), calMonth = new Date().getMonth() + 1; //
 
 const STAGE_COLOR = {
   New: "#8A8578",
-  Quoted: "#C98B3D",
+  Quoted: "#C1602B",
   "Follow-up": "#B6752C",
   Confirmed: "#5C8A6B",
   Completed: "#2E5C63",
@@ -422,7 +422,7 @@ function renderNav() {
   });
   document.getElementById("sidebarFoot").innerHTML = `
     <div>${CURRENT_USER ? `${CURRENT_USER.username} <span class="muted">(${CURRENT_USER.accessLevel})</span>` : ""}</div>
-    <a href="#" id="logoutLink" style="color:#C98B3D;">Log out</a>
+    <a href="#" id="logoutLink" style="color:#C1602B;">Log out</a>
   `;
   const logoutLink = document.getElementById("logoutLink");
   if (logoutLink) logoutLink.addEventListener("click", (e) => { e.preventDefault(); handleLogout(); });
@@ -1697,7 +1697,7 @@ async function renderDashboard(main) {
     </div>
     ${teamNotifs.length > 0 ? `
       <div class="section-label">🔔 Team responses</div>
-      <div class="card" id="teamNotifCard" style="margin-bottom:16px; border-color:#C98B3D;">
+      <div class="card" id="teamNotifCard" style="margin-bottom:16px; border-color:#C1602B;">
         ${teamNotifs.map((n) => `
           <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
             <div>
@@ -1717,7 +1717,7 @@ async function renderDashboard(main) {
     ` : ""}
     ${announcements.length > 0 ? `
       <div class="section-label">📢 Announcements</div>
-      <div class="card" style="margin-bottom:16px; border-color:#C98B3D;">
+      <div class="card" style="margin-bottom:16px; border-color:#C1602B;">
         ${announcements.map((a) => `
           <div class="dash-list-item">
             <div>${a.message}</div>
@@ -2137,7 +2137,7 @@ function renderLoginScreen(errorMsg) {
   app.innerHTML = `
     <div class="login-screen">
       <div class="login-card card">
-        <div class="brand-mark" style="margin:0 auto 14px;">TOL</div>
+        <img src="/logo.png" class="brand-mark" style="margin:0 auto 14px;" alt="Together, Out Loud" />
         <h2 style="text-align:center; margin-bottom:4px;">Together, Out Loud</h2>
         <p class="muted" style="text-align:center; margin-bottom:20px;">Sign in to the workflow app</p>
         ${errorMsg ? `<p style="color:#A64B3C; font-size:13px; margin-bottom:10px;">${errorMsg}</p>` : ""}
@@ -2212,12 +2212,12 @@ async function renderPerformerApp() {
   app.innerHTML = `
     <div class="performer-app">
       <div class="performer-header">
-        <div class="brand-mark">TOL</div>
+        <img src="/logo.png" class="brand-mark" alt="Together, Out Loud" />
         <div>
           <div class="brand-name">Together, Out Loud</div>
           <div class="muted small">${CURRENT_USER.username}</div>
         </div>
-        <a href="#" id="performerLogout" style="margin-left:auto; color:#C98B3D;">Log out</a>
+        <a href="#" id="performerLogout" style="margin-left:auto; color:#C1602B;">Log out</a>
       </div>
       <div class="performer-body" id="performerBody">
         <p class="muted">Loading your events…</p>
@@ -2241,7 +2241,7 @@ async function renderPerformerApp() {
   body.innerHTML = `
     ${notifications.length > 0 ? `
       <div class="section-label">🔔 Updates for you</div>
-      <div class="card" id="perfNotifCard" style="margin-bottom:20px; border-color:#C98B3D;">
+      <div class="card" id="perfNotifCard" style="margin-bottom:20px; border-color:#C1602B;">
         ${notifications.map((n) => `
           <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
             <div><div>${n.message}</div><div class="muted small">${fmtDateTime(n.created_at)}</div></div>
@@ -2252,7 +2252,7 @@ async function renderPerformerApp() {
     ` : ""}
     ${announcements.length > 0 ? `
       <div class="section-label">📢 Announcements</div>
-      <div class="card" style="margin-bottom:20px; border-color:#C98B3D;">
+      <div class="card" style="margin-bottom:20px; border-color:#C1602B;">
         ${announcements.map((a) => `
           <div class="dash-list-item">
             <div>${a.message}</div>
