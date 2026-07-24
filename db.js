@@ -158,6 +158,11 @@ async function setup() {
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payment_mode TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS advance_date TEXT`);
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS specialty TEXT`);
+  await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS lead_id TEXT REFERENCES leads(id)`);
+  await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS from_team_id TEXT REFERENCES team(id)`);
+  await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'info'`);
+  await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'`);
+  // team_id nullable already — NULL means "for admin" rather than a specific performer.
   await pool.query(`ALTER TABLE event_assignments ADD COLUMN IF NOT EXISTS cancel_reason TEXT`);
 
   // One-time migration: bring any existing single "advance" amount into the new
