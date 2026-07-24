@@ -120,7 +120,12 @@ app.post("/api/auth/logout", (req, res) => {
 app.get("/api/auth/me", async (req, res) => {
   const user = await getSessionUser(req);
   if (!user) return res.status(401).json({ error: "Not authenticated" });
-  res.json({ id: user.id, username: user.username, accessLevel: user.access_level });
+  let name = user.username;
+  if (user.team_id) {
+    const member = (await pool.query("SELECT name FROM team WHERE id = $1", [user.team_id])).rows[0];
+    if (member) name = member.name;
+  }
+  res.json({ id: user.id, username: user.username, accessLevel: user.access_level, name });
 });
 
 // ---------- User accounts (admin only) — add teammates with their own login ----------

@@ -421,7 +421,7 @@ function renderNav() {
     nav.appendChild(btn);
   });
   document.getElementById("sidebarFoot").innerHTML = `
-    <div>${CURRENT_USER ? `${CURRENT_USER.username} <span class="muted">(${CURRENT_USER.accessLevel})</span>` : ""}</div>
+    <div>${CURRENT_USER ? `${CURRENT_USER.name || CURRENT_USER.username} <span class="muted">(${CURRENT_USER.accessLevel})</span>` : ""}</div>
     <a href="#" id="logoutLink" style="color:#C1602B;">Log out</a>
   `;
   const logoutLink = document.getElementById("logoutLink");
@@ -2214,8 +2214,8 @@ async function renderPerformerApp() {
       <div class="performer-header">
         <img src="/logo.png" class="brand-mark" alt="Together, Out Loud" />
         <div>
-          <div class="brand-name">Together, Out Loud</div>
-          <div class="muted small">${CURRENT_USER.username}</div>
+          <div class="brand-name">${CURRENT_USER.name || CURRENT_USER.username}</div>
+          <div class="muted small">Together, Out Loud</div>
         </div>
         <a href="#" id="performerLogout" style="margin-left:auto; color:#C1602B;">Log out</a>
       </div>
@@ -2237,8 +2237,26 @@ async function renderPerformerApp() {
   const activeEvents = events.filter((e) => e.stage !== "Cancelled");
   const paidCount = activeEvents.filter((e) => e.paid).length;
   const unpaidCount = activeEvents.length - paidCount;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const weekAhead = new Date(today.getTime() + 7 * 86400000);
+  const soonEvents = activeEvents.filter((e) => {
+    if (e.status !== "accepted" || !e.date) return false;
+    const d = new Date(e.date + "T00:00:00");
+    return d >= today && d <= weekAhead;
+  });
 
   body.innerHTML = `
+    ${soonEvents.length > 0 ? `
+      <div class="section-label">⏰ Coming up this week</div>
+      <div class="card reminder-flash" style="margin-bottom:20px;">
+        ${soonEvents.map((e) => `
+          <div class="dash-list-item">
+            <div><strong>${e.lead_name}</strong> — ${packageName(e.event_type)}</div>
+            <div class="muted small">${fmtDate(e.date)}${e.city ? ` · ${e.city}` : ""}</div>
+          </div>
+        `).join("")}
+      </div>
+    ` : ""}
     ${notifications.length > 0 ? `
       <div class="section-label">🔔 Updates for you</div>
       <div class="card" id="perfNotifCard" style="margin-bottom:20px; border-color:#C1602B;">
@@ -2463,6 +2481,8 @@ if ("serviceWorker" in navigator) {
     renderPerformerApp();
     return;
   }
+  const brandTag = document.getElementById("brandTag");
+  if (brandTag) brandTag.textContent = CURRENT_USER.name || CURRENT_USER.username;
   await loadAll();
   renderNav();
   renderMain();
