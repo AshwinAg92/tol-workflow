@@ -611,6 +611,7 @@ app.post("/api/admin/clear-demo-data", requireAuth, requireAdmin, async (req, re
   const demoNames = ["Divya", "Karan", "Neha", "Devin"];
   try {
     await pool.query("DELETE FROM event_assignments");
+    await pool.query("DELETE FROM event_messages");
     await pool.query("DELETE FROM expenses");
     await pool.query("DELETE FROM quotes");
     await pool.query("DELETE FROM payments");
