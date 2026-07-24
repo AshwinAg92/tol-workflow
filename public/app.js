@@ -1015,7 +1015,11 @@ async function renderTeam(main) {
   });
   if (isAdmin) {
     main.querySelectorAll("[data-edit-member]").forEach((btn) => {
-      btn.addEventListener("click", () => openEditMemberModal(TEAM.find((m) => m.id === btn.dataset.editMember)));
+      btn.addEventListener("click", () => {
+        const member = TEAM.find((m) => m.id === btn.dataset.editMember);
+        const linkedUser = users.find((u) => u.team_id === member.id);
+        openEditMemberModal(member, linkedUser);
+      });
     });
     main.querySelectorAll("[data-add-login]").forEach((btn) => {
       btn.addEventListener("click", () => openAddLoginForMemberModal(TEAM.find((m) => m.id === btn.dataset.addLogin)));
@@ -1214,7 +1218,7 @@ function openAddLoginForMemberModal(member) {
   });
 }
 
-function openEditMemberModal(member) {
+function openEditMemberModal(member, linkedUser) {
   const root = document.getElementById("modalRoot");
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
@@ -1223,6 +1227,14 @@ function openEditMemberModal(member) {
         <div class="modal-body">
           <label>Name</label>
           <input id="emName" value="${member.name}" />
+          ${linkedUser ? `
+            <label>Access level</label>
+            <select id="emAccess">
+              <option value="staff" ${linkedUser.access_level === "staff" ? "selected" : ""}>Staff — everyday use, can't manage logins</option>
+              <option value="performer" ${linkedUser.access_level === "performer" ? "selected" : ""}>Performer — musicians/photographers: just their events, pay status, and event chat</option>
+              <option value="admin" ${linkedUser.access_level === "admin" ? "selected" : ""}>Admin — full access, including adding/removing logins</option>
+            </select>
+          ` : `<p class="muted small">No login yet for this person — add a username/password below to create one.</p>`}
           <div class="row-2">
             <div><label>Role / title</label><input id="emRole" value="${member.role || ""}" /></div>
             <div><label>Specialty (optional)</label><input id="emSpecialty" value="${member.specialty || ""}" placeholder="e.g. Drummer, Photographer" /></div>
@@ -1231,6 +1243,23 @@ function openEditMemberModal(member) {
             <div><label>Phone</label><input id="emPhone" value="${member.phone || ""}" /></div>
             <div><label>Email</label><input id="emEmail" value="${member.email || ""}" /></div>
           </div>
+          <div class="row-2">
+            <div><label>Username</label><input id="emUsername" value="${linkedUser ? linkedUser.username : ""}" placeholder="${linkedUser ? "" : "Leave blank for no login"}" /></div>
+            <div><label>${linkedUser ? "New password (leave blank to keep unchanged)" : "Password"}</label>
+              <div class="password-field">
+                <input id="emPassword" type="password" placeholder="${linkedUser ? "••••••••" : "Choose a password"}" />
+                <button type="button" class="password-toggle" data-toggle-for="emPassword">Show</button>
+              </div>
+            </div>
+          </div>
+          <button type="button" class="btn-ghost" id="genPasswordBtn" style="margin-top:6px;">🎲 Generate a new password</button>
+          <p class="muted small" id="genPasswordNote" style="display:none; margin-top:6px;">Copy this now — it can't be viewed again once saved (only reset).</p>
+          ${!linkedUser ? `<label style="margin-top:10px;">Access level (for the new login)</label>
+            <select id="emAccess">
+              <option value="staff">Staff — everyday use, can't manage logins</option>
+              <option value="performer">Performer — musicians/photographers: just their events, pay status, and event chat</option>
+              <option value="admin">Admin — full access, including adding/removing logins</option>
+            </select>` : ""}
         </div>
         <div class="modal-foot">
           <button class="btn-ghost" id="deleteMember" style="color:#A64B3C;">Remove member</button>
@@ -1240,6 +1269,14 @@ function openEditMemberModal(member) {
       </div>
     </div>
   `;
+  wirePasswordToggles(root);
+  root.querySelector("#genPasswordBtn").addEventListener("click", () => {
+    const pw = Math.random().toString(36).slice(-4) + Math.floor(1000 + Math.random() * 9000);
+    const input = root.querySelector("#emPassword");
+    input.type = "text";
+    input.value = pw;
+    root.querySelector("#genPasswordNote").style.display = "block";
+  });
   const close = () => (root.innerHTML = "");
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#cancelModal").addEventListener("click", close);
@@ -1256,6 +1293,20 @@ function openEditMemberModal(member) {
           email: root.querySelector("#emEmail").value,
         }),
       });
+      const username = root.querySelector("#emUsername").value;
+      const password = root.querySelector("#emPassword").value;
+      const accessLevel = root.querySelector("#emAccess")?.value;
+      if (linkedUser) {
+        await api(`/api/users/${linkedUser.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ username, password: password || undefined, accessLevel }),
+        });
+      } else if (username && password) {
+        await api("/api/users", {
+          method: "POST",
+          body: JSON.stringify({ existingTeamId: member.id, username, password, accessLevel }),
+        });
+      }
       const teamData = await api("/api/team");
       TEAM = teamData;
       close();
