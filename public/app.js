@@ -947,12 +947,49 @@ async function renderTeam(main) {
       <div><h2>Team</h2><p class="muted">Who's carrying which leads right now.</p></div>
       ${isAdmin ? `<button class="btn-primary" id="addMemberBtn">+ Add team member</button>` : ""}
     </div>
+    ${isAdmin ? `
+      <div class="section-label">Broadcast to team</div>
+      <div class="card" style="margin-bottom:20px;">
+        <textarea id="announceText" rows="2" placeholder="e.g. Reminder: team meeting tomorrow at 6pm" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:13px;"></textarea>
+        <button class="btn-primary" id="sendAnnounceBtn" style="margin-top:8px;">📢 Send to everyone</button>
+        <div id="announceList" style="margin-top:12px;"></div>
+      </div>
+    ` : ""}
     <div class="team-grid" id="teamGrid"></div>
     ${isAdmin ? `
       <div class="section-label" style="margin-top:24px;">Logins</div>
       <div class="table" id="userRows"></div>
     ` : ""}
   `;
+
+  if (isAdmin) {
+    const renderAnnouncements = async () => {
+      const list = await api("/api/announcements");
+      const el2 = main.querySelector("#announceList");
+      if (!el2) return;
+      el2.innerHTML = list.length === 0 ? "" : list.map((a) => `
+        <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
+          <div><div>${a.message}</div><div class="muted small">${a.created_by} · ${fmtDateTime(a.created_at)}</div></div>
+          <button class="icon-btn" data-delete-announce="${a.id}">✕</button>
+        </div>
+      `).join("");
+      el2.querySelectorAll("[data-delete-announce]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          await api(`/api/announcements/${btn.dataset.deleteAnnounce}`, { method: "DELETE" });
+          renderAnnouncements();
+        });
+      });
+    };
+    renderAnnouncements();
+    main.querySelector("#sendAnnounceBtn").addEventListener("click", async () => {
+      const text = main.querySelector("#announceText").value;
+      if (!text.trim()) return;
+      await api("/api/announcements", { method: "POST", body: JSON.stringify({ message: text }) });
+      main.querySelector("#announceText").value = "";
+      renderAnnouncements();
+    });
+  }
+
   const grid = main.querySelector("#teamGrid");
   TEAM.forEach((m) => {
     grid.appendChild(el(`
@@ -960,7 +997,7 @@ async function renderTeam(main) {
         ${isAdmin ? `<button class="icon-btn" data-edit-member="${m.id}" style="float:right;">✎</button>` : ""}
         <div class="team-avatar">${m.name[0]}</div>
         <div class="team-name">${m.name}</div>
-        <div class="muted">${m.role || ""}</div>
+        <div class="muted">${m.role || ""}${m.specialty ? ` · ${m.specialty}` : ""}</div>
         ${m.phone ? `<div class="muted small">${m.phone}</div>` : ""}
         ${m.email ? `<div class="muted small">${m.email}</div>` : ""}
         <div class="team-count mono">${m.activeLeads.length} active lead${m.activeLeads.length === 1 ? "" : "s"}</div>
@@ -1020,7 +1057,7 @@ function wirePasswordToggles(root) {
   });
 }
 
-function openAddMemberModal() {
+function openAddMemberModal(onCreated) {
   const root = document.getElementById("modalRoot");
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
@@ -1029,8 +1066,12 @@ function openAddMemberModal() {
         <div class="modal-body">
           <label>Name</label>
           <input id="nmName" placeholder="e.g. Karan Mehta" />
-          <label>Role / title</label>
-          <input id="nmRole" placeholder="e.g. Logistics & Sound" />
+          <div class="row-2">
+            <div><label>Role / title</label><input id="nmRole" placeholder="e.g. Logistics & Sound" /></div>
+            <div><label>Specialty (optional)</label><input id="nmSpecialty" placeholder="e.g. Drummer, Photographer" /></div>
+          </div>
+          <label>Phone</label>
+          <input id="nmPhone" placeholder="+91 ..." />
           <div class="row-2">
             <div><label>Username</label><input id="nmUsername" placeholder="e.g. karan" /></div>
             <div><label>Password</label>
@@ -1062,11 +1103,13 @@ function openAddMemberModal() {
     const password = root.querySelector("#nmPassword").value;
     if (!name || !username || !password) return alert("Name, username, and password are required.");
     try {
-      await api("/api/users", {
+      const result = await api("/api/users", {
         method: "POST",
         body: JSON.stringify({
           name,
           roleTitle: root.querySelector("#nmRole").value,
+          specialty: root.querySelector("#nmSpecialty").value,
+          phone: root.querySelector("#nmPhone").value,
           username,
           password,
           accessLevel: root.querySelector("#nmAccess").value,
@@ -1075,7 +1118,8 @@ function openAddMemberModal() {
       const teamData = await api("/api/team");
       TEAM = teamData;
       close();
-      renderMain();
+      if (onCreated) onCreated(result);
+      else renderMain();
     } catch (err) {
       alert(err.message);
     }
@@ -1145,8 +1189,10 @@ function openEditMemberModal(member) {
         <div class="modal-body">
           <label>Name</label>
           <input id="emName" value="${member.name}" />
-          <label>Role / title</label>
-          <input id="emRole" value="${member.role || ""}" />
+          <div class="row-2">
+            <div><label>Role / title</label><input id="emRole" value="${member.role || ""}" /></div>
+            <div><label>Specialty (optional)</label><input id="emSpecialty" value="${member.specialty || ""}" placeholder="e.g. Drummer, Photographer" /></div>
+          </div>
           <div class="row-2">
             <div><label>Phone</label><input id="emPhone" value="${member.phone || ""}" /></div>
             <div><label>Email</label><input id="emEmail" value="${member.email || ""}" /></div>
@@ -1171,6 +1217,7 @@ function openEditMemberModal(member) {
         body: JSON.stringify({
           name: root.querySelector("#emName").value,
           role: root.querySelector("#emRole").value,
+          specialty: root.querySelector("#emSpecialty").value,
           phone: root.querySelector("#emPhone").value,
           email: root.querySelector("#emEmail").value,
         }),
@@ -1272,6 +1319,7 @@ async function openAssignTeamModal(leadId) {
               </label>
             `;
           }).join("")}
+          <button class="btn-ghost full" id="addMemberInlineBtn" style="margin-top:10px;">+ Add new member</button>
         </div>
         <div class="modal-foot">
           <button class="btn-ghost" id="openChatBtn">💬 Event chat</button>
@@ -1286,6 +1334,9 @@ async function openAssignTeamModal(leadId) {
   root.querySelector("#cancelModal").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
   root.querySelector("#openChatBtn").addEventListener("click", () => openEventChat(leadId, lead.name));
+  root.querySelector("#addMemberInlineBtn").addEventListener("click", () => {
+    openAddMemberModal(() => openAssignTeamModal(leadId));
+  });
 
   root.querySelector("#submitModal").addEventListener("click", async () => {
     const checked = [...root.querySelectorAll("[data-team-id]:checked")].map((c) => c.dataset.teamId);
@@ -1359,9 +1410,28 @@ async function renderAccounts(main) {
         </select>
         <input id="expCustomHead" placeholder="Custom expense name" style="display:none; flex:1; min-width:140px;" />
         <input id="expAmount" type="number" placeholder="Amount ₹" style="width:130px;" />
+        <input id="expDate" type="date" max="${new Date().toISOString().slice(0, 10)}" />
+        <select id="expMode">
+          <option value="">Mode —</option>
+          <option value="Cash">Cash</option>
+          <option value="UPI">UPI</option>
+        </select>
+        <label class="muted small" style="display:flex; align-items:center; gap:5px; white-space:nowrap;">
+          <input type="checkbox" id="expPaidNow" /> Already paid
+        </label>
         <button class="btn-primary" id="addExpenseBtn">Add</button>
       </div>
     </div>
+
+    <div class="section-label">Recent transactions</div>
+    <div class="table" style="margin-bottom:24px;">
+      <div class="table-head" style="grid-template-columns:1fr 1.3fr 1fr 0.9fr 0.7fr;">
+        <span>Date</span><span>Party</span><span class="right">Amount</span><span>Mode</span><span></span>
+      </div>
+      <div id="txnRows"><div class="board-empty">Loading…</div></div>
+    </div>
+
+    <div class="section-label">Pending expenses (not yet paid)</div>
     <div class="table">
       <div class="table-head" style="grid-template-columns:1.2fr 1.1fr 0.9fr 0.6fr 1fr 0.8fr 0.9fr;">
         <span>Head</span><span>Event</span><span class="right">Amount</span><span>Paid</span><span>Payment date</span><span>Mode</span><span></span>
@@ -1369,6 +1439,24 @@ async function renderAccounts(main) {
       <div id="expenseRows"></div>
     </div>
   `;
+
+  api("/api/transactions").then((txns) => {
+    const txnRows = main.querySelector("#txnRows");
+    if (!txnRows) return;
+    if (txns.length === 0) { txnRows.innerHTML = `<div class="board-empty">No transactions recorded yet</div>`; return; }
+    txnRows.innerHTML = "";
+    txns.forEach((t) => {
+      txnRows.appendChild(el(`
+        <div class="table-row" style="grid-template-columns:1fr 1.3fr 1fr 0.9fr 0.7fr;">
+          <span class="mono">${fmtDate(t.date)}</span>
+          <span>${t.party_name}<div class="muted small">${t.description}</div></span>
+          <span class="right mono" style="color:${t.direction === "in" ? "#5C8A6B" : "#A64B3C"};">${t.direction === "in" ? "+" : "−"}${inr(t.amount)}</span>
+          <span>${t.mode || "—"}</span>
+          <span class="tag" style="color:${t.direction === "in" ? "#5C8A6B" : "#A64B3C"};">${t.direction === "in" ? "Received" : "Paid out"}</span>
+        </div>
+      `));
+    });
+  });
 
   const rows = main.querySelector("#acctRows");
   if (bookings.length === 0) rows.innerHTML = `<div class="board-empty">No confirmed or completed bookings yet</div>`;
@@ -1395,9 +1483,10 @@ async function renderAccounts(main) {
 
   function renderExpenseRows() {
     const expRows = main.querySelector("#expenseRows");
-    if (expenses.length === 0) { expRows.innerHTML = `<div class="board-empty">No expenses logged yet</div>`; return; }
+    const pending = expenses.filter((e) => !e.paid);
+    if (pending.length === 0) { expRows.innerHTML = `<div class="board-empty">Nothing pending — all expenses are paid</div>`; return; }
     expRows.innerHTML = "";
-    expenses.forEach((e) => {
+    pending.forEach((e) => {
       const lead = LEADS.find((l) => l.id === e.lead_id);
       const member = TEAM.find((m) => m.id === e.team_id);
       expRows.appendChild(el(`
@@ -1463,6 +1552,9 @@ async function renderAccounts(main) {
     } else {
       head = expType;
     }
+    const paidNow = main.querySelector("#expPaidNow").checked;
+    const expDate = main.querySelector("#expDate").value;
+    if (paidNow && !expDate) return alert("Enter the payment date, or uncheck 'Already paid'.");
     await api("/api/expenses", {
       method: "POST",
       body: JSON.stringify({
@@ -1470,6 +1562,9 @@ async function renderAccounts(main) {
         amount,
         leadId: main.querySelector("#expLead").value || null,
         teamId,
+        paid: paidNow,
+        paymentDate: expDate || null,
+        paymentMode: main.querySelector("#expMode").value || null,
       }),
     });
     renderMain();
@@ -1579,12 +1674,23 @@ function renderPartyLedgerDetail(container, booking) {
 
 // ---------- Dashboard ----------
 async function renderDashboard(main) {
-  const data = await api("/api/dashboard");
+  const [data, announcements] = await Promise.all([api("/api/dashboard"), api("/api/announcements")]);
   main.innerHTML = `
     <div class="view-head">
       <div><h2>Dashboard</h2><p class="muted">The three things that matter today — click any card to see the list.</p></div>
       <button class="btn-ghost" id="dashExportBtn">⬇ Export to Excel</button>
     </div>
+    ${announcements.length > 0 ? `
+      <div class="section-label">📢 Announcements</div>
+      <div class="card" style="margin-bottom:16px; border-color:#C98B3D;">
+        ${announcements.map((a) => `
+          <div class="dash-list-item">
+            <div>${a.message}</div>
+            <div class="muted small">${a.created_by} · ${fmtDateTime(a.created_at)}</div>
+          </div>
+        `).join("")}
+      </div>
+    ` : ""}
     <div class="dash-stats">
       <button class="card dash-stat dash-stat-click" id="statNew"><div class="muted">New queries</div><div class="mono big">${data.newLeadsCount}</div></button>
       <button class="card dash-stat dash-stat-click" id="statFollowup"><div class="muted">Awaiting follow-up</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${data.pendingFollowUps.length}</div></button>
@@ -2071,22 +2177,29 @@ async function renderPerformerApp() {
   document.getElementById("performerLogout").addEventListener("click", (e) => { e.preventDefault(); handleLogout(); });
 
   CONFIG = await api("/api/config");
-  const [events, tasks] = await Promise.all([api("/api/my/events"), api("/api/my/tasks")]);
+  const [events, tasks, announcements] = await Promise.all([api("/api/my/events"), api("/api/my/tasks"), api("/api/announcements")]);
   const body = document.getElementById("performerBody");
 
   const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined" };
   const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C" };
-  const paidCount = events.filter((e) => e.paid).length;
-  const unpaidCount = events.length - paidCount;
+  const activeEvents = events.filter((e) => e.stage !== "Cancelled");
+  const paidCount = activeEvents.filter((e) => e.paid).length;
+  const unpaidCount = activeEvents.length - paidCount;
 
   body.innerHTML = `
-    <div class="dash-stats" style="grid-template-columns:1fr 1fr;">
-      <div class="card dash-stat"><div class="muted">Paid</div><div class="mono big" style="color:#5C8A6B">${paidCount}</div></div>
-      <div class="card dash-stat"><div class="muted">Unpaid</div><div class="mono big" style="color:#A64B3C">${unpaidCount}</div></div>
-    </div>
-
+    ${announcements.length > 0 ? `
+      <div class="section-label">📢 Announcements</div>
+      <div class="card" style="margin-bottom:20px; border-color:#C98B3D;">
+        ${announcements.map((a) => `
+          <div class="dash-list-item">
+            <div>${a.message}</div>
+            <div class="muted small">${a.created_by} · ${fmtDateTime(a.created_at)}</div>
+          </div>
+        `).join("")}
+      </div>
+    ` : ""}
     <div class="section-label">Calendar</div>
-    <div class="card" id="perfCalCard" style="margin-bottom:20px;">${performerCalendarMarkup(events)}</div>
+    <div class="card" id="perfCalCard" style="margin-bottom:20px;">${performerCalendarMarkup(activeEvents)}</div>
 
     <div class="section-label">Your events</div>
     ${events.length === 0 ? `<p class="muted small" style="margin-bottom:20px;">No events assigned to you yet.</p>` : events.map((e) => `
@@ -2096,8 +2209,11 @@ async function renderPerformerApp() {
             <div class="team-name">${e.lead_name}</div>
             <div class="muted small">${packageName(e.event_type)} · ${fmtDate(e.date)} · ${e.city || ""}</div>
           </div>
-          <span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status]}</span>
+          ${e.stage === "Cancelled"
+            ? `<span class="tag" style="color:#A64B3C; font-weight:700;">⚠ CANCELLED</span>`
+            : `<span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status]}</span>`}
         </div>
+        ${e.stage === "Cancelled" ? `<p class="muted small" style="color:#A64B3C; margin-top:4px;">This event has been cancelled by the team — no action needed.</p>` : `
         <div class="performer-event-row">
           <span class="muted small">Payment:</span>
           <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
@@ -2110,11 +2226,12 @@ async function renderPerformerApp() {
           </div>
         ` : ""}
         <button class="btn-ghost full" data-chat-lead="${e.lead_id}" data-chat-name="${e.lead_name}" style="margin-top:10px;">💬 Event chat</button>
+        `}
       </div>
     `).join("")}
 
     <div class="section-label" style="margin-top:20px;">Your tasks</div>
-    <div class="card" id="perfTasksCard">
+    <div class="card" id="perfTasksCard" style="margin-bottom:20px;">
       ${tasks.length === 0 ? `<p class="muted small">No tasks assigned to you.</p>` : tasks.map((t) => `
         <div class="task-row${t.done ? " done" : ""}">
           <input type="checkbox" data-task-id="${t.id}" ${t.done ? "checked" : ""} />
@@ -2123,9 +2240,15 @@ async function renderPerformerApp() {
         </div>
       `).join("")}
     </div>
+
+    <div class="section-label">Payment summary</div>
+    <div class="dash-stats" style="grid-template-columns:1fr 1fr;">
+      <div class="card dash-stat"><div class="muted">Paid</div><div class="mono big" style="color:#5C8A6B">${paidCount}</div></div>
+      <div class="card dash-stat"><div class="muted">Unpaid</div><div class="mono big" style="color:#A64B3C">${unpaidCount}</div></div>
+    </div>
   `;
 
-  wireCalendarGridPerformer(document.getElementById("perfCalCard"), events);
+  wireCalendarGridPerformer(document.getElementById("perfCalCard"), activeEvents);
 
   body.querySelectorAll("[data-respond]").forEach((btn) => {
     btn.addEventListener("click", async () => {

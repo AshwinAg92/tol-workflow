@@ -134,7 +134,7 @@ app.get("/api/users", requireAuth, requireAdmin, async (req, res) => {
 });
 
 app.post("/api/users", requireAuth, requireAdmin, async (req, res) => {
-  const { name, roleTitle, username, password, accessLevel, existingTeamId } = req.body;
+  const { name, roleTitle, phone, specialty, username, password, accessLevel, existingTeamId } = req.body;
   if (!username || !password) return res.status(400).json({ error: "Username and password are required" });
   if (!existingTeamId && !name) return res.status(400).json({ error: "Name is required for a new team member" });
   if (!["admin", "staff", "performer"].includes(accessLevel)) return res.status(400).json({ error: "accessLevel must be 'admin', 'staff', or 'performer'" });
@@ -149,7 +149,7 @@ app.post("/api/users", requireAuth, requireAdmin, async (req, res) => {
     if (alreadyHasLogin) return res.status(400).json({ error: "That team member already has a login" });
   } else {
     teamId = uuid();
-    await pool.query("INSERT INTO team (id, name, role) VALUES ($1, $2, $3)", [teamId, name, roleTitle || null]);
+    await pool.query("INSERT INTO team (id, name, role, phone, specialty) VALUES ($1, $2, $3, $4, $5)", [teamId, name, roleTitle || null, phone || null, specialty || null]);
   }
   const userId = uuid();
   const passwordHash = bcrypt.hashSync(password, 10);
@@ -200,12 +200,13 @@ app.patch("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
 app.patch("/api/team/:id", requireAuth, requireAdmin, async (req, res) => {
   const member = (await pool.query("SELECT * FROM team WHERE id = $1", [req.params.id])).rows[0];
   if (!member) return res.status(404).json({ error: "Team member not found" });
-  const { name, role, phone, email } = req.body;
-  await pool.query(`UPDATE team SET name = $1, role = $2, phone = $3, email = $4 WHERE id = $5`, [
+  const { name, role, phone, email, specialty } = req.body;
+  await pool.query(`UPDATE team SET name = $1, role = $2, phone = $3, email = $4, specialty = $5 WHERE id = $6`, [
     name || member.name,
     role !== undefined ? role : member.role,
     phone !== undefined ? phone : member.phone,
     email !== undefined ? email : member.email,
+    specialty !== undefined ? specialty : member.specialty,
     member.id,
   ]);
   res.json((await pool.query("SELECT * FROM team WHERE id = $1", [member.id])).rows[0]);
@@ -217,6 +218,13 @@ app.delete("/api/team/:id", requireAuth, requireAdmin, async (req, res) => {
   if (linkedUser && linkedUser.id === req.user.id) {
     return res.status(400).json({ error: "You can't remove your own team entry while logged in as it" });
   }
+  // Unlink (not delete) financial/assignment records so history is preserved,
+  // then remove the login and the team member themselves. Deleting the team
+  // row directly would otherwise fail — expenses/event_assignments reference it.
+  await pool.query("UPDATE expenses SET team_id = NULL WHERE team_id = $1", [req.params.id]);
+  await pool.query("DELETE FROM event_assignments WHERE team_id = $1", [req.params.id]);
+  await pool.query("UPDATE tasks SET assigned_to = NULL WHERE assigned_to = $1", [req.params.id]);
+  await pool.query("UPDATE leads SET assigned_to = NULL WHERE assigned_to = $1", [req.params.id]);
   await pool.query("DELETE FROM users WHERE team_id = $1", [req.params.id]);
   await pool.query("DELETE FROM team WHERE id = $1", [req.params.id]);
   res.status(204).end();
@@ -462,6 +470,28 @@ app.post("/api/my/events/:leadId/messages", requireAuth, async (req, res) => {
   res.status(201).json((await pool.query("SELECT * FROM event_messages WHERE id = $1", [id])).rows[0]);
 });
 
+// ---------- Announcements (broadcast to the whole team) ----------
+app.get("/api/announcements", requireAuth, async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM announcements ORDER BY created_at DESC LIMIT 10");
+  res.json(rows);
+});
+
+app.post("/api/announcements", requireAuth, requireAdmin, async (req, res) => {
+  const { message } = req.body;
+  if (!message || !message.trim()) return res.status(400).json({ error: "Message can't be empty" });
+  const id = uuid();
+  await pool.query(`
+    INSERT INTO announcements (id, message, created_by, created_at)
+    VALUES ($1, $2, $3, $4)
+  `, [id, message, req.user.username, new Date().toISOString()]);
+  res.status(201).json((await pool.query("SELECT * FROM announcements WHERE id = $1", [id])).rows[0]);
+});
+
+app.delete("/api/announcements/:id", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM announcements WHERE id = $1", [req.params.id]);
+  res.status(204).end();
+});
+
 // ---------- Team ----------
 app.get("/api/team", requireAuth, async (req, res) => {
   const leads = (await pool.query("SELECT * FROM leads WHERE stage NOT IN ('Completed', 'Cancelled')")).rows;
@@ -559,6 +589,42 @@ app.get("/api/assignments", requireAuth, requireAdmin, async (req, res) => {
 });
 
 // General expenses — travel, lights, or any custom head Ashwin wants to track.
+// Merged view of real money movement — paid expenses (money out) and client
+// payments (money in) — for a single "Recent Transactions" feed in Accounts.
+app.get("/api/transactions", requireAuth, async (req, res) => {
+  const { rows } = await pool.query(`
+    SELECT
+      'out' AS direction,
+      e.id,
+      e.amount,
+      e.payment_date AS date,
+      e.payment_mode AS mode,
+      COALESCE(t.name, l.name, 'General') AS party_name,
+      e.head AS description
+    FROM expenses e
+    LEFT JOIN team t ON t.id = e.team_id
+    LEFT JOIN leads l ON l.id = e.lead_id
+    WHERE e.paid = 1 AND e.payment_date IS NOT NULL
+
+    UNION ALL
+
+    SELECT
+      'in' AS direction,
+      p.id,
+      p.amount,
+      p.payment_date AS date,
+      p.payment_mode AS mode,
+      l.name AS party_name,
+      'Payment received' AS description
+    FROM payments p
+    JOIN leads l ON l.id = p.lead_id
+
+    ORDER BY date DESC
+    LIMIT 30
+  `);
+  res.json(rows);
+});
+
 app.get("/api/expenses", requireAuth, async (req, res) => {
   const { leadId } = req.query;
   const { rows } = leadId

@@ -115,6 +115,13 @@ async function setup() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS announcements (
+      id TEXT PRIMARY KEY,
+      message TEXT NOT NULL,
+      created_by TEXT,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS expenses (
       id TEXT PRIMARY KEY,
       lead_id TEXT REFERENCES leads(id),
@@ -136,6 +143,7 @@ async function setup() {
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payment_date TEXT`);
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payment_mode TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS advance_date TEXT`);
+  await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS specialty TEXT`);
 
   // One-time migration: bring any existing single "advance" amount into the new
   // payments ledger as its first entry, so nothing is lost when moving from a
