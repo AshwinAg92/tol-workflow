@@ -325,10 +325,10 @@ async function downloadQuotePDF({ clientName, date, fields }) {
   y += 22;
 
   y = pdfHeaderBar(doc, "Session Conditions", marginX, y, contentW, PDF_COLORS.brown);
-  y = pdfList(doc, [
-    "No food, alcohol, or beverages to be consumed or served during the session.",
-    "Session duration will be 75 to 90 minutes.",
-  ], marginX + 4, contentW - 4, y, { numbered: true, bulletColor: PDF_COLORS.brown, size: 9 });
+  const isPheras = (fields.format || "").trim().toLowerCase() === "musical pheras";
+  const sessionConditionItems = ["No food, alcohol, or beverages to be consumed or served during the session."];
+  if (!isPheras) sessionConditionItems.push("Session duration will be 75 to 90 minutes.");
+  y = pdfList(doc, sessionConditionItems, marginX + 4, contentW - 4, y, { numbered: true, bulletColor: PDF_COLORS.brown, size: 9 });
   y += 4;
 
   const halfW = (contentW - 6) / 2;
@@ -606,6 +606,11 @@ function renderLeadsLog(main) {
 // wording, amount, or format — the textarea is the source of truth.
 function buildQuoteText({ format, location, date, guests, duration, setPieces, formatType, charges }) {
   const amountLine = charges ? `₹${Number(charges).toLocaleString("en-IN")}/-` : "________";
+  const isPheras = (format || "").trim().toLowerCase() === "musical pheras";
+  const sessionConditions = isPheras
+    ? `1️⃣ No food, alcohol, or beverages to be consumed or served during the session.`
+    : `1️⃣ No food, alcohol, or beverages to be consumed or served during the session.
+2️⃣ Session duration will be 75 to 90 minutes.`;
   return `🎶 *QUOTATION — ${(format || "").toUpperCase()}*
 _Together, Out Loud_
 
@@ -622,8 +627,7 @@ Hi! Thank you for considering us for your event — here are the details of our 
 💰 *Performance Charges: ${amountLine}*
 
 *SESSION CONDITIONS*
-1️⃣ No food, alcohol, or beverages to be consumed or served during the session.
-2️⃣ Session duration will be 75 to 90 minutes.
+${sessionConditions}
 
 *EXCLUSIONS*
 • Stage Setup
