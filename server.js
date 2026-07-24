@@ -487,15 +487,62 @@ app.get("/api/calendar", requireAuth, async (req, res) => {
 // ---------- Accounts ----------
 app.get("/api/accounts", requireAuth, async (req, res) => {
   const rows = (await pool.query("SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed')")).rows;
-  const totals = rows.reduce(
+  const paymentSums = (await pool.query(`
+    SELECT lead_id, COALESCE(SUM(amount), 0) AS total
+    FROM payments WHERE lead_id = ANY($1::text[]) GROUP BY lead_id
+  `, [rows.map((r) => r.id)])).rows;
+  const receivedByLead = {};
+  paymentSums.forEach((p) => (receivedByLead[p.lead_id] = Number(p.total)));
+
+  const bookings = rows.map((l) => ({ ...l, received: receivedByLead[l.id] || 0 }));
+  const totals = bookings.reduce(
     (acc, l) => {
       acc.quoted += l.final_amount || l.quote_amount || 0;
-      acc.received += l.advance || 0;
+      acc.received += l.received;
       return acc;
     },
     { quoted: 0, received: 0 }
   );
-  res.json({ bookings: rows, totals: { ...totals, outstanding: totals.quoted - totals.received } });
+  res.json({ bookings, totals: { ...totals, outstanding: totals.quoted - totals.received } });
+});
+
+// ---------- Payments ledger — supports multiple partial payments per booking ----------
+app.get("/api/ledger", requireAuth, async (req, res) => {
+  const leads = (await pool.query("SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') ORDER BY date ASC")).rows;
+  const payments = (await pool.query("SELECT * FROM payments ORDER BY payment_date ASC")).rows;
+  const result = leads.map((l) => {
+    const leadPayments = payments.filter((p) => p.lead_id === l.id);
+    const totalReceived = leadPayments.reduce((s, p) => s + p.amount, 0);
+    const total = l.final_amount || l.quote_amount || 0;
+    return { ...l, payments: leadPayments, totalReceived, balance: total - totalReceived };
+  });
+  res.json(result);
+});
+
+app.get("/api/leads/:id/payments", requireAuth, async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM payments WHERE lead_id = $1 ORDER BY payment_date ASC", [req.params.id]);
+  res.json(rows);
+});
+
+app.post("/api/leads/:id/payments", requireAuth, requireAdmin, async (req, res) => {
+  const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const { amount, date, mode, notes } = req.body;
+  if (!amount || Number(amount) <= 0) return res.status(400).json({ error: "Enter a valid amount" });
+  if (!date) return res.status(400).json({ error: "Payment date is required" });
+  const today = new Date().toISOString().slice(0, 10);
+  if (date > today) return res.status(400).json({ error: "Payment date can't be in the future" });
+  const id = uuid();
+  await pool.query(`
+    INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+  `, [id, req.params.id, Number(amount), date, mode || null, notes || null, new Date().toISOString()]);
+  res.status(201).json((await pool.query("SELECT * FROM payments WHERE id = $1", [id])).rows[0]);
+});
+
+app.delete("/api/payments/:id", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM payments WHERE id = $1", [req.params.id]);
+  res.status(204).end();
 });
 
 // All artist/crew fee assignments across every event — for the Accounts tab's
@@ -650,25 +697,24 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const weekAhead = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
-  const [upcomingRes, followUpsRes, accountsRes, tasksRes, newLeadsRes] = await Promise.all([
+  const [upcomingRes, followUpsRes, accountsRes, paymentsRes, tasksRes, newLeadsRes] = await Promise.all([
     pool.query(`SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1 ORDER BY date ASC LIMIT 5`, [today]),
     pool.query(`SELECT * FROM leads WHERE stage = 'Follow-up' ORDER BY date ASC`),
-    pool.query(`SELECT final_amount, quote_amount, advance FROM leads WHERE stage IN ('Confirmed', 'Completed')`),
+    pool.query(`SELECT id, final_amount, quote_amount FROM leads WHERE stage IN ('Confirmed', 'Completed')`),
+    pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments`),
     pool.query(`SELECT * FROM tasks WHERE done = 0 AND (due_date <= $1 OR due_date IS NULL) ORDER BY due_date ASC LIMIT 8`, [weekAhead]),
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage = 'New'`),
   ]);
 
-  const totals = accountsRes.rows.reduce(
-    (acc, l) => { acc.quoted += l.final_amount || l.quote_amount || 0; acc.received += l.advance || 0; return acc; },
-    { quoted: 0, received: 0 }
-  );
+  const totalQuoted = accountsRes.rows.reduce((s, l) => s + (l.final_amount || l.quote_amount || 0), 0);
+  const totalReceived = Number(paymentsRes.rows[0].total);
 
   res.json({
     upcomingEvents: upcomingRes.rows,
     pendingFollowUps: followUpsRes.rows,
     tasksDueSoon: tasksRes.rows,
     newLeadsCount: Number(newLeadsRes.rows[0].c),
-    outstanding: totals.quoted - totals.received,
+    outstanding: totalQuoted - totalReceived,
   });
 });
 

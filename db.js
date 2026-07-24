@@ -105,6 +105,16 @@ async function setup() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS payments (
+      id TEXT PRIMARY KEY,
+      lead_id TEXT REFERENCES leads(id),
+      amount INTEGER NOT NULL,
+      payment_date TEXT NOT NULL,
+      payment_mode TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS expenses (
       id TEXT PRIMARY KEY,
       lead_id TEXT REFERENCES leads(id),
@@ -126,6 +136,22 @@ async function setup() {
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payment_date TEXT`);
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payment_mode TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS advance_date TEXT`);
+
+  // One-time migration: bring any existing single "advance" amount into the new
+  // payments ledger as its first entry, so nothing is lost when moving from a
+  // single advance field to a full multi-payment ledger.
+  const leadsWithAdvance = (await pool.query(
+    `SELECT id, advance, advance_date, created_at FROM leads WHERE advance IS NOT NULL AND advance > 0`
+  )).rows;
+  for (const l of leadsWithAdvance) {
+    const already = (await pool.query("SELECT id FROM payments WHERE lead_id = $1 LIMIT 1", [l.id])).rows[0];
+    if (!already) {
+      await pool.query(`
+        INSERT INTO payments (id, lead_id, amount, payment_date, created_at)
+        VALUES ($1, $2, $3, $4, $5)
+      `, [uuid(), l.id, l.advance, l.advance_date || l.created_at.slice(0, 10), new Date().toISOString()]);
+    }
+  }
 
   // Migration: "Quoted" is no longer a distinct stage — a lead moves straight
   // to "Follow-up" once quoted. Move any existing Quoted leads forward so
