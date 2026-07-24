@@ -605,6 +605,33 @@ app.delete("/api/announcements/:id", requireAuth, requireAdmin, async (req, res)
   res.status(204).end();
 });
 
+// One-time cleanup: wipe demo/seed data (leads and everything tied to them,
+// plus the placeholder team members) while preserving real admin logins.
+app.post("/api/admin/clear-demo-data", requireAuth, requireAdmin, async (req, res) => {
+  const demoNames = ["Divya", "Karan", "Neha", "Devin"];
+  try {
+    await pool.query("DELETE FROM event_assignments");
+    await pool.query("DELETE FROM expenses");
+    await pool.query("DELETE FROM quotes");
+    await pool.query("DELETE FROM payments");
+    await pool.query("DELETE FROM tasks");
+    await pool.query("DELETE FROM documents");
+    await pool.query("DELETE FROM notifications");
+    await pool.query("DELETE FROM admin_notifications");
+    await pool.query("DELETE FROM announcements");
+    await pool.query("DELETE FROM users WHERE team_id IN (SELECT id FROM team WHERE name = ANY($1::text[]))", [demoNames]);
+    await pool.query("DELETE FROM team WHERE name = ANY($1::text[])", [demoNames]);
+    await pool.query("DELETE FROM leads");
+
+    const leadsLeft = Number((await pool.query("SELECT COUNT(*) AS c FROM leads")).rows[0].c);
+    const teamLeft = Number((await pool.query("SELECT COUNT(*) AS c FROM team")).rows[0].c);
+    const usersLeft = Number((await pool.query("SELECT COUNT(*) AS c FROM users")).rows[0].c);
+    res.json({ ok: true, leadsLeft, teamLeft, usersLeft });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ---------- Team ----------
 app.get("/api/team", requireAuth, async (req, res) => {
   const leads = (await pool.query("SELECT * FROM leads WHERE stage NOT IN ('Completed', 'Cancelled')")).rows;

@@ -947,6 +947,13 @@ async function renderTeam(main) {
       <div><h2>Team</h2><p class="muted">Who's carrying which leads right now.</p></div>
       ${isAdmin ? `<button class="btn-primary" id="addMemberBtn">+ Add team member</button>` : ""}
     </div>
+    ${isAdmin && LEADS.length > 0 ? `
+      <div class="card" style="margin-bottom:20px; border-color:#A64B3C;">
+        <div class="section-label" style="color:#A64B3C;">Going live</div>
+        <p class="muted small">Wipe all demo leads, bookings, and placeholder team members (Divya/Karan/Neha/Devin) to start fresh with real data. Your own admin login is never touched.</p>
+        <button class="btn-ghost" id="clearDemoBtn" style="color:#A64B3C; border-color:#A64B3C;">🗑 Clear all demo data</button>
+      </div>
+    ` : ""}
     ${isAdmin ? `
       <div class="section-label">Broadcast to team</div>
       <div class="card" style="margin-bottom:20px;">
@@ -1042,6 +1049,23 @@ async function renderTeam(main) {
       });
     });
     main.querySelector("#addMemberBtn").addEventListener("click", openAddMemberModal);
+    const clearBtn = main.querySelector("#clearDemoBtn");
+    if (clearBtn) {
+      clearBtn.addEventListener("click", async () => {
+        if (!confirm(`This permanently deletes ALL ${LEADS.length} current leads/bookings and everything tied to them (tasks, documents, expenses, payments, quotes), plus the placeholder team members Divya/Karan/Neha/Devin. Your own admin login is kept. This cannot be undone — continue?`)) return;
+        if (!confirm("Are you absolutely sure? Type-to-confirm isn't available here, so this is your last chance to cancel.")) return;
+        try {
+          const result = await api("/api/admin/clear-demo-data", { method: "POST" });
+          alert(`Done. Leads remaining: ${result.leadsLeft}, team members remaining: ${result.teamLeft}, logins remaining: ${result.usersLeft}.`);
+          await refreshLeads();
+          const teamData = await api("/api/team");
+          TEAM = teamData;
+          renderMain();
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+    }
   }
 }
 
