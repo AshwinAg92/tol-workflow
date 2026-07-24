@@ -2282,17 +2282,20 @@ async function renderPerformerApp() {
           <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
           ${e.paid && e.payment_date ? `<span class="muted small">on ${fmtDate(e.payment_date)}${e.payment_mode ? ` via ${e.payment_mode}` : ""}</span>` : ""}
         </div>
-        ${e.status === "pending" ? `
-          <div style="margin-top:10px; display:flex; gap:8px;">
-            <button class="btn-primary" data-respond="${e.id}" data-status="accepted">Accept</button>
-            <button class="btn-ghost" data-respond="${e.id}" data-status="declined">Decline</button>
-          </div>
-        ` : ""}
-        ${e.status === "accepted" ? `
-          <button class="btn-ghost full" data-request-cancel="${e.id}" style="margin-top:8px; color:#A64B3C;">Request to cancel</button>
-        ` : ""}
         ${e.status === "cancel_requested" ? `
           <p class="muted small" style="margin-top:8px;">Waiting on admin to review your cancellation request.</p>
+        ` : `
+          <div style="margin-top:10px;">
+            <label class="muted small">Your response</label>
+            <select class="respond-select" data-respond-select="${e.id}">
+              <option value="pending" ${e.status === "pending" ? "selected" : ""}>Pending — not responded yet</option>
+              <option value="accepted" ${e.status === "accepted" ? "selected" : ""}>Accept</option>
+              <option value="declined" ${e.status === "declined" ? "selected" : ""}>Decline</option>
+            </select>
+          </div>
+        `}
+        ${e.status === "accepted" ? `
+          <button class="btn-ghost full" data-request-cancel="${e.id}" style="margin-top:8px; color:#A64B3C;">Request to cancel</button>
         ` : ""}
         <button class="btn-ghost full" data-chat-lead="${e.lead_id}" data-chat-name="${e.lead_name}" style="margin-top:10px;">💬 Event chat</button>
         `}
@@ -2330,10 +2333,17 @@ async function renderPerformerApp() {
     });
   });
 
-  body.querySelectorAll("[data-respond]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      await api(`/api/my/assignments/${btn.dataset.respond}/respond`, { method: "POST", body: JSON.stringify({ status: btn.dataset.status }) });
-      renderPerformerApp();
+  body.querySelectorAll("[data-respond-select]").forEach((sel) => {
+    sel.addEventListener("change", async () => {
+      const value = sel.value;
+      if (value === "pending") { renderPerformerApp(); return; } // no valid way back to pending, just refresh
+      try {
+        await api(`/api/my/assignments/${sel.dataset.respondSelect}/respond`, { method: "POST", body: JSON.stringify({ status: value }) });
+        renderPerformerApp();
+      } catch (err) {
+        alert(err.message);
+        renderPerformerApp();
+      }
     });
   });
   body.querySelectorAll("[data-request-cancel]").forEach((btn) => {
