@@ -54,7 +54,7 @@ async function getSessionUser(req) {
     const payload = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
     if (!payload.exp || payload.exp < Date.now()) return null;
     const { rows } = await pool.query(
-      "SELECT id, username, access_level, team_id FROM users WHERE id = $1",
+      "SELECT id, username, access_level, team_id, permissions FROM users WHERE id = $1",
       [payload.uid]
     );
     return rows[0] || null;
@@ -79,6 +79,23 @@ async function requireAuth(req, res, next) {
 function requireAdmin(req, res, next) {
   if (req.user.access_level !== "admin") return res.status(403).json({ error: "Admin access required" });
   next();
+}
+
+// Gate a section (e.g. "accounts") for staff logins with restricted permissions.
+// Admin always passes. NULL permissions = full access (default for existing staff).
+function requireSection(section) {
+  return (req, res, next) => {
+    if (req.user.access_level === "admin") return next();
+    if (req.user.access_level === "staff") {
+      let perms = null;
+      try { perms = req.user.permissions ? JSON.parse(req.user.permissions) : null; } catch { perms = null; }
+      if (perms && !perms.includes(section)) {
+        return res.status(403).json({ error: `You don't have access to ${section}` });
+      }
+      return next();
+    }
+    return res.status(403).json({ error: "Not available for this account" });
+  };
 }
 
 const UPLOAD_DIR = path.join(__dirname, "uploads");
@@ -125,21 +142,23 @@ app.get("/api/auth/me", async (req, res) => {
     const member = (await pool.query("SELECT name FROM team WHERE id = $1", [user.team_id])).rows[0];
     if (member) name = member.name;
   }
-  res.json({ id: user.id, username: user.username, accessLevel: user.access_level, name });
+  let permissions = null;
+  try { permissions = user.permissions ? JSON.parse(user.permissions) : null; } catch { permissions = null; }
+  res.json({ id: user.id, username: user.username, accessLevel: user.access_level, name, permissions });
 });
 
 // ---------- User accounts (admin only) — add teammates with their own login ----------
 app.get("/api/users", requireAuth, requireAdmin, async (req, res) => {
   const { rows } = await pool.query(`
-    SELECT users.id, users.username, users.access_level, users.team_id, team.name AS team_name, team.role AS team_role
+    SELECT users.id, users.username, users.access_level, users.team_id, users.permissions, team.name AS team_name, team.role AS team_role
     FROM users LEFT JOIN team ON team.id = users.team_id
     ORDER BY users.created_at ASC
   `);
-  res.json(rows);
+  res.json(rows.map((u) => ({ ...u, permissions: u.permissions ? JSON.parse(u.permissions) : null })));
 });
 
 app.post("/api/users", requireAuth, requireAdmin, async (req, res) => {
-  const { name, roleTitle, phone, specialty, username, password, accessLevel, existingTeamId } = req.body;
+  const { name, roleTitle, phone, specialty, username, password, accessLevel, existingTeamId, permissions } = req.body;
   if (!username || !password) return res.status(400).json({ error: "Username and password are required" });
   if (!existingTeamId && !name) return res.status(400).json({ error: "Name is required for a new team member" });
   if (!["admin", "staff", "performer"].includes(accessLevel)) return res.status(400).json({ error: "accessLevel must be 'admin', 'staff', or 'performer'" });
@@ -159,9 +178,9 @@ app.post("/api/users", requireAuth, requireAdmin, async (req, res) => {
   const userId = uuid();
   const passwordHash = bcrypt.hashSync(password, 10);
   await pool.query(`
-    INSERT INTO users (id, team_id, username, password_hash, access_level, created_at)
-    VALUES ($1, $2, $3, $4, $5, $6)
-  `, [userId, teamId, username, passwordHash, accessLevel, new Date().toISOString()]);
+    INSERT INTO users (id, team_id, username, password_hash, access_level, created_at, permissions)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+  `, [userId, teamId, username, passwordHash, accessLevel, new Date().toISOString(), Array.isArray(permissions) ? JSON.stringify(permissions) : null]);
 
   res.status(201).json({ id: userId, username, accessLevel, teamId, name });
 });
@@ -176,7 +195,7 @@ app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
 app.patch("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
   const user = (await pool.query("SELECT * FROM users WHERE id = $1", [req.params.id])).rows[0];
   if (!user) return res.status(404).json({ error: "Login not found" });
-  const { username, password, accessLevel } = req.body;
+  const { username, password, accessLevel, permissions } = req.body;
 
   if (username && username !== user.username) {
     const existing = (await pool.query("SELECT id FROM users WHERE username = $1 AND id != $2", [username, user.id])).rows[0];
@@ -190,12 +209,14 @@ app.patch("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
     UPDATE users SET
       username = $1,
       access_level = $2,
-      password_hash = $3
-    WHERE id = $4
+      password_hash = $3,
+      permissions = $4
+    WHERE id = $5
   `, [
     username || user.username,
     accessLevel || user.access_level,
     password ? bcrypt.hashSync(password, 10) : user.password_hash,
+    permissions !== undefined ? (Array.isArray(permissions) ? JSON.stringify(permissions) : null) : user.permissions,
     user.id,
   ]);
   res.json({ id: user.id, username: username || user.username, accessLevel: accessLevel || user.access_level });
@@ -656,7 +677,7 @@ app.get("/api/calendar", requireAuth, async (req, res) => {
 });
 
 // ---------- Accounts ----------
-app.get("/api/accounts", requireAuth, async (req, res) => {
+app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, res) => {
   const rows = (await pool.query("SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed')")).rows;
   const paymentSums = (await pool.query(`
     SELECT lead_id, COALESCE(SUM(amount), 0) AS total
@@ -678,7 +699,7 @@ app.get("/api/accounts", requireAuth, async (req, res) => {
 });
 
 // ---------- Payments ledger — supports multiple partial payments per booking ----------
-app.get("/api/ledger", requireAuth, async (req, res) => {
+app.get("/api/ledger", requireAuth, requireSection("accounts"), async (req, res) => {
   const leads = (await pool.query("SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') ORDER BY date ASC")).rows;
   const payments = (await pool.query("SELECT * FROM payments ORDER BY payment_date ASC")).rows;
   const result = leads.map((l) => {
@@ -690,12 +711,12 @@ app.get("/api/ledger", requireAuth, async (req, res) => {
   res.json(result);
 });
 
-app.get("/api/leads/:id/payments", requireAuth, async (req, res) => {
+app.get("/api/leads/:id/payments", requireAuth, requireSection("accounts"), async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM payments WHERE lead_id = $1 ORDER BY payment_date ASC", [req.params.id]);
   res.json(rows);
 });
 
-app.post("/api/leads/:id/payments", requireAuth, requireAdmin, async (req, res) => {
+app.post("/api/leads/:id/payments", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
   const { amount, date, mode, notes } = req.body;
@@ -711,7 +732,7 @@ app.post("/api/leads/:id/payments", requireAuth, requireAdmin, async (req, res) 
   res.status(201).json((await pool.query("SELECT * FROM payments WHERE id = $1", [id])).rows[0]);
 });
 
-app.delete("/api/payments/:id", requireAuth, requireAdmin, async (req, res) => {
+app.delete("/api/payments/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   await pool.query("DELETE FROM payments WHERE id = $1", [req.params.id]);
   res.status(204).end();
 });
@@ -732,7 +753,7 @@ app.get("/api/assignments", requireAuth, requireAdmin, async (req, res) => {
 // General expenses — travel, lights, or any custom head Ashwin wants to track.
 // Merged view of real money movement — paid expenses (money out) and client
 // payments (money in) — for a single "Recent Transactions" feed in Accounts.
-app.get("/api/transactions", requireAuth, async (req, res) => {
+app.get("/api/transactions", requireAuth, requireSection("accounts"), async (req, res) => {
   const { rows } = await pool.query(`
     SELECT
       'out' AS direction,
@@ -766,7 +787,7 @@ app.get("/api/transactions", requireAuth, async (req, res) => {
   res.json(rows);
 });
 
-app.get("/api/expenses", requireAuth, async (req, res) => {
+app.get("/api/expenses", requireAuth, requireSection("accounts"), async (req, res) => {
   const { leadId } = req.query;
   const { rows } = leadId
     ? await pool.query("SELECT * FROM expenses WHERE lead_id = $1 ORDER BY created_at DESC", [leadId])
@@ -774,7 +795,7 @@ app.get("/api/expenses", requireAuth, async (req, res) => {
   res.json(rows);
 });
 
-app.post("/api/expenses", requireAuth, requireAdmin, async (req, res) => {
+app.post("/api/expenses", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   const { leadId, teamId, head, amount, paid, notes, paymentDate, paymentMode } = req.body;
   if (!head || amount === undefined) return res.status(400).json({ error: "head and amount are required" });
   const id = uuid();
@@ -789,7 +810,7 @@ app.post("/api/expenses", requireAuth, requireAdmin, async (req, res) => {
   res.status(201).json((await pool.query("SELECT * FROM expenses WHERE id = $1", [id])).rows[0]);
 });
 
-app.patch("/api/expenses/:id", requireAuth, requireAdmin, async (req, res) => {
+app.patch("/api/expenses/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   const exp = (await pool.query("SELECT * FROM expenses WHERE id = $1", [req.params.id])).rows[0];
   if (!exp) return res.status(404).json({ error: "Expense not found" });
   const { head, amount, paid, notes, paymentDate, paymentMode } = req.body;
@@ -810,7 +831,7 @@ app.patch("/api/expenses/:id", requireAuth, requireAdmin, async (req, res) => {
   res.json((await pool.query("SELECT * FROM expenses WHERE id = $1", [exp.id])).rows[0]);
 });
 
-app.delete("/api/expenses/:id", requireAuth, requireAdmin, async (req, res) => {
+app.delete("/api/expenses/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   await pool.query("DELETE FROM expenses WHERE id = $1", [req.params.id]);
   res.status(204).end();
 });

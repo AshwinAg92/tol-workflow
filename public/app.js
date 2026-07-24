@@ -31,6 +31,19 @@ const NAV = [
   { id: "team", label: "Team" },
   { id: "accounts", label: "Accounts" },
 ];
+const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "dashboard");
+
+function permissionsChecklistHtml(idPrefix, currentPermissions) {
+  // undefined (new member) defaults to excluding Accounts; null (existing, unrestricted)
+  // shows everything checked since that's their real current access; an array is explicit.
+  return PERMISSION_SECTIONS.map((s) => {
+    let checked;
+    if (Array.isArray(currentPermissions)) checked = currentPermissions.includes(s.id);
+    else if (currentPermissions === null) checked = true;
+    else checked = s.id !== "accounts";
+    return `<label class="check-row"><input type="checkbox" class="${idPrefix}-perm" value="${s.id}" ${checked ? "checked" : ""} /> ${s.label}</label>`;
+  }).join("");
+}
 
 // ---------- Helpers ----------
 const inr = (n) => (n == null ? "—" : "₹" + Number(n).toLocaleString("en-IN"));
@@ -410,7 +423,10 @@ async function refreshTasks() {
 function renderNav() {
   const nav = document.getElementById("nav");
   nav.innerHTML = "";
-  NAV.forEach(({ id, label }) => {
+  const perms = CURRENT_USER?.accessLevel === "staff" ? CURRENT_USER.permissions : null;
+  const visibleNav = NAV.filter((n) => n.id === "dashboard" || !Array.isArray(perms) || perms.includes(n.id));
+  if (!visibleNav.some((n) => n.id === currentTab)) currentTab = "dashboard";
+  visibleNav.forEach(({ id, label }) => {
     const btn = el(`<button class="nav-item${currentTab === id ? " nav-item-active" : ""}">${label}</button>`);
     btn.addEventListener("click", () => {
       currentTab = id;
@@ -1100,6 +1116,10 @@ function openAddMemberModal(onCreated) {
             <option value="performer">Performer — musicians/photographers: just their events, pay status, and event chat</option>
             <option value="admin">Admin — full access, including adding/removing logins</option>
           </select>
+          <div id="nmPermsWrap" style="margin-top:8px;">
+            <label>What can they access?</label>
+            ${permissionsChecklistHtml("nm", undefined)}
+          </div>
           <label>Role / Specialty</label>
           <input id="nmRole" placeholder="e.g. Logistics & Sound, or Drummer, Photographer" />
           <label>Phone</label>
@@ -1120,6 +1140,9 @@ function openAddMemberModal(onCreated) {
     </div>
   `;
   wirePasswordToggles(root);
+  const toggleNmPerms = () => { root.querySelector("#nmPermsWrap").style.display = root.querySelector("#nmAccess").value === "staff" ? "block" : "none"; };
+  root.querySelector("#nmAccess").addEventListener("change", toggleNmPerms);
+  toggleNmPerms();
 
   // Username/password default to the phone number as it's typed, but only
   // while the admin hasn't manually overridden them — never fight a manual edit.
@@ -1140,6 +1163,10 @@ function openAddMemberModal(onCreated) {
     const name = root.querySelector("#nmName").value;
     const username = root.querySelector("#nmUsername").value;
     const password = root.querySelector("#nmPassword").value;
+    const accessLevel = root.querySelector("#nmAccess").value;
+    const permissions = accessLevel === "staff"
+      ? [...root.querySelectorAll(".nm-perm:checked")].map((cb) => cb.value)
+      : undefined;
     if (!name || !username || !password) return alert("Name, username, and password are required.");
     try {
       const result = await api("/api/users", {
@@ -1150,7 +1177,8 @@ function openAddMemberModal(onCreated) {
           phone: root.querySelector("#nmPhone").value,
           username,
           password,
-          accessLevel: root.querySelector("#nmAccess").value,
+          accessLevel,
+          permissions,
         }),
       });
       const teamData = await api("/api/team");
@@ -1234,6 +1262,10 @@ function openEditMemberModal(member, linkedUser) {
               <option value="performer" ${linkedUser.access_level === "performer" ? "selected" : ""}>Performer — musicians/photographers: just their events, pay status, and event chat</option>
               <option value="admin" ${linkedUser.access_level === "admin" ? "selected" : ""}>Admin — full access, including adding/removing logins</option>
             </select>
+            <div id="emPermsWrap" style="margin-top:8px; display:${linkedUser.access_level === "staff" ? "block" : "none"};">
+              <label>What can they access?</label>
+              ${permissionsChecklistHtml("em", linkedUser.permissions)}
+            </div>
           ` : `<p class="muted small">No login yet for this person — add a username/password below to create one.</p>`}
           <div class="row-2">
             <div><label>Role / title</label><input id="emRole" value="${member.role || ""}" /></div>
@@ -1259,7 +1291,11 @@ function openEditMemberModal(member, linkedUser) {
               <option value="staff">Staff — everyday use, can't manage logins</option>
               <option value="performer">Performer — musicians/photographers: just their events, pay status, and event chat</option>
               <option value="admin">Admin — full access, including adding/removing logins</option>
-            </select>` : ""}
+            </select>
+            <div id="emPermsWrap" style="margin-top:8px;">
+              <label>What can they access?</label>
+              ${permissionsChecklistHtml("em", undefined)}
+            </div>` : ""}
         </div>
         <div class="modal-foot">
           <button class="btn-ghost" id="deleteMember" style="color:#A64B3C;">Remove member</button>
@@ -1270,6 +1306,11 @@ function openEditMemberModal(member, linkedUser) {
     </div>
   `;
   wirePasswordToggles(root);
+  const emAccessSelect = root.querySelector("#emAccess");
+  if (emAccessSelect) {
+    const toggleEmPerms = () => { const w = root.querySelector("#emPermsWrap"); if (w) w.style.display = emAccessSelect.value === "staff" ? "block" : "none"; };
+    emAccessSelect.addEventListener("change", toggleEmPerms);
+  }
   root.querySelector("#genPasswordBtn").addEventListener("click", () => {
     const pw = Math.random().toString(36).slice(-4) + Math.floor(1000 + Math.random() * 9000);
     const input = root.querySelector("#emPassword");
@@ -1296,15 +1337,18 @@ function openEditMemberModal(member, linkedUser) {
       const username = root.querySelector("#emUsername").value;
       const password = root.querySelector("#emPassword").value;
       const accessLevel = root.querySelector("#emAccess")?.value;
+      const permissions = accessLevel === "staff"
+        ? [...root.querySelectorAll(".em-perm:checked")].map((cb) => cb.value)
+        : undefined;
       if (linkedUser) {
         await api(`/api/users/${linkedUser.id}`, {
           method: "PATCH",
-          body: JSON.stringify({ username, password: password || undefined, accessLevel }),
+          body: JSON.stringify({ username, password: password || undefined, accessLevel, permissions }),
         });
       } else if (username && password) {
         await api("/api/users", {
           method: "POST",
-          body: JSON.stringify({ existingTeamId: member.id, username, password, accessLevel }),
+          body: JSON.stringify({ existingTeamId: member.id, username, password, accessLevel, permissions }),
         });
       }
       const teamData = await api("/api/team");
@@ -1351,12 +1395,20 @@ function openEditLoginModal(user) {
             <option value="performer" ${user.access_level === "performer" ? "selected" : ""}>Performer — musicians/photographers: just their events, pay status, and event chat</option>
             <option value="admin" ${user.access_level === "admin" ? "selected" : ""}>Admin — full access, including adding/removing logins</option>
           </select>
+          <div id="elPermsWrap" style="margin-top:8px; display:${user.access_level === "staff" ? "block" : "none"};">
+            <label>What can they access?</label>
+            ${permissionsChecklistHtml("el", user.permissions)}
+          </div>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Save</button></div>
       </div>
     </div>
   `;
   wirePasswordToggles(root);
+  const elAccessSelect = root.querySelector("#elAccess");
+  elAccessSelect.addEventListener("change", () => {
+    root.querySelector("#elPermsWrap").style.display = elAccessSelect.value === "staff" ? "block" : "none";
+  });
   root.querySelector("#genPasswordBtn").addEventListener("click", () => {
     const pw = Math.random().toString(36).slice(-4) + Math.floor(1000 + Math.random() * 9000);
     const input = root.querySelector("#elPassword");
@@ -1372,11 +1424,14 @@ function openEditLoginModal(user) {
     const username = root.querySelector("#elUsername").value;
     const password = root.querySelector("#elPassword").value;
     const accessLevel = root.querySelector("#elAccess").value;
+    const permissions = accessLevel === "staff"
+      ? [...root.querySelectorAll(".el-perm:checked")].map((cb) => cb.value)
+      : undefined;
     if (!username) return alert("Username can't be empty.");
     try {
       await api(`/api/users/${user.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ username, password: password || undefined, accessLevel }),
+        body: JSON.stringify({ username, password: password || undefined, accessLevel, permissions }),
       });
       close();
       renderMain();
