@@ -33,16 +33,32 @@ const NAV = [
 ];
 const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "dashboard");
 
+function canAssignTeam() {
+  if (!CURRENT_USER) return false;
+  if (CURRENT_USER.accessLevel === "admin") return true;
+  if (CURRENT_USER.accessLevel !== "staff") return false;
+  return !Array.isArray(CURRENT_USER.permissions) || CURRENT_USER.permissions.includes("assign_team");
+}
+
 function permissionsChecklistHtml(idPrefix, currentPermissions) {
   // undefined (new member) defaults to excluding Accounts; null (existing, unrestricted)
   // shows everything checked since that's their real current access; an array is explicit.
-  return PERMISSION_SECTIONS.map((s) => {
+  const sectionsHtml = PERMISSION_SECTIONS.map((s) => {
     let checked;
     if (Array.isArray(currentPermissions)) checked = currentPermissions.includes(s.id);
     else if (currentPermissions === null) checked = true;
     else checked = s.id !== "accounts";
     return `<label class="check-row"><input type="checkbox" class="${idPrefix}-perm" value="${s.id}" ${checked ? "checked" : ""} /> ${s.label}</label>`;
   }).join("");
+  let assignChecked;
+  if (Array.isArray(currentPermissions)) assignChecked = currentPermissions.includes("assign_team");
+  else if (currentPermissions === null) assignChecked = true;
+  else assignChecked = false; // operational capability — off by default for new staff, unlike most sections
+  const capabilityHtml = `
+    <div class="muted small" style="margin-top:8px; margin-bottom:2px;">Operational permissions</div>
+    <label class="check-row"><input type="checkbox" class="${idPrefix}-perm" value="assign_team" ${assignChecked ? "checked" : ""} /> Assign artists to confirmed events</label>
+  `;
+  return sectionsHtml + capabilityHtml;
 }
 
 // ---------- Helpers ----------
@@ -555,7 +571,7 @@ function renderLeadsLog(main) {
           <span style="display:flex; flex-direction:column; gap:4px;">
             ${l.stage === "New" || l.stage === "Follow-up" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
             ${(l.stage === "New" || l.stage === "Follow-up") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
-            ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Final: ${l.final_amount ? inr(l.final_amount) : "—"}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>${CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:4px;">Team</button>` : ""}` : ""}
+            ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Final: ${l.final_amount ? inr(l.final_amount) : "—"}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>${canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:4px;">Team</button>` : ""}` : ""}
           </span>
         </div>
       `));

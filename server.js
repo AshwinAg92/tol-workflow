@@ -98,6 +98,24 @@ function requireSection(section) {
   };
 }
 
+// Same shape as requireSection, but for operational abilities (not page visibility) —
+// e.g. "assign_team" lets a staff member allot artists to a confirmed event without
+// making them a full admin (which would also let them manage other people's logins).
+function requireCapability(capability) {
+  return (req, res, next) => {
+    if (req.user.access_level === "admin") return next();
+    if (req.user.access_level === "staff") {
+      let perms = null;
+      try { perms = req.user.permissions ? JSON.parse(req.user.permissions) : null; } catch { perms = null; }
+      if (perms && !perms.includes(capability)) {
+        return res.status(403).json({ error: "You don't have permission to do that" });
+      }
+      return next();
+    }
+    return res.status(403).json({ error: "Not available for this account" });
+  };
+}
+
 const UPLOAD_DIR = path.join(__dirname, "uploads");
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const upload = multer({
@@ -415,7 +433,7 @@ app.get("/api/quotes", requireAuth, async (req, res) => {
 // ---------- Event assignments (staffing a Confirmed event) ----------
 // Admin picks which team members are performing; each gets a pending
 // invitation they accept/decline from their own simplified view.
-app.get("/api/leads/:id/assignments", requireAuth, requireAdmin, async (req, res) => {
+app.get("/api/leads/:id/assignments", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const { rows } = await pool.query(`
     SELECT event_assignments.*, team.name AS team_name
     FROM event_assignments JOIN team ON team.id = event_assignments.team_id
@@ -425,7 +443,7 @@ app.get("/api/leads/:id/assignments", requireAuth, requireAdmin, async (req, res
   res.json(rows);
 });
 
-app.post("/api/leads/:id/assignments", requireAuth, requireAdmin, async (req, res) => {
+app.post("/api/leads/:id/assignments", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
   const { teamIds = [] } = req.body;
@@ -450,7 +468,7 @@ app.post("/api/leads/:id/assignments", requireAuth, requireAdmin, async (req, re
   res.status(201).json(rows);
 });
 
-app.delete("/api/assignments/:id", requireAuth, requireAdmin, async (req, res) => {
+app.delete("/api/assignments/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
   await pool.query("DELETE FROM event_assignments WHERE id = $1", [req.params.id]);
   res.status(204).end();
 });
