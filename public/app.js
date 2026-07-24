@@ -39,6 +39,131 @@ const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "numer
 const packageName = (id) => id === "both" ? "Bhajan Jamming & Musical Pheras (Both)" : (CONFIG.packages.find((p) => p.id === id)?.name || id);
 const el = (html) => { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstChild; };
 
+// ---------- PDF generation (logo + letterhead, used by both Ledger and Quotation) ----------
+let _logoDataUrl = null;
+function loadLogoDataUrl() {
+  if (_logoDataUrl) return Promise.resolve(_logoDataUrl);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      canvas.getContext("2d").drawImage(img, 0, 0);
+      _logoDataUrl = canvas.toDataURL("image/png");
+      resolve(_logoDataUrl);
+    };
+    img.onerror = () => resolve(null); // PDF still works without the logo if it fails to load
+    img.src = "/logo.png";
+  });
+}
+
+async function newLetterheadPDF(title) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const logo = await loadLogoDataUrl();
+  if (logo) {
+    try { doc.addImage(logo, "PNG", 20, 15, 20, 20); } catch { /* skip logo if it fails */ }
+  }
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text("Together, Out Loud", logo ? 45 : 20, 25);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(120, 110, 90);
+  doc.text(title, logo ? 45 : 20, 32);
+  doc.setTextColor(30, 30, 30);
+  doc.setDrawColor(220, 210, 190);
+  doc.line(20, 40, 190, 40);
+  return doc;
+}
+
+async function downloadLedgerPDF(booking, payments) {
+  const doc = await newLetterheadPDF("Payment Ledger");
+  const total = booking.final_amount || booking.quote_amount || 0;
+  const received = payments.reduce((s, p) => s + p.amount, 0);
+  const balance = total - received;
+  let y = 52;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text(`Dear ${(booking.name || "").split(" ")[0] || "there"},`, 20, y);
+  y += 8;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10.5);
+  const intro = doc.splitTextToSize(`Thank you for being part of the Together, Out Loud family. Here is the current payment record for your event on ${fmtDate(booking.date)}${booking.city ? ` in ${booking.city}` : ""}.`, 170);
+  doc.text(intro, 20, y);
+  y += intro.length * 6 + 8;
+
+  doc.setFont("helvetica", "bold");
+  doc.text(`Amount confirmed: ${inr(total)}`, 20, y); y += 7;
+  doc.text(`Amount received: ${inr(received)}`, 20, y); y += 7;
+  doc.text(`Balance due: ${inr(balance)}`, 20, y); y += 12;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.text("Payments received", 20, y); y += 7;
+  doc.setDrawColor(220, 210, 190);
+  doc.line(20, y - 3, 190, y - 3);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  if (payments.length === 0) {
+    doc.text("No payments recorded yet.", 20, y); y += 7;
+  } else {
+    payments.forEach((p) => {
+      doc.text(fmtDate(p.payment_date), 20, y);
+      doc.text(inr(p.amount), 90, y);
+      doc.text(p.payment_mode || "—", 140, y);
+      y += 7;
+    });
+  }
+
+  y += 10;
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(10);
+  doc.text("Generated on " + fmtDate(new Date().toISOString().slice(0, 10)), 20, y);
+  y += 14;
+  doc.setFont("helvetica", "normal");
+  doc.text("Warmly,", 20, y); y += 6;
+  doc.text("Together, Out Loud", 20, y);
+
+  const filename = `Ledger-${booking.name.replace(/[^a-z0-9]/gi, "-")}.pdf`;
+  doc.save(filename);
+  return filename;
+}
+
+async function downloadQuotePDF({ clientName, date, body }) {
+  const doc = await newLetterheadPDF("Quotation");
+  let y = 52;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text(`Dear ${(clientName || "").split(" ")[0] || "there"},`, 20, y);
+  y += 8;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10.5);
+  const warm = doc.splitTextToSize("Thank you for considering Together, Out Loud for your event — we'd be honoured to be part of it. Here is our quotation for your review.", 170);
+  doc.text(warm, 20, y);
+  y += warm.length * 6 + 4;
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(9.5);
+  doc.text(`Date: ${date}`, 20, y);
+  y += 10;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  const lines = doc.splitTextToSize(body, 170);
+  lines.forEach((line) => {
+    if (y > 280) { doc.addPage(); y = 20; }
+    doc.text(line, 20, y);
+    y += 5.5;
+  });
+
+  const filename = `Quotation-${(clientName || "client").replace(/[^a-z0-9]/gi, "-")}.pdf`;
+  doc.save(filename);
+  return filename;
+}
+
+
 async function api(path, opts) {
   const res = await fetch(path, {
     ...opts,
@@ -349,6 +474,7 @@ async function renderQuotation(main) {
         <label>Message</label>
         <textarea id="qBody" rows="18" style="width:100%; font-family:'JetBrains Mono',monospace; font-size:12.5px; padding:10px; border:1px solid #DDD5C4; border-radius:6px;"></textarea>
         <button class="btn-primary full" id="sendQuoteBtn" style="margin-top:12px;">💬 Mark as quoted & prepare messages</button>
+        <button class="btn-ghost full" id="downloadQuotePdfBtn" style="margin-top:8px;">📄 Download quote as PDF</button>
         <div id="sendStatus"></div>
       </div>
     </div>
@@ -465,6 +591,25 @@ async function renderQuotation(main) {
     } finally {
       btn.disabled = false;
       btn.textContent = "💬 Mark as quoted & prepare messages";
+    }
+  });
+
+  main.querySelector("#downloadQuotePdfBtn").addEventListener("click", async () => {
+    const lead = LEADS.find((l) => l.id === leadSelect.value);
+    const body = main.querySelector("#qBody").value;
+    if (!body.trim()) return alert("Generate the quote draft first.");
+    const btn = main.querySelector("#downloadQuotePdfBtn");
+    btn.disabled = true;
+    btn.textContent = "Preparing PDF…";
+    try {
+      await downloadQuotePDF({
+        clientName: lead ? lead.name : "Client",
+        date: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }),
+        body,
+      });
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "📄 Download quote as PDF";
     }
   });
 }
@@ -1107,8 +1252,11 @@ function renderPartyLedgerDetail(container, booking) {
     const balance = total - received;
     container.innerHTML = `
       <div class="card" style="margin-top:10px;">
-        <div class="section-label">${booking.name} — ${fmtDate(booking.date)}</div>
-        <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:16px;">
+        <div class="view-head" style="margin-bottom:0;">
+          <div class="section-label" style="margin-bottom:0;">${booking.name} — ${fmtDate(booking.date)}</div>
+          <button class="btn-ghost" id="shareLedgerPdfBtn">📄 Share ledger PDF on WhatsApp</button>
+        </div>
+        <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:16px; margin-top:10px;">
           <div class="card summary-card"><div class="muted">Amount confirmed</div><div class="mono big">${inr(total)}</div></div>
           <div class="card summary-card"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
           <div class="card summary-card"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
@@ -1139,6 +1287,25 @@ function renderPartyLedgerDetail(container, booking) {
         <button class="btn-primary full" id="addPaymentBtn" style="margin-top:12px;">Done — add payment</button>
       </div>
     `;
+    container.querySelector("#shareLedgerPdfBtn").addEventListener("click", async () => {
+      const btn = container.querySelector("#shareLedgerPdfBtn");
+      btn.disabled = true;
+      btn.textContent = "Preparing PDF…";
+      try {
+        await downloadLedgerPDF(booking, payments);
+        const digitsOnly = (booking.phone || "").replace(/\D/g, "");
+        if (digitsOnly) {
+          const msg = `Hi ${(booking.name || "").split(" ")[0] || "there"}, sharing your payment ledger with Together, Out Loud. Please find the PDF attached.`;
+          window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
+          alert("PDF downloaded, and WhatsApp is opening in a new tab — attach the downloaded PDF file to that chat to send it.");
+        } else {
+          alert("PDF downloaded — this client has no phone number on file, so WhatsApp couldn't be opened automatically.");
+        }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "📄 Share ledger PDF on WhatsApp";
+      }
+    });
     container.querySelectorAll("[data-delete-payment]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         await api(`/api/payments/${btn.dataset.deletePayment}`, { method: "DELETE" });
