@@ -502,6 +502,19 @@ function initMobileNav() {
   overlay?.addEventListener("click", closeMobileSidebar);
 }
 
+// Clicking the logo (sidebar brand block, or mobile topbar logo/name) always jumps to the Dashboard.
+function initLogoNav() {
+  const goToDashboard = () => {
+    currentTab = "dashboard";
+    renderNav();
+    renderMain();
+    closeMobileSidebar();
+  };
+  document.querySelector(".sidebar .brand")?.addEventListener("click", goToDashboard);
+  document.querySelector(".mobile-topbar .brand-mark")?.addEventListener("click", goToDashboard);
+  document.querySelector(".mobile-topbar .brand-name")?.addEventListener("click", goToDashboard);
+}
+
 // Jump from a dashboard card straight to the matching filtered Leads list.
 function goToLeads(stage) {
   leadsFilter = "all";
@@ -2691,4 +2704,5 @@ if ("serviceWorker" in navigator) {
   renderNav();
   renderMain();
   initMobileNav();
+  initLogoNav();
 })();
