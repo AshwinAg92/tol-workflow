@@ -81,23 +81,26 @@ async function newLetterheadPDF(title) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
-
-  doc.setFillColor(...PDF_COLORS.navy);
-  doc.rect(0, 0, pageWidth, 34, "F");
+  const marginX = 14;
 
   const logo = await loadLogoDataUrl();
   if (logo) {
-    try { doc.addImage(logo, "PNG", 12, 4, 26, 26); } catch { /* skip logo if it fails */ }
+    try { doc.addImage(logo, "PNG", marginX, 10, 20, 20); } catch { /* skip logo if it fails */ }
   }
 
-  doc.setTextColor(255, 255, 255);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(17);
-  doc.text("Together, Out Loud", logo ? 43 : 14, 17);
+  const textX = logo ? marginX + 25 : marginX;
+  doc.setTextColor(...PDF_COLORS.dark);
+  doc.setFont("times", "bold");
+  doc.setFontSize(19);
+  doc.text("Together, Out Loud", textX, 20);
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(10.5);
+  doc.setFontSize(9.5);
   doc.setTextColor(...PDF_COLORS.gold);
-  doc.text(title.toUpperCase(), logo ? 43 : 14, 25);
+  doc.text(title.toUpperCase(), textX, 27);
+
+  doc.setDrawColor(...PDF_COLORS.gold);
+  doc.setLineWidth(0.7);
+  doc.line(marginX, 36, pageWidth - marginX, 36);
 
   doc.setTextColor(...PDF_COLORS.dark);
   return { doc, pageWidth };
@@ -191,11 +194,14 @@ async function downloadLedgerPDF(booking, payments) {
   y += 22 + 12;
 
   y = pdfSectionHeader(doc, "Payments Received", marginX, y);
-  doc.setFillColor(...PDF_COLORS.navy);
+  doc.setFillColor(...PDF_COLORS.cream);
   doc.rect(marginX, y - 5, contentW, 8, "F");
+  doc.setDrawColor(...PDF_COLORS.gold);
+  doc.setLineWidth(0.4);
+  doc.line(marginX, y + 3, marginX + contentW, y + 3);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8.5);
-  doc.setTextColor(255, 255, 255);
+  doc.setTextColor(...PDF_COLORS.muted);
   doc.text("DATE", marginX + 4, y);
   doc.text("AMOUNT", marginX + contentW * 0.42, y);
   doc.text("MODE", marginX + contentW * 0.72, y);
@@ -253,11 +259,13 @@ async function downloadQuotePDF({ clientName, date, fields }) {
   doc.setTextColor(...PDF_COLORS.dark);
   y += 10;
 
-  doc.setFillColor(...PDF_COLORS.gold);
-  doc.roundedRect(marginX, y, contentW, 10, 2, 2, "F");
+  doc.setFillColor(...PDF_COLORS.cream);
+  doc.setDrawColor(...PDF_COLORS.gold);
+  doc.setLineWidth(0.5);
+  doc.roundedRect(marginX, y, contentW, 10, 2, 2, "FD");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
-  doc.setTextColor(255, 255, 255);
+  doc.setTextColor(...PDF_COLORS.navy);
   doc.text((fields.format || "").toUpperCase(), pageWidth / 2, y + 6.8, { align: "center" });
   doc.setTextColor(...PDF_COLORS.dark);
   y += 18;
@@ -284,13 +292,16 @@ async function downloadQuotePDF({ clientName, date, fields }) {
   ], marginX, contentW, y, pageWidth);
   y += 4;
 
-  doc.setFillColor(...PDF_COLORS.navy);
-  doc.roundedRect(marginX, y, contentW, 14, 2, 2, "F");
+  doc.setFillColor(...PDF_COLORS.cream);
+  doc.setDrawColor(...PDF_COLORS.gold);
+  doc.setLineWidth(0.5);
+  doc.roundedRect(marginX, y, contentW, 14, 2, 2, "FD");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9.5);
-  doc.setTextColor(255, 255, 255);
+  doc.setTextColor(...PDF_COLORS.muted);
   doc.text("PERFORMANCE CHARGES", marginX + 6, y + 9);
   doc.setFontSize(13);
+  doc.setTextColor(...PDF_COLORS.navy);
   doc.text(fields.charges ? inrPdf(fields.charges) + "/-" : "To be confirmed", pageWidth - marginX - 6, y + 9, { align: "right" });
   doc.setTextColor(...PDF_COLORS.dark);
   y += 22;
