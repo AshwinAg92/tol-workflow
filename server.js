@@ -395,12 +395,10 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   }
 
   if (req.body.stage === "Completed" && lead.stage !== "Completed") {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 2);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    const today = new Date().toISOString().slice(0, 10);
     const effectiveDate = req.body.date || lead.date;
-    if (!(effectiveDate <= cutoffStr)) {
-      return res.status(400).json({ error: "Can't mark as Completed until 2 days after the event date — this happens automatically." });
+    if (!(effectiveDate < today)) {
+      return res.status(400).json({ error: "Can't mark as Completed until the day after the event date — this happens automatically." });
     }
   }
 
@@ -1019,17 +1017,12 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
   });
 });
 
-// Confirmed events move themselves to Completed two full days after the event date —
-// runs at boot and every hour after. The extra day (instead of just "date has passed")
-// is a buffer for events that run past midnight, so a lead blocked on the evening the
-// event starts isn't marked Completed while it may still be happening.
-// No cron infra needed for this volume of data.
+// Confirmed events move themselves to Completed once the event date has passed —
+// runs at boot and every hour after. No cron infra needed for this volume of data.
 async function autoCompletePastEvents() {
   try {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 2);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
-    await pool.query(`UPDATE leads SET stage = 'Completed' WHERE stage = 'Confirmed' AND date <= $1`, [cutoffStr]);
+    const today = new Date().toISOString().slice(0, 10);
+    await pool.query(`UPDATE leads SET stage = 'Completed' WHERE stage = 'Confirmed' AND date < $1`, [today]);
   } catch (err) {
     console.error("autoCompletePastEvents failed:", err.message);
   }
