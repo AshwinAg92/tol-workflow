@@ -75,76 +75,103 @@ const PDF_COLORS = {
   green: [92, 138, 107],
   red: [166, 75, 60],
   line: [222, 212, 192],
+  rust: [193, 68, 26],
+  rustDark: [163, 54, 18],
+  brown: [107, 47, 15],
+  peach: [253, 240, 227],
 };
 
-async function newLetterheadPDF(title) {
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
+// ---------- Shared letterhead helpers (jsPDF uses mm as the default unit) ----------
+async function pdfLetterhead(doc, title, subtitle) {
   const pageWidth = doc.internal.pageSize.getWidth();
   const marginX = 14;
-
   const logo = await loadLogoDataUrl();
   if (logo) {
-    try { doc.addImage(logo, "PNG", marginX, 10, 20, 20); } catch { /* skip logo if it fails */ }
+    try { doc.addImage(logo, "PNG", marginX, 10, 22, 22); } catch { /* skip logo if it fails */ }
   }
-
-  const textX = logo ? marginX + 25 : marginX;
-  doc.setTextColor(...PDF_COLORS.dark);
+  const textX = logo ? marginX + 26 : marginX;
+  doc.setTextColor(...PDF_COLORS.rust);
   doc.setFont("times", "bold");
-  doc.setFontSize(19);
-  doc.text("Together, Out Loud", textX, 20);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9.5);
-  doc.setTextColor(...PDF_COLORS.gold);
-  doc.text(title.toUpperCase(), textX, 27);
-
-  doc.setDrawColor(...PDF_COLORS.gold);
-  doc.setLineWidth(0.7);
-  doc.line(marginX, 36, pageWidth - marginX, 36);
-
+  doc.setFontSize(24);
+  doc.text(title, textX, 20);
+  doc.setFont("times", "italic");
+  doc.setFontSize(11.5);
   doc.setTextColor(...PDF_COLORS.dark);
-  return { doc, pageWidth };
-}
-
-function pdfSectionHeader(doc, text, x, y) {
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10.5);
-  doc.setTextColor(...PDF_COLORS.gold);
-  const label = text.toUpperCase();
-  doc.text(label, x, y);
-  doc.setDrawColor(...PDF_COLORS.gold);
+  doc.text(subtitle, textX, 28);
+  doc.setDrawColor(...PDF_COLORS.rust);
   doc.setLineWidth(0.6);
-  doc.line(x, y + 1.8, x + doc.getTextWidth(label) + 3, y + 1.8);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
+  doc.line(marginX, 32, pageWidth - marginX, 32);
   doc.setTextColor(...PDF_COLORS.dark);
-  return y + 8;
+  return { pageWidth, marginX };
 }
 
-function pdfBulletList(doc, items, x, contentW, y, pageWidth) {
-  items.forEach((line) => {
-    const wrapped = doc.splitTextToSize(`•  ${line}`, contentW - 4);
-    if (y + wrapped.length * 5.5 > 280) { doc.addPage(); y = 20; }
-    doc.text(wrapped, x, y);
-    y += wrapped.length * 5.5;
+// Even-width row of small dot-labelled fields (e.g. Location / Date / Guests / Duration).
+function pdfInfoRow(doc, cols, marginX, contentW, y) {
+  const colW = contentW / cols.length;
+  cols.forEach(([label, value], i) => {
+    const cx = marginX + i * colW;
+    doc.setFillColor(...PDF_COLORS.rust);
+    doc.circle(cx + 1.3, y + 1.7, 1.3, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7);
+    doc.setTextColor(...PDF_COLORS.muted);
+    doc.text(label.toUpperCase(), cx + 5, y + 3);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    doc.setTextColor(...PDF_COLORS.dark);
+    const wrapped = doc.splitTextToSize(value || "—", colW - 6);
+    wrapped.forEach((ln, j) => doc.text(ln, cx + 5, y + 8 + j * 4.3));
+  });
+  return y + 18;
+}
+
+// Rounded, filled section header bar with centered white bold text.
+function pdfHeaderBar(doc, text, x, y, w, color) {
+  doc.setFillColor(...color);
+  doc.roundedRect(x, y, w, 8, 1.5, 1.5, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  doc.setTextColor(255, 255, 255);
+  doc.text(text.toUpperCase(), x + w / 2, y + 5.5, { align: "center" });
+  doc.setTextColor(...PDF_COLORS.dark);
+  return y + 12;
+}
+
+function pdfList(doc, items, x, w, y, { bulletColor = PDF_COLORS.rust, numbered = false, size = 8.5 } = {}) {
+  doc.setFontSize(size);
+  items.forEach((item, i) => {
+    const bullet = numbered ? `${i + 1}.` : "•";
+    const wrapped = doc.splitTextToSize(item, w - 7);
+    if (y + wrapped.length * 4.7 > 280) { doc.addPage(); y = 20; }
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...bulletColor);
+    doc.text(bullet, x, y);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...PDF_COLORS.dark);
+    wrapped.forEach((ln, j) => doc.text(ln, x + 6, y + j * 4.7));
+    y += wrapped.length * 4.7 + 2;
   });
   return y;
 }
 
-function pdfFooter(doc, pageWidth, y) {
+function pdfWarmClosing(doc, pageWidth, text, y) {
   if (y > 265) { doc.addPage(); y = 30; }
   doc.setDrawColor(...PDF_COLORS.line);
   doc.setLineWidth(0.3);
   doc.line(14, y, pageWidth - 14, y);
-  y += 7;
-  doc.setFont("helvetica", "italic");
+  y += 8;
+  doc.setFont("times", "italic");
+  doc.setFontSize(10);
+  doc.setTextColor(...PDF_COLORS.rust);
+  doc.splitTextToSize(text, pageWidth - 28).forEach((ln) => { doc.text(ln, pageWidth / 2, y, { align: "center" }); y += 5.5; });
+  y += 4;
+  doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.setTextColor(...PDF_COLORS.muted);
-  doc.text("We look forward to creating a memorable, soul-stirring experience with you.", pageWidth / 2, y, { align: "center" });
-  y += 6;
+  doc.setTextColor(...PDF_COLORS.dark);
+  doc.text("Warmly,", pageWidth / 2, y, { align: "center" });
+  y += 5;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
-  doc.setTextColor(...PDF_COLORS.dark);
   doc.text("Together, Out Loud", pageWidth / 2, y, { align: "center" });
   y += 5;
   doc.setFont("helvetica", "normal");
@@ -154,82 +181,94 @@ function pdfFooter(doc, pageWidth, y) {
 }
 
 async function downloadLedgerPDF(booking, payments) {
-  const { doc, pageWidth } = await newLetterheadPDF("Payment Ledger");
-  const marginX = 14;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const { pageWidth, marginX } = await pdfLetterhead(doc, "PAYMENT LEDGER", "Together, Out Loud");
   const contentW = pageWidth - marginX * 2;
-  let y = 44;
+  let y = 40;
 
   const total = booking.final_amount || booking.quote_amount || 0;
   const received = payments.reduce((s, p) => s + p.amount, 0);
   const balance = total - received;
 
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(13);
+  doc.setFontSize(12);
+  doc.setTextColor(...PDF_COLORS.dark);
   doc.text(`Dear ${(booking.name || "").split(" ")[0] || "there"},`, marginX, y);
   y += 7;
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
+  doc.setFontSize(9.3);
   const intro = doc.splitTextToSize(`Thank you for being part of the Together, Out Loud family. Here is the current payment record for your event on ${fmtDate(booking.date)}${booking.city ? ` in ${booking.city}` : ""}.`, contentW);
   doc.text(intro, marginX, y);
-  y += intro.length * 5.5 + 8;
+  y += intro.length * 5 + 4;
 
-  const boxW = (contentW - 10) / 3;
+  y = pdfInfoRow(doc, [
+    ["Event", packageName(booking.event_type)],
+    ["Date", fmtDate(booking.date)],
+    ["Location", booking.city || "—"],
+  ], marginX, contentW, y);
+  doc.setDrawColor(...PDF_COLORS.line);
+  doc.line(marginX, y, pageWidth - marginX, y);
+  y += 9;
+
+  const boxW = (contentW - 8) / 3;
   [
-    { label: "AMOUNT CONFIRMED", value: inrPdf(total), color: PDF_COLORS.navy },
-    { label: "RECEIVED", value: inrPdf(received), color: PDF_COLORS.green },
-    { label: "BALANCE DUE", value: inrPdf(balance), color: balance > 0 ? PDF_COLORS.red : PDF_COLORS.green },
-  ].forEach((b, i) => {
-    const bx = marginX + i * (boxW + 5);
+    ["AMOUNT CONFIRMED", inrPdf(total), PDF_COLORS.dark, PDF_COLORS.line],
+    ["RECEIVED", inrPdf(received), PDF_COLORS.green, PDF_COLORS.line],
+    ["BALANCE DUE", inrPdf(balance), PDF_COLORS.rustDark, balance > 0 ? PDF_COLORS.rust : PDF_COLORS.line],
+  ].forEach(([label, value, color, borderColor], i) => {
+    const bx = marginX + i * (boxW + 4);
     doc.setFillColor(...PDF_COLORS.card);
-    doc.setDrawColor(...PDF_COLORS.line);
-    doc.roundedRect(bx, y, boxW, 22, 2, 2, "FD");
+    doc.setDrawColor(...borderColor);
+    doc.setLineWidth(0.5);
+    doc.roundedRect(bx, y, boxW, 24, 2, 2, "FD");
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.3);
+    doc.setFontSize(7.6);
     doc.setTextColor(...PDF_COLORS.muted);
-    doc.text(b.label, bx + 5, y + 8);
-    doc.setFontSize(12);
-    doc.setTextColor(...b.color);
-    doc.text(b.value, bx + 5, y + 17);
+    doc.text(label, bx + 5, y + 9);
+    doc.setFontSize(14);
+    doc.setTextColor(...color);
+    doc.text(value, bx + 5, y + 19);
   });
-  y += 22 + 12;
+  y += 24 + 12;
 
-  y = pdfSectionHeader(doc, "Payments Received", marginX, y);
-  doc.setFillColor(...PDF_COLORS.cream);
-  doc.rect(marginX, y - 5, contentW, 8, "F");
-  doc.setDrawColor(...PDF_COLORS.gold);
+  y = pdfHeaderBar(doc, "Payments Received", marginX, y, contentW, PDF_COLORS.rust);
+  doc.setFillColor(...PDF_COLORS.card);
+  doc.rect(marginX, y - 5, contentW, 7, "F");
+  doc.setDrawColor(...PDF_COLORS.rust);
   doc.setLineWidth(0.4);
-  doc.line(marginX, y + 3, marginX + contentW, y + 3);
+  doc.line(marginX, y + 3, pageWidth - marginX, y + 3);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(8.5);
+  doc.setFontSize(8);
   doc.setTextColor(...PDF_COLORS.muted);
   doc.text("DATE", marginX + 4, y);
-  doc.text("AMOUNT", marginX + contentW * 0.42, y);
-  doc.text("MODE", marginX + contentW * 0.72, y);
+  doc.text("AMOUNT", marginX + contentW * 0.4, y);
+  doc.text("MODE", marginX + contentW * 0.7, y);
   y += 8;
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(9.5);
+  doc.setFontSize(9.3);
   if (payments.length === 0) {
     doc.setTextColor(...PDF_COLORS.muted);
     doc.text("No payments recorded yet.", marginX + 4, y);
-    y += 8;
+    y += 7;
   } else {
     payments.forEach((p, i) => {
-      if (i % 2 === 1) { doc.setFillColor(248, 246, 240); doc.rect(marginX, y - 5, contentW, 7, "F"); }
+      if (i % 2 === 1) { doc.setFillColor(248, 240, 230); doc.rect(marginX, y - 5, contentW, 7, "F"); }
       doc.setTextColor(...PDF_COLORS.dark);
       doc.text(fmtDate(p.payment_date), marginX + 4, y);
-      doc.text(inrPdf(p.amount), marginX + contentW * 0.42, y);
-      doc.text(p.payment_mode || "—", marginX + contentW * 0.72, y);
+      doc.text(inrPdf(p.amount), marginX + contentW * 0.4, y);
+      doc.text(p.payment_mode || "—", marginX + contentW * 0.7, y);
       y += 7;
     });
   }
   y += 6;
   doc.setFont("helvetica", "italic");
-  doc.setFontSize(8.5);
+  doc.setFontSize(8.3);
   doc.setTextColor(...PDF_COLORS.muted);
   doc.text("Generated on " + fmtDate(new Date().toISOString().slice(0, 10)), marginX, y);
-  y += 10;
+  y += 14;
 
-  pdfFooter(doc, pageWidth, y);
+  pdfWarmClosing(doc, pageWidth, "We look forward to creating a memorable, soul-stirring experience with you.", y);
 
   const filename = `Ledger-${booking.name.replace(/[^a-z0-9]/gi, "-")}.pdf`;
   doc.save(filename);
@@ -238,107 +277,101 @@ async function downloadLedgerPDF(booking, payments) {
 
 // fields: { format, location, eventDate, guests, duration, pcs, formatType, charges }
 async function downloadQuotePDF({ clientName, date, fields }) {
-  const { doc, pageWidth } = await newLetterheadPDF("Quotation");
-  const marginX = 14;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const { pageWidth, marginX } = await pdfLetterhead(doc, "QUOTATION", `For ${fields.format || ""} — Together, Out Loud`);
   const contentW = pageWidth - marginX * 2;
-  let y = 44;
+  let y = 40;
 
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(13);
+  doc.setFontSize(12);
+  doc.setTextColor(...PDF_COLORS.dark);
   doc.text(`Dear ${(clientName || "").split(" ")[0] || "there"},`, marginX, y);
   y += 7;
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  const intro = doc.splitTextToSize("Thank you for considering Together, Out Loud for your event — we'd be honoured to be part of it. Please find our quotation below.", contentW);
+  doc.setFontSize(9.3);
+  const intro = doc.splitTextToSize("Thank you for considering us for your event — here are the details of our offering.", contentW);
   doc.text(intro, marginX, y);
-  y += intro.length * 5.5 + 2;
-  doc.setFont("helvetica", "italic");
-  doc.setFontSize(9);
-  doc.setTextColor(...PDF_COLORS.muted);
-  doc.text(`Date: ${date}`, marginX, y);
+  y += intro.length * 5 + 4;
+
+  y = pdfInfoRow(doc, [
+    ["Location", fields.location], ["Date", fields.eventDate], ["Guests", fields.guests], ["Duration", fields.duration],
+  ], marginX, contentW, y);
+  doc.setDrawColor(...PDF_COLORS.line);
+  doc.line(marginX, y, pageWidth - marginX, y);
+  y += 9;
+
+  y = pdfHeaderBar(doc, "Performance Details", marginX, y, contentW, PDF_COLORS.rust);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.3);
   doc.setTextColor(...PDF_COLORS.dark);
+  doc.text(`•  Pcs (No. of Musicians): ${fields.pcs || "—"}`, marginX + 4, y);
+  y += 6;
+  doc.text(`•  Format: ${fields.formatType || "—"}`, marginX + 4, y);
   y += 10;
 
-  doc.setFillColor(...PDF_COLORS.cream);
-  doc.setDrawColor(...PDF_COLORS.gold);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(marginX, y, contentW, 10, 2, 2, "FD");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
-  doc.setTextColor(...PDF_COLORS.navy);
-  doc.text((fields.format || "").toUpperCase(), pageWidth / 2, y + 6.8, { align: "center" });
-  doc.setTextColor(...PDF_COLORS.dark);
-  y += 18;
-
-  const cardY = y;
   doc.setFillColor(...PDF_COLORS.card);
-  doc.setDrawColor(...PDF_COLORS.line);
-  doc.roundedRect(marginX, cardY, contentW, 26, 2, 2, "FD");
-  const col1X = marginX + 6, col2X = marginX + contentW / 2 + 4;
-  let iy = cardY + 8;
-  const label = (t, x) => { doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...PDF_COLORS.muted); doc.text(t, x, iy); };
-  const value = (t, x) => { doc.setFont("helvetica", "normal"); doc.setFontSize(10.5); doc.setTextColor(...PDF_COLORS.dark); doc.text(t || "—", x, iy + 5); };
-  label("LOCATION", col1X); label("EVENT DATE", col2X);
-  value(fields.location, col1X); value(fields.eventDate, col2X);
-  iy += 13;
-  label("GUESTS", col1X); label("DURATION", col2X);
-  value(fields.guests, col1X); value(fields.duration, col2X);
-  y = cardY + 26 + 10;
-
-  y = pdfSectionHeader(doc, "Performance Details", marginX, y);
-  y = pdfBulletList(doc, [
-    `Pcs (No. of Musicians): ${fields.pcs || "—"}`,
-    `Format: ${fields.formatType || "—"}`,
-  ], marginX, contentW, y, pageWidth);
-  y += 4;
-
-  doc.setFillColor(...PDF_COLORS.cream);
-  doc.setDrawColor(...PDF_COLORS.gold);
+  doc.setDrawColor(...PDF_COLORS.rust);
   doc.setLineWidth(0.5);
-  doc.roundedRect(marginX, y, contentW, 14, 2, 2, "FD");
+  doc.roundedRect(marginX, y, contentW, 13, 2, 2, "FD");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9.5);
   doc.setTextColor(...PDF_COLORS.muted);
-  doc.text("PERFORMANCE CHARGES", marginX + 6, y + 9);
-  doc.setFontSize(13);
-  doc.setTextColor(...PDF_COLORS.navy);
-  doc.text(fields.charges ? inrPdf(fields.charges) + "/-" : "To be confirmed", pageWidth - marginX - 6, y + 9, { align: "right" });
+  doc.text("PERFORMANCE CHARGES", marginX + 6, y + 8.5);
+  doc.setFontSize(13.5);
+  doc.setTextColor(...PDF_COLORS.rustDark);
+  doc.text(fields.charges ? inrPdf(fields.charges) + "/-" : "To be confirmed", pageWidth - marginX - 6, y + 8.5, { align: "right" });
   doc.setTextColor(...PDF_COLORS.dark);
   y += 22;
 
-  y = pdfSectionHeader(doc, "Session Conditions", marginX, y);
-  ["No food, alcohol, or beverages to be consumed or served during the session.", "Session duration will be 75 to 90 minutes."].forEach((line, i) => {
-    const wrapped = doc.splitTextToSize(`${i + 1}. ${line}`, contentW - 4);
-    if (y + wrapped.length * 5.5 > 280) { doc.addPage(); y = 20; }
-    doc.text(wrapped, marginX, y);
-    y += wrapped.length * 5.5;
-  });
+  y = pdfHeaderBar(doc, "Session Conditions", marginX, y, contentW, PDF_COLORS.brown);
+  y = pdfList(doc, [
+    "No food, alcohol, or beverages to be consumed or served during the session.",
+    "Session duration will be 75 to 90 minutes.",
+  ], marginX + 4, contentW - 4, y, { numbered: true, bulletColor: PDF_COLORS.brown, size: 9 });
   y += 4;
 
-  y = pdfSectionHeader(doc, "Exclusions", marginX, y);
-  y = pdfBulletList(doc, [
-    "Stage Setup",
-    "Lights & Sound",
+  const halfW = (contentW - 6) / 2;
+  const x1 = marginX, x2 = marginX + halfW + 6;
+  const secTop = y;
+  pdfHeaderBar(doc, "Exclusions", x1, secTop, halfW, PDF_COLORS.rustDark);
+  pdfHeaderBar(doc, "Terms", x2, secTop, halfW, PDF_COLORS.rust);
+  const y1 = pdfList(doc, [
+    "Stage Setup", "Lights & Sound",
     "Travel, Accommodation (from previous city of performance — informed 2 months prior)",
-    "Food for the Team (all meals)",
-    "Airport/Station Transfers",
-  ], marginX, contentW, y, pageWidth);
-  y += 4;
-
-  y = pdfSectionHeader(doc, "Terms", marginX, y);
-  y = pdfBulletList(doc, [
+    "Food for the Team (all meals)", "Airport/Station Transfers",
+  ], x1 + 3, halfW - 6, secTop + 13, { bulletColor: PDF_COLORS.rustDark, size: 8 });
+  const y2 = pdfList(doc, [
     "An advance payment is required to confirm and block the date — booking is confirmed only upon receipt.",
     "This quotation is valid for 7 days from the date of issue; charges are subject to revision after.",
     "Strictly no food or beverages during the session.",
-  ], marginX, contentW, y, pageWidth);
-  y += 6;
+  ], x2 + 3, halfW - 6, secTop + 13, { bulletColor: PDF_COLORS.rust, size: 8 });
+  y = Math.max(y1, y2) + 8;
 
-  pdfFooter(doc, pageWidth, y);
+  if (y > 250) { doc.addPage(); y = 20; }
+  y = pdfHeaderBar(doc, "Experience We Offer", marginX, y, contentW, PDF_COLORS.rustDark);
+  const experiences = ["Musical Pheras", "Bhajan Jamming", "Devotional Satsang", "Shraddhanjali Satsang"];
+  const expW = (contentW - 6) / experiences.length;
+  experiences.forEach((name, i) => {
+    const ex = marginX + i * (expW + 2);
+    doc.setFillColor(...PDF_COLORS.card);
+    doc.setDrawColor(...PDF_COLORS.line);
+    doc.setLineWidth(0.4);
+    doc.roundedRect(ex, y, expW, 16, 1.5, 1.5, "FD");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.6);
+    doc.setTextColor(...PDF_COLORS.dark);
+    doc.splitTextToSize(name, expW - 4).forEach((ln, j) => doc.text(ln, ex + expW / 2, y + 7 + j * 4, { align: "center" }));
+  });
+  y += 22;
+
+  pdfWarmClosing(doc, pageWidth, "We'd love to make your event a truly memorable, soul-stirring experience.", y);
 
   const filename = `Quotation-${(clientName || "client").replace(/[^a-z0-9]/gi, "-")}.pdf`;
   doc.save(filename);
   return filename;
 }
+
 
 
 async function api(path, opts) {
