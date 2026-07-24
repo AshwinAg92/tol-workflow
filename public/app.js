@@ -30,7 +30,6 @@ const NAV = [
   { id: "calendar", label: "Calendar" },
   { id: "team", label: "Team" },
   { id: "accounts", label: "Accounts" },
-  { id: "ledger", label: "Ledger" },
 ];
 
 // ---------- Helpers ----------
@@ -920,9 +919,10 @@ async function openAssignTeamModal(leadId) {
 
 // ---------- Accounts ----------
 async function renderAccounts(main) {
-  const [{ bookings, totals }, expenses] = await Promise.all([
+  const [{ bookings, totals }, expenses, ledgerBookings] = await Promise.all([
     api("/api/accounts"),
     api("/api/expenses"),
+    api("/api/ledger"),
   ]);
 
   main.innerHTML = `
@@ -936,8 +936,18 @@ async function renderAccounts(main) {
       <div class="card summary-card"><div class="muted">Outstanding</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${inr(totals.outstanding)}</div></div>
     </div>
     <div class="table" style="margin-bottom:24px;">
-      <div class="table-head" style="grid-template-columns:1.3fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr 0.7fr;"><span>Booking</span><span>Status</span><span class="right">Quoted</span><span class="right">Final rate</span><span class="right">Received</span><span class="right">Balance</span><span></span></div>
+      <div class="table-head" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr 1fr;"><span>Booking</span><span>Status</span><span class="right">Quoted</span><span class="right">Final rate</span><span class="right">Received</span><span class="right">Balance</span></div>
       <div id="acctRows"></div>
+    </div>
+
+    <div class="section-label">Party ledger</div>
+    <div class="card" style="margin-bottom:24px;">
+      <label>Choose a client to open their ledger</label>
+      <select id="ledgerClientSelect">
+        <option value="">Select a client…</option>
+        ${ledgerBookings.slice().sort((a, b) => new Date(a.date) - new Date(b.date)).map((b) => `<option value="${b.id}">${b.name} — ${fmtDate(b.date)}${b.city ? `, ${b.city}` : ""}</option>`).join("")}
+      </select>
+      <div id="partyLedgerDetail"></div>
     </div>
 
     <div class="section-label">Artist fees &amp; other expenses</div>
@@ -964,7 +974,7 @@ async function renderAccounts(main) {
       </div>
     </div>
     <div class="table">
-      <div class="table-head" style="grid-template-columns:1.2fr 1.1fr 0.9fr 0.7fr 1fr 0.9fr 0.5fr;">
+      <div class="table-head" style="grid-template-columns:1.2fr 1.1fr 0.9fr 0.6fr 1fr 0.8fr 0.9fr;">
         <span>Head</span><span>Event</span><span class="right">Amount</span><span>Paid</span><span>Payment date</span><span>Mode</span><span></span>
       </div>
       <div id="expenseRows"></div>
@@ -976,23 +986,22 @@ async function renderAccounts(main) {
   bookings.forEach((l) => {
     const total = l.final_amount || l.quote_amount || 0;
     rows.appendChild(el(`
-      <div class="table-row" style="grid-template-columns:1.3fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr 0.7fr;">
+      <div class="table-row" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr 1fr;">
         <span>${l.name}</span>
         <span class="tag" style="color:${STAGE_COLOR[l.stage]}">${l.stage}</span>
         <span class="right mono">${inr(l.quote_amount)}</span>
         <span class="right mono">${l.final_amount ? inr(l.final_amount) : "—"}</span>
         <span class="right mono">${inr(l.received)}</span>
         <span class="right mono">${inr(total - l.received)}</span>
-        <span><button class="btn-ghost open-ledger-from-accounts" data-lead-id="${l.id}">Ledger</button></span>
       </div>
     `));
   });
-  rows.querySelectorAll(".open-ledger-from-accounts").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const ledgerBookings = await api("/api/ledger");
-      const booking = ledgerBookings.find((b) => b.id === btn.dataset.leadId);
-      if (booking) openLedgerModal(booking);
-    });
+
+  main.querySelector("#ledgerClientSelect").addEventListener("change", (e) => {
+    const detail = main.querySelector("#partyLedgerDetail");
+    if (!e.target.value) { detail.innerHTML = ""; return; }
+    const booking = ledgerBookings.find((b) => b.id === e.target.value);
+    if (booking) renderPartyLedgerDetail(detail, booking);
   });
 
   function renderExpenseRows() {
@@ -1003,12 +1012,12 @@ async function renderAccounts(main) {
       const lead = LEADS.find((l) => l.id === e.lead_id);
       const member = TEAM.find((m) => m.id === e.team_id);
       expRows.appendChild(el(`
-        <div class="table-row" style="grid-template-columns:1.2fr 1.1fr 0.9fr 0.7fr 1fr 0.9fr 0.5fr;">
+        <div class="table-row" style="grid-template-columns:1.2fr 1.1fr 0.9fr 0.6fr 1fr 0.8fr 0.9fr;">
           <span>${e.head}</span>
           <span class="muted">${lead ? lead.name : "General"}${member ? ` · ${member.name}` : ""}</span>
           <span class="right mono">${inr(e.amount)}</span>
-          <span><input type="checkbox" data-exp-paid="${e.id}" ${e.paid ? "checked" : ""} /></span>
-          <span><input type="date" class="exp-date" data-exp-id="${e.id}" value="${e.payment_date || ""}" /></span>
+          <span><input type="checkbox" class="exp-paid" data-exp-id="${e.id}" ${e.paid ? "checked" : ""} /></span>
+          <span><input type="date" class="exp-date" data-exp-id="${e.id}" value="${e.payment_date || ""}" max="${new Date().toISOString().slice(0, 10)}" /></span>
           <span>
             <select class="exp-mode" data-exp-id="${e.id}">
               <option value="">—</option>
@@ -1016,24 +1025,26 @@ async function renderAccounts(main) {
               <option value="UPI" ${e.payment_mode === "UPI" ? "selected" : ""}>UPI</option>
             </select>
           </span>
-          <span><button class="icon-btn" data-delete-exp="${e.id}">✕</button></span>
+          <span style="display:flex; gap:4px;">
+            <button class="btn-ghost exp-save-btn" data-exp-id="${e.id}">Done</button>
+            <button class="icon-btn" data-delete-exp="${e.id}">✕</button>
+          </span>
         </div>
       `));
     });
-    expRows.querySelectorAll("[data-exp-paid]").forEach((cb) => {
-      cb.addEventListener("change", async () => {
-        await api(`/api/expenses/${cb.dataset.expPaid}`, { method: "PATCH", body: JSON.stringify({ paid: cb.checked }) });
-        renderMain();
-      });
-    });
-    expRows.querySelectorAll(".exp-date").forEach((input) => {
-      input.addEventListener("change", async () => {
-        await api(`/api/expenses/${input.dataset.expId}`, { method: "PATCH", body: JSON.stringify({ paymentDate: input.value || null }) });
-      });
-    });
-    expRows.querySelectorAll(".exp-mode").forEach((sel) => {
-      sel.addEventListener("change", async () => {
-        await api(`/api/expenses/${sel.dataset.expId}`, { method: "PATCH", body: JSON.stringify({ paymentMode: sel.value || null }) });
+    expRows.querySelectorAll(".exp-save-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.expId;
+        const paid = expRows.querySelector(`.exp-paid[data-exp-id="${id}"]`).checked;
+        const date = expRows.querySelector(`.exp-date[data-exp-id="${id}"]`).value;
+        const mode = expRows.querySelector(`.exp-mode[data-exp-id="${id}"]`).value;
+        if (paid && !date) return alert("Enter the payment date before marking this paid.");
+        try {
+          await api(`/api/expenses/${id}`, { method: "PATCH", body: JSON.stringify({ paid, paymentDate: date || null, paymentMode: mode || null }) });
+          renderMain();
+        } catch (err) {
+          alert(err.message);
+        }
       });
     });
     expRows.querySelectorAll("[data-delete-exp]").forEach((btn) => {
@@ -1085,102 +1096,74 @@ async function renderAccounts(main) {
 }
 
 // ---------- Ledger — one row per Confirmed/Completed event, full payment history ----------
-async function renderLedger(main) {
-  const bookings = await api("/api/ledger");
-  main.innerHTML = `
-    <div class="view-head"><div><h2>Ledger</h2><p class="muted">Every payment received, per confirmed event — a running record for each booking.</p></div></div>
-    <div class="table">
-      <div class="table-head" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr 0.8fr;"><span>Booking</span><span class="right">Total</span><span class="right">Received</span><span class="right">Balance</span><span>Payments</span><span></span></div>
-      <div id="ledgerRows"></div>
-    </div>
-  `;
-  const rows = main.querySelector("#ledgerRows");
-  if (bookings.length === 0) rows.innerHTML = `<div class="board-empty">No confirmed or completed bookings yet</div>`;
-  bookings.forEach((l) => {
-    const total = l.final_amount || l.quote_amount || 0;
-    rows.appendChild(el(`
-      <div class="table-row" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr 0.8fr;">
-        <span>${l.name} <span class="muted small">— ${fmtDate(l.date)}</span></span>
-        <span class="right mono">${inr(total)}</span>
-        <span class="right mono">${inr(l.totalReceived)}</span>
-        <span class="right mono" style="color:${l.balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(l.balance)}</span>
-        <span class="muted small">${l.payments.length} payment${l.payments.length === 1 ? "" : "s"}</span>
-        <span><button class="btn-ghost open-ledger-btn" data-lead-id="${l.id}">Open</button></span>
-      </div>
-    `));
-  });
-  rows.querySelectorAll(".open-ledger-btn").forEach((btn) => {
-    btn.addEventListener("click", () => openLedgerModal(bookings.find((b) => b.id === btn.dataset.leadId)));
-  });
-}
-
-function openLedgerModal(booking) {
-  const root = document.getElementById("modalRoot");
+// Renders one client's ledger detail inline (used inside the Accounts tab) —
+// not a modal, so it stays visible while adding several payments in a row.
+function renderPartyLedgerDetail(container, booking) {
   const today = new Date().toISOString().slice(0, 10);
   const total = booking.final_amount || booking.quote_amount || 0;
 
-  const render = (payments) => {
-    const balance = total - payments.reduce((s, p) => s + p.amount, 0);
-    root.innerHTML = `
-      <div class="modal-overlay" id="overlay">
-        <div class="modal-card">
-          <div class="modal-head"><h3>${booking.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
-          <div class="modal-body">
-            <p class="muted small">${fmtDate(booking.date)} · Total ${inr(total)} · Balance <strong style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</strong></p>
-            <div id="paymentList" style="margin-bottom:14px;">
-              ${payments.length === 0 ? `<p class="muted small">No payments recorded yet.</p>` : payments.map((p) => `
-                <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
-                  <div>
-                    <div class="mono">${inr(p.amount)}</div>
-                    <div class="muted small">${fmtDate(p.payment_date)}${p.payment_mode ? ` · ${p.payment_mode}` : ""}</div>
-                  </div>
-                  <button class="icon-btn" data-delete-payment="${p.id}">✕</button>
-                </div>
-              `).join("")}
-            </div>
-            <label>Amount (₹)</label>
-            <input id="payAmount" type="number" placeholder="e.g. 20000" />
-            <label>Date received</label>
-            <input id="payDate" type="date" max="${today}" />
-            <label>Mode</label>
-            <select id="payMode">
-              <option value="">—</option>
-              <option value="Cash">Cash</option>
-              <option value="UPI">UPI</option>
-            </select>
-          </div>
-          <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button><button class="btn-primary" id="addPaymentBtn">Done — add payment</button></div>
+  const draw = (payments) => {
+    const received = payments.reduce((s, p) => s + p.amount, 0);
+    const balance = total - received;
+    container.innerHTML = `
+      <div class="card" style="margin-top:10px;">
+        <div class="section-label">${booking.name} — ${fmtDate(booking.date)}</div>
+        <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:16px;">
+          <div class="card summary-card"><div class="muted">Amount confirmed</div><div class="mono big">${inr(total)}</div></div>
+          <div class="card summary-card"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
+          <div class="card summary-card"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
         </div>
+        <div class="section-label">Payments received (date-wise)</div>
+        <div style="margin-bottom:14px;">
+          ${payments.length === 0 ? `<p class="muted small">No payments recorded yet.</p>` : payments.map((p) => `
+            <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <div class="mono">${inr(p.amount)}</div>
+                <div class="muted small">${fmtDate(p.payment_date)}${p.payment_mode ? ` · ${p.payment_mode}` : ""}</div>
+              </div>
+              <button class="icon-btn" data-delete-payment="${p.id}">✕</button>
+            </div>
+          `).join("")}
+        </div>
+        <div class="section-label">Add a payment</div>
+        <div class="row-2">
+          <div><label>Amount (₹)</label><input id="payAmount" type="number" placeholder="e.g. 20000" /></div>
+          <div><label>Date received</label><input id="payDate" type="date" max="${today}" /></div>
+        </div>
+        <label>Mode</label>
+        <select id="payMode">
+          <option value="">—</option>
+          <option value="Cash">Cash</option>
+          <option value="UPI">UPI</option>
+        </select>
+        <button class="btn-primary full" id="addPaymentBtn" style="margin-top:12px;">Done — add payment</button>
       </div>
     `;
-    const close = () => { root.innerHTML = ""; renderMain(); };
-    root.querySelector("#closeModal").addEventListener("click", close);
-    root.querySelector("#cancelModal").addEventListener("click", close);
-    root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
-    root.querySelectorAll("[data-delete-payment]").forEach((btn) => {
+    container.querySelectorAll("[data-delete-payment]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         await api(`/api/payments/${btn.dataset.deletePayment}`, { method: "DELETE" });
         const fresh = await api(`/api/leads/${booking.id}/payments`);
-        render(fresh);
+        draw(fresh);
       });
     });
-    root.querySelector("#addPaymentBtn").addEventListener("click", async () => {
-      const amount = root.querySelector("#payAmount").value;
-      const date = root.querySelector("#payDate").value;
-      const mode = root.querySelector("#payMode").value;
+    container.querySelector("#addPaymentBtn").addEventListener("click", async () => {
+      const amount = container.querySelector("#payAmount").value;
+      const date = container.querySelector("#payDate").value;
+      const mode = container.querySelector("#payMode").value;
       if (!amount || Number(amount) <= 0) return alert("Enter a valid amount.");
       if (!date) return alert("Date received is required.");
       try {
         await api(`/api/leads/${booking.id}/payments`, { method: "POST", body: JSON.stringify({ amount, date, mode: mode || null }) });
         const fresh = await api(`/api/leads/${booking.id}/payments`);
-        render(fresh);
+        draw(fresh);
+        await refreshLeads();
       } catch (err) {
         alert(err.message);
       }
     });
   };
 
-  render(booking.payments);
+  draw(booking.payments);
 }
 
 // ---------- Dashboard ----------
@@ -1579,7 +1562,6 @@ function renderMain() {
   else if (currentTab === "calendar") renderCalendar(main);
   else if (currentTab === "team") renderTeam(main);
   else if (currentTab === "accounts") renderAccounts(main);
-  else if (currentTab === "ledger") renderLedger(main);
 }
 
 // ---------- Auth ----------
