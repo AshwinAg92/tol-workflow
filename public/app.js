@@ -37,6 +37,7 @@ const inr = (n) => (n == null ? "—" : "₹" + Number(n).toLocaleString("en-IN"
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—";
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 const packageName = (id) => id === "both" ? "Bhajan Jamming & Musical Pheras (Both)" : (CONFIG.packages.find((p) => p.id === id)?.name || id);
+
 const el = (html) => { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstChild; };
 
 // ---------- PDF generation (logo + letterhead, used by both Ledger and Quotation) ----------
@@ -560,7 +561,26 @@ async function renderQuotation(main) {
   prefillFromLead();
   generateDraft();
 
+  function validateQuoteFields() {
+    const required = [
+      ["#qLocation", "Location"],
+      ["#qDate", "Date"],
+      ["#qGuests", "No. of guests"],
+      ["#qDuration", "Duration"],
+      ["#qSet", "Pcs (No. of Musicians)"],
+      ["#qFormatType", "Format"],
+      ["#qCharges", "Performance charges"],
+    ];
+    const missing = required.filter(([sel]) => !main.querySelector(sel).value.toString().trim());
+    if (missing.length > 0) {
+      alert(`Please fill in before sending: ${missing.map(([, label]) => label).join(", ")}`);
+      return false;
+    }
+    return true;
+  }
+
   main.querySelector("#sendQuoteBtn").addEventListener("click", async () => {
+    if (!validateQuoteFields()) return;
     const leadId = leadSelect.value;
     const body = main.querySelector("#qBody").value;
     const subject = main.querySelector("#qSubject").value;
@@ -595,6 +615,7 @@ async function renderQuotation(main) {
   });
 
   main.querySelector("#downloadQuotePdfBtn").addEventListener("click", async () => {
+    if (!validateQuoteFields()) return;
     const lead = LEADS.find((l) => l.id === leadSelect.value);
     const body = main.querySelector("#qBody").value;
     if (!body.trim()) return alert("Generate the quote draft first.");
