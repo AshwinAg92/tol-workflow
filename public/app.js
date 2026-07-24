@@ -1292,6 +1292,8 @@ function openEditLoginModal(user) {
             <input id="elPassword" type="password" placeholder="••••••••" />
             <button type="button" class="password-toggle" data-toggle-for="elPassword">Show</button>
           </div>
+          <button type="button" class="btn-ghost" id="genPasswordBtn" style="margin-top:6px;">🎲 Generate a new password</button>
+          <p class="muted small" id="genPasswordNote" style="display:none; margin-top:6px;">Copy this now — it can't be viewed again once saved (only reset).</p>
           <label>Access level</label>
           <select id="elAccess">
             <option value="staff" ${user.access_level === "staff" ? "selected" : ""}>Staff — everyday use, can't manage logins</option>
@@ -1304,6 +1306,13 @@ function openEditLoginModal(user) {
     </div>
   `;
   wirePasswordToggles(root);
+  root.querySelector("#genPasswordBtn").addEventListener("click", () => {
+    const pw = Math.random().toString(36).slice(-4) + Math.floor(1000 + Math.random() * 9000);
+    const input = root.querySelector("#elPassword");
+    input.type = "text";
+    input.value = pw;
+    root.querySelector("#genPasswordNote").style.display = "block";
+  });
   const close = () => (root.innerHTML = "");
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#cancelModal").addEventListener("click", close);
