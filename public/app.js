@@ -60,104 +60,269 @@ function loadLogoDataUrl() {
   });
 }
 
+// jsPDF's built-in fonts (helvetica/times/courier) don't include the ₹ glyph —
+// it silently renders as a broken superscript character. "Rs." is the safe
+// substitute for anything going into a PDF; the web UI still uses real ₹ (inr()).
+const inrPdf = (n) => (n == null ? "—" : "Rs. " + Number(n).toLocaleString("en-IN"));
+
+const PDF_COLORS = {
+  navy: [27, 31, 42],
+  gold: [201, 139, 61],
+  cream: [241, 236, 227],
+  card: [251, 249, 245],
+  muted: [138, 133, 120],
+  dark: [42, 38, 32],
+  green: [92, 138, 107],
+  red: [166, 75, 60],
+  line: [222, 212, 192],
+};
+
 async function newLetterheadPDF(title) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  doc.setFillColor(...PDF_COLORS.navy);
+  doc.rect(0, 0, pageWidth, 34, "F");
+
   const logo = await loadLogoDataUrl();
   if (logo) {
-    try { doc.addImage(logo, "PNG", 20, 15, 20, 20); } catch { /* skip logo if it fails */ }
+    try { doc.addImage(logo, "PNG", 12, 4, 26, 26); } catch { /* skip logo if it fails */ }
   }
+
+  doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(16);
-  doc.text("Together, Out Loud", logo ? 45 : 20, 25);
+  doc.setFontSize(17);
+  doc.text("Together, Out Loud", logo ? 43 : 14, 17);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10.5);
+  doc.setTextColor(...PDF_COLORS.gold);
+  doc.text(title.toUpperCase(), logo ? 43 : 14, 25);
+
+  doc.setTextColor(...PDF_COLORS.dark);
+  return { doc, pageWidth };
+}
+
+function pdfSectionHeader(doc, text, x, y) {
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10.5);
+  doc.setTextColor(...PDF_COLORS.gold);
+  const label = text.toUpperCase();
+  doc.text(label, x, y);
+  doc.setDrawColor(...PDF_COLORS.gold);
+  doc.setLineWidth(0.6);
+  doc.line(x, y + 1.8, x + doc.getTextWidth(label) + 3, y + 1.8);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
-  doc.setTextColor(120, 110, 90);
-  doc.text(title, logo ? 45 : 20, 32);
-  doc.setTextColor(30, 30, 30);
-  doc.setDrawColor(220, 210, 190);
-  doc.line(20, 40, 190, 40);
-  return doc;
+  doc.setTextColor(...PDF_COLORS.dark);
+  return y + 8;
+}
+
+function pdfBulletList(doc, items, x, contentW, y, pageWidth) {
+  items.forEach((line) => {
+    const wrapped = doc.splitTextToSize(`•  ${line}`, contentW - 4);
+    if (y + wrapped.length * 5.5 > 280) { doc.addPage(); y = 20; }
+    doc.text(wrapped, x, y);
+    y += wrapped.length * 5.5;
+  });
+  return y;
+}
+
+function pdfFooter(doc, pageWidth, y) {
+  if (y > 265) { doc.addPage(); y = 30; }
+  doc.setDrawColor(...PDF_COLORS.line);
+  doc.setLineWidth(0.3);
+  doc.line(14, y, pageWidth - 14, y);
+  y += 7;
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(9);
+  doc.setTextColor(...PDF_COLORS.muted);
+  doc.text("We look forward to creating a memorable, soul-stirring experience with you.", pageWidth / 2, y, { align: "center" });
+  y += 6;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(...PDF_COLORS.dark);
+  doc.text("Together, Out Loud", pageWidth / 2, y, { align: "center" });
+  y += 5;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  doc.setTextColor(...PDF_COLORS.muted);
+  doc.text("Instagram: instagram.com/togetheroutloudclub", pageWidth / 2, y, { align: "center" });
 }
 
 async function downloadLedgerPDF(booking, payments) {
-  const doc = await newLetterheadPDF("Payment Ledger");
+  const { doc, pageWidth } = await newLetterheadPDF("Payment Ledger");
+  const marginX = 14;
+  const contentW = pageWidth - marginX * 2;
+  let y = 44;
+
   const total = booking.final_amount || booking.quote_amount || 0;
   const received = payments.reduce((s, p) => s + p.amount, 0);
   const balance = total - received;
-  let y = 52;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.text(`Dear ${(booking.name || "").split(" ")[0] || "there"},`, 20, y);
-  y += 8;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10.5);
-  const intro = doc.splitTextToSize(`Thank you for being part of the Together, Out Loud family. Here is the current payment record for your event on ${fmtDate(booking.date)}${booking.city ? ` in ${booking.city}` : ""}.`, 170);
-  doc.text(intro, 20, y);
-  y += intro.length * 6 + 8;
 
   doc.setFont("helvetica", "bold");
-  doc.text(`Amount confirmed: ${inr(total)}`, 20, y); y += 7;
-  doc.text(`Amount received: ${inr(received)}`, 20, y); y += 7;
-  doc.text(`Balance due: ${inr(balance)}`, 20, y); y += 12;
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
-  doc.text("Payments received", 20, y); y += 7;
-  doc.setDrawColor(220, 210, 190);
-  doc.line(20, y - 3, 190, y - 3);
+  doc.setFontSize(13);
+  doc.text(`Dear ${(booking.name || "").split(" ")[0] || "there"},`, marginX, y);
+  y += 7;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
+  const intro = doc.splitTextToSize(`Thank you for being part of the Together, Out Loud family. Here is the current payment record for your event on ${fmtDate(booking.date)}${booking.city ? ` in ${booking.city}` : ""}.`, contentW);
+  doc.text(intro, marginX, y);
+  y += intro.length * 5.5 + 8;
+
+  const boxW = (contentW - 10) / 3;
+  [
+    { label: "AMOUNT CONFIRMED", value: inrPdf(total), color: PDF_COLORS.navy },
+    { label: "RECEIVED", value: inrPdf(received), color: PDF_COLORS.green },
+    { label: "BALANCE DUE", value: inrPdf(balance), color: balance > 0 ? PDF_COLORS.red : PDF_COLORS.green },
+  ].forEach((b, i) => {
+    const bx = marginX + i * (boxW + 5);
+    doc.setFillColor(...PDF_COLORS.card);
+    doc.setDrawColor(...PDF_COLORS.line);
+    doc.roundedRect(bx, y, boxW, 22, 2, 2, "FD");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.3);
+    doc.setTextColor(...PDF_COLORS.muted);
+    doc.text(b.label, bx + 5, y + 8);
+    doc.setFontSize(12);
+    doc.setTextColor(...b.color);
+    doc.text(b.value, bx + 5, y + 17);
+  });
+  y += 22 + 12;
+
+  y = pdfSectionHeader(doc, "Payments Received", marginX, y);
+  doc.setFillColor(...PDF_COLORS.navy);
+  doc.rect(marginX, y - 5, contentW, 8, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(255, 255, 255);
+  doc.text("DATE", marginX + 4, y);
+  doc.text("AMOUNT", marginX + contentW * 0.42, y);
+  doc.text("MODE", marginX + contentW * 0.72, y);
+  y += 8;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
   if (payments.length === 0) {
-    doc.text("No payments recorded yet.", 20, y); y += 7;
+    doc.setTextColor(...PDF_COLORS.muted);
+    doc.text("No payments recorded yet.", marginX + 4, y);
+    y += 8;
   } else {
-    payments.forEach((p) => {
-      doc.text(fmtDate(p.payment_date), 20, y);
-      doc.text(inr(p.amount), 90, y);
-      doc.text(p.payment_mode || "—", 140, y);
+    payments.forEach((p, i) => {
+      if (i % 2 === 1) { doc.setFillColor(248, 246, 240); doc.rect(marginX, y - 5, contentW, 7, "F"); }
+      doc.setTextColor(...PDF_COLORS.dark);
+      doc.text(fmtDate(p.payment_date), marginX + 4, y);
+      doc.text(inrPdf(p.amount), marginX + contentW * 0.42, y);
+      doc.text(p.payment_mode || "—", marginX + contentW * 0.72, y);
       y += 7;
     });
   }
-
-  y += 10;
+  y += 6;
   doc.setFont("helvetica", "italic");
-  doc.setFontSize(10);
-  doc.text("Generated on " + fmtDate(new Date().toISOString().slice(0, 10)), 20, y);
-  y += 14;
-  doc.setFont("helvetica", "normal");
-  doc.text("Warmly,", 20, y); y += 6;
-  doc.text("Together, Out Loud", 20, y);
+  doc.setFontSize(8.5);
+  doc.setTextColor(...PDF_COLORS.muted);
+  doc.text("Generated on " + fmtDate(new Date().toISOString().slice(0, 10)), marginX, y);
+  y += 10;
+
+  pdfFooter(doc, pageWidth, y);
 
   const filename = `Ledger-${booking.name.replace(/[^a-z0-9]/gi, "-")}.pdf`;
   doc.save(filename);
   return filename;
 }
 
-async function downloadQuotePDF({ clientName, date, body }) {
-  const doc = await newLetterheadPDF("Quotation");
-  let y = 52;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.text(`Dear ${(clientName || "").split(" ")[0] || "there"},`, 20, y);
-  y += 8;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10.5);
-  const warm = doc.splitTextToSize("Thank you for considering Together, Out Loud for your event — we'd be honoured to be part of it. Here is our quotation for your review.", 170);
-  doc.text(warm, 20, y);
-  y += warm.length * 6 + 4;
-  doc.setFont("helvetica", "italic");
-  doc.setFontSize(9.5);
-  doc.text(`Date: ${date}`, 20, y);
-  y += 10;
+// fields: { format, location, eventDate, guests, duration, pcs, formatType, charges }
+async function downloadQuotePDF({ clientName, date, fields }) {
+  const { doc, pageWidth } = await newLetterheadPDF("Quotation");
+  const marginX = 14;
+  const contentW = pageWidth - marginX * 2;
+  let y = 44;
 
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.text(`Dear ${(clientName || "").split(" ")[0] || "there"},`, marginX, y);
+  y += 7;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
-  const lines = doc.splitTextToSize(body, 170);
-  lines.forEach((line) => {
-    if (y > 280) { doc.addPage(); y = 20; }
-    doc.text(line, 20, y);
-    y += 5.5;
+  const intro = doc.splitTextToSize("Thank you for considering Together, Out Loud for your event — we'd be honoured to be part of it. Please find our quotation below.", contentW);
+  doc.text(intro, marginX, y);
+  y += intro.length * 5.5 + 2;
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(9);
+  doc.setTextColor(...PDF_COLORS.muted);
+  doc.text(`Date: ${date}`, marginX, y);
+  doc.setTextColor(...PDF_COLORS.dark);
+  y += 10;
+
+  doc.setFillColor(...PDF_COLORS.gold);
+  doc.roundedRect(marginX, y, contentW, 10, 2, 2, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.setTextColor(255, 255, 255);
+  doc.text((fields.format || "").toUpperCase(), pageWidth / 2, y + 6.8, { align: "center" });
+  doc.setTextColor(...PDF_COLORS.dark);
+  y += 18;
+
+  const cardY = y;
+  doc.setFillColor(...PDF_COLORS.card);
+  doc.setDrawColor(...PDF_COLORS.line);
+  doc.roundedRect(marginX, cardY, contentW, 26, 2, 2, "FD");
+  const col1X = marginX + 6, col2X = marginX + contentW / 2 + 4;
+  let iy = cardY + 8;
+  const label = (t, x) => { doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...PDF_COLORS.muted); doc.text(t, x, iy); };
+  const value = (t, x) => { doc.setFont("helvetica", "normal"); doc.setFontSize(10.5); doc.setTextColor(...PDF_COLORS.dark); doc.text(t || "—", x, iy + 5); };
+  label("LOCATION", col1X); label("EVENT DATE", col2X);
+  value(fields.location, col1X); value(fields.eventDate, col2X);
+  iy += 13;
+  label("GUESTS", col1X); label("DURATION", col2X);
+  value(fields.guests, col1X); value(fields.duration, col2X);
+  y = cardY + 26 + 10;
+
+  y = pdfSectionHeader(doc, "Performance Details", marginX, y);
+  y = pdfBulletList(doc, [
+    `Pcs (No. of Musicians): ${fields.pcs || "—"}`,
+    `Format: ${fields.formatType || "—"}`,
+  ], marginX, contentW, y, pageWidth);
+  y += 4;
+
+  doc.setFillColor(...PDF_COLORS.navy);
+  doc.roundedRect(marginX, y, contentW, 14, 2, 2, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  doc.setTextColor(255, 255, 255);
+  doc.text("PERFORMANCE CHARGES", marginX + 6, y + 9);
+  doc.setFontSize(13);
+  doc.text(fields.charges ? inrPdf(fields.charges) + "/-" : "To be confirmed", pageWidth - marginX - 6, y + 9, { align: "right" });
+  doc.setTextColor(...PDF_COLORS.dark);
+  y += 22;
+
+  y = pdfSectionHeader(doc, "Session Conditions", marginX, y);
+  ["No food, alcohol, or beverages to be consumed or served during the session.", "Session duration will be 75 to 90 minutes."].forEach((line, i) => {
+    const wrapped = doc.splitTextToSize(`${i + 1}. ${line}`, contentW - 4);
+    if (y + wrapped.length * 5.5 > 280) { doc.addPage(); y = 20; }
+    doc.text(wrapped, marginX, y);
+    y += wrapped.length * 5.5;
   });
+  y += 4;
+
+  y = pdfSectionHeader(doc, "Exclusions", marginX, y);
+  y = pdfBulletList(doc, [
+    "Stage Setup",
+    "Lights & Sound",
+    "Travel, Accommodation (from previous city of performance — informed 2 months prior)",
+    "Food for the Team (all meals)",
+    "Airport/Station Transfers",
+  ], marginX, contentW, y, pageWidth);
+  y += 4;
+
+  y = pdfSectionHeader(doc, "Terms", marginX, y);
+  y = pdfBulletList(doc, [
+    "An advance payment is required to confirm and block the date — booking is confirmed only upon receipt.",
+    "This quotation is valid for 7 days from the date of issue; charges are subject to revision after.",
+    "Strictly no food or beverages during the session.",
+  ], marginX, contentW, y, pageWidth);
+  y += 6;
+
+  pdfFooter(doc, pageWidth, y);
 
   const filename = `Quotation-${(clientName || "client").replace(/[^a-z0-9]/gi, "-")}.pdf`;
   doc.save(filename);
@@ -397,39 +562,42 @@ function renderLeadsLog(main) {
 // wording, amount, or format — the textarea is the source of truth.
 function buildQuoteText({ format, location, date, guests, duration, setPieces, formatType, charges }) {
   const amountLine = charges ? `₹${Number(charges).toLocaleString("en-IN")}/-` : "________";
-  return `QUOTATION for ${(format || "").toUpperCase()}
-Together, Out Loud
+  return `🎶 *QUOTATION — ${(format || "").toUpperCase()}*
+_Together, Out Loud_
 
-Location: ${location || ""}
-Date: ${date || ""}
-No. Of Guests: ${guests || ""}
-Duration: ${duration || "75-90 Minutes"}
+Hi! Thank you for considering us for your event — here are the details of our offering. 💛
 
-PERFORMANCE DETAILS
-•  Pcs (No. of Musicians): ${setPieces || ""}
-•  Format (Private/Public): ${formatType || ""}
-•  Performance Charges: ${amountLine}
+📍 *Location:* ${location || ""}
+📅 *Date:* ${date || ""}
+👥 *Guests:* ${guests || ""}
+⏱️ *Duration:* ${duration || "75-90 Minutes"}
 
-SESSION CONDITIONS
-1. No food, alcohol, or any beverages to be consumed or served during the session.
-2. Session duration will be 75 to 90 minutes.
+*PERFORMANCE DETAILS*
+🎸 Pcs (No. of Musicians): ${setPieces || ""}
+🎤 Format: ${formatType || ""}
+💰 *Performance Charges: ${amountLine}*
 
-EXCLUSIONS
-•  Stage Setup
-•  Lights & Sound
-•  Travel, Accommodation (From Previous City of Performance- will be informed 2 months prior)
-•  Food for the Team (All Meals)
-•  Airport/Station Transfers
+*SESSION CONDITIONS*
+1️⃣ No food, alcohol, or beverages to be consumed or served during the session.
+2️⃣ Session duration will be 75 to 90 minutes.
 
-TERMS
-•  An advance payment is required to confirm and block the date. Booking is confirmed only upon receipt of advance.
-•  This quotation is valid for 7 days from the date of issue. Post validity, charges are subject to revision.
-•  Strictly no consumption of Food or Beverage during the Jamming Session.
+*EXCLUSIONS*
+• Stage Setup
+• Lights & Sound
+• Travel, Accommodation (from previous city of performance — informed 2 months prior)
+• Food for the Team (all meals)
+• Airport/Station Transfers
 
-We look forward to creating a memorable and deeply immersive musical experience.
+*TERMS*
+• An advance payment is required to confirm and block the date — booking is confirmed only upon receipt.
+• This quotation is valid for 7 days from the date of issue; charges are subject to revision after.
+• Strictly no food or beverages during the session.
 
-Together, Out Loud
-Instagram: https://www.instagram.com/togetheroutloudclub`;
+We'd love to make your event a truly memorable, soul-stirring experience. 🎶✨
+
+Warmly,
+*Together, Out Loud*
+📷 Instagram: https://www.instagram.com/togetheroutloudclub`;
 }
 
 async function renderQuotation(main) {
@@ -617,8 +785,6 @@ async function renderQuotation(main) {
   main.querySelector("#downloadQuotePdfBtn").addEventListener("click", async () => {
     if (!validateQuoteFields()) return;
     const lead = LEADS.find((l) => l.id === leadSelect.value);
-    const body = main.querySelector("#qBody").value;
-    if (!body.trim()) return alert("Generate the quote draft first.");
     const btn = main.querySelector("#downloadQuotePdfBtn");
     btn.disabled = true;
     btn.textContent = "Preparing PDF…";
@@ -626,7 +792,16 @@ async function renderQuotation(main) {
       await downloadQuotePDF({
         clientName: lead ? lead.name : "Client",
         date: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }),
-        body,
+        fields: {
+          format: lead ? packageName(lead.event_type) : "",
+          location: main.querySelector("#qLocation").value,
+          eventDate: main.querySelector("#qDate").value,
+          guests: main.querySelector("#qGuests").value,
+          duration: main.querySelector("#qDuration").value,
+          pcs: main.querySelector("#qSet").value,
+          formatType: main.querySelector("#qFormatType").value,
+          charges: main.querySelector("#qCharges").value,
+        },
       });
     } finally {
       btn.disabled = false;
