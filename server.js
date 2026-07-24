@@ -175,11 +175,26 @@ app.get("/api/users", requireAuth, requireAdmin, async (req, res) => {
   res.json(rows.map((u) => ({ ...u, permissions: u.permissions ? JSON.parse(u.permissions) : null })));
 });
 
-app.post("/api/users", requireAuth, requireAdmin, async (req, res) => {
+app.post("/api/users", requireAuth, requireCapability("manage_team"), async (req, res) => {
   const { name, roleTitle, phone, specialty, username, password, accessLevel, existingTeamId, permissions } = req.body;
   if (!username || !password) return res.status(400).json({ error: "Username and password are required" });
   if (!existingTeamId && !name) return res.status(400).json({ error: "Name is required for a new team member" });
   if (!["admin", "staff", "performer"].includes(accessLevel)) return res.status(400).json({ error: "accessLevel must be 'admin', 'staff', or 'performer'" });
+
+  // Guardrails for a manager (staff with manage_team) — never a true admin:
+  // can't create admin accounts, and can't hand out access broader than their own.
+  if (req.user.access_level === "staff") {
+    if (accessLevel === "admin") return res.status(403).json({ error: "Managers can't create admin accounts — ask an admin." });
+    if (Array.isArray(permissions)) {
+      let ownPerms = null;
+      try { ownPerms = req.user.permissions ? JSON.parse(req.user.permissions) : null; } catch { ownPerms = null; }
+      if (Array.isArray(ownPerms)) {
+        const overreach = permissions.filter((p) => !ownPerms.includes(p));
+        if (overreach.length > 0) return res.status(403).json({ error: `You can't grant access you don't have yourself: ${overreach.join(", ")}` });
+      }
+    }
+  }
+
   const existingUser = (await pool.query("SELECT id FROM users WHERE username = $1", [username])).rows[0];
   if (existingUser) return res.status(400).json({ error: "That username is already taken" });
 
@@ -210,10 +225,23 @@ app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
 });
 
 // Update an existing login — username, access level, and/or password (leave password blank to keep it unchanged).
-app.patch("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
+app.patch("/api/users/:id", requireAuth, requireCapability("manage_team"), async (req, res) => {
   const user = (await pool.query("SELECT * FROM users WHERE id = $1", [req.params.id])).rows[0];
   if (!user) return res.status(404).json({ error: "Login not found" });
   const { username, password, accessLevel, permissions } = req.body;
+
+  if (req.user.access_level === "staff") {
+    if (user.access_level === "admin") return res.status(403).json({ error: "Managers can't edit an admin's login." });
+    if (accessLevel === "admin") return res.status(403).json({ error: "Managers can't promote anyone to admin." });
+    if (Array.isArray(permissions)) {
+      let ownPerms = null;
+      try { ownPerms = req.user.permissions ? JSON.parse(req.user.permissions) : null; } catch { ownPerms = null; }
+      if (Array.isArray(ownPerms)) {
+        const overreach = permissions.filter((p) => !ownPerms.includes(p));
+        if (overreach.length > 0) return res.status(403).json({ error: `You can't grant access you don't have yourself: ${overreach.join(", ")}` });
+      }
+    }
+  }
 
   if (username && username !== user.username) {
     const existing = (await pool.query("SELECT id FROM users WHERE username = $1 AND id != $2", [username, user.id])).rows[0];
@@ -240,10 +268,16 @@ app.patch("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
   res.json({ id: user.id, username: username || user.username, accessLevel: accessLevel || user.access_level });
 });
 
-// Update a team member's own details (name, role/title, phone, email) — admin only.
-app.patch("/api/team/:id", requireAuth, requireAdmin, async (req, res) => {
+// Update a team member's own details (name, role/title, phone, email).
+app.patch("/api/team/:id", requireAuth, requireCapability("manage_team"), async (req, res) => {
   const member = (await pool.query("SELECT * FROM team WHERE id = $1", [req.params.id])).rows[0];
   if (!member) return res.status(404).json({ error: "Team member not found" });
+  if (req.user.access_level === "staff") {
+    const linkedUser = (await pool.query("SELECT access_level FROM users WHERE team_id = $1", [req.params.id])).rows[0];
+    if (linkedUser && linkedUser.access_level === "admin") {
+      return res.status(403).json({ error: "Managers can't edit an admin's details." });
+    }
+  }
   const { name, role, phone, email, specialty } = req.body;
   await pool.query(`UPDATE team SET name = $1, role = $2, phone = $3, email = $4, specialty = $5 WHERE id = $6`, [
     name || member.name,
@@ -301,7 +335,18 @@ app.get("/api/config", (req, res) => {
 // ---------- Leads ----------
 app.get("/api/leads", requireAuth, async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM leads ORDER BY created_at DESC");
-  res.json(rows);
+  let hasLeadsAccess = true;
+  if (req.user.access_level === "staff") {
+    let perms = null;
+    try { perms = req.user.permissions ? JSON.parse(req.user.permissions) : null; } catch { perms = null; }
+    if (perms && !perms.includes("leads")) hasLeadsAccess = false;
+  }
+  if (hasLeadsAccess) return res.json(rows);
+  // Restricted staff (e.g. a manager who can assign team but not view the pipeline)
+  // still need basic event info for the calendar and team assignment — nothing sensitive.
+  res.json(rows.map((l) => ({
+    id: l.id, name: l.name, date: l.date, city: l.city, event_type: l.event_type, stage: l.stage,
+  })));
 });
 
 // Public lead-capture endpoint — this is the form link you'd share with a new query.

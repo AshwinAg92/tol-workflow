@@ -40,7 +40,27 @@ function canAssignTeam() {
   return !Array.isArray(CURRENT_USER.permissions) || CURRENT_USER.permissions.includes("assign_team");
 }
 
+function canManageTeam() {
+  if (!CURRENT_USER) return false;
+  if (CURRENT_USER.accessLevel === "admin") return true;
+  if (CURRENT_USER.accessLevel !== "staff") return false;
+  return !Array.isArray(CURRENT_USER.permissions) || CURRENT_USER.permissions.includes("manage_team");
+}
+
+function hasLeadsAccess() {
+  if (!CURRENT_USER) return false;
+  if (CURRENT_USER.accessLevel === "admin") return true;
+  if (CURRENT_USER.accessLevel !== "staff") return false;
+  return !Array.isArray(CURRENT_USER.permissions) || CURRENT_USER.permissions.includes("leads");
+}
+
 function permissionsChecklistHtml(idPrefix, currentPermissions) {
+  // A manager (staff, not a true admin) can't grant access broader than their own —
+  // disable those checkboxes so it's visually clear, matching the backend's rejection.
+  const actingAsManager = CURRENT_USER?.accessLevel === "staff";
+  const ownPerms = actingAsManager && Array.isArray(CURRENT_USER.permissions) ? CURRENT_USER.permissions : null;
+  const disabledAttr = (id) => (ownPerms && !ownPerms.includes(id)) ? "disabled" : "";
+
   // undefined (new member) defaults to excluding Accounts; null (existing, unrestricted)
   // shows everything checked since that's their real current access; an array is explicit.
   const sectionsHtml = PERMISSION_SECTIONS.map((s) => {
@@ -48,15 +68,20 @@ function permissionsChecklistHtml(idPrefix, currentPermissions) {
     if (Array.isArray(currentPermissions)) checked = currentPermissions.includes(s.id);
     else if (currentPermissions === null) checked = true;
     else checked = s.id !== "accounts";
-    return `<label class="check-row"><input type="checkbox" class="${idPrefix}-perm" value="${s.id}" ${checked ? "checked" : ""} /> ${s.label}</label>`;
+    return `<label class="check-row"><input type="checkbox" class="${idPrefix}-perm" value="${s.id}" ${checked ? "checked" : ""} ${disabledAttr(s.id)} /> ${s.label}</label>`;
   }).join("");
   let assignChecked;
   if (Array.isArray(currentPermissions)) assignChecked = currentPermissions.includes("assign_team");
   else if (currentPermissions === null) assignChecked = true;
   else assignChecked = false; // operational capability — off by default for new staff, unlike most sections
+  let manageChecked;
+  if (Array.isArray(currentPermissions)) manageChecked = currentPermissions.includes("manage_team");
+  else if (currentPermissions === null) manageChecked = true;
+  else manageChecked = false;
   const capabilityHtml = `
     <div class="muted small" style="margin-top:8px; margin-bottom:2px;">Operational permissions</div>
-    <label class="check-row"><input type="checkbox" class="${idPrefix}-perm" value="assign_team" ${assignChecked ? "checked" : ""} /> Assign artists to confirmed events</label>
+    <label class="check-row"><input type="checkbox" class="${idPrefix}-perm" value="assign_team" ${assignChecked ? "checked" : ""} ${disabledAttr("assign_team")} /> Assign artists to confirmed events</label>
+    <label class="check-row"><input type="checkbox" class="${idPrefix}-perm" value="manage_team" ${manageChecked ? "checked" : ""} ${disabledAttr("manage_team")} /> Add/edit team members (never admins, never grants more than they have)</label>
   `;
   return sectionsHtml + capabilityHtml;
 }
@@ -934,12 +959,16 @@ function wireCalendarGrid(container) {
     pill.addEventListener("click", () => {
       const lead = LEADS.find((l) => l.id === pill.dataset.leadId);
       if (!lead) return;
-      leadsSearch = lead.name;
-      leadsStageFilter = "all";
-      leadsDateFilter = "";
-      currentTab = "leads";
-      renderNav();
-      renderMain();
+      if (hasLeadsAccess()) {
+        leadsSearch = lead.name;
+        leadsStageFilter = "all";
+        leadsDateFilter = "";
+        currentTab = "leads";
+        renderNav();
+        renderMain();
+      } else if (canAssignTeam()) {
+        openAssignTeamModal(lead.id);
+      }
     });
   });
 
@@ -972,12 +1001,13 @@ function renderCalendar(main) {
 // ---------- Team ----------
 async function renderTeam(main) {
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
-  const users = isAdmin ? await api("/api/users") : [];
+  const canManage = canManageTeam();
+  const users = canManage ? await api("/api/users") : [];
   const teamIdsWithLogin = new Set(users.map((u) => u.team_id).filter(Boolean));
   main.innerHTML = `
     <div class="view-head">
       <div><h2>Team</h2><p class="muted">Who's carrying which leads right now.</p></div>
-      ${isAdmin ? `<button class="btn-primary" id="addMemberBtn">+ Add team member</button>` : ""}
+      ${canManage ? `<button class="btn-primary" id="addMemberBtn">+ Add team member</button>` : ""}
     </div>
     ${isAdmin && LEADS.length > 0 ? `
       <div class="card" style="margin-bottom:20px; border-color:#A64B3C;">
@@ -1033,7 +1063,7 @@ async function renderTeam(main) {
   TEAM.forEach((m) => {
     grid.appendChild(el(`
       <div class="card team-card">
-        ${isAdmin ? `<button class="icon-btn" data-edit-member="${m.id}" style="float:right;">✎</button>` : ""}
+        ${canManage ? `<button class="icon-btn" data-edit-member="${m.id}" style="float:right;">✎</button>` : ""}
         <div class="team-avatar">${m.name[0]}</div>
         <div class="team-name">${m.name}</div>
         <div class="muted">${m.role || ""}${m.specialty ? ` · ${m.specialty}` : ""}</div>
@@ -1041,11 +1071,11 @@ async function renderTeam(main) {
         ${m.email ? `<div class="muted small">${m.email}</div>` : ""}
         <div class="team-count mono">${m.activeLeads.length} active lead${m.activeLeads.length === 1 ? "" : "s"}</div>
         ${m.activeLeads.map((l) => `<div class="team-lead">› ${l.name}</div>`).join("")}
-        ${isAdmin && !teamIdsWithLogin.has(m.id) ? `<button class="btn-ghost full" data-add-login="${m.id}" style="margin-top:10px;">+ Add login</button>` : ""}
+        ${canManage && !teamIdsWithLogin.has(m.id) ? `<button class="btn-ghost full" data-add-login="${m.id}" style="margin-top:10px;">+ Add login</button>` : ""}
       </div>
     `));
   });
-  if (isAdmin) {
+  if (canManage) {
     main.querySelectorAll("[data-edit-member]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const member = TEAM.find((m) => m.id === btn.dataset.editMember);
@@ -1084,7 +1114,6 @@ async function renderTeam(main) {
         renderMain();
       });
     });
-    main.querySelector("#addMemberBtn").addEventListener("click", () => openAddMemberModal());
     const clearBtn = main.querySelector("#clearDemoBtn");
     if (clearBtn) {
       clearBtn.addEventListener("click", async () => {
@@ -1102,6 +1131,9 @@ async function renderTeam(main) {
         }
       });
     }
+  }
+  if (canManage) {
+    main.querySelector("#addMemberBtn").addEventListener("click", () => openAddMemberModal());
   }
 }
 
@@ -1130,7 +1162,7 @@ function openAddMemberModal(onCreated) {
           <select id="nmAccess">
             <option value="staff">Staff — everyday use, can't manage logins</option>
             <option value="performer">Performer — musicians/photographers: just their events, pay status, and event chat</option>
-            <option value="admin">Admin — full access, including adding/removing logins</option>
+            ${CURRENT_USER?.accessLevel === "admin" ? `<option value="admin">Admin — full access, including adding/removing logins</option>` : ""}
           </select>
           <div id="nmPermsWrap" style="margin-top:8px;">
             <label>What can they access?</label>
@@ -1228,7 +1260,7 @@ function openAddLoginForMemberModal(member) {
           <select id="alAccess">
             <option value="staff">Staff — everyday use, can't manage logins</option>
             <option value="performer">Performer — musicians/photographers: just their events, pay status, and event chat</option>
-            <option value="admin">Admin — full access, including adding/removing logins</option>
+            ${CURRENT_USER?.accessLevel === "admin" ? `<option value="admin">Admin — full access, including adding/removing logins</option>` : ""}
           </select>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Add login</button></div>
@@ -1276,7 +1308,7 @@ function openEditMemberModal(member, linkedUser) {
             <select id="emAccess">
               <option value="staff" ${linkedUser.access_level === "staff" ? "selected" : ""}>Staff — everyday use, can't manage logins</option>
               <option value="performer" ${linkedUser.access_level === "performer" ? "selected" : ""}>Performer — musicians/photographers: just their events, pay status, and event chat</option>
-              <option value="admin" ${linkedUser.access_level === "admin" ? "selected" : ""}>Admin — full access, including adding/removing logins</option>
+              ${CURRENT_USER?.accessLevel === "admin" ? `<option value="admin" ${linkedUser.access_level === "admin" ? "selected" : ""}>Admin — full access, including adding/removing logins</option>` : ""}
             </select>
             <div id="emPermsWrap" style="margin-top:8px; display:${linkedUser.access_level === "staff" ? "block" : "none"};">
               <label>What can they access?</label>
@@ -1306,7 +1338,7 @@ function openEditMemberModal(member, linkedUser) {
             <select id="emAccess">
               <option value="staff">Staff — everyday use, can't manage logins</option>
               <option value="performer">Performer — musicians/photographers: just their events, pay status, and event chat</option>
-              <option value="admin">Admin — full access, including adding/removing logins</option>
+              ${CURRENT_USER?.accessLevel === "admin" ? `<option value="admin">Admin — full access, including adding/removing logins</option>` : ""}
             </select>
             <div id="emPermsWrap" style="margin-top:8px;">
               <label>What can they access?</label>
@@ -1409,7 +1441,7 @@ function openEditLoginModal(user) {
           <select id="elAccess">
             <option value="staff" ${user.access_level === "staff" ? "selected" : ""}>Staff — everyday use, can't manage logins</option>
             <option value="performer" ${user.access_level === "performer" ? "selected" : ""}>Performer — musicians/photographers: just their events, pay status, and event chat</option>
-            <option value="admin" ${user.access_level === "admin" ? "selected" : ""}>Admin — full access, including adding/removing logins</option>
+            ${CURRENT_USER?.accessLevel === "admin" ? `<option value="admin" ${user.access_level === "admin" ? "selected" : ""}>Admin — full access, including adding/removing logins</option>` : ""}
           </select>
           <div id="elPermsWrap" style="margin-top:8px; display:${user.access_level === "staff" ? "block" : "none"};">
             <label>What can they access?</label>
@@ -1882,8 +1914,10 @@ async function renderDashboard(main) {
       </div>
     ` : ""}
     <div class="dash-stats">
+      ${hasLeadsAccess() ? `
       <button class="card dash-stat dash-stat-click" id="statNew"><div class="muted">New queries</div><div class="mono big">${data.newLeadsCount}</div></button>
       <button class="card dash-stat dash-stat-click" id="statFollowup"><div class="muted">Awaiting follow-up</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${data.pendingFollowUps.length}</div></button>
+      ` : ""}
       <button class="card dash-stat dash-stat-click" id="statUpcoming"><div class="muted">Upcoming events</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${data.upcomingEvents.length}</div></button>
     </div>
     <div class="card" id="dashCalCard" style="margin-bottom:16px;">
@@ -1900,6 +1934,7 @@ async function renderDashboard(main) {
           </div>
         `).join("")}
       </div>
+      ${hasLeadsAccess() ? `
       <div class="card">
         <div class="section-label">Leads waiting on a follow-up</div>
         ${data.pendingFollowUps.length === 0 ? `<p class="muted small">No one's waiting on you right now.</p>` : data.pendingFollowUps.map((l) => `
@@ -1909,6 +1944,7 @@ async function renderDashboard(main) {
           </div>
         `).join("")}
       </div>
+      ` : ""}
     </div>
   `;
 
@@ -1936,14 +1972,25 @@ async function renderDashboard(main) {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expenses), "Expenses");
     XLSX.writeFile(wb, `TOL-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
   });
-  main.querySelector("#statNew").addEventListener("click", () => goToLeads("New"));
-  main.querySelector("#statFollowup").addEventListener("click", () => goToLeads("Follow-up"));
-  main.querySelector("#statUpcoming").addEventListener("click", () => goToLeads("Confirmed"));
+  const openEventForCurrentUser = (leadId, fallbackStage) => {
+    if (hasLeadsAccess()) {
+      const lead = LEADS.find((l) => l.id === leadId);
+      goToLeads(lead ? lead.stage : (fallbackStage || "all"));
+    } else if (canAssignTeam()) {
+      openAssignTeamModal(leadId);
+    }
+    // No Leads access and no assign_team capability: nothing appropriate to open.
+  };
+  const statNewEl = main.querySelector("#statNew");
+  if (statNewEl) statNewEl.addEventListener("click", () => goToLeads("New"));
+  const statFollowupEl = main.querySelector("#statFollowup");
+  if (statFollowupEl) statFollowupEl.addEventListener("click", () => goToLeads("Follow-up"));
+  main.querySelector("#statUpcoming").addEventListener("click", () => {
+    if (hasLeadsAccess()) goToLeads("Confirmed");
+    else { currentTab = "calendar"; renderNav(); renderMain(); }
+  });
   main.querySelectorAll(".dash-list-item-click").forEach((row) => {
-    row.addEventListener("click", () => {
-      const lead = LEADS.find((l) => l.id === row.dataset.leadId);
-      goToLeads(lead ? lead.stage : "all");
-    });
+    row.addEventListener("click", () => openEventForCurrentUser(row.dataset.leadId));
   });
 }
 
