@@ -81,7 +81,8 @@ function permissionsChecklistHtml(idPrefix, currentPermissions) {
   const capabilityHtml = `
     <div class="muted small" style="margin-top:8px; margin-bottom:2px;">Operational permissions</div>
     <label class="check-row"><input type="checkbox" class="${idPrefix}-perm" value="assign_team" ${assignChecked ? "checked" : ""} ${disabledAttr("assign_team")} /> Assign artists to confirmed events</label>
-    <label class="check-row"><input type="checkbox" class="${idPrefix}-perm" value="manage_team" ${manageChecked ? "checked" : ""} ${disabledAttr("manage_team")} /> Add/edit team members (never admins, never grants more than they have)</label>
+    <label class="check-row"><input type="checkbox" class="${idPrefix}-perm" value="manage_team" ${manageChecked ? "checked" : ""} ${disabledAttr("manage_team")} /> Can add new team members and edit existing ones</label>
+    <p class="muted small" style="margin:-4px 0 6px 26px;">They can never create/edit an Admin, and can never hand out access beyond what they themselves have.</p>
   `;
   return sectionsHtml + capabilityHtml;
 }
@@ -1006,7 +1007,7 @@ async function renderTeam(main) {
   const teamIdsWithLogin = new Set(users.map((u) => u.team_id).filter(Boolean));
   main.innerHTML = `
     <div class="view-head">
-      <div><h2>Team</h2><p class="muted">Who's carrying which leads right now.</p></div>
+      <div><h2>Team</h2><p class="muted">Your band's musicians, crew, and staff.</p></div>
       ${canManage ? `<button class="btn-primary" id="addMemberBtn">+ Add team member</button>` : ""}
     </div>
     ${isAdmin && LEADS.length > 0 ? `
