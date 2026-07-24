@@ -1066,33 +1066,44 @@ function openAddMemberModal(onCreated) {
         <div class="modal-body">
           <label>Name</label>
           <input id="nmName" placeholder="e.g. Karan Mehta" />
-          <div class="row-2">
-            <div><label>Role / title</label><input id="nmRole" placeholder="e.g. Logistics & Sound" /></div>
-            <div><label>Specialty (optional)</label><input id="nmSpecialty" placeholder="e.g. Drummer, Photographer" /></div>
-          </div>
-          <label>Phone</label>
-          <input id="nmPhone" placeholder="+91 ..." />
-          <div class="row-2">
-            <div><label>Username</label><input id="nmUsername" placeholder="e.g. karan" /></div>
-            <div><label>Password</label>
-              <div class="password-field">
-                <input id="nmPassword" type="password" placeholder="Choose a password" />
-                <button type="button" class="password-toggle" data-toggle-for="nmPassword">Show</button>
-              </div>
-            </div>
-          </div>
           <label>Access level</label>
           <select id="nmAccess">
             <option value="staff">Staff — everyday use, can't manage logins</option>
             <option value="performer">Performer — musicians/photographers: just their events, pay status, and event chat</option>
             <option value="admin">Admin — full access, including adding/removing logins</option>
           </select>
+          <label>Role / Specialty</label>
+          <input id="nmRole" placeholder="e.g. Logistics & Sound, or Drummer, Photographer" />
+          <label>Phone</label>
+          <input id="nmPhone" placeholder="e.g. 9876543210" />
+          <p class="muted small" style="margin:4px 0 0;">Username and password default to this phone number — change them below if you'd like something else.</p>
+          <div class="row-2">
+            <div><label>Username</label><input id="nmUsername" placeholder="Defaults to phone number" /></div>
+            <div><label>Password</label>
+              <div class="password-field">
+                <input id="nmPassword" type="password" placeholder="Defaults to phone number" />
+                <button type="button" class="password-toggle" data-toggle-for="nmPassword">Show</button>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Add member</button></div>
       </div>
     </div>
   `;
   wirePasswordToggles(root);
+
+  // Username/password default to the phone number as it's typed, but only
+  // while the admin hasn't manually overridden them — never fight a manual edit.
+  let usernameTouched = false, passwordTouched = false;
+  root.querySelector("#nmUsername").addEventListener("input", () => { usernameTouched = true; });
+  root.querySelector("#nmPassword").addEventListener("input", () => { passwordTouched = true; });
+  root.querySelector("#nmPhone").addEventListener("input", (e) => {
+    const digits = e.target.value.replace(/\D/g, "");
+    if (!usernameTouched) root.querySelector("#nmUsername").value = digits;
+    if (!passwordTouched) root.querySelector("#nmPassword").value = digits;
+  });
+
   const close = () => (root.innerHTML = "");
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#cancelModal").addEventListener("click", close);
@@ -1108,7 +1119,6 @@ function openAddMemberModal(onCreated) {
         body: JSON.stringify({
           name,
           roleTitle: root.querySelector("#nmRole").value,
-          specialty: root.querySelector("#nmSpecialty").value,
           phone: root.querySelector("#nmPhone").value,
           username,
           password,
@@ -2177,7 +2187,9 @@ async function renderPerformerApp() {
   document.getElementById("performerLogout").addEventListener("click", (e) => { e.preventDefault(); handleLogout(); });
 
   CONFIG = await api("/api/config");
-  const [events, tasks, announcements] = await Promise.all([api("/api/my/events"), api("/api/my/tasks"), api("/api/announcements")]);
+  const [events, tasks, announcements, notifications] = await Promise.all([
+    api("/api/my/events"), api("/api/my/tasks"), api("/api/announcements"), api("/api/my/notifications"),
+  ]);
   const body = document.getElementById("performerBody");
 
   const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined" };
@@ -2187,6 +2199,17 @@ async function renderPerformerApp() {
   const unpaidCount = activeEvents.length - paidCount;
 
   body.innerHTML = `
+    ${notifications.length > 0 ? `
+      <div class="section-label">🔔 Updates for you</div>
+      <div class="card" id="perfNotifCard" style="margin-bottom:20px; border-color:#C98B3D;">
+        ${notifications.map((n) => `
+          <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
+            <div><div>${n.message}</div><div class="muted small">${fmtDateTime(n.created_at)}</div></div>
+            <button class="icon-btn" data-dismiss-notif="${n.id}">✕</button>
+          </div>
+        `).join("")}
+      </div>
+    ` : ""}
     ${announcements.length > 0 ? `
       <div class="section-label">📢 Announcements</div>
       <div class="card" style="margin-bottom:20px; border-color:#C98B3D;">
@@ -2249,6 +2272,17 @@ async function renderPerformerApp() {
   `;
 
   wireCalendarGridPerformer(document.getElementById("perfCalCard"), activeEvents);
+
+  body.querySelectorAll("[data-dismiss-notif]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await api(`/api/my/notifications/${btn.dataset.dismissNotif}`, { method: "DELETE" });
+      btn.closest(".dash-list-item").remove();
+      if (!document.querySelector("#perfNotifCard .dash-list-item")) {
+        document.querySelector("#perfNotifCard")?.previousElementSibling?.remove();
+        document.querySelector("#perfNotifCard")?.remove();
+      }
+    });
+  });
 
   body.querySelectorAll("[data-respond]").forEach((btn) => {
     btn.addEventListener("click", async () => {

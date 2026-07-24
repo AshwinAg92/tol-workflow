@@ -218,11 +218,21 @@ app.delete("/api/team/:id", requireAuth, requireAdmin, async (req, res) => {
   if (linkedUser && linkedUser.id === req.user.id) {
     return res.status(400).json({ error: "You can't remove your own team entry while logged in as it" });
   }
+  const activeEvents = (await pool.query(`
+    SELECT leads.name, leads.date FROM event_assignments
+    JOIN leads ON leads.id = event_assignments.lead_id
+    WHERE event_assignments.team_id = $1 AND leads.stage = 'Confirmed'
+  `, [req.params.id])).rows;
+  if (activeEvents.length > 0) {
+    const list = activeEvents.map((e) => `${e.name} (${e.date})`).join(", ");
+    return res.status(400).json({ error: `Can't remove — they're on ${activeEvents.length} active confirmed event${activeEvents.length > 1 ? "s" : ""}: ${list}. Reassign or wait until those are completed/cancelled first.` });
+  }
   // Unlink (not delete) financial/assignment records so history is preserved,
   // then remove the login and the team member themselves. Deleting the team
   // row directly would otherwise fail — expenses/event_assignments reference it.
   await pool.query("UPDATE expenses SET team_id = NULL WHERE team_id = $1", [req.params.id]);
   await pool.query("DELETE FROM event_assignments WHERE team_id = $1", [req.params.id]);
+  await pool.query("DELETE FROM notifications WHERE team_id = $1", [req.params.id]);
   await pool.query("UPDATE tasks SET assigned_to = NULL WHERE assigned_to = $1", [req.params.id]);
   await pool.query("UPDATE leads SET assigned_to = NULL WHERE assigned_to = $1", [req.params.id]);
   await pool.query("DELETE FROM users WHERE team_id = $1", [req.params.id]);
@@ -309,6 +319,19 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
 
   values.push(req.params.id);
   await pool.query(`UPDATE leads SET ${updates.join(", ")} WHERE id = $${values.length}`, values);
+
+  // If this event just got cancelled, tell everyone who was assigned to it.
+  if (req.body.stage === "Cancelled" && lead.stage !== "Cancelled") {
+    const assigned = (await pool.query("SELECT team_id FROM event_assignments WHERE lead_id = $1", [req.params.id])).rows;
+    const now = new Date().toISOString();
+    for (const a of assigned) {
+      await pool.query(`
+        INSERT INTO notifications (id, team_id, message, created_at)
+        VALUES ($1, $2, $3, $4)
+      `, [uuid(), a.team_id, `Event cancelled: ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""} — no longer happening.`, now]);
+    }
+  }
+
   res.json((await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0]);
 });
 
@@ -382,11 +405,16 @@ app.post("/api/leads/:id/assignments", requireAuth, requireAdmin, async (req, re
   const { teamIds = [] } = req.body;
   const existing = (await pool.query("SELECT team_id FROM event_assignments WHERE lead_id = $1", [req.params.id])).rows.map((r) => r.team_id);
   const now = new Date().toISOString();
-  for (const teamId of teamIds.filter((id) => !existing.includes(id))) {
+  const newlyAdded = teamIds.filter((id) => !existing.includes(id));
+  for (const teamId of newlyAdded) {
     await pool.query(`
       INSERT INTO event_assignments (id, lead_id, team_id, status, paid, created_at)
       VALUES ($1, $2, $3, 'pending', 0, $4)
     `, [uuid(), req.params.id, teamId, now]);
+    await pool.query(`
+      INSERT INTO notifications (id, team_id, message, created_at)
+      VALUES ($1, $2, $3, $4)
+    `, [uuid(), teamId, `You've been added to a new event: ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""}.`, now]);
   }
   const { rows } = await pool.query(`
     SELECT event_assignments.*, team.name AS team_name
@@ -471,6 +499,20 @@ app.post("/api/my/events/:leadId/messages", requireAuth, async (req, res) => {
 });
 
 // ---------- Announcements (broadcast to the whole team) ----------
+app.get("/api/my/notifications", requireAuth, async (req, res) => {
+  if (!req.user.team_id) return res.json([]);
+  const { rows } = await pool.query("SELECT * FROM notifications WHERE team_id = $1 ORDER BY created_at DESC", [req.user.team_id]);
+  res.json(rows);
+});
+
+app.delete("/api/my/notifications/:id", requireAuth, async (req, res) => {
+  const n = (await pool.query("SELECT * FROM notifications WHERE id = $1", [req.params.id])).rows[0];
+  if (!n) return res.status(204).end();
+  if (n.team_id !== req.user.team_id) return res.status(403).json({ error: "Not yours to dismiss" });
+  await pool.query("DELETE FROM notifications WHERE id = $1", [req.params.id]);
+  res.status(204).end();
+});
+
 app.get("/api/announcements", requireAuth, async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM announcements ORDER BY created_at DESC LIMIT 10");
   res.json(rows);

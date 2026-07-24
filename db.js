@@ -122,6 +122,13 @@ async function setup() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      team_id TEXT REFERENCES team(id),
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS expenses (
       id TEXT PRIMARY KEY,
       lead_id TEXT REFERENCES leads(id),
