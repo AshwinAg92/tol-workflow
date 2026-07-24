@@ -465,7 +465,73 @@ app.post("/api/my/assignments/:id/respond", requireAuth, async (req, res) => {
   const { status } = req.body;
   if (!["accepted", "declined"].includes(status)) return res.status(400).json({ error: "status must be 'accepted' or 'declined'" });
   await pool.query("UPDATE event_assignments SET status = $1, responded_at = $2 WHERE id = $3", [status, new Date().toISOString(), a.id]);
+
+  const lead = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [a.lead_id])).rows[0];
+  const member = (await pool.query("SELECT name FROM team WHERE id = $1", [a.team_id])).rows[0];
+  if (lead && member) {
+    await pool.query(`
+      INSERT INTO admin_notifications (id, message, assignment_id, created_at)
+      VALUES ($1, $2, $3, $4)
+    `, [uuid(), `${member.name} ${status} ${lead.name} on ${lead.date}.`, a.id, new Date().toISOString()]);
+  }
+
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
+});
+
+// A performer who already accepted can request to back out, giving a reason —
+// admin sees it and decides whether to approve, freeing up that slot.
+app.post("/api/my/assignments/:id/request-cancel", requireAuth, async (req, res) => {
+  const a = (await pool.query("SELECT * FROM event_assignments WHERE id = $1", [req.params.id])).rows[0];
+  if (!a) return res.status(404).json({ error: "Assignment not found" });
+  if (a.team_id !== req.user.team_id) return res.status(403).json({ error: "This invitation isn't yours" });
+  if (a.status !== "accepted") return res.status(400).json({ error: "Only an accepted event can be cancelled" });
+  const { reason } = req.body;
+  if (!reason || !reason.trim()) return res.status(400).json({ error: "Please give a reason for cancelling" });
+  await pool.query("UPDATE event_assignments SET status = 'cancel_requested', cancel_reason = $1 WHERE id = $2", [reason, a.id]);
+
+  const lead = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [a.lead_id])).rows[0];
+  const member = (await pool.query("SELECT name FROM team WHERE id = $1", [a.team_id])).rows[0];
+  if (lead && member) {
+    await pool.query(`
+      INSERT INTO admin_notifications (id, message, assignment_id, created_at)
+      VALUES ($1, $2, $3, $4)
+    `, [uuid(), `${member.name} wants to cancel their spot on ${lead.name} (${lead.date}) — reason: ${reason}`, a.id, new Date().toISOString()]);
+  }
+  res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
+});
+
+// Admin approves or rejects a performer's cancellation request.
+app.post("/api/assignments/:id/resolve-cancel", requireAuth, requireAdmin, async (req, res) => {
+  const a = (await pool.query("SELECT * FROM event_assignments WHERE id = $1", [req.params.id])).rows[0];
+  if (!a) return res.status(404).json({ error: "Assignment not found" });
+  if (a.status !== "cancel_requested") return res.status(400).json({ error: "No pending cancellation request on this assignment" });
+  const { approve } = req.body;
+  const newStatus = approve ? "declined" : "accepted";
+  await pool.query("UPDATE event_assignments SET status = $1, cancel_reason = NULL WHERE id = $2", [newStatus, a.id]);
+
+  const lead = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [a.lead_id])).rows[0];
+  if (lead) {
+    await pool.query(`
+      INSERT INTO notifications (id, team_id, message, created_at)
+      VALUES ($1, $2, $3, $4)
+    `, [uuid(), a.team_id, `Your cancellation request for ${lead.name} (${lead.date}) was ${approve ? "approved" : "declined — you're still on this event"}.`, new Date().toISOString()]);
+  }
+  res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
+});
+
+app.get("/api/admin/notifications", requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await pool.query(`
+    SELECT admin_notifications.*, event_assignments.status AS assignment_status
+    FROM admin_notifications
+    LEFT JOIN event_assignments ON event_assignments.id = admin_notifications.assignment_id
+    ORDER BY admin_notifications.created_at DESC LIMIT 15
+  `);
+  res.json(rows);
+});
+
+app.delete("/api/admin/notifications/:id", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM admin_notifications WHERE id = $1", [req.params.id]);
+  res.status(204).end();
 });
 
 async function canAccessEventChat(req, leadId) {

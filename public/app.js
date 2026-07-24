@@ -1684,12 +1684,37 @@ function renderPartyLedgerDetail(container, booking) {
 
 // ---------- Dashboard ----------
 async function renderDashboard(main) {
-  const [data, announcements] = await Promise.all([api("/api/dashboard"), api("/api/announcements")]);
+  const isAdmin = CURRENT_USER?.accessLevel === "admin";
+  const [data, announcements, teamNotifs] = await Promise.all([
+    api("/api/dashboard"),
+    api("/api/announcements"),
+    isAdmin ? api("/api/admin/notifications") : Promise.resolve([]),
+  ]);
   main.innerHTML = `
     <div class="view-head">
       <div><h2>Dashboard</h2><p class="muted">The three things that matter today — click any card to see the list.</p></div>
       <button class="btn-ghost" id="dashExportBtn">⬇ Export to Excel</button>
     </div>
+    ${teamNotifs.length > 0 ? `
+      <div class="section-label">🔔 Team responses</div>
+      <div class="card" id="teamNotifCard" style="margin-bottom:16px; border-color:#C98B3D;">
+        ${teamNotifs.map((n) => `
+          <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
+            <div>
+              <div>${n.message}</div>
+              <div class="muted small">${fmtDateTime(n.created_at)}</div>
+            </div>
+            <div style="display:flex; gap:6px; flex-shrink:0;">
+              ${n.assignment_status === "cancel_requested" ? `
+                <button class="btn-primary" data-resolve-cancel="${n.assignment_id}" data-approve="true" style="padding:5px 10px; font-size:12px;">Approve</button>
+                <button class="btn-ghost" data-resolve-cancel="${n.assignment_id}" data-approve="false" style="padding:5px 10px; font-size:12px;">Reject</button>
+              ` : ""}
+              <button class="icon-btn" data-dismiss-admin-notif="${n.id}">✕</button>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    ` : ""}
     ${announcements.length > 0 ? `
       <div class="section-label">📢 Announcements</div>
       <div class="card" style="margin-bottom:16px; border-color:#C98B3D;">
@@ -1733,6 +1758,21 @@ async function renderDashboard(main) {
   `;
 
   wireCalendarGrid(main.querySelector("#dashCalCard"));
+  main.querySelectorAll("[data-resolve-cancel]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await api(`/api/assignments/${btn.dataset.resolveCancel}/resolve-cancel`, {
+        method: "POST",
+        body: JSON.stringify({ approve: btn.dataset.approve === "true" }),
+      });
+      renderMain();
+    });
+  });
+  main.querySelectorAll("[data-dismiss-admin-notif]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await api(`/api/admin/notifications/${btn.dataset.dismissAdminNotif}`, { method: "DELETE" });
+      btn.closest(".dash-list-item").remove();
+    });
+  });
   main.querySelector("#dashExportBtn").addEventListener("click", async () => {
     const [{ bookings }, expenses] = await Promise.all([api("/api/accounts"), api("/api/expenses")]);
     const wb = XLSX.utils.book_new();
@@ -2192,8 +2232,8 @@ async function renderPerformerApp() {
   ]);
   const body = document.getElementById("performerBody");
 
-  const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined" };
-  const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C" };
+  const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined", cancel_requested: "Cancellation requested" };
+  const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C", cancel_requested: "#B6752C" };
   const activeEvents = events.filter((e) => e.stage !== "Cancelled");
   const paidCount = activeEvents.filter((e) => e.paid).length;
   const unpaidCount = activeEvents.length - paidCount;
@@ -2248,6 +2288,12 @@ async function renderPerformerApp() {
             <button class="btn-ghost" data-respond="${e.id}" data-status="declined">Decline</button>
           </div>
         ` : ""}
+        ${e.status === "accepted" ? `
+          <button class="btn-ghost full" data-request-cancel="${e.id}" style="margin-top:8px; color:#A64B3C;">Request to cancel</button>
+        ` : ""}
+        ${e.status === "cancel_requested" ? `
+          <p class="muted small" style="margin-top:8px;">Waiting on admin to review your cancellation request.</p>
+        ` : ""}
         <button class="btn-ghost full" data-chat-lead="${e.lead_id}" data-chat-name="${e.lead_name}" style="margin-top:10px;">💬 Event chat</button>
         `}
       </div>
@@ -2288,6 +2334,19 @@ async function renderPerformerApp() {
     btn.addEventListener("click", async () => {
       await api(`/api/my/assignments/${btn.dataset.respond}/respond`, { method: "POST", body: JSON.stringify({ status: btn.dataset.status }) });
       renderPerformerApp();
+    });
+  });
+  body.querySelectorAll("[data-request-cancel]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const reason = prompt("Why do you need to cancel this event? This goes to the admin for review.");
+      if (reason === null) return;
+      if (!reason.trim()) return alert("A reason is required.");
+      try {
+        await api(`/api/my/assignments/${btn.dataset.requestCancel}/request-cancel`, { method: "POST", body: JSON.stringify({ reason }) });
+        renderPerformerApp();
+      } catch (err) {
+        alert(err.message);
+      }
     });
   });
   body.querySelectorAll("[data-chat-lead]").forEach((btn) => {
