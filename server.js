@@ -875,6 +875,34 @@ app.post("/api/my/events/:leadId/messages", requireAuth, async (req, res) => {
     VALUES ($1, $2, $3, $4, $5)
   `, [id, req.params.leadId, authorName, body, new Date().toISOString()]);
   res.status(201).json((await pool.query("SELECT * FROM event_messages WHERE id = $1", [id])).rows[0]);
+
+  if (req.user.access_level !== "admin") {
+    const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [req.params.leadId])).rows[0];
+    const snippet = body.length > 60 ? `${body.slice(0, 60)}…` : body;
+    await pool.query(`
+      INSERT INTO admin_notifications (id, message, assignment_id, created_at)
+      VALUES ($1, $2, NULL, $3)
+    `, [uuid(), `${authorName} messaged in ${lead?.name || "an event"}: "${snippet}"`, new Date().toISOString()]);
+  }
+});
+
+// General (not tied to any event) message from a manager/performer to admin --
+// simple one-way notification, not a full thread, so it can piggyback on the
+// same admin_notifications feed and flashing card the event chats use.
+app.post("/api/messages/general", requireAuth, async (req, res) => {
+  if (req.user.access_level === "admin") return res.status(400).json({ error: "You're already the admin." });
+  const { body } = req.body;
+  if (!body || !body.trim()) return res.status(400).json({ error: "Message can't be empty" });
+  let authorName = req.user.username;
+  if (req.user.team_id) {
+    const t = (await pool.query("SELECT name FROM team WHERE id = $1", [req.user.team_id])).rows[0];
+    if (t) authorName = t.name;
+  }
+  await pool.query(`
+    INSERT INTO admin_notifications (id, message, assignment_id, created_at)
+    VALUES ($1, $2, NULL, $3)
+  `, [uuid(), `${authorName}: "${body.trim()}"`, new Date().toISOString()]);
+  res.status(201).json({ ok: true });
 });
 
 // ---------- Announcements (broadcast to the whole team) ----------

@@ -2228,6 +2228,17 @@ async function renderDashboard(main) {
       <div><h2>Dashboard</h2><p class="muted">The three things that matter today — click any card to see the list.</p></div>
       <button class="btn-ghost" id="dashExportBtn">⬇ Export to Excel</button>
     </div>
+    ${!isAdmin ? `
+      <div class="card" style="margin-bottom:16px;">
+        <div class="section-label">✉️ Message admin</div>
+        <p class="muted small" style="margin-top:-4px;">Not about a specific event? Send a quick note here instead.</p>
+        <textarea id="generalMsgInput" rows="2" placeholder="e.g. Running late today, can we talk about next month's schedule..." style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:14px;"></textarea>
+        <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+          <button class="btn-primary" id="sendGeneralMsgBtn">Send</button>
+          <span class="muted small" id="generalMsgSentNote" style="display:none; color:#5C8A6B;">Sent ✓</span>
+        </div>
+      </div>
+    ` : ""}
     ${teamNotifs.length > 0 ? `
       <div class="section-label">🔔 Team responses</div>
       <div class="card reminder-flash" id="teamNotifCard" style="margin-bottom:16px;">
@@ -2335,6 +2346,27 @@ async function renderDashboard(main) {
       btn.closest(".dash-list-item").remove();
     });
   });
+  const generalMsgBtn = main.querySelector("#sendGeneralMsgBtn");
+  if (generalMsgBtn) {
+    generalMsgBtn.addEventListener("click", async () => {
+      const input = main.querySelector("#generalMsgInput");
+      const body = input.value.trim();
+      if (!body) return;
+      generalMsgBtn.disabled = true;
+      try {
+        await api("/api/messages/general", { method: "POST", body: JSON.stringify({ body }) });
+        input.value = "";
+        const note = main.querySelector("#generalMsgSentNote");
+        note.style.display = "inline";
+        setTimeout(() => { note.style.display = "none"; }, 2000);
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        generalMsgBtn.disabled = false;
+      }
+    });
+  }
+
   main.querySelector("#dashExportBtn").addEventListener("click", async () => {
     const [{ bookings }, expenses] = await Promise.all([api("/api/accounts"), api("/api/expenses")]);
     const wb = XLSX.utils.book_new();
@@ -3212,6 +3244,15 @@ async function renderPerformerApp() {
         `).join("")}
       </div>
     ` : ""}
+    <div class="card" style="margin-bottom:20px;">
+      <div class="section-label">✉️ Message admin</div>
+      <p class="muted small" style="margin-top:-4px;">Not about a specific event? Send a quick note here instead.</p>
+      <textarea id="generalMsgInput" rows="2" placeholder="e.g. Running late today, can we talk about next month's schedule..." style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:14px;"></textarea>
+      <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+        <button class="btn-primary" id="sendGeneralMsgBtn">Send</button>
+        <span class="muted small" id="generalMsgSentNote" style="display:none; color:#5C8A6B;">Sent ✓</span>
+      </div>
+    </div>
     <div class="section-label">Calendar</div>
     <div class="card" id="perfCalCard" style="margin-bottom:20px;">${performerCalendarMarkup(activeEvents)}</div>
 
@@ -3295,6 +3336,27 @@ async function renderPerformerApp() {
       }
     });
   });
+
+  const perfGeneralMsgBtn = body.querySelector("#sendGeneralMsgBtn");
+  if (perfGeneralMsgBtn) {
+    perfGeneralMsgBtn.addEventListener("click", async () => {
+      const input = body.querySelector("#generalMsgInput");
+      const msgBody = input.value.trim();
+      if (!msgBody) return;
+      perfGeneralMsgBtn.disabled = true;
+      try {
+        await api("/api/messages/general", { method: "POST", body: JSON.stringify({ body: msgBody }) });
+        input.value = "";
+        const note = body.querySelector("#generalMsgSentNote");
+        note.style.display = "inline";
+        setTimeout(() => { note.style.display = "none"; }, 2000);
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        perfGeneralMsgBtn.disabled = false;
+      }
+    });
+  }
 
   body.querySelectorAll("[data-respond-select]").forEach((sel) => {
     sel.addEventListener("change", async () => {
