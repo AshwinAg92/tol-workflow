@@ -124,7 +124,7 @@ nav { display:flex; flex-direction:column; gap:2px; }
 select.stage-select { width:auto; padding:4px 6px; font-size:12px; border-radius:5px; }
 
 .dash-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
-.dash-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:20px; }
+.dash-stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:14px; margin-bottom:20px; }
 .dash-stat .big { font-size:26px; margin-top:4px; }
 .dash-stat-click {
   text-align:left; border:none; cursor:pointer; font-family:inherit;

@@ -178,6 +178,15 @@ async function setup() {
     );
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS activity_log (
+      id TEXT PRIMARY KEY,
+      message TEXT NOT NULL,
+      actor TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
+
   // One-time migration: bring any existing single "advance" amount into the new
   // payments ledger as its first entry, so nothing is lost when moving from a
   // single advance field to a full multi-payment ledger.

@@ -126,6 +126,30 @@ const upload = multer({
   limits: { fileSize: 15 * 1024 * 1024 }, // 15MB
 });
 
+// Best-effort daily activity log — shown on the Dashboard as a register of what happened today.
+// Never throws: a logging failure should never break the request that triggered it.
+async function actorName(user) {
+  if (!user) return "System";
+  if (user.team_id) {
+    try {
+      const { rows } = await pool.query("SELECT name FROM team WHERE id = $1", [user.team_id]);
+      if (rows[0]) return rows[0].name;
+    } catch {}
+  }
+  return user.username || "Someone";
+}
+async function logActivity(req, message) {
+  try {
+    const actor = await actorName(req.user);
+    await pool.query(
+      "INSERT INTO activity_log (id, message, actor, created_at) VALUES ($1, $2, $3, $4)",
+      [uuid(), message, actor, new Date().toISOString()]
+    );
+  } catch (err) {
+    console.error("logActivity failed:", err.message);
+  }
+}
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -383,6 +407,7 @@ app.post("/api/leads", async (req, res) => {
   ]);
   const created = (await pool.query("SELECT * FROM leads WHERE id = $1", [id])).rows[0];
   res.status(201).json(created);
+  logActivity({ user: null }, `New query received: ${name} — ${packageName(eventType)}${city ? ` in ${city}` : ""}`);
   // New leads show up immediately in the Leads tab and dashboard "new leads"
   // count — no email/notification needed, the team works off the app directly.
 });
@@ -432,6 +457,17 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   }
 
   res.json((await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0]);
+
+  if (req.body.stage !== undefined && req.body.stage !== lead.stage) {
+    if (req.body.stage === "Confirmed") {
+      const amt = req.body.finalAmount ? ` — ₹${Number(req.body.finalAmount).toLocaleString("en-IN")}` : "";
+      logActivity(req, `Confirmed: ${lead.name}${amt}`);
+    } else {
+      logActivity(req, `${lead.name}: ${lead.stage} → ${req.body.stage}`);
+    }
+  } else if (req.body.advance !== undefined && Number(req.body.advance) !== Number(lead.advance || 0)) {
+    logActivity(req, `Payment recorded for ${lead.name}: ₹${Number(req.body.advance).toLocaleString("en-IN")} received`);
+  }
 });
 
 // ---------- Quotation ----------
@@ -473,6 +509,7 @@ app.post("/api/leads/:id/quote", requireAuth, async (req, res) => {
     whatsapp,
     mailto,
   });
+  logActivity(req, `Quote sent to ${lead.name}${numericAmount ? `: ₹${numericAmount.toLocaleString("en-IN")}` : ""}`);
 });
 
 // History of every quote ever sent, newest first — so Ashwin can see what's gone to whom.
@@ -521,6 +558,10 @@ app.post("/api/leads/:id/assignments", requireAuth, requireCapability("assign_te
     WHERE lead_id = $1
   `, [req.params.id]);
   res.status(201).json(rows);
+  if (newlyAdded.length > 0) {
+    const names = rows.filter((r) => newlyAdded.includes(r.team_id)).map((r) => r.team_name).join(", ");
+    logActivity(req, `${names} assigned to ${lead.name}`);
+  }
 });
 
 app.delete("/api/assignments/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
@@ -558,6 +599,7 @@ app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_t
     VALUES ($1, $2, $3, $4, $5, $6)
   `, [id, req.params.id, name, description || null, phone || null, new Date().toISOString()]);
   res.status(201).json((await pool.query("SELECT * FROM temp_artists WHERE id = $1", [id])).rows[0]);
+  logActivity(req, `Temporary artist added to ${lead.name}: ${name}${description ? ` (${description})` : ""}`);
 });
 
 app.delete("/api/temp-artists/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
@@ -599,6 +641,7 @@ app.post("/api/my/assignments/:id/respond", requireAuth, async (req, res) => {
   }
 
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
+  if (lead && member) logActivity(req, `${member.name} ${status} ${lead.name} on ${lead.date}`);
 });
 
 // A performer who already accepted can request to back out, giving a reason —
@@ -621,6 +664,7 @@ app.post("/api/my/assignments/:id/request-cancel", requireAuth, async (req, res)
     `, [uuid(), `${member.name} wants to cancel their spot on ${lead.name} (${lead.date}) — reason: ${reason}`, a.id, new Date().toISOString()]);
   }
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
+  if (lead && member) logActivity(req, `${member.name} requested to cancel ${lead.name} (${lead.date}) — reason: ${reason}`);
 });
 
 // Admin approves or rejects a performer's cancellation request.
@@ -633,6 +677,7 @@ app.post("/api/assignments/:id/resolve-cancel", requireAuth, requireAdmin, async
   await pool.query("UPDATE event_assignments SET status = $1, cancel_reason = NULL WHERE id = $2", [newStatus, a.id]);
 
   const lead = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [a.lead_id])).rows[0];
+  const member = (await pool.query("SELECT name FROM team WHERE id = $1", [a.team_id])).rows[0];
   if (lead) {
     await pool.query(`
       INSERT INTO notifications (id, team_id, message, created_at)
@@ -640,6 +685,7 @@ app.post("/api/assignments/:id/resolve-cancel", requireAuth, requireAdmin, async
     `, [uuid(), a.team_id, `Your cancellation request for ${lead.name} (${lead.date}) was ${approve ? "approved" : "declined — you're still on this event"}.`, new Date().toISOString()]);
   }
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
+  if (lead && member) logActivity(req, `Cancellation request ${approve ? "approved" : "rejected"}: ${member.name} on ${lead.name}`);
 });
 
 app.get("/api/admin/notifications", requireAuth, requireAdmin, async (req, res) => {
@@ -827,6 +873,7 @@ app.post("/api/leads/:id/payments", requireAuth, requireSection("accounts"), req
     VALUES ($1, $2, $3, $4, $5, $6, $7)
   `, [id, req.params.id, Number(amount), date, mode || null, notes || null, new Date().toISOString()]);
   res.status(201).json((await pool.query("SELECT * FROM payments WHERE id = $1", [id])).rows[0]);
+  logActivity(req, `Payment recorded for ${lead.name}: ₹${Number(amount).toLocaleString("en-IN")}${mode ? ` via ${mode}` : ""}`);
 });
 
 app.delete("/api/payments/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
@@ -1006,6 +1053,12 @@ app.post("/api/documents", requireAuth, upload.single("file"), async (req, res) 
   `, [id, req.body.leadId || null, req.file.originalname, req.file.filename, req.body.notes || null, new Date().toISOString()]);
   const doc = (await pool.query("SELECT * FROM documents WHERE id = $1", [id])).rows[0];
   res.status(201).json({ ...doc, url: `/uploads/${doc.stored_name}` });
+  let leadName = null;
+  if (req.body.leadId) {
+    const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [req.body.leadId])).rows[0];
+    leadName = lead?.name;
+  }
+  logActivity(req, `Document uploaded${req.body.notes ? `: ${req.body.notes}` : ""}${leadName ? ` for ${leadName}` : ""} (${req.file.originalname})`);
 });
 
 app.delete("/api/documents/:id", requireAuth, async (req, res) => {
@@ -1018,17 +1071,27 @@ app.delete("/api/documents/:id", requireAuth, async (req, res) => {
 });
 
 // ---------- Dashboard ----------
+app.get("/api/activity", requireAuth, async (req, res) => {
+  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+  const { rows } = await pool.query(
+    "SELECT * FROM activity_log WHERE created_at >= $1 ORDER BY created_at ASC",
+    [startOfToday.toISOString()]
+  );
+  res.json(rows);
+});
+
 app.get("/api/dashboard", requireAuth, async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const weekAhead = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
-  const [upcomingRes, followUpsRes, accountsRes, paymentsRes, tasksRes, newLeadsRes] = await Promise.all([
+  const [upcomingRes, followUpsRes, accountsRes, paymentsRes, tasksRes, newLeadsRes, tentativeRes] = await Promise.all([
     pool.query(`SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1 ORDER BY date ASC LIMIT 5`, [today]),
     pool.query(`SELECT * FROM leads WHERE stage = 'Follow-up' ORDER BY date ASC`),
     pool.query(`SELECT id, final_amount, quote_amount FROM leads WHERE stage IN ('Confirmed', 'Completed')`),
     pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments`),
     pool.query(`SELECT * FROM tasks WHERE done = 0 AND (due_date <= $1 OR due_date IS NULL) ORDER BY due_date ASC LIMIT 8`, [weekAhead]),
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage = 'New'`),
+    pool.query(`SELECT * FROM leads WHERE stage = 'Tentative' ORDER BY date ASC`),
   ]);
 
   const totalQuoted = accountsRes.rows.reduce((s, l) => s + (l.final_amount || l.quote_amount || 0), 0);
@@ -1039,6 +1102,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
     pendingFollowUps: followUpsRes.rows,
     tasksDueSoon: tasksRes.rows,
     newLeadsCount: Number(newLeadsRes.rows[0].c),
+    tentativeBookings: tentativeRes.rows,
     outstanding: totalQuoted - totalReceived,
   });
 });

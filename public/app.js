@@ -92,6 +92,7 @@ function permissionsChecklistHtml(idPrefix, currentPermissions) {
 const inr = (n) => (n == null ? "—" : "₹" + Number(n).toLocaleString("en-IN"));
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—";
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+const fmtTime = (d) => d ? new Date(d).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—";
 const packageName = (id) => id === "both" ? "Bhajan Jamming & Musical Pheras (Both)" : (CONFIG.packages.find((p) => p.id === id)?.name || id);
 
 const el = (html) => { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstChild; };
@@ -612,8 +613,9 @@ function renderLeadsLog(main) {
             </select>
           </span>
           <span style="display:flex; flex-direction:column; gap:4px;">
-            ${l.stage === "New" || l.stage === "Follow-up" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
-            ${(l.stage === "New" || l.stage === "Follow-up") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
+            ${l.stage === "New" || l.stage === "Follow-up" || l.stage === "Tentative" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
+            ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Tentative") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
+            ${l.quote_amount && l.stage !== "Confirmed" && l.stage !== "Completed" ? `<div class="muted small mono">Quoted: ${inr(l.quote_amount)}</div>` : ""}
             ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Quoted: ${l.quote_amount ? inr(l.quote_amount) : "—"}</div><div class="muted small mono">Final: ${l.final_amount ? inr(l.final_amount) : "—"}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>${canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:4px;">Team</button>` : ""}` : ""}
           </span>
         </div>
@@ -634,7 +636,9 @@ function renderLeadsLog(main) {
     btn.addEventListener("click", () => {
       const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
       const firstName = (lead.name || "").split(" ")[0] || "there";
-      const msg = `Hi ${firstName}, just following up on your enquiry with Together, Out Loud for ${packageName(lead.event_type)}${lead.date ? ` on ${fmtDate(lead.date)}` : ""}. Let us know if you have any questions or would like to go ahead — happy to help!`;
+      const msg = lead.stage === "Tentative"
+        ? `Hi ${firstName}, following up on your ${packageName(lead.event_type)}${lead.date ? ` on ${fmtDate(lead.date)}` : ""} — we've tentatively held this date for you with Together, Out Loud. Let us know if you'd like to go ahead so we can lock it in for you!`
+        : `Hi ${firstName}, just following up on your enquiry with Together, Out Loud for ${packageName(lead.event_type)}${lead.date ? ` on ${fmtDate(lead.date)}` : ""}. Let us know if you have any questions or would like to go ahead — happy to help!`;
       const digitsOnly = (lead.phone || "").replace(/\D/g, "");
       if (digitsOnly) window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
     });
@@ -1584,6 +1588,7 @@ async function openAssignTeamModal(leadId) {
           </div>
           <input id="taDescription" placeholder="Description (e.g. session tabla player)" style="margin-top:8px;" />
           <button class="btn-ghost full" id="addTempArtistBtn" style="margin-top:8px;">+ Add temporary artist</button>
+          <p class="muted small" style="margin-top:4px;">Tip: hitting the overall Save button below also adds this if you've filled it in.</p>
         </div>
         <div class="modal-foot">
           <button class="btn-ghost" id="openChatBtn">💬 Event chat</button>
@@ -1607,9 +1612,12 @@ async function openAssignTeamModal(leadId) {
       openAssignTeamModal(leadId);
     });
   });
-  root.querySelector("#addTempArtistBtn").addEventListener("click", async () => {
+
+  // Shared by the dedicated button and the main Save button, so a filled-in
+  // temporary artist is never silently lost just because someone hit Save instead.
+  const submitPendingTempArtist = async () => {
     const name = root.querySelector("#taName").value.trim();
-    if (!name) return alert("Name is required.");
+    if (!name) return true; // nothing pending — not an error
     try {
       await api(`/api/leads/${leadId}/temp-artists`, {
         method: "POST",
@@ -1619,16 +1627,21 @@ async function openAssignTeamModal(leadId) {
           description: root.querySelector("#taDescription").value.trim(),
         }),
       });
-      openAssignTeamModal(leadId);
+      return true;
     } catch (err) {
       alert(err.message);
+      return false;
     }
+  };
+  root.querySelector("#addTempArtistBtn").addEventListener("click", async () => {
+    if (await submitPendingTempArtist()) openAssignTeamModal(leadId);
   });
 
   root.querySelector("#submitModal").addEventListener("click", async () => {
     const checked = [...root.querySelectorAll("[data-team-id]:checked")].map((c) => c.dataset.teamId);
     const unchecked = [...root.querySelectorAll("[data-team-id]:not(:checked)")].map((c) => c.dataset.teamId);
     try {
+      if (!(await submitPendingTempArtist())) return;
       const newlyChecked = checked.filter((id) => !byTeamId[id]);
       if (newlyChecked.length > 0) {
         await api(`/api/leads/${leadId}/assignments`, { method: "POST", body: JSON.stringify({ teamIds: newlyChecked }) });
@@ -1962,10 +1975,11 @@ function renderPartyLedgerDetail(container, booking) {
 // ---------- Dashboard ----------
 async function renderDashboard(main) {
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
-  const [data, announcements, teamNotifs] = await Promise.all([
+  const [data, announcements, teamNotifs, activity] = await Promise.all([
     api("/api/dashboard"),
     api("/api/announcements"),
     isAdmin ? api("/api/admin/notifications") : Promise.resolve([]),
+    api("/api/activity"),
   ]);
   main.innerHTML = `
     <div class="view-head">
@@ -2007,12 +2021,26 @@ async function renderDashboard(main) {
       ${hasLeadsAccess() ? `
       <button class="card dash-stat dash-stat-click" id="statNew"><div class="muted">New queries</div><div class="mono big">${data.newLeadsCount}</div></button>
       <button class="card dash-stat dash-stat-click" id="statFollowup"><div class="muted">Awaiting follow-up</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${data.pendingFollowUps.length}</div></button>
+      <button class="card dash-stat dash-stat-click" id="statTentative"><div class="muted">Tentative holds</div><div class="mono big" style="color:${STAGE_COLOR.Tentative}">${data.tentativeBookings.length}</div></button>
       ` : ""}
       <button class="card dash-stat dash-stat-click" id="statUpcoming"><div class="muted">Upcoming events</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${data.upcomingEvents.length}</div></button>
     </div>
     <div class="card" id="dashCalCard" style="margin-bottom:16px;">
       <div class="section-label">Calendar</div>
       ${calendarGridMarkup()}
+    </div>
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">📋 Today's activity</div>
+      ${activity.length === 0 ? `<p class="muted small">Nothing logged yet today.</p>` : `
+        <div class="activity-log">
+          ${activity.map((a) => `
+            <div class="dash-list-item" style="display:flex; gap:10px;">
+              <span class="muted small mono" style="flex-shrink:0; width:52px;">${fmtTime(a.created_at)}</span>
+              <span>${a.message}${a.actor && a.actor !== "System" ? ` <span class="muted small">— ${a.actor}</span>` : ""}</span>
+            </div>
+          `).join("")}
+        </div>
+      `}
     </div>
     <div class="dash-grid">
       <div class="card">
@@ -2075,6 +2103,8 @@ async function renderDashboard(main) {
   if (statNewEl) statNewEl.addEventListener("click", () => goToLeads("New"));
   const statFollowupEl = main.querySelector("#statFollowup");
   if (statFollowupEl) statFollowupEl.addEventListener("click", () => goToLeads("Follow-up"));
+  const statTentativeEl = main.querySelector("#statTentative");
+  if (statTentativeEl) statTentativeEl.addEventListener("click", () => goToLeads("Tentative"));
   main.querySelector("#statUpcoming").addEventListener("click", () => {
     if (hasLeadsAccess()) goToLeads("Confirmed");
     else { currentTab = "calendar"; renderNav(); renderMain(); }
