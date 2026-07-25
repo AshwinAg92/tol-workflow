@@ -2665,6 +2665,10 @@ function openNewLeadModal() {
             <div><label>No. of guests</label><select id="mGuests"><option value="">Not specified</option>${CONFIG.guestRanges.map((g) => `<option value="${g}">${g}</option>`).join("")}</select></div>
             <div></div>
           </div>
+          <label class="check-row" style="margin-top:10px;">
+            <input type="checkbox" id="mAlreadyConfirmed" />
+            <span>Already confirmed — skip straight to Confirmed (e.g. someone you know called and booked directly)</span>
+          </label>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Add lead</button></div>
       </div>
@@ -2678,7 +2682,8 @@ function openNewLeadModal() {
     const name = root.querySelector("#mName").value;
     const date = root.querySelector("#mDate").value;
     if (!name || !date) return alert("Name and event date are required.");
-    await api("/api/leads", {
+    const alreadyConfirmed = root.querySelector("#mAlreadyConfirmed").checked;
+    const created = await api("/api/leads", {
       method: "POST",
       body: JSON.stringify({
         name,
@@ -2693,7 +2698,14 @@ function openNewLeadModal() {
     });
     await refreshLeads();
     close();
-    renderMain();
+    if (alreadyConfirmed) {
+      // Reuse the same Confirm flow used elsewhere — same conflict-checking and
+      // final-rate prompt — rather than duplicating that logic here.
+      const freshLead = LEADS.find((l) => l.id === created.id) || created;
+      openConfirmEventModal(freshLead);
+    } else {
+      renderMain();
+    }
   });
 }
 
