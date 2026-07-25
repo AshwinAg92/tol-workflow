@@ -1750,9 +1750,14 @@ async function openAssignTeamModal(leadId) {
 
   // Shared by the dedicated button and the main Save button, so a filled-in
   // temporary artist is never silently lost just because someone hit Save instead.
+  // isSubmittingTempArtist guards against double-clicks firing two POSTs before
+  // the modal re-renders and clears the form.
+  let isSubmittingTempArtist = false;
   const submitPendingTempArtist = async () => {
     const name = root.querySelector("#taName").value.trim();
     if (!name) return true; // nothing pending — not an error
+    if (isSubmittingTempArtist) return false; // a submission is already in flight
+    isSubmittingTempArtist = true;
     try {
       const feeInput = root.querySelector("#taFee");
       await api(`/api/leads/${leadId}/temp-artists`, {
@@ -1768,17 +1773,29 @@ async function openAssignTeamModal(leadId) {
     } catch (err) {
       alert(err.message);
       return false;
+    } finally {
+      isSubmittingTempArtist = false;
     }
   };
-  root.querySelector("#addTempArtistBtn").addEventListener("click", async () => {
-    if (await submitPendingTempArtist()) openAssignTeamModal(leadId);
+  root.querySelector("#addTempArtistBtn").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
+    btn.disabled = true;
+    try {
+      if (await submitPendingTempArtist()) openAssignTeamModal(leadId);
+    } finally {
+      btn.disabled = false;
+    }
   });
 
-  root.querySelector("#submitModal").addEventListener("click", async () => {
+  root.querySelector("#submitModal").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
+    btn.disabled = true;
     const checked = [...root.querySelectorAll("[data-team-id]:checked")].map((c) => c.dataset.teamId);
     const unchecked = [...root.querySelectorAll("[data-team-id]:not(:checked)")].map((c) => c.dataset.teamId);
     try {
-      if (!(await submitPendingTempArtist())) return;
+      if (!(await submitPendingTempArtist())) { btn.disabled = false; return; }
       const newlyChecked = checked.filter((id) => !byTeamId[id]);
       if (newlyChecked.length > 0) {
         await api(`/api/leads/${leadId}/assignments`, { method: "POST", body: JSON.stringify({ teamIds: newlyChecked }) });
@@ -1796,6 +1813,7 @@ async function openAssignTeamModal(leadId) {
       renderMain();
     } catch (err) {
       alert(err.message);
+      btn.disabled = false;
     }
   });
 }
