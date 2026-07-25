@@ -850,14 +850,30 @@ app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, re
   const receivedByLead = {};
   paymentSums.forEach((p) => (receivedByLead[p.lead_id] = Number(p.total)));
 
-  const bookings = rows.map((l) => ({ ...l, received: receivedByLead[l.id] || 0 }));
+  // Expenses committed to an event (artist fees + any other head) count against
+  // its profit whether or not they've actually been paid out yet — the cost is
+  // real the moment it's booked, not only once cash has left the account.
+  const expenseSums = (await pool.query(`
+    SELECT lead_id, COALESCE(SUM(amount), 0) AS total
+    FROM expenses WHERE lead_id = ANY($1::text[]) GROUP BY lead_id
+  `, [rows.map((r) => r.id)])).rows;
+  const expensesByLead = {};
+  expenseSums.forEach((e) => (expensesByLead[e.lead_id] = Number(e.total)));
+
+  const bookings = rows.map((l) => {
+    const revenue = l.final_amount || l.quote_amount || 0;
+    const expenses = expensesByLead[l.id] || 0;
+    return { ...l, received: receivedByLead[l.id] || 0, expenses, profit: revenue - expenses };
+  });
   const totals = bookings.reduce(
     (acc, l) => {
       acc.quoted += l.final_amount || l.quote_amount || 0;
       acc.received += l.received;
+      acc.expenses += l.expenses;
+      acc.profit += l.profit;
       return acc;
     },
-    { quoted: 0, received: 0 }
+    { quoted: 0, received: 0, expenses: 0, profit: 0 }
   );
   res.json({ bookings, totals: { ...totals, outstanding: totals.quoted - totals.received } });
 });
@@ -866,11 +882,18 @@ app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, re
 app.get("/api/ledger", requireAuth, requireSection("accounts"), async (req, res) => {
   const leads = (await pool.query("SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') ORDER BY date ASC")).rows;
   const payments = (await pool.query("SELECT * FROM payments ORDER BY payment_date ASC")).rows;
+  const expenses = (await pool.query(`
+    SELECT expenses.*, team.name AS team_name FROM expenses
+    LEFT JOIN team ON team.id = expenses.team_id
+    ORDER BY expenses.created_at ASC
+  `)).rows;
   const result = leads.map((l) => {
     const leadPayments = payments.filter((p) => p.lead_id === l.id);
+    const leadExpenses = expenses.filter((e) => e.lead_id === l.id);
     const totalReceived = leadPayments.reduce((s, p) => s + p.amount, 0);
+    const totalExpenses = leadExpenses.reduce((s, e) => s + e.amount, 0);
     const total = l.final_amount || l.quote_amount || 0;
-    return { ...l, payments: leadPayments, totalReceived, balance: total - totalReceived };
+    return { ...l, payments: leadPayments, expenses: leadExpenses, totalReceived, totalExpenses, profit: total - totalExpenses, balance: total - totalReceived };
   });
   res.json(result);
 });

@@ -1714,9 +1714,10 @@ async function renderAccounts(main) {
       <div class="card summary-card"><div class="muted">Confirmed</div><div class="mono big">${inr(totals.quoted)}</div></div>
       <div class="card summary-card"><div class="muted">Amount received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(totals.received)}</div></div>
       <div class="card summary-card"><div class="muted">Outstanding</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${inr(totals.outstanding)}</div></div>
+      <div class="card summary-card"><div class="muted">Total profit</div><div class="mono big" style="color:${totals.profit >= 0 ? "#5C8A6B" : "#A64B3C"}">${inr(totals.profit)}</div></div>
     </div>
     <div class="table" style="margin-bottom:24px;">
-      <div class="table-head" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr 1fr;"><span>Booking</span><span>Status</span><span class="right">Quoted</span><span class="right">Final rate</span><span class="right">Received</span><span class="right">Balance</span></div>
+      <div class="table-head" style="grid-template-columns:1.3fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr;"><span>Booking</span><span>Status</span><span class="right">Final rate</span><span class="right">Received</span><span class="right">Balance</span><span class="right">Expenses</span><span class="right">Profit</span></div>
       <div id="acctRows"></div>
     </div>
 
@@ -1802,16 +1803,24 @@ async function renderAccounts(main) {
   if (bookings.length === 0) rows.innerHTML = `<div class="board-empty">No confirmed or completed bookings yet</div>`;
   bookings.forEach((l) => {
     const total = l.final_amount || l.quote_amount || 0;
-    rows.appendChild(el(`
-      <div class="table-row" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr 1fr;">
+    const row = el(`
+      <div class="table-row" style="grid-template-columns:1.3fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr; cursor:pointer;">
         <span>${l.name}</span>
         <span class="tag" style="color:${STAGE_COLOR[l.stage]}">${l.stage}</span>
-        <span class="right mono">${inr(l.quote_amount)}</span>
-        <span class="right mono">${l.final_amount ? inr(l.final_amount) : "—"}</span>
+        <span class="right mono">${total ? inr(total) : "—"}</span>
         <span class="right mono">${inr(l.received)}</span>
         <span class="right mono">${inr(total - l.received)}</span>
+        <span class="right mono">${l.expenses ? inr(l.expenses) : "—"}</span>
+        <span class="right mono" style="color:${l.profit >= 0 ? "#5C8A6B" : "#A64B3C"};">${inr(l.profit)}</span>
       </div>
-    `));
+    `);
+    row.addEventListener("click", () => {
+      const select = main.querySelector("#ledgerClientSelect");
+      select.value = l.id;
+      select.dispatchEvent(new Event("change"));
+      select.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    rows.appendChild(row);
   });
 
   main.querySelector("#ledgerClientSelect").addEventListener("change", (e) => {
@@ -1929,16 +1938,20 @@ function renderPartyLedgerDetail(container, booking) {
   const draw = (payments) => {
     const received = payments.reduce((s, p) => s + p.amount, 0);
     const balance = total - received;
+    const expensesList = booking.expenses || [];
+    const totalExpenses = booking.totalExpenses || 0;
+    const profit = total - totalExpenses;
     container.innerHTML = `
       <div class="card" style="margin-top:10px;">
         <div class="view-head" style="margin-bottom:0;">
           <div class="section-label" style="margin-bottom:0;">${booking.name} — ${fmtDate(booking.date)}</div>
           <button class="btn-ghost" id="shareLedgerPdfBtn">📄 Share ledger PDF on WhatsApp</button>
         </div>
-        <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:16px; margin-top:10px;">
+        <div class="dash-stats" style="grid-template-columns:repeat(4,1fr); margin-bottom:16px; margin-top:10px;">
           <div class="card summary-card"><div class="muted">Amount confirmed</div><div class="mono big">${inr(total)}</div></div>
           <div class="card summary-card"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
           <div class="card summary-card"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
+          <div class="card summary-card"><div class="muted">Profit</div><div class="mono big" style="color:${profit >= 0 ? "#5C8A6B" : "#A64B3C"};">${inr(profit)}</div></div>
         </div>
         <div class="section-label">Payments received (date-wise)</div>
         <div style="margin-bottom:14px;">
@@ -1951,6 +1964,18 @@ function renderPartyLedgerDetail(container, booking) {
               <button class="icon-btn" data-delete-payment="${p.id}">✕</button>
             </div>
           `).join("")}
+        </div>
+        <div class="section-label">Expenses for this event (artist fees &amp; other)</div>
+        <div style="margin-bottom:14px;">
+          ${expensesList.length === 0 ? `<p class="muted small">No expenses recorded yet for this event. Add artist fees or other costs below in "Artist fees &amp; other expenses".</p>` : expensesList.map((e) => `
+            <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <div class="mono">${inr(e.amount)}</div>
+                <div class="muted small">${e.head}${e.team_name ? ` · ${e.team_name}` : ""} · ${e.paid ? "Paid" : "Pending"}</div>
+              </div>
+            </div>
+          `).join("")}
+          ${expensesList.length > 0 ? `<div class="dash-list-item" style="display:flex; justify-content:space-between; font-weight:600;"><span>Total expenses</span><span class="mono">${inr(totalExpenses)}</span></div>` : ""}
         </div>
         <div class="section-label">Add a payment</div>
         <div class="row-2">
