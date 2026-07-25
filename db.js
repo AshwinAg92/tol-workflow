@@ -167,6 +167,17 @@ async function setup() {
   await pool.query(`ALTER TABLE event_assignments ADD COLUMN IF NOT EXISTS cancel_reason TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_performer INTEGER NOT NULL DEFAULT 0`);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS temp_artists (
+      id TEXT PRIMARY KEY,
+      lead_id TEXT REFERENCES leads(id),
+      name TEXT NOT NULL,
+      description TEXT,
+      phone TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
+
   // One-time migration: bring any existing single "advance" amount into the new
   // payments ledger as its first entry, so nothing is lost when moving from a
   // single advance field to a full multi-payment ledger.

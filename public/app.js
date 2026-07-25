@@ -16,6 +16,7 @@ const STAGE_COLOR = {
   New: "#8A8578",
   Quoted: "#C1602B",
   "Follow-up": "#B6752C",
+  Tentative: "#9B6EA8",
   Confirmed: "#5C8A6B",
   Completed: "#2E5C63",
   Cancelled: "#A64B3C",
@@ -946,7 +947,7 @@ function calendarGridMarkup() {
 }
 
 function wireCalendarGrid(container) {
-  const confirmed = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed");
+  const confirmed = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed" || l.stage === "Tentative");
   const first = new Date(calYear, calMonth - 1, 1);
   const startDay = first.getDay();
   const daysInMonth = new Date(calYear, calMonth, 0).getDate();
@@ -968,7 +969,7 @@ function wireCalendarGrid(container) {
     calCells.appendChild(el(`
       <div class="cal-cell${d ? "" : " cal-cell-empty"}">
         ${d ? `<div class="cal-day">${d}</div>` : ""}
-        ${evs.map((ev) => `<div class="cal-event" data-lead-id="${ev.id}" style="cursor:pointer;" title="Click to open ${ev.name}">${ev.name.split(" ")[0]}</div>`).join("")}
+        ${evs.map((ev) => `<div class="cal-event${ev.stage === "Tentative" ? " cal-event-tentative" : ""}" data-lead-id="${ev.id}" style="cursor:pointer;${ev.stage === "Tentative" ? ` background:transparent; border:1px dashed ${STAGE_COLOR.Tentative}; color:${STAGE_COLOR.Tentative};` : ""}" title="Click to open ${ev.name}${ev.stage === "Tentative" ? " (Tentative)" : ""}">${ev.name.split(" ")[0]}${ev.stage === "Tentative" ? " ⏳" : ""}</div>`).join("")}
       </div>
     `));
   });
@@ -994,9 +995,9 @@ function wireCalendarGrid(container) {
 }
 
 function renderCalendar(main) {
-  const confirmed = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed");
+  const confirmed = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed" || l.stage === "Tentative");
   main.innerHTML = `
-    <div class="view-head"><div><h2>Calendar</h2><p class="muted">Confirmed and completed events — spot clashes before you quote.</p></div></div>
+    <div class="view-head"><div><h2>Calendar</h2><p class="muted">Confirmed, tentative, and completed events — spot clashes before you quote.</p></div></div>
     <div class="card">${calendarGridMarkup()}</div>
     <div class="section-label" style="margin-top:20px;">Upcoming confirmed events</div>
     <div class="list" id="calList"></div>
@@ -1535,7 +1536,10 @@ function openEditLoginModal(user) {
 
 async function openAssignTeamModal(leadId) {
   const lead = LEADS.find((l) => l.id === leadId);
-  const assignments = await api(`/api/leads/${leadId}/assignments`);
+  const [assignments, tempArtists] = await Promise.all([
+    api(`/api/leads/${leadId}/assignments`),
+    api(`/api/leads/${leadId}/temp-artists`),
+  ]);
   const byTeamId = {};
   assignments.forEach((a) => (byTeamId[a.team_id] = a));
 
@@ -1561,6 +1565,25 @@ async function openAssignTeamModal(leadId) {
             `;
           }).join("")}
           <button class="btn-ghost full" id="addMemberInlineBtn" style="margin-top:10px;">+ Add new member</button>
+
+          <div class="section-label" style="margin-top:16px;">Temporary artists (one-off, this event only)</div>
+          <div id="tempArtistList">
+            ${tempArtists.length === 0 ? `<p class="muted small">None added yet.</p>` : tempArtists.map((t) => `
+              <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                  <div>${t.name}${t.description ? ` <span class="muted small">— ${t.description}</span>` : ""}</div>
+                  ${t.phone ? `<div class="muted small">${t.phone}</div>` : ""}
+                </div>
+                <button class="icon-btn" data-remove-temp-artist="${t.id}">✕</button>
+              </div>
+            `).join("")}
+          </div>
+          <div class="row-2" style="margin-top:8px;">
+            <input id="taName" placeholder="Name" />
+            <input id="taPhone" placeholder="Phone" />
+          </div>
+          <input id="taDescription" placeholder="Description (e.g. session tabla player)" style="margin-top:8px;" />
+          <button class="btn-ghost full" id="addTempArtistBtn" style="margin-top:8px;">+ Add temporary artist</button>
         </div>
         <div class="modal-foot">
           <button class="btn-ghost" id="openChatBtn">💬 Event chat</button>
@@ -1577,6 +1600,29 @@ async function openAssignTeamModal(leadId) {
   root.querySelector("#openChatBtn").addEventListener("click", () => openEventChat(leadId, lead.name));
   root.querySelector("#addMemberInlineBtn").addEventListener("click", () => {
     openAddMemberModal(() => openAssignTeamModal(leadId));
+  });
+  root.querySelectorAll("[data-remove-temp-artist]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await api(`/api/temp-artists/${btn.dataset.removeTempArtist}`, { method: "DELETE" });
+      openAssignTeamModal(leadId);
+    });
+  });
+  root.querySelector("#addTempArtistBtn").addEventListener("click", async () => {
+    const name = root.querySelector("#taName").value.trim();
+    if (!name) return alert("Name is required.");
+    try {
+      await api(`/api/leads/${leadId}/temp-artists`, {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          phone: root.querySelector("#taPhone").value.trim(),
+          description: root.querySelector("#taDescription").value.trim(),
+        }),
+      });
+      openAssignTeamModal(leadId);
+    } catch (err) {
+      alert(err.message);
+    }
   });
 
   root.querySelector("#submitModal").addEventListener("click", async () => {
@@ -2132,7 +2178,7 @@ function renderTasks(main) {
 async function renderDocuments(main) {
   const eventLeads = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed");
   main.innerHTML = `
-    <div class="view-head"><div><h2>Documents</h2><p class="muted">General files, plus files kept against a specific confirmed event.</p></div></div>
+    <div class="view-head"><div><h2>Documents</h2><p class="muted">General files, plus files kept against a specific confirmed event — tag riders/contracts and send them straight to the client.</p></div></div>
     <div class="card" style="margin-bottom:16px;">
       <div class="section-label">Upload a file</div>
       <div class="upload-form">
@@ -2140,6 +2186,13 @@ async function renderDocuments(main) {
           <option value="">General (not tied to an event)</option>
           ${eventLeads.map((l) => `<option value="${l.id}">${l.name} — ${fmtDate(l.date)}${l.city ? `, ${l.city}` : ""}</option>`).join("")}
         </select>
+        <input type="text" id="docLabel" list="docLabelOptions" placeholder="Label (e.g. Tech Rider, Hospitality Rider)" />
+        <datalist id="docLabelOptions">
+          <option value="Tech Rider"></option>
+          <option value="Hospitality Rider"></option>
+          <option value="Contract"></option>
+          <option value="Invoice"></option>
+        </datalist>
         <input type="file" id="docFile" />
         <button class="btn-primary" id="uploadBtn">Upload</button>
       </div>
@@ -2151,11 +2204,15 @@ async function renderDocuments(main) {
   const docs = await api("/api/documents");
   const groups = main.querySelector("#docGroups");
 
-  function renderRow(d) {
+  function renderRow(d, lead) {
+    const fullUrl = window.location.origin + d.url;
+    const waPhone = lead?.phone ? lead.phone.replace(/\D/g, "") : "";
+    const waText = encodeURIComponent(`Hi! Sharing the ${d.notes || "document"} for your event with Together, Out Loud: ${fullUrl}`);
     return `
       <div class="doc-row">
-        <div class="doc-name"><a href="${d.url}" target="_blank">${d.original_name}</a></div>
+        <div class="doc-name">${d.notes ? `<strong>${d.notes}</strong> — ` : ""}<a href="${d.url}" target="_blank">${d.original_name}</a></div>
         <div class="muted mono">${fmtDate(d.uploaded_at.slice(0, 10))}</div>
+        ${lead && waPhone ? `<a class="btn-ghost" href="https://wa.me/91${waPhone}?text=${waText}" target="_blank" style="font-size:12px; padding:4px 8px;">Send to client</a>` : ""}
         <button class="icon-btn" data-delete-doc="${d.id}">✕</button>
       </div>
     `;
@@ -2168,7 +2225,7 @@ async function renderDocuments(main) {
   let html = `
     <div class="card" style="margin-bottom:14px;">
       <div class="section-label">General documents</div>
-      ${general.length === 0 ? `<p class="muted small">No general documents yet.</p>` : `<div class="table">${general.map(renderRow).join("")}</div>`}
+      ${general.length === 0 ? `<p class="muted small">No general documents yet.</p>` : `<div class="table">${general.map((d) => renderRow(d, null)).join("")}</div>`}
     </div>
   `;
 
@@ -2177,7 +2234,7 @@ async function renderDocuments(main) {
     html += `
       <div class="card" style="margin-bottom:14px;">
         <div class="section-label">${l.name} — <span class="muted">${fmtDate(l.date)} · ${l.city || ""}</span></div>
-        ${leadDocs.length === 0 ? `<p class="muted small">No documents uploaded for this event yet.</p>` : `<div class="table">${leadDocs.map(renderRow).join("")}</div>`}
+        ${leadDocs.length === 0 ? `<p class="muted small">No documents uploaded for this event yet.</p>` : `<div class="table">${leadDocs.map((d) => renderRow(d, l)).join("")}</div>`}
       </div>
     `;
   });
@@ -2189,7 +2246,7 @@ async function renderDocuments(main) {
     html += `
       <div class="card" style="margin-bottom:14px;">
         <div class="section-label">${lead ? lead.name : "Unknown lead"} <span class="muted">(${lead ? lead.stage : "—"})</span></div>
-        <div class="table">${byLead[id].map(renderRow).join("")}</div>
+        <div class="table">${byLead[id].map((d) => renderRow(d, null)).join("")}</div>
       </div>
     `;
   });
@@ -2209,6 +2266,7 @@ async function renderDocuments(main) {
     const formData = new FormData();
     formData.append("file", fileInput.files[0]);
     formData.append("leadId", main.querySelector("#docLead").value || "");
+    formData.append("notes", main.querySelector("#docLabel").value || "");
     const btn = main.querySelector("#uploadBtn");
     btn.disabled = true;
     btn.textContent = "Uploading…";
@@ -2225,7 +2283,7 @@ async function renderDocuments(main) {
 
 function openConfirmEventModal(lead) {
   const root = document.getElementById("modalRoot");
-  const conflict = LEADS.find((l) => l.id !== lead.id && l.stage === "Confirmed" && l.date === lead.date);
+  const conflict = LEADS.find((l) => l.id !== lead.id && (l.stage === "Confirmed" || l.stage === "Tentative") && l.date === lead.date);
 
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
@@ -2235,7 +2293,8 @@ function openConfirmEventModal(lead) {
           <p class="muted small">This moves the lead to Confirmed and records the final closed rate.</p>
           ${conflict ? `
             <div style="background:#FFF4E5; color:#8A5A1F; padding:10px 12px; border-radius:6px; font-size:13px; margin-bottom:12px;">
-              ⚠️ ${conflict.name} is already Confirmed for ${fmtDate(lead.date)}. Double-check before confirming another event the same day.
+              ⚠️ ${conflict.name} is already ${conflict.stage} for ${fmtDate(lead.date)}. Double-check before confirming another event the same day.
+              ${conflict.stage === "Tentative" ? `<div style="margin-top:8px;"><button class="btn-ghost" id="reconfirmOtherBtn" style="font-size:12px; padding:4px 10px;">Reconfirm ${conflict.name} instead</button></div>` : ""}
             </div>
           ` : ""}
           ${lead.alt_date ? `
@@ -2257,11 +2316,12 @@ function openConfirmEventModal(lead) {
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#cancelModal").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#reconfirmOtherBtn")?.addEventListener("click", () => openConfirmEventModal(conflict));
   root.querySelector("#submitModal").addEventListener("click", async () => {
     const finalAmount = root.querySelector("#ceAmount").value;
     const chosenDate = root.querySelector("#ceDateChoice")?.value || lead.date;
-    const stillConflicting = LEADS.find((l) => l.id !== lead.id && l.stage === "Confirmed" && l.date === chosenDate);
-    if (stillConflicting && !confirm(`${stillConflicting.name} is already Confirmed for this date. Confirm ${lead.name} anyway?`)) {
+    const stillConflicting = LEADS.find((l) => l.id !== lead.id && (l.stage === "Confirmed" || l.stage === "Tentative") && l.date === chosenDate);
+    if (stillConflicting && !confirm(`${stillConflicting.name} is already ${stillConflicting.stage} for this date. Confirm ${lead.name} anyway?`)) {
       return;
     }
     try {

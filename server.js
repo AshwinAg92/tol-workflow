@@ -541,6 +541,30 @@ app.patch("/api/assignments/:id", requireAuth, requireAdmin, async (req, res) =>
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
 });
 
+// ---------- Temporary artists — one-off performers hired for a single event, not part of the permanent team ----------
+app.get("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM temp_artists WHERE lead_id = $1 ORDER BY created_at ASC", [req.params.id]);
+  res.json(rows);
+});
+
+app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const { name, description, phone } = req.body;
+  if (!name) return res.status(400).json({ error: "Name is required" });
+  const id = uuid();
+  await pool.query(`
+    INSERT INTO temp_artists (id, lead_id, name, description, phone, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6)
+  `, [id, req.params.id, name, description || null, phone || null, new Date().toISOString()]);
+  res.status(201).json((await pool.query("SELECT * FROM temp_artists WHERE id = $1", [id])).rows[0]);
+});
+
+app.delete("/api/temp-artists/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  await pool.query("DELETE FROM temp_artists WHERE id = $1", [req.params.id]);
+  res.status(204).end();
+});
+
 // ---------- Performer/photographer view — deliberately narrow: only their own events ----------
 app.get("/api/my/events", requireAuth, async (req, res) => {
   if (!req.user.team_id) return res.json([]);
