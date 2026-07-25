@@ -710,30 +710,30 @@ function renderLeadsLog(main) {
 // editable draft in the exact wording he uses, tweaks anything he wants,
 // then sends via WhatsApp/email. No code change ever needed to adjust
 // wording, amount, or format — the textarea is the source of truth.
-function buildQuoteText({ format, location, date, guests, duration, setPieces, formatType, charges }) {
+function buildQuoteText({ eventType, format, location, date, guests, duration, setPieces, formatType, charges }) {
   const amountLine = charges ? `₹${Number(charges).toLocaleString("en-IN")}/-` : "________";
   const isPheras = (format || "").trim().toLowerCase() === "musical pheras";
   const sessionConditions = isPheras
     ? `1️⃣ No food, alcohol, or beverages to be consumed or served during the session.`
     : `1️⃣ No food, alcohol, or beverages to be consumed or served during the session.
 2️⃣ Session duration will be 75 to 90 minutes.`;
-  return `🎶 *QUOTATION — ${(format || "").toUpperCase()}*
+  const fallback = `🎶 *QUOTATION — {formatUpper}*
 _Together, Out Loud_
 
 Hi! Thank you for considering us for your event — here are the details of our offering. 💛
 
-📍 *Location:* ${location || ""}
-📅 *Date:* ${date || ""}
-👥 *Guests:* ${guests || ""}
-⏱️ *Duration:* ${duration || "75-90 Minutes"}
+📍 *Location:* {location}
+📅 *Date:* {date}
+👥 *Guests:* {guests}
+⏱️ *Duration:* {duration}
 
 *PERFORMANCE DETAILS*
-🎸 Pcs (No. of Musicians): ${setPieces || ""}
-🎤 Format: ${formatType || ""}
-💰 *Performance Charges: ${amountLine}*
+🎸 Pcs (No. of Musicians): {setPieces}
+🎤 Format: {formatType}
+💰 *Performance Charges: {amountLine}*
 
 *SESSION CONDITIONS*
-${sessionConditions}
+{sessionConditions}
 
 *EXCLUSIONS*
 • Stage Setup
@@ -752,6 +752,18 @@ We'd love to make your event a truly memorable, soul-stirring experience. 🎶�
 Warmly,
 *Together, Out Loud*
 📷 Instagram: https://www.instagram.com/togetheroutloudclub`;
+  const tpl = MESSAGE_TEMPLATES[`quotation_${eventType}`] || fallback;
+  return fillTemplate(tpl, {
+    formatUpper: (format || "").toUpperCase(),
+    location: location || "",
+    date: date || "",
+    guests: guests || "",
+    duration: duration || "75-90 Minutes",
+    setPieces: setPieces || "",
+    formatType: formatType || "",
+    amountLine,
+    sessionConditions,
+  });
 }
 
 async function renderQuotation(main) {
@@ -866,6 +878,7 @@ async function renderQuotation(main) {
   function generateDraft() {
     const lead = LEADS.find((l) => l.id === leadSelect.value);
     main.querySelector("#qBody").value = buildQuoteText({
+      eventType: lead ? lead.event_type : "",
       format: lead ? packageName(lead.event_type) : "",
       location: main.querySelector("#qLocation").value,
       date: main.querySelector("#qDate").value,
@@ -2245,10 +2258,7 @@ async function renderDocuments(main) {
         </select>
         <input type="text" id="docLabel" list="docLabelOptions" placeholder="Label (e.g. Tech Rider, Hospitality Rider)" />
         <datalist id="docLabelOptions">
-          <option value="Tech Rider"></option>
-          <option value="Hospitality Rider"></option>
-          <option value="Contract"></option>
-          <option value="Invoice"></option>
+          ${(MESSAGE_TEMPLATES.doc_label_suggestions || "Tech Rider, Hospitality Rider, Contract, Invoice").split(",").map((s) => s.trim()).filter(Boolean).map((s) => `<option value="${s}"></option>`).join("")}
         </datalist>
         <input type="file" id="docFile" />
         <button class="btn-primary" id="uploadBtn">Upload</button>
@@ -2539,16 +2549,40 @@ const TEMPLATE_META = {
   },
 };
 
+const QUOTE_TEMPLATE_PLACEHOLDERS = ["formatUpper", "location", "date", "guests", "duration", "setPieces", "formatType", "amountLine", "sessionConditions"];
+
 async function renderSettings(main) {
   main.innerHTML = `
-    <div class="view-head"><div><h2>Settings</h2><p class="muted">Customize the wording used for client messages yourself — no code changes needed.</p></div></div>
+    <div class="view-head"><div><h2>Settings</h2><p class="muted">Customize wording and options yourself — no code changes needed. Tap a section to expand it.</p></div></div>
+
     <div id="templateCards"></div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">Quotation templates</div>
+      <p class="muted small" style="margin-top:-4px;">Each experience has its own quote wording. Pick one to edit it.</p>
+      <select id="quoteTemplateSelect">
+        ${CONFIG.packages.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}
+      </select>
+      <div id="quoteTemplateEditor" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">Document label suggestions</div>
+      <p class="muted small" style="margin-top:-4px;">The quick-pick labels shown when uploading a file on the Documents tab. Comma-separated.</p>
+      <input id="docLabelsInput" value="${(MESSAGE_TEMPLATES.doc_label_suggestions || "Tech Rider, Hospitality Rider, Contract, Invoice")}" style="width:100%;" />
+      <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+        <button class="btn-primary" id="saveDocLabelsBtn">Save</button>
+        <button class="btn-ghost" id="resetDocLabelsBtn">Reset to default</button>
+        <span class="muted small" id="docLabelsSavedNote" style="display:none; color:#5C8A6B;">Saved ✓</span>
+      </div>
+    </div>
   `;
+
   const container = main.querySelector("#templateCards");
   container.innerHTML = Object.entries(TEMPLATE_META).map(([key, meta]) => `
-    <div class="card" style="margin-bottom:16px;">
-      <div class="section-label">${meta.label}</div>
-      <p class="muted small" style="margin-top:-4px;">${meta.description}</p>
+    <details class="card" style="margin-bottom:12px;">
+      <summary style="cursor:pointer; font-weight:600;">${meta.label}</summary>
+      <p class="muted small" style="margin-top:8px;">${meta.description}</p>
       <p class="muted small">Placeholders you can use: ${meta.placeholders.map((p) => `<code>{${p}}</code>`).join(", ")}</p>
       <textarea id="tpl-${key}" rows="4" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:13px;">${MESSAGE_TEMPLATES[key] || meta.default}</textarea>
       <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
@@ -2556,7 +2590,7 @@ async function renderSettings(main) {
         <button class="btn-ghost" data-reset-template="${key}">Reset to default</button>
         <span class="muted small" data-saved-note="${key}" style="display:none; color:#5C8A6B;">Saved ✓</span>
       </div>
-    </div>
+    </details>
   `).join("");
 
   container.querySelectorAll("[data-reset-template]").forEach((btn) => {
@@ -2582,6 +2616,61 @@ async function renderSettings(main) {
         btn.disabled = false;
       }
     });
+  });
+
+  // ---- Quotation templates (one at a time, picked via the dropdown) ----
+  const quoteEditor = main.querySelector("#quoteTemplateEditor");
+  const quoteSelect = main.querySelector("#quoteTemplateSelect");
+  function renderQuoteEditor() {
+    const pkgId = quoteSelect.value;
+    const key = `quotation_${pkgId}`;
+    quoteEditor.innerHTML = `
+      <p class="muted small">Placeholders: ${QUOTE_TEMPLATE_PLACEHOLDERS.map((p) => `<code>{${p}}</code>`).join(", ")}</p>
+      <textarea id="quoteTplBody" rows="14" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:'JetBrains Mono',monospace; font-size:12.5px;">${MESSAGE_TEMPLATES[key] || ""}</textarea>
+      <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+        <button class="btn-primary" id="saveQuoteTplBtn">Save</button>
+        <span class="muted small" id="quoteTplSavedNote" style="display:none; color:#5C8A6B;">Saved ✓</span>
+      </div>
+    `;
+    quoteEditor.querySelector("#saveQuoteTplBtn").addEventListener("click", async () => {
+      const value = quoteEditor.querySelector("#quoteTplBody").value;
+      const btn = quoteEditor.querySelector("#saveQuoteTplBtn");
+      btn.disabled = true;
+      try {
+        await api(`/api/message-templates/${key}`, { method: "PATCH", body: JSON.stringify({ template: value }) });
+        MESSAGE_TEMPLATES[key] = value;
+        const note = quoteEditor.querySelector("#quoteTplSavedNote");
+        note.style.display = "inline";
+        setTimeout(() => { note.style.display = "none"; }, 2000);
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+  quoteSelect.addEventListener("change", renderQuoteEditor);
+  renderQuoteEditor();
+
+  // ---- Document label suggestions ----
+  main.querySelector("#saveDocLabelsBtn").addEventListener("click", async () => {
+    const value = main.querySelector("#docLabelsInput").value;
+    const btn = main.querySelector("#saveDocLabelsBtn");
+    btn.disabled = true;
+    try {
+      await api("/api/message-templates/doc_label_suggestions", { method: "PATCH", body: JSON.stringify({ template: value }) });
+      MESSAGE_TEMPLATES.doc_label_suggestions = value;
+      const note = main.querySelector("#docLabelsSavedNote");
+      note.style.display = "inline";
+      setTimeout(() => { note.style.display = "none"; }, 2000);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  main.querySelector("#resetDocLabelsBtn").addEventListener("click", () => {
+    main.querySelector("#docLabelsInput").value = "Tech Rider, Hospitality Rider, Contract, Invoice";
   });
 }
 

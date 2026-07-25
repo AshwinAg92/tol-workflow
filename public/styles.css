@@ -5,6 +5,10 @@ body { margin: 0; }
 .mono { font-family:'JetBrains Mono',monospace; }
 .muted { color:#8A8578; }
 code { background:#EFE9DC; border-radius:4px; padding:1px 5px; font-size:12px; font-family:'JetBrains Mono',monospace; }
+details.card summary { list-style:none; }
+details.card summary::-webkit-details-marker { display:none; }
+details.card summary::before { content:"▸ "; color:#8A8578; }
+details.card[open] summary::before { content:"▾ "; }
 .small { font-size:12px; }
 .right { text-align:right; margin-left:auto; }
 

@@ -1,7 +1,7 @@
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const { v4: uuid } = require("uuid");
-const { TEAM } = require("./config");
+const { TEAM, PACKAGES } = require("./config");
 
 // Real managed Postgres (Railway's own database service) instead of a SQLite
 // file on disk — this survives redeploys reliably, unlike an app-local file
@@ -199,11 +199,59 @@ async function setup() {
     tentative_followup: "Hi {firstName}, following up on your {experience}{dateClause} — we've tentatively held this date for you with Together, Out Loud. Let us know if you'd like to go ahead so we can lock it in for you!",
     confirmed: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe look forward to creating a memorable experience with you. — Together, Out Loud",
     document_share: "Hi! Sharing the {label} for your event with Together, Out Loud: {link}",
+    doc_label_suggestions: "Tech Rider, Hospitality Rider, Contract, Invoice",
   };
   for (const [key, template] of Object.entries(defaultTemplates)) {
     await pool.query(
       `INSERT INTO message_templates (key, template, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING`,
       [key, template, new Date().toISOString()]
+    );
+  }
+
+  // One quotation template per package/experience — same content Ashwin already had,
+  // just split out so each experience can be worded differently going forward.
+  const quoteBody = (sessionConditions) => `🎶 *QUOTATION — {formatUpper}*
+_Together, Out Loud_
+
+Hi! Thank you for considering us for your event — here are the details of our offering. 💛
+
+📍 *Location:* {location}
+📅 *Date:* {date}
+👥 *Guests:* {guests}
+⏱️ *Duration:* {duration}
+
+*PERFORMANCE DETAILS*
+🎸 Pcs (No. of Musicians): {setPieces}
+🎤 Format: {formatType}
+💰 *Performance Charges: {amountLine}*
+
+*SESSION CONDITIONS*
+${sessionConditions}
+
+*EXCLUSIONS*
+• Stage Setup
+• Lights & Sound
+• Travel, Accommodation (from previous city of performance — informed 2 months prior)
+• Food for the Team (all meals)
+• Airport/Station Transfers
+
+*TERMS*
+• An advance payment is required to confirm and block the date — booking is confirmed only upon receipt.
+• This quotation is valid for 7 days from the date of issue; charges are subject to revision after.
+• Strictly no food or beverages during the session.
+
+We'd love to make your event a truly memorable, soul-stirring experience. 🎶✨
+
+Warmly,
+*Together, Out Loud*
+📷 Instagram: https://www.instagram.com/togetheroutloudclub`;
+  const onePheraCondition = `1️⃣ No food, alcohol, or beverages to be consumed or served during the session.`;
+  const twoConditions = `1️⃣ No food, alcohol, or beverages to be consumed or served during the session.\n2️⃣ Session duration will be 75 to 90 minutes.`;
+  for (const pkg of PACKAGES) {
+    const isPheras = pkg.id === "pheras";
+    await pool.query(
+      `INSERT INTO message_templates (key, template, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING`,
+      [`quotation_${pkg.id}`, quoteBody(isPheras ? onePheraCondition : twoConditions), new Date().toISOString()]
     );
   }
 
