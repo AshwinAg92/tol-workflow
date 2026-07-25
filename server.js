@@ -523,6 +523,36 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   }
 });
 
+// Permanently delete a single lead/event and everything tied to it. Distinct
+// from "Cancel" (a stage, keeps the record) and "Clear demo data" (scoped to
+// the 7 seed leads only) — this is for removing any one real record entirely.
+app.delete("/api/leads/:id", requireAuth, requireAdmin, async (req, res) => {
+  const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  if (!lead) return res.status(404).json({ error: "Lead not found" });
+
+  const assignmentIds = (await pool.query("SELECT id FROM event_assignments WHERE lead_id = $1", [req.params.id])).rows.map((r) => r.id);
+  if (assignmentIds.length > 0) {
+    await pool.query("DELETE FROM admin_notifications WHERE assignment_id = ANY($1::text[])", [assignmentIds]);
+  }
+  const docs = (await pool.query("SELECT stored_name FROM documents WHERE lead_id = $1", [req.params.id])).rows;
+  docs.forEach((d) => fs.unlink(path.join(UPLOAD_DIR, d.stored_name), () => {}));
+
+  await pool.query("DELETE FROM event_assignments WHERE lead_id = $1", [req.params.id]);
+  await pool.query("DELETE FROM event_messages WHERE lead_id = $1", [req.params.id]);
+  await pool.query("DELETE FROM temp_artists WHERE lead_id = $1", [req.params.id]);
+  await pool.query("DELETE FROM expenses WHERE lead_id = $1", [req.params.id]);
+  await pool.query("DELETE FROM quotes WHERE lead_id = $1", [req.params.id]);
+  await pool.query("DELETE FROM payments WHERE lead_id = $1", [req.params.id]);
+  await pool.query("DELETE FROM tasks WHERE lead_id = $1", [req.params.id]);
+  await pool.query("DELETE FROM documents WHERE lead_id = $1", [req.params.id]);
+  await pool.query("DELETE FROM notifications WHERE lead_id = $1", [req.params.id]);
+  await pool.query("DELETE FROM activity_log WHERE lead_id = $1", [req.params.id]);
+  await pool.query("DELETE FROM leads WHERE id = $1", [req.params.id]);
+
+  res.status(204).end();
+  logActivity(req, `Deleted event/lead: ${lead.name}`);
+});
+
 // ---------- Quotation ----------
 // The quote text is built and edited entirely in the browser (so Ashwin can
 // change wording, amount, or anything else himself without needing a code

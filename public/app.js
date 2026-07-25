@@ -655,6 +655,7 @@ function renderLeadsLog(main) {
             ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Tentative") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
             ${l.quote_amount && l.stage !== "Confirmed" && l.stage !== "Completed" ? `<div class="muted small mono">Quoted: ${inr(l.quote_amount)}</div>` : ""}
             ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Quoted: ${l.quote_amount ? inr(l.quote_amount) : "—"}</div><div class="muted small mono">Final: ${l.final_amount ? inr(l.final_amount) : "—"}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>${(l.event_time || l.soundcheck_time) ? `<div class="muted small">${l.soundcheck_time ? `SC ${fmtTimeHM(l.soundcheck_time)}` : ""}${l.soundcheck_time && l.event_time ? " · " : ""}${l.event_time ? `Event ${fmtTimeHM(l.event_time)}` : ""}</div>` : ""}${canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:4px;">Team</button>` : ""}` : ""}
+            ${CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="margin-top:4px; color:#A64B3C;">🗑 Delete</button>` : ""}
           </span>
         </div>
       `));
@@ -688,6 +689,23 @@ function renderLeadsLog(main) {
 
   main.querySelectorAll(".assign-team-btn").forEach((btn) => {
     btn.addEventListener("click", () => openAssignTeamModal(btn.dataset.leadId));
+  });
+
+  main.querySelectorAll(".delete-lead-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const name = btn.dataset.leadName;
+      if (!confirm(`Permanently delete "${name}" and everything tied to it — tasks, documents, expenses, payments, quotes, team assignments? This cannot be undone.`)) return;
+      if (!confirm(`Are you absolutely sure you want to delete "${name}"? This is your last chance to cancel.`)) return;
+      btn.disabled = true;
+      try {
+        await api(`/api/leads/${btn.dataset.leadId}`, { method: "DELETE" });
+        await refreshLeads();
+        renderMain();
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+      }
+    });
   });
 
   main.querySelectorAll(".stage-select").forEach((sel) => {
