@@ -409,6 +409,7 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   // still need basic event info for the calendar and team assignment — nothing sensitive.
   res.json(rows.map((l) => ({
     id: l.id, name: l.name, date: l.date, city: l.city, event_type: l.event_type, stage: l.stage,
+    event_time: l.event_time, soundcheck_time: l.soundcheck_time,
   })));
 });
 
@@ -453,6 +454,21 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
+  const hasLeads = userHasSection(req.user, "leads");
+  const canAssignTeam = userHasSection(req.user, "assign_team");
+  if (!hasLeads && !canAssignTeam) return res.status(403).json({ error: "You don't have permission to update this event" });
+
+  // Event day timing is editable by anyone who can plan the team for an event
+  // (a manager without full Leads access included); everything else — stage,
+  // amounts, notes — needs full Leads access.
+  const leadsOnlyFields = ["stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes"];
+  const sharedFields = ["event_time", "soundcheck_time"];
+  if (!hasLeads) {
+    const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f);
+    const attemptedRestricted = leadsOnlyFields.some((f) => req.body[keyFor(f)] !== undefined);
+    if (attemptedRestricted) return res.status(403).json({ error: "You don't have permission to update those fields" });
+  }
+
   if (req.body.advanceDate) {
     const today = new Date().toISOString().slice(0, 10);
     if (req.body.advanceDate > today) return res.status(400).json({ error: "Advance received date can't be in the future" });
@@ -466,7 +482,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     }
   }
 
-  const fields = ["stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "event_time", "soundcheck_time"];
+  const fields = hasLeads ? [...leadsOnlyFields, ...sharedFields] : sharedFields;
   const updates = [];
   const values = [];
   fields.forEach((f) => {
