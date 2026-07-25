@@ -2243,15 +2243,22 @@ async function renderDocuments(main) {
   const docs = await api("/api/documents");
   const groups = main.querySelector("#docGroups");
 
-  function renderRow(d, lead) {
+  function renderRow(d, lead, showPicker) {
     const fullUrl = window.location.origin + d.url;
     const waPhone = lead?.phone ? lead.phone.replace(/\D/g, "") : "";
     const waText = encodeURIComponent(`Hi! Sharing the ${d.notes || "document"} for your event with Together, Out Loud: ${fullUrl}`);
+    const clientsWithPhone = eventLeads.filter((l) => l.phone);
     return `
       <div class="doc-row">
         <div class="doc-name">${d.notes ? `<strong>${d.notes}</strong> — ` : ""}<a href="${d.url}" target="_blank">${d.original_name}</a></div>
         <div class="muted mono">${fmtDate(d.uploaded_at.slice(0, 10))}</div>
         ${lead && waPhone ? `<a class="btn-ghost" href="https://wa.me/${waPhone}?text=${waText}" target="_blank" style="font-size:12px; padding:4px 8px;">Send to client</a>` : ""}
+        ${showPicker && clientsWithPhone.length > 0 ? `
+          <select class="doc-send-select" data-doc-id="${d.id}" style="font-size:12px; max-width:140px;">
+            <option value="">Send to…</option>
+            ${clientsWithPhone.map((l) => `<option value="${l.id}">${l.name}</option>`).join("")}
+          </select>
+        ` : ""}
         <button class="icon-btn" data-delete-doc="${d.id}">✕</button>
       </div>
     `;
@@ -2264,7 +2271,8 @@ async function renderDocuments(main) {
   let html = `
     <div class="card" style="margin-bottom:14px;">
       <div class="section-label">General documents</div>
-      ${general.length === 0 ? `<p class="muted small">No general documents yet.</p>` : `<div class="table">${general.map((d) => renderRow(d, null)).join("")}</div>`}
+      <p class="muted small" style="margin-top:-4px; margin-bottom:8px;">Shared across events — use "Send to…" on any row to send it to a specific client.</p>
+      ${general.length === 0 ? `<p class="muted small">No general documents yet.</p>` : `<div class="table">${general.map((d) => renderRow(d, null, true)).join("")}</div>`}
     </div>
   `;
 
@@ -2273,7 +2281,7 @@ async function renderDocuments(main) {
     html += `
       <div class="card" style="margin-bottom:14px;">
         <div class="section-label">${l.name} — <span class="muted">${fmtDate(l.date)} · ${l.city || ""}</span></div>
-        ${leadDocs.length === 0 ? `<p class="muted small">No documents uploaded for this event yet.</p>` : `<div class="table">${leadDocs.map((d) => renderRow(d, l)).join("")}</div>`}
+        ${leadDocs.length === 0 ? `<p class="muted small">No documents uploaded for this event yet.</p>` : `<div class="table">${leadDocs.map((d) => renderRow(d, l, false)).join("")}</div>`}
       </div>
     `;
   });
@@ -2285,12 +2293,26 @@ async function renderDocuments(main) {
     html += `
       <div class="card" style="margin-bottom:14px;">
         <div class="section-label">${lead ? lead.name : "Unknown lead"} <span class="muted">(${lead ? lead.stage : "—"})</span></div>
-        <div class="table">${byLead[id].map((d) => renderRow(d, null)).join("")}</div>
+        <div class="table">${byLead[id].map((d) => renderRow(d, null, false)).join("")}</div>
       </div>
     `;
   });
 
   groups.innerHTML = html;
+
+  groups.querySelectorAll(".doc-send-select").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      if (!sel.value) return;
+      const doc = general.find((d) => d.id === sel.dataset.docId);
+      const lead = eventLeads.find((l) => l.id === sel.value);
+      if (!doc || !lead || !lead.phone) return;
+      const fullUrl = window.location.origin + doc.url;
+      const waPhone = lead.phone.replace(/\D/g, "");
+      const waText = encodeURIComponent(`Hi! Sharing the ${doc.notes || "document"} for your event with Together, Out Loud: ${fullUrl}`);
+      window.open(`https://wa.me/${waPhone}?text=${waText}`, "_blank");
+      sel.value = "";
+    });
+  });
 
   groups.querySelectorAll("[data-delete-doc]").forEach((btn) => {
     btn.addEventListener("click", async () => {
