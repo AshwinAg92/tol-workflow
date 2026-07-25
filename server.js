@@ -641,7 +641,6 @@ app.post("/api/my/assignments/:id/respond", requireAuth, async (req, res) => {
   }
 
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
-  if (lead && member) logActivity(req, `${member.name} ${status} ${lead.name} on ${lead.date}`);
 });
 
 // A performer who already accepted can request to back out, giving a reason —
@@ -664,7 +663,6 @@ app.post("/api/my/assignments/:id/request-cancel", requireAuth, async (req, res)
     `, [uuid(), `${member.name} wants to cancel their spot on ${lead.name} (${lead.date}) — reason: ${reason}`, a.id, new Date().toISOString()]);
   }
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
-  if (lead && member) logActivity(req, `${member.name} requested to cancel ${lead.name} (${lead.date}) — reason: ${reason}`);
 });
 
 // Admin approves or rejects a performer's cancellation request.
@@ -677,7 +675,6 @@ app.post("/api/assignments/:id/resolve-cancel", requireAuth, requireAdmin, async
   await pool.query("UPDATE event_assignments SET status = $1, cancel_reason = NULL WHERE id = $2", [newStatus, a.id]);
 
   const lead = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [a.lead_id])).rows[0];
-  const member = (await pool.query("SELECT name FROM team WHERE id = $1", [a.team_id])).rows[0];
   if (lead) {
     await pool.query(`
       INSERT INTO notifications (id, team_id, message, created_at)
@@ -685,7 +682,6 @@ app.post("/api/assignments/:id/resolve-cancel", requireAuth, requireAdmin, async
     `, [uuid(), a.team_id, `Your cancellation request for ${lead.name} (${lead.date}) was ${approve ? "approved" : "declined — you're still on this event"}.`, new Date().toISOString()]);
   }
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
-  if (lead && member) logActivity(req, `Cancellation request ${approve ? "approved" : "rejected"}: ${member.name} on ${lead.name}`);
 });
 
 app.get("/api/admin/notifications", requireAuth, requireAdmin, async (req, res) => {
