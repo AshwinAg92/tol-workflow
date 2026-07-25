@@ -1616,7 +1616,7 @@ async function openAssignTeamModal(leadId) {
               <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
                 <div>
                   <div>${t.name}${t.description ? ` <span class="muted small">— ${t.description}</span>` : ""}</div>
-                  ${t.phone ? `<div class="muted small">${t.phone}</div>` : ""}
+                  <div class="muted small">${t.phone ? `${t.phone} · ` : ""}${t.fee_amount != null ? `Fee ${inr(t.fee_amount)}${t.fee_paid ? " · Paid" : " · Pending"}` : "No fee recorded"}</div>
                 </div>
                 <button class="icon-btn" data-remove-temp-artist="${t.id}">✕</button>
               </div>
@@ -1626,9 +1626,12 @@ async function openAssignTeamModal(leadId) {
             <input id="taName" placeholder="Name" />
             <input id="taPhone" placeholder="Phone" />
           </div>
-          <input id="taDescription" placeholder="Description (e.g. session tabla player)" style="margin-top:8px;" />
+          <div class="row-2" style="margin-top:8px;">
+            <input id="taDescription" placeholder="Description (e.g. session tabla player)" />
+            <input id="taFee" type="number" placeholder="Fee ₹ (optional)" />
+          </div>
           <button class="btn-ghost full" id="addTempArtistBtn" style="margin-top:8px;">+ Add temporary artist</button>
-          <p class="muted small" style="margin-top:4px;">Tip: hitting the overall Save button below also adds this if you've filled it in.</p>
+          <p class="muted small" style="margin-top:4px;">Tip: hitting the overall Save button below also adds this if you've filled it in. Any fee entered here counts toward this event's expenses/profit automatically — no need to add it again under Accounts.</p>
         </div>
         <div class="modal-foot">
           <button class="btn-ghost" id="openChatBtn">💬 Event chat</button>
@@ -1665,6 +1668,7 @@ async function openAssignTeamModal(leadId) {
           name,
           phone: root.querySelector("#taPhone").value.trim(),
           description: root.querySelector("#taDescription").value.trim(),
+          feeAmount: root.querySelector("#taFee").value.trim() || null,
         }),
       });
       return true;

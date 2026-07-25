@@ -166,6 +166,7 @@ async function setup() {
   // team_id nullable already — NULL means "for admin" rather than a specific performer.
   await pool.query(`ALTER TABLE event_assignments ADD COLUMN IF NOT EXISTS cancel_reason TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_performer INTEGER NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS expense_id TEXT REFERENCES expenses(id) ON DELETE SET NULL`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS temp_artists (

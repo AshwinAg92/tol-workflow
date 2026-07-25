@@ -608,26 +608,85 @@ app.patch("/api/assignments/:id", requireAuth, requireAdmin, async (req, res) =>
 });
 
 // ---------- Temporary artists — one-off performers hired for a single event, not part of the permanent team ----------
+// Their fee (if given) lives as a row in the same `expenses` table used everywhere
+// else in Accounts, linked via temp_artists.expense_id — so it automatically counts
+// toward that event's expenses/profit and shows up in Pending expenses / Recent
+// transactions, without a second, separate accounting path to keep in sync.
 app.get("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_team"), async (req, res) => {
-  const { rows } = await pool.query("SELECT * FROM temp_artists WHERE lead_id = $1 ORDER BY created_at ASC", [req.params.id]);
+  const { rows } = await pool.query(`
+    SELECT temp_artists.*, expenses.amount AS fee_amount, expenses.paid AS fee_paid,
+      expenses.payment_date AS fee_payment_date, expenses.payment_mode AS fee_payment_mode
+    FROM temp_artists
+    LEFT JOIN expenses ON expenses.id = temp_artists.expense_id
+    WHERE temp_artists.lead_id = $1 ORDER BY temp_artists.created_at ASC
+  `, [req.params.id]);
   res.json(rows);
 });
 
 app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
-  const { name, description, phone } = req.body;
+  const { name, description, phone, feeAmount } = req.body;
   if (!name) return res.status(400).json({ error: "Name is required" });
   const id = uuid();
+  const now = new Date().toISOString();
+  let expenseId = null;
+  if (feeAmount !== undefined && feeAmount !== null && feeAmount !== "") {
+    if (isNaN(Number(feeAmount)) || Number(feeAmount) < 0) return res.status(400).json({ error: "Enter a valid fee amount" });
+    expenseId = uuid();
+    await pool.query(`
+      INSERT INTO expenses (id, lead_id, head, amount, paid, created_at)
+      VALUES ($1, $2, $3, $4, 0, $5)
+    `, [expenseId, req.params.id, `Artist fee — ${name} (guest artist)`, Number(feeAmount), now]);
+  }
   await pool.query(`
-    INSERT INTO temp_artists (id, lead_id, name, description, phone, created_at)
-    VALUES ($1, $2, $3, $4, $5, $6)
-  `, [id, req.params.id, name, description || null, phone || null, new Date().toISOString()]);
-  res.status(201).json((await pool.query("SELECT * FROM temp_artists WHERE id = $1", [id])).rows[0]);
-  logActivity(req, `Temporary artist added to ${lead.name}: ${name}${description ? ` (${description})` : ""}`);
+    INSERT INTO temp_artists (id, lead_id, name, description, phone, expense_id, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+  `, [id, req.params.id, name, description || null, phone || null, expenseId, now]);
+  const { rows } = await pool.query(`
+    SELECT temp_artists.*, expenses.amount AS fee_amount, expenses.paid AS fee_paid,
+      expenses.payment_date AS fee_payment_date, expenses.payment_mode AS fee_payment_mode
+    FROM temp_artists LEFT JOIN expenses ON expenses.id = temp_artists.expense_id WHERE temp_artists.id = $1
+  `, [id]);
+  res.status(201).json(rows[0]);
+  logActivity(req, `Temporary artist added to ${lead.name}: ${name}${description ? ` (${description})` : ""}${expenseId ? ` — fee ₹${Number(feeAmount).toLocaleString("en-IN")}` : ""}`);
+});
+
+app.patch("/api/temp-artists/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const artist = (await pool.query("SELECT * FROM temp_artists WHERE id = $1", [req.params.id])).rows[0];
+  if (!artist) return res.status(404).json({ error: "Not found" });
+  const { feeAmount } = req.body;
+  if (feeAmount !== undefined && feeAmount !== null && feeAmount !== "" && (isNaN(Number(feeAmount)) || Number(feeAmount) < 0)) {
+    return res.status(400).json({ error: "Enter a valid fee amount" });
+  }
+  const hasFee = feeAmount !== undefined && feeAmount !== null && feeAmount !== "";
+  if (artist.expense_id) {
+    // Already has a linked expense — update its amount, or drop it if the fee was cleared.
+    if (hasFee) {
+      await pool.query("UPDATE expenses SET amount = $1 WHERE id = $2", [Number(feeAmount), artist.expense_id]);
+    } else {
+      await pool.query("DELETE FROM expenses WHERE id = $1", [artist.expense_id]);
+      await pool.query("UPDATE temp_artists SET expense_id = NULL WHERE id = $1", [artist.id]);
+    }
+  } else if (hasFee) {
+    const expenseId = uuid();
+    await pool.query(`
+      INSERT INTO expenses (id, lead_id, head, amount, paid, created_at)
+      VALUES ($1, $2, $3, $4, 0, $5)
+    `, [expenseId, artist.lead_id, `Artist fee — ${artist.name} (guest artist)`, Number(feeAmount), new Date().toISOString()]);
+    await pool.query("UPDATE temp_artists SET expense_id = $1 WHERE id = $2", [expenseId, artist.id]);
+  }
+  const { rows } = await pool.query(`
+    SELECT temp_artists.*, expenses.amount AS fee_amount, expenses.paid AS fee_paid,
+      expenses.payment_date AS fee_payment_date, expenses.payment_mode AS fee_payment_mode
+    FROM temp_artists LEFT JOIN expenses ON expenses.id = temp_artists.expense_id WHERE temp_artists.id = $1
+  `, [artist.id]);
+  res.json(rows[0]);
 });
 
 app.delete("/api/temp-artists/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const artist = (await pool.query("SELECT * FROM temp_artists WHERE id = $1", [req.params.id])).rows[0];
+  if (artist?.expense_id) await pool.query("DELETE FROM expenses WHERE id = $1", [artist.expense_id]);
   await pool.query("DELETE FROM temp_artists WHERE id = $1", [req.params.id]);
   res.status(204).end();
 });
