@@ -1155,8 +1155,8 @@ async function renderTeam(main) {
 
   const grid = main.querySelector("#teamGrid");
   TEAM.forEach((m) => {
-    grid.appendChild(el(`
-      <div class="card team-card">
+    const card = el(`
+      <div class="card team-card" style="cursor:pointer;">
         ${canManage ? `<button class="icon-btn" data-edit-member="${m.id}" style="float:right;">✎</button>` : ""}
         <div class="team-avatar">${m.name[0]}</div>
         <div class="team-name">${m.name}</div>
@@ -1167,7 +1167,12 @@ async function renderTeam(main) {
         ${m.activeLeads.map((l) => `<div class="team-lead">› ${l.name}</div>`).join("")}
         ${canManage && !teamIdsWithLogin.has(m.id) ? `<button class="btn-ghost full" data-add-login="${m.id}" style="margin-top:10px;">+ Add login</button>` : ""}
       </div>
-    `));
+    `);
+    card.addEventListener("click", (e) => {
+      if (e.target.closest("[data-edit-member]") || e.target.closest("[data-add-login]")) return;
+      openTeamMemberEventsModal(m);
+    });
+    grid.appendChild(card);
   });
   if (canManage) {
     main.querySelectorAll("[data-edit-member]").forEach((btn) => {
@@ -1231,7 +1236,65 @@ async function renderTeam(main) {
   }
 }
 
-// Wires up any "Show"/"Hide" buttons for password fields inside a given root element.
+// Shows every event a given team member is booked to perform at — separate from
+// "active leads" above, which is about who's managing the lead, not who's playing.
+async function openTeamMemberEventsModal(member) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>Events for ${member.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-body"><p class="muted small">Loading…</p></div>
+        <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
+      </div>
+    </div>
+  `;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+
+  const statusLabel = { pending: "Awaiting response", accepted: "Accepted", declined: "Declined", cancel_requested: "Cancellation requested" };
+  const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C", cancel_requested: "#B6752C" };
+
+  let events;
+  try {
+    events = await api(`/api/team/${member.id}/assignments`);
+  } catch (err) {
+    const body = root.querySelector(".modal-body");
+    if (body) body.innerHTML = `<p class="muted small">${err.message}</p>`;
+    return;
+  }
+  const body = root.querySelector(".modal-body");
+  if (!body) return; // modal was closed while loading
+  const today = new Date().toISOString().slice(0, 10);
+  const upcoming = events.filter((e) => e.date >= today);
+  const past = events.filter((e) => e.date < today);
+
+  const rowHtml = (e) => `
+    <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
+      <div>
+        <div>${e.lead_name} <span class="muted small">— ${packageName(e.event_type)}</span></div>
+        <div class="muted small">${fmtDate(e.date)}${e.city ? ` · ${e.city}` : ""}${e.event_time ? ` · Event ${fmtTimeHM(e.event_time)}` : ""}${e.soundcheck_time ? ` · SC ${fmtTimeHM(e.soundcheck_time)}` : ""}</div>
+        ${e.fee_amount !== undefined ? `<div class="muted small mono">Fee: ${e.fee_amount ? inr(e.fee_amount) : "—"}${e.fee_amount ? (e.paid ? " · Paid" : " · Pending") : ""}</div>` : ""}
+      </div>
+      <span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status] || e.status}</span>
+    </div>
+  `;
+
+  body.innerHTML = `
+    ${events.length === 0 ? `<p class="muted small">No events assigned to ${member.name} yet.</p>` : `
+      <div class="section-label">Upcoming</div>
+      ${upcoming.length === 0 ? `<p class="muted small">Nothing upcoming.</p>` : upcoming.map(rowHtml).join("")}
+      ${past.length > 0 ? `
+        <div class="section-label" style="margin-top:14px;">Past</div>
+        ${past.map(rowHtml).join("")}
+      ` : ""}
+    `}
+  `;
+}
+
+
 function wirePasswordToggles(root) {
   root.querySelectorAll(".password-toggle").forEach((btn) => {
     btn.addEventListener("click", () => {

@@ -917,6 +917,26 @@ app.get("/api/team", requireAuth, async (req, res) => {
   res.json(team);
 });
 
+// Events a specific team member is booked to perform at (distinct from a lead's
+// "assigned_to" owner above) — used by the Team tab so anyone who can plan events
+// (manager or admin) can click an artist and see what's on their plate.
+app.get("/api/team/:id/assignments", requireAuth, async (req, res) => {
+  if (!userHasSection(req.user, "leads") && !userHasSection(req.user, "assign_team")) {
+    return res.status(403).json({ error: "You don't have permission to view this" });
+  }
+  const { rows } = await pool.query(`
+    SELECT event_assignments.id, event_assignments.status, event_assignments.paid, event_assignments.fee_amount,
+      leads.id AS lead_id, leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage,
+      leads.event_time, leads.soundcheck_time
+    FROM event_assignments
+    JOIN leads ON leads.id = event_assignments.lead_id
+    WHERE event_assignments.team_id = $1
+    ORDER BY leads.date ASC
+  `, [req.params.id]);
+  const canSeeMoney = userHasSection(req.user, "accounts");
+  res.json(canSeeMoney ? rows : rows.map(({ fee_amount, paid, ...rest }) => rest));
+});
+
 // ---------- Calendar ----------
 app.get("/api/calendar", requireAuth, async (req, res) => {
   const { year, month } = req.query; // month is 1-12
