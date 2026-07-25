@@ -345,17 +345,42 @@ app.delete("/api/team/:id", requireAuth, requireAdmin, async (req, res) => {
 });
 
 // ---------- Config (so the frontend never hardcodes pricing) ----------
-app.get("/api/config", (req, res) => {
+app.get("/api/config", async (req, res) => {
+  let pricing = PRICING;
+  try {
+    const row = (await pool.query("SELECT template FROM message_templates WHERE key = 'pricing_matrix'")).rows[0];
+    if (row) pricing = JSON.parse(row.template);
+  } catch (err) {
+    console.error("Failed to load pricing_matrix override, using config.js default:", err.message);
+  }
   res.json({
     stages: STAGES,
     packages: PACKAGES,
     addons: ADDONS,
-    pricing: PRICING,
+    pricing,
     experiences: EXPERIENCES,
     occasions: OCCASIONS,
     guestRanges: GUEST_RANGES,
     howHeard: HOW_HEARD,
   });
+});
+
+app.patch("/api/pricing", requireAuth, requireAdmin, async (req, res) => {
+  const { pricing } = req.body;
+  if (!pricing || typeof pricing !== "object" || Array.isArray(pricing)) {
+    return res.status(400).json({ error: "pricing must be an object of { packageId: { pcs: rate } }" });
+  }
+  for (const [pkgId, tiers] of Object.entries(pricing)) {
+    if (typeof tiers !== "object" || Array.isArray(tiers)) return res.status(400).json({ error: `Invalid pricing for "${pkgId}"` });
+    for (const [pcs, rate] of Object.entries(tiers)) {
+      if (isNaN(Number(pcs)) || isNaN(Number(rate))) return res.status(400).json({ error: `Invalid Pcs/rate pair in "${pkgId}"` });
+    }
+  }
+  await pool.query(`
+    INSERT INTO message_templates (key, template, updated_at) VALUES ('pricing_matrix', $1, $2)
+    ON CONFLICT (key) DO UPDATE SET template = $1, updated_at = $2
+  `, [JSON.stringify(pricing), new Date().toISOString()]);
+  res.json({ pricing });
 });
 
 // ---------- Leads ----------

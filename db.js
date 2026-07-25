@@ -1,7 +1,7 @@
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const { v4: uuid } = require("uuid");
-const { TEAM, PACKAGES } = require("./config");
+const { TEAM, PACKAGES, PRICING } = require("./config");
 
 // Real managed Postgres (Railway's own database service) instead of a SQLite
 // file on disk — this survives redeploys reliably, unlike an app-local file
@@ -199,7 +199,6 @@ async function setup() {
     tentative_followup: "Hi {firstName}, following up on your {experience}{dateClause} — we've tentatively held this date for you with Together, Out Loud. Let us know if you'd like to go ahead so we can lock it in for you!",
     confirmed: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe look forward to creating a memorable experience with you. — Together, Out Loud",
     document_share: "Hi! Sharing the {label} for your event with Together, Out Loud: {link}",
-    doc_label_suggestions: "Tech Rider, Hospitality Rider, Contract, Invoice",
   };
   for (const [key, template] of Object.entries(defaultTemplates)) {
     await pool.query(
@@ -254,6 +253,11 @@ Warmly,
       [`quotation_${pkg.id}`, quoteBody(isPheras ? onePheraCondition : twoConditions), new Date().toISOString()]
     );
   }
+
+  await pool.query(
+    `INSERT INTO message_templates (key, template, updated_at) VALUES ('pricing_matrix', $1, $2) ON CONFLICT (key) DO NOTHING`,
+    [JSON.stringify(PRICING), new Date().toISOString()]
+  );
 
   // One-time migration: bring any existing single "advance" amount into the new
   // payments ledger as its first entry, so nothing is lost when moving from a

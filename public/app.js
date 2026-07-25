@@ -2258,7 +2258,10 @@ async function renderDocuments(main) {
         </select>
         <input type="text" id="docLabel" list="docLabelOptions" placeholder="Label (e.g. Tech Rider, Hospitality Rider)" />
         <datalist id="docLabelOptions">
-          ${(MESSAGE_TEMPLATES.doc_label_suggestions || "Tech Rider, Hospitality Rider, Contract, Invoice").split(",").map((s) => s.trim()).filter(Boolean).map((s) => `<option value="${s}"></option>`).join("")}
+          <option value="Tech Rider"></option>
+          <option value="Hospitality Rider"></option>
+          <option value="Contract"></option>
+          <option value="Invoice"></option>
         </datalist>
         <input type="file" id="docFile" />
         <button class="btn-primary" id="uploadBtn">Upload</button>
@@ -2558,24 +2561,23 @@ async function renderSettings(main) {
     <div id="templateCards"></div>
 
     <div class="card" style="margin-bottom:16px;">
-      <div class="section-label">Quotation templates</div>
-      <p class="muted small" style="margin-top:-4px;">Each experience has its own quote wording. Pick one to edit it.</p>
+      <div class="section-label">Pricing</div>
+      <p class="muted small" style="margin-top:-4px;">Rate by number of musicians (Pcs), per experience. This is what auto-fills "Performance charges" in the Quotation tab — change it here and both the WhatsApp/email text and the downloaded PDF will use the new rate the next time you generate a quote.</p>
+      <div id="pricingEditor"></div>
+      <div style="display:flex; gap:8px; align-items:center; margin-top:12px;">
+        <button class="btn-primary" id="savePricingBtn">Save pricing</button>
+        <span class="muted small" id="pricingSavedNote" style="display:none; color:#5C8A6B;">Saved ✓</span>
+      </div>
+    </div>
+
+    <details class="card" style="margin-bottom:16px;">
+      <summary style="cursor:pointer; font-weight:600;">Quotation wording (advanced)</summary>
+      <p class="muted small" style="margin-top:8px;">This only changes the WhatsApp/email wording text — not pricing, and not the PDF. Most of the time you just want Pricing above instead.</p>
       <select id="quoteTemplateSelect">
         ${CONFIG.packages.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}
       </select>
       <div id="quoteTemplateEditor" style="margin-top:12px;"></div>
-    </div>
-
-    <div class="card" style="margin-bottom:16px;">
-      <div class="section-label">Document label suggestions</div>
-      <p class="muted small" style="margin-top:-4px;">The quick-pick labels shown when uploading a file on the Documents tab. Comma-separated.</p>
-      <input id="docLabelsInput" value="${(MESSAGE_TEMPLATES.doc_label_suggestions || "Tech Rider, Hospitality Rider, Contract, Invoice")}" style="width:100%;" />
-      <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
-        <button class="btn-primary" id="saveDocLabelsBtn">Save</button>
-        <button class="btn-ghost" id="resetDocLabelsBtn">Reset to default</button>
-        <span class="muted small" id="docLabelsSavedNote" style="display:none; color:#5C8A6B;">Saved ✓</span>
-      </div>
-    </div>
+    </details>
   `;
 
   const container = main.querySelector("#templateCards");
@@ -2618,6 +2620,70 @@ async function renderSettings(main) {
     });
   });
 
+  // ---- Pricing (Pcs -> rate per experience) ----
+  const pricingEditor = main.querySelector("#pricingEditor");
+  // Work on a local copy so nothing is sent until "Save pricing" is clicked.
+  const pricingDraft = JSON.parse(JSON.stringify(CONFIG.pricing || {}));
+  CONFIG.packages.forEach((p) => { if (!pricingDraft[p.id]) pricingDraft[p.id] = {}; });
+
+  function renderPricingEditor() {
+    pricingEditor.innerHTML = CONFIG.packages.map((p) => `
+      <div style="margin-top:10px;">
+        <div class="muted small" style="font-weight:600;">${p.name}</div>
+        <div data-pricing-rows="${p.id}">
+          ${Object.entries(pricingDraft[p.id] || {}).map(([pcs, rate]) => `
+            <div class="row-2" style="margin-top:4px;" data-pricing-row="${p.id}:${pcs}">
+              <input type="number" class="pricing-pcs" value="${pcs}" placeholder="Pcs" />
+              <input type="number" class="pricing-rate" value="${rate}" placeholder="Rate (₹)" />
+            </div>
+          `).join("")}
+        </div>
+        <button class="btn-ghost" data-add-pricing-row="${p.id}" style="margin-top:4px; font-size:12px; padding:4px 10px;">+ Add Pcs tier</button>
+      </div>
+    `).join("");
+
+    pricingEditor.querySelectorAll("[data-add-pricing-row]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const pkgId = btn.dataset.addPricingRow;
+        const rowsEl = pricingEditor.querySelector(`[data-pricing-rows="${pkgId}"]`);
+        rowsEl.insertAdjacentHTML("beforeend", `
+          <div class="row-2" style="margin-top:4px;">
+            <input type="number" class="pricing-pcs" placeholder="Pcs" />
+            <input type="number" class="pricing-rate" placeholder="Rate (₹)" />
+          </div>
+        `);
+      });
+    });
+  }
+  renderPricingEditor();
+
+  main.querySelector("#savePricingBtn").addEventListener("click", async () => {
+    const newPricing = {};
+    CONFIG.packages.forEach((p) => {
+      const rowsEl = pricingEditor.querySelector(`[data-pricing-rows="${p.id}"]`);
+      const tiers = {};
+      rowsEl.querySelectorAll(".row-2").forEach((row) => {
+        const pcs = row.querySelector(".pricing-pcs").value;
+        const rate = row.querySelector(".pricing-rate").value;
+        if (pcs && rate) tiers[pcs] = Number(rate);
+      });
+      newPricing[p.id] = tiers;
+    });
+    const btn = main.querySelector("#savePricingBtn");
+    btn.disabled = true;
+    try {
+      await api("/api/pricing", { method: "PATCH", body: JSON.stringify({ pricing: newPricing }) });
+      CONFIG.pricing = newPricing;
+      const note = main.querySelector("#pricingSavedNote");
+      note.style.display = "inline";
+      setTimeout(() => { note.style.display = "none"; }, 2000);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
   // ---- Quotation templates (one at a time, picked via the dropdown) ----
   const quoteEditor = main.querySelector("#quoteTemplateEditor");
   const quoteSelect = main.querySelector("#quoteTemplateSelect");
@@ -2651,27 +2717,6 @@ async function renderSettings(main) {
   }
   quoteSelect.addEventListener("change", renderQuoteEditor);
   renderQuoteEditor();
-
-  // ---- Document label suggestions ----
-  main.querySelector("#saveDocLabelsBtn").addEventListener("click", async () => {
-    const value = main.querySelector("#docLabelsInput").value;
-    const btn = main.querySelector("#saveDocLabelsBtn");
-    btn.disabled = true;
-    try {
-      await api("/api/message-templates/doc_label_suggestions", { method: "PATCH", body: JSON.stringify({ template: value }) });
-      MESSAGE_TEMPLATES.doc_label_suggestions = value;
-      const note = main.querySelector("#docLabelsSavedNote");
-      note.style.display = "inline";
-      setTimeout(() => { note.style.display = "none"; }, 2000);
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      btn.disabled = false;
-    }
-  });
-  main.querySelector("#resetDocLabelsBtn").addEventListener("click", () => {
-    main.querySelector("#docLabelsInput").value = "Tech Rider, Hospitality Rider, Contract, Invoice";
-  });
 }
 
 // ---------- Main dispatch ----------
