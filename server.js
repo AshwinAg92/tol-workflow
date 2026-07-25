@@ -409,7 +409,7 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   // still need basic event info for the calendar and team assignment — nothing sensitive.
   res.json(rows.map((l) => ({
     id: l.id, name: l.name, date: l.date, city: l.city, event_type: l.event_type, stage: l.stage,
-    event_time: l.event_time, soundcheck_time: l.soundcheck_time,
+    event_time: l.event_time, soundcheck_time: l.soundcheck_time, occasion: l.occasion,
   })));
 });
 
@@ -756,7 +756,7 @@ app.get("/api/my/events", requireAuth, async (req, res) => {
   if (!req.user.team_id) return res.json([]);
   const { rows } = await pool.query(`
     SELECT event_assignments.id, event_assignments.lead_id, event_assignments.team_id, event_assignments.status,
-      leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage, leads.event_time, leads.soundcheck_time,
+      leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage, leads.event_time, leads.soundcheck_time, leads.occasion,
       ex.paid AS paid, ex.amount AS fee_amount, ex.payment_date, ex.payment_mode
     FROM event_assignments
     JOIN leads ON leads.id = event_assignments.lead_id
@@ -978,7 +978,7 @@ app.get("/api/team/:id/assignments", requireAuth, async (req, res) => {
   const { rows } = await pool.query(`
     SELECT event_assignments.id, event_assignments.status,
       leads.id AS lead_id, leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage,
-      leads.event_time, leads.soundcheck_time,
+      leads.event_time, leads.soundcheck_time, leads.occasion,
       ex.paid AS paid, ex.amount AS fee_amount
     FROM event_assignments
     JOIN leads ON leads.id = event_assignments.lead_id

@@ -640,7 +640,7 @@ function renderLeadsLog(main) {
     sorted.forEach((l) => {
       rows.appendChild(el(`
         <div class="table-row leads-table-row">
-          <span><div class="lead-name">${l.name}</div><div class="muted small">${l.phone || ""}</div>${l.alt_date ? `<div class="muted small" style="color:#B6752C;">Alt date: ${fmtDate(l.alt_date)}</div>` : ""}</span>
+          <span><div class="lead-name">${l.name}</div><div class="muted small">${l.phone || ""}</div>${l.occasion && (l.stage === "Confirmed" || l.stage === "Completed") ? `<div class="muted small">${l.occasion}</div>` : ""}${l.alt_date ? `<div class="muted small" style="color:#B6752C;">Alt date: ${fmtDate(l.alt_date)}</div>` : ""}</span>
           <span>${packageName(l.event_type)}</span>
           <span>${l.city || "—"}</span>
           <span class="mono">${fmtDate(l.date)}</span>
@@ -1090,7 +1090,7 @@ function renderCalendar(main) {
   upcoming.forEach((l) => {
     const row = el(`
       <div class="list-row" style="cursor:pointer;">
-        <span class="mono">${fmtDate(l.date)}</span><span>${l.name}</span><span class="muted">${l.city || ""}</span>
+        <span class="mono">${fmtDate(l.date)}</span><span>${l.name}${l.occasion ? ` <span class="muted small">— ${l.occasion}</span>` : ""}</span><span class="muted">${l.city || ""}</span>
         <span class="tag" style="color:${STAGE_COLOR[l.stage]}">${l.stage}</span>
       </div>
     `);
@@ -1291,7 +1291,7 @@ async function openTeamMemberEventsModal(member) {
   const rowHtml = (e) => `
     <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
       <div>
-        <div>${e.lead_name} <span class="muted small">— ${packageName(e.event_type)}</span></div>
+        <div>${e.lead_name} <span class="muted small">— ${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""}</span></div>
         <div class="muted small">${fmtDate(e.date)}${e.city ? ` · ${e.city}` : ""}${e.event_time ? ` · Event ${fmtTimeHM(e.event_time)}` : ""}${e.soundcheck_time ? ` · SC ${fmtTimeHM(e.soundcheck_time)}` : ""}</div>
         ${e.fee_amount !== undefined ? `<div class="muted small mono">Fee: ${e.fee_amount ? inr(e.fee_amount) : "—"}${e.fee_amount ? (e.paid ? " · Paid" : " · Pending") : ""}</div>` : ""}
       </div>
@@ -1699,7 +1699,7 @@ async function openAssignTeamModal(leadId) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
-        <div class="modal-head"><h3>Team for ${lead.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-head"><h3>Team for ${lead.name}${lead.occasion ? ` <span class="muted" style="font-weight:400; font-size:14px;">— ${lead.occasion}</span>` : ""}</h3><button class="icon-btn" id="closeModal">✕</button></div>
         <div class="modal-body">
           <div class="section-label">Event day timing</div>
           <div class="row-2" style="margin-bottom:14px;">
@@ -2981,7 +2981,7 @@ async function renderMyEvents(main) {
         <div class="performer-event-head">
           <div>
             <div class="team-name">${e.lead_name}</div>
-            <div class="muted small">${packageName(e.event_type)} · ${fmtDate(e.date)} · ${e.city || ""}</div>
+            <div class="muted small">${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""} · ${fmtDate(e.date)} · ${e.city || ""}</div>
           </div>
           ${e.stage === "Cancelled"
             ? `<span class="tag" style="color:#A64B3C; font-weight:700;">⚠ CANCELLED</span>`
@@ -3135,7 +3135,7 @@ async function renderPerformerApp() {
       <div class="card reminder-flash" style="margin-bottom:20px;">
         ${soonEvents.map((e) => `
           <div class="dash-list-item">
-            <div><strong>${e.lead_name}</strong> — ${packageName(e.event_type)}</div>
+            <div><strong>${e.lead_name}</strong> — ${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""}</div>
             <div class="muted small">${fmtDate(e.date)}${e.city ? ` · ${e.city}` : ""}</div>
           </div>
         `).join("")}
@@ -3172,7 +3172,7 @@ async function renderPerformerApp() {
         <div class="performer-event-head">
           <div>
             <div class="team-name">${e.lead_name}</div>
-            <div class="muted small">${packageName(e.event_type)} · ${fmtDate(e.date)} · ${e.city || ""}</div>
+            <div class="muted small">${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""} · ${fmtDate(e.date)} · ${e.city || ""}</div>
           </div>
           ${e.stage === "Cancelled"
             ? `<span class="tag" style="color:#A64B3C; font-weight:700;">⚠ CANCELLED</span>`
