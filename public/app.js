@@ -577,7 +577,16 @@ function renderLeadsLog(main) {
     </div>
   `;
 
-  main.querySelector("#leadsSearchInput").addEventListener("input", (e) => { leadsSearch = e.target.value; renderMain(); });
+  main.querySelector("#leadsSearchInput").addEventListener("input", (e) => {
+    const cursorPos = e.target.selectionStart;
+    leadsSearch = e.target.value;
+    renderMain();
+    const newInput = document.querySelector("#leadsSearchInput");
+    if (newInput) {
+      newInput.focus();
+      newInput.setSelectionRange(cursorPos, cursorPos);
+    }
+  });
   main.querySelector("#leadsDateInput").addEventListener("change", (e) => { leadsDateFilter = e.target.value; renderMain(); });
   main.querySelector("#leadsStageSelect").addEventListener("change", (e) => { leadsStageFilter = e.target.value; renderMain(); });
   const clearAllBtn = main.querySelector("#clearAllFilters");
