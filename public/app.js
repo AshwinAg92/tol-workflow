@@ -2221,7 +2221,7 @@ async function renderDashboard(main) {
     api("/api/dashboard"),
     api("/api/announcements"),
     isAdmin ? api("/api/admin/notifications") : Promise.resolve([]),
-    api("/api/activity"),
+    isAdmin ? api("/api/activity") : Promise.resolve([]),
   ]);
   main.innerHTML = `
     <div class="view-head">
@@ -2271,6 +2271,7 @@ async function renderDashboard(main) {
       <div class="section-label">Calendar</div>
       ${calendarGridMarkup()}
     </div>
+    ${isAdmin ? `
     <div class="card" style="margin-bottom:16px;">
       <div class="section-label">📋 Today's activity</div>
       ${activity.length === 0 ? `<p class="muted small">Nothing logged yet today.</p>` : `
@@ -2281,12 +2282,13 @@ async function renderDashboard(main) {
                 <span class="muted small mono" style="flex-shrink:0; width:52px;">${fmtTime(a.created_at)}</span>
                 <span>${a.message}${a.actor && a.actor !== "System" ? ` <span class="muted small">— ${a.actor}</span>` : ""}</span>
               </div>
-              ${isAdmin ? `<button class="icon-btn" data-dismiss-activity="${a.id}" title="Remove this entry">✕</button>` : ""}
+              <button class="icon-btn" data-dismiss-activity="${a.id}" title="Remove this entry">✕</button>
             </div>
           `).join("")}
         </div>
       `}
     </div>
+    ` : ""}
     <div class="dash-grid">
       <div class="card">
         <div class="section-label">Upcoming events</div>

@@ -1295,7 +1295,7 @@ app.patch("/api/message-templates/:key", requireAuth, requireAdmin, async (req, 
   res.json({ key: req.params.key, template });
 });
 
-app.get("/api/activity", requireAuth, async (req, res) => {
+app.get("/api/activity", requireAuth, requireAdmin, async (req, res) => {
   const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
   const { rows } = await pool.query(
     "SELECT * FROM activity_log WHERE created_at >= $1 ORDER BY created_at ASC",
