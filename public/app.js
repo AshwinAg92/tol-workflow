@@ -2563,7 +2563,10 @@ async function renderSettings(main) {
     <div class="card" style="margin-bottom:16px;">
       <div class="section-label">Pricing</div>
       <p class="muted small" style="margin-top:-4px;">Rate by number of musicians (Pcs), per experience. This is what auto-fills "Performance charges" in the Quotation tab — change it here and both the WhatsApp/email text and the downloaded PDF will use the new rate the next time you generate a quote.</p>
-      <div id="pricingEditor"></div>
+      <select id="pricingPackageSelect">
+        ${CONFIG.packages.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}
+      </select>
+      <div id="pricingEditor" style="margin-top:12px;"></div>
       <div style="display:flex; gap:8px; align-items:center; margin-top:12px;">
         <button class="btn-primary" id="savePricingBtn">Save pricing</button>
         <span class="muted small" id="pricingSavedNote" style="display:none; color:#5C8A6B;">Saved ✓</span>
@@ -2620,60 +2623,64 @@ async function renderSettings(main) {
     });
   });
 
-  // ---- Pricing (Pcs -> rate per experience) ----
+  // ---- Pricing (Pcs -> rate per experience, one experience shown at a time) ----
   const pricingEditor = main.querySelector("#pricingEditor");
+  const pricingSelect = main.querySelector("#pricingPackageSelect");
   // Work on a local copy so nothing is sent until "Save pricing" is clicked.
   const pricingDraft = JSON.parse(JSON.stringify(CONFIG.pricing || {}));
   CONFIG.packages.forEach((p) => { if (!pricingDraft[p.id]) pricingDraft[p.id] = {}; });
 
-  function renderPricingEditor() {
-    pricingEditor.innerHTML = CONFIG.packages.map((p) => `
-      <div style="margin-top:10px;">
-        <div class="muted small" style="font-weight:600;">${p.name}</div>
-        <div data-pricing-rows="${p.id}">
-          ${Object.entries(pricingDraft[p.id] || {}).map(([pcs, rate]) => `
-            <div class="row-2" style="margin-top:4px;" data-pricing-row="${p.id}:${pcs}">
-              <input type="number" class="pricing-pcs" value="${pcs}" placeholder="Pcs" />
-              <input type="number" class="pricing-rate" value="${rate}" placeholder="Rate (₹)" />
-            </div>
-          `).join("")}
-        </div>
-        <button class="btn-ghost" data-add-pricing-row="${p.id}" style="margin-top:4px; font-size:12px; padding:4px 10px;">+ Add Pcs tier</button>
-      </div>
-    `).join("");
+  // Reads whatever's currently on screen back into pricingDraft for the given package,
+  // so switching the dropdown (or saving) never silently drops an edit.
+  function syncVisibleRowsIntoDraft(pkgId) {
+    const tiers = {};
+    pricingEditor.querySelectorAll(".row-2").forEach((row) => {
+      const pcs = row.querySelector(".pricing-pcs").value;
+      const rate = row.querySelector(".pricing-rate").value;
+      if (pcs && rate) tiers[pcs] = Number(rate);
+    });
+    pricingDraft[pkgId] = tiers;
+  }
 
-    pricingEditor.querySelectorAll("[data-add-pricing-row]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const pkgId = btn.dataset.addPricingRow;
-        const rowsEl = pricingEditor.querySelector(`[data-pricing-rows="${pkgId}"]`);
-        rowsEl.insertAdjacentHTML("beforeend", `
+  function renderPricingEditor() {
+    const pkgId = pricingSelect.value;
+    pricingEditor.innerHTML = `
+      <div data-pricing-rows="${pkgId}">
+        ${Object.entries(pricingDraft[pkgId] || {}).map(([pcs, rate]) => `
           <div class="row-2" style="margin-top:4px;">
-            <input type="number" class="pricing-pcs" placeholder="Pcs" />
-            <input type="number" class="pricing-rate" placeholder="Rate (₹)" />
+            <input type="number" class="pricing-pcs" value="${pcs}" placeholder="Pcs" />
+            <input type="number" class="pricing-rate" value="${rate}" placeholder="Rate (₹)" />
           </div>
-        `);
-      });
+        `).join("")}
+      </div>
+      <button class="btn-ghost" id="addPricingRowBtn" style="margin-top:4px; font-size:12px; padding:4px 10px;">+ Add Pcs tier</button>
+    `;
+    pricingEditor.querySelector("#addPricingRowBtn").addEventListener("click", () => {
+      pricingEditor.querySelector(`[data-pricing-rows="${pkgId}"]`).insertAdjacentHTML("beforeend", `
+        <div class="row-2" style="margin-top:4px;">
+          <input type="number" class="pricing-pcs" placeholder="Pcs" />
+          <input type="number" class="pricing-rate" placeholder="Rate (₹)" />
+        </div>
+      `);
     });
   }
+  pricingSelect.addEventListener("change", (e) => {
+    // e.target's *new* value is already selected, so grab the previous package
+    // from a data attribute we keep in sync, to know which draft entry to save into.
+    syncVisibleRowsIntoDraft(pricingEditor.dataset.currentPkg);
+    pricingEditor.dataset.currentPkg = e.target.value;
+    renderPricingEditor();
+  });
+  pricingEditor.dataset.currentPkg = pricingSelect.value;
   renderPricingEditor();
 
   main.querySelector("#savePricingBtn").addEventListener("click", async () => {
-    const newPricing = {};
-    CONFIG.packages.forEach((p) => {
-      const rowsEl = pricingEditor.querySelector(`[data-pricing-rows="${p.id}"]`);
-      const tiers = {};
-      rowsEl.querySelectorAll(".row-2").forEach((row) => {
-        const pcs = row.querySelector(".pricing-pcs").value;
-        const rate = row.querySelector(".pricing-rate").value;
-        if (pcs && rate) tiers[pcs] = Number(rate);
-      });
-      newPricing[p.id] = tiers;
-    });
+    syncVisibleRowsIntoDraft(pricingSelect.value);
     const btn = main.querySelector("#savePricingBtn");
     btn.disabled = true;
     try {
-      await api("/api/pricing", { method: "PATCH", body: JSON.stringify({ pricing: newPricing }) });
-      CONFIG.pricing = newPricing;
+      await api("/api/pricing", { method: "PATCH", body: JSON.stringify({ pricing: pricingDraft }) });
+      CONFIG.pricing = JSON.parse(JSON.stringify(pricingDraft));
       const note = main.querySelector("#pricingSavedNote");
       note.style.display = "inline";
       setTimeout(() => { note.style.display = "none"; }, 2000);
