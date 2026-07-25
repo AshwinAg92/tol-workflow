@@ -409,7 +409,7 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   // still need basic event info for the calendar and team assignment — nothing sensitive.
   res.json(rows.map((l) => ({
     id: l.id, name: l.name, date: l.date, city: l.city, event_type: l.event_type, stage: l.stage,
-    event_time: l.event_time, soundcheck_time: l.soundcheck_time, occasion: l.occasion,
+    event_time: l.event_time, soundcheck_time: l.soundcheck_time, occasion: l.occasion, venue: l.venue,
   })));
 });
 
@@ -462,7 +462,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   // (a manager without full Leads access included); everything else — stage,
   // amounts, notes — needs full Leads access.
   const leadsOnlyFields = ["stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "date"];
-  const sharedFields = ["event_time", "soundcheck_time"];
+  const sharedFields = ["event_time", "soundcheck_time", "venue"];
   if (!hasLeads) {
     const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f);
     const attemptedRestricted = leadsOnlyFields.some((f) => req.body[keyFor(f)] !== undefined);
@@ -756,7 +756,7 @@ app.get("/api/my/events", requireAuth, async (req, res) => {
   if (!req.user.team_id) return res.json([]);
   const { rows } = await pool.query(`
     SELECT event_assignments.id, event_assignments.lead_id, event_assignments.team_id, event_assignments.status,
-      leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage, leads.event_time, leads.soundcheck_time, leads.occasion,
+      leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage, leads.event_time, leads.soundcheck_time, leads.occasion, leads.venue,
       ex.paid AS paid, ex.amount AS fee_amount, ex.payment_date, ex.payment_mode
     FROM event_assignments
     JOIN leads ON leads.id = event_assignments.lead_id
@@ -978,7 +978,7 @@ app.get("/api/team/:id/assignments", requireAuth, async (req, res) => {
   const { rows } = await pool.query(`
     SELECT event_assignments.id, event_assignments.status,
       leads.id AS lead_id, leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage,
-      leads.event_time, leads.soundcheck_time, leads.occasion,
+      leads.event_time, leads.soundcheck_time, leads.occasion, leads.venue,
       ex.paid AS paid, ex.amount AS fee_amount
     FROM event_assignments
     JOIN leads ON leads.id = event_assignments.lead_id

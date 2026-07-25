@@ -654,7 +654,7 @@ function renderLeadsLog(main) {
             ${l.stage === "New" || l.stage === "Follow-up" || l.stage === "Tentative" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
             ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Tentative") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
             ${l.quote_amount && l.stage !== "Confirmed" && l.stage !== "Completed" ? `<div class="muted small mono">Quoted: ${inr(l.quote_amount)}</div>` : ""}
-            ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Quoted: ${l.quote_amount ? inr(l.quote_amount) : "—"}</div><div class="muted small mono">Final: ${l.final_amount ? inr(l.final_amount) : "—"}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>${(l.event_time || l.soundcheck_time) ? `<div class="muted small">${l.soundcheck_time ? `SC ${fmtTimeHM(l.soundcheck_time)}` : ""}${l.soundcheck_time && l.event_time ? " · " : ""}${l.event_time ? `Event ${fmtTimeHM(l.event_time)}` : ""}</div>` : ""}${canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:4px;">Team</button>` : ""}` : ""}
+            ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Quoted: ${l.quote_amount ? inr(l.quote_amount) : "—"}</div><div class="muted small mono">Final: ${l.final_amount ? inr(l.final_amount) : "—"}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>${(l.event_time || l.soundcheck_time) ? `<div class="muted small">${l.soundcheck_time ? `SC ${fmtTimeHM(l.soundcheck_time)}` : ""}${l.soundcheck_time && l.event_time ? " · " : ""}${l.event_time ? `Event ${fmtTimeHM(l.event_time)}` : ""}</div>` : ""}${l.venue ? `<div class="muted small">📍 ${l.venue}</div>` : ""}${canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:4px;">Team</button>` : ""}` : ""}
             ${CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="margin-top:4px; color:#A64B3C;">🗑 Delete</button>` : ""}
           </span>
         </div>
@@ -1293,6 +1293,7 @@ async function openTeamMemberEventsModal(member) {
       <div>
         <div>${e.lead_name} <span class="muted small">— ${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""}</span></div>
         <div class="muted small">${fmtDate(e.date)}${e.city ? ` · ${e.city}` : ""}${e.event_time ? ` · Event ${fmtTimeHM(e.event_time)}` : ""}${e.soundcheck_time ? ` · SC ${fmtTimeHM(e.soundcheck_time)}` : ""}</div>
+        ${e.venue ? `<div class="muted small">📍 ${e.venue}</div>` : ""}
         ${e.fee_amount !== undefined ? `<div class="muted small mono">Fee: ${e.fee_amount ? inr(e.fee_amount) : "—"}${e.fee_amount ? (e.paid ? " · Paid" : " · Pending") : ""}</div>` : ""}
       </div>
       <span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status] || e.status}</span>
@@ -1701,11 +1702,13 @@ async function openAssignTeamModal(leadId) {
       <div class="modal-card">
         <div class="modal-head"><h3>Team for ${lead.name}${lead.occasion ? ` <span class="muted" style="font-weight:400; font-size:14px;">— ${lead.occasion}</span>` : ""}</h3><button class="icon-btn" id="closeModal">✕</button></div>
         <div class="modal-body">
-          <div class="section-label">Event day timing</div>
-          <div class="row-2" style="margin-bottom:14px;">
+          <div class="section-label">Event day details</div>
+          <div class="row-2" style="margin-bottom:8px;">
             <div><label>Event time</label><input id="eventTimeInput" type="time" value="${lead.event_time || ""}" /></div>
             <div><label>Sound check time</label><input id="soundcheckTimeInput" type="time" value="${lead.soundcheck_time || ""}" /></div>
           </div>
+          <label>Venue</label>
+          <input id="venueInput" placeholder="e.g. Radhika Function Hall, MG Road" value="${lead.venue || ""}" style="margin-bottom:14px;" />
           ${TEAM.map((m) => {
             const a = byTeamId[m.id];
             return `
@@ -1823,8 +1826,9 @@ async function openAssignTeamModal(leadId) {
       }
       const eventTime = root.querySelector("#eventTimeInput").value;
       const soundcheckTime = root.querySelector("#soundcheckTimeInput").value;
-      if (eventTime !== (lead.event_time || "") || soundcheckTime !== (lead.soundcheck_time || "")) {
-        await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ eventTime: eventTime || null, soundcheckTime: soundcheckTime || null }) });
+      const venue = root.querySelector("#venueInput").value;
+      if (eventTime !== (lead.event_time || "") || soundcheckTime !== (lead.soundcheck_time || "") || venue !== (lead.venue || "")) {
+        await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ eventTime: eventTime || null, soundcheckTime: soundcheckTime || null, venue: venue || null }) });
       }
       await refreshLeads();
       close();
@@ -2665,6 +2669,8 @@ function openNewLeadModal() {
             <div><label>No. of guests</label><select id="mGuests"><option value="">Not specified</option>${CONFIG.guestRanges.map((g) => `<option value="${g}">${g}</option>`).join("")}</select></div>
             <div><label>Occasion</label><select id="mOccasion"><option value="">Not specified</option>${CONFIG.occasions.map((o) => `<option value="${o}">${o}</option>`).join("")}</select></div>
           </div>
+          <label>Venue (optional)</label>
+          <input id="mVenue" placeholder="e.g. Radhika Function Hall, MG Road" />
           <label class="check-row" style="margin-top:10px;">
             <input type="checkbox" id="mAlreadyConfirmed" />
             <span>Already confirmed — skip straight to Confirmed (e.g. someone you know called and booked directly)</span>
@@ -2695,6 +2701,7 @@ function openNewLeadModal() {
         budget: root.querySelector("#mBudget").value ? Number(root.querySelector("#mBudget").value) : null,
         guestRange: root.querySelector("#mGuests").value || null,
         occasion: root.querySelector("#mOccasion").value || null,
+        venue: root.querySelector("#mVenue").value || null,
       }),
     });
     await refreshLeads();
@@ -2994,6 +3001,12 @@ async function renderMyEvents(main) {
           <span>${e.soundcheck_time ? `Sound check ${fmtTimeHM(e.soundcheck_time)}` : ""}${e.soundcheck_time && e.event_time ? " · " : ""}${e.event_time ? `Event ${fmtTimeHM(e.event_time)}` : ""}</span>
         </div>
         ` : ""}
+        ${e.venue ? `
+        <div class="performer-event-row">
+          <span class="muted small">Venue:</span>
+          <span>${e.venue}</span>
+        </div>
+        ` : ""}
         <div class="performer-event-row">
           <span class="muted small">Artist fee:</span>
           <span class="mono">${e.fee_amount ? inr(e.fee_amount) : "—"}</span>
@@ -3179,6 +3192,18 @@ async function renderPerformerApp() {
             : `<span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status]}</span>`}
         </div>
         ${e.stage === "Cancelled" ? `<p class="muted small" style="color:#A64B3C; margin-top:4px;">This event has been cancelled by the team — no action needed.</p>` : `
+        ${e.event_time || e.soundcheck_time ? `
+        <div class="performer-event-row">
+          <span class="muted small">Timing:</span>
+          <span>${e.soundcheck_time ? `Sound check ${fmtTimeHM(e.soundcheck_time)}` : ""}${e.soundcheck_time && e.event_time ? " · " : ""}${e.event_time ? `Event ${fmtTimeHM(e.event_time)}` : ""}</span>
+        </div>
+        ` : ""}
+        ${e.venue ? `
+        <div class="performer-event-row">
+          <span class="muted small">Venue:</span>
+          <span>${e.venue}</span>
+        </div>
+        ` : ""}
         <div class="performer-event-row">
           <span class="muted small">Payment:</span>
           <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
