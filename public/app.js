@@ -2212,7 +2212,7 @@ async function renderDocuments(main) {
       <div class="doc-row">
         <div class="doc-name">${d.notes ? `<strong>${d.notes}</strong> — ` : ""}<a href="${d.url}" target="_blank">${d.original_name}</a></div>
         <div class="muted mono">${fmtDate(d.uploaded_at.slice(0, 10))}</div>
-        ${lead && waPhone ? `<a class="btn-ghost" href="https://wa.me/91${waPhone}?text=${waText}" target="_blank" style="font-size:12px; padding:4px 8px;">Send to client</a>` : ""}
+        ${lead && waPhone ? `<a class="btn-ghost" href="https://wa.me/${waPhone}?text=${waText}" target="_blank" style="font-size:12px; padding:4px 8px;">Send to client</a>` : ""}
         <button class="icon-btn" data-delete-doc="${d.id}">✕</button>
       </div>
     `;
