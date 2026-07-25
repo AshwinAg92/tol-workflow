@@ -1686,12 +1686,19 @@ function openEditLoginModal(user) {
 
 async function openAssignTeamModal(leadId) {
   const lead = LEADS.find((l) => l.id === leadId);
-  const [assignments, tempArtists] = await Promise.all([
+  const isAdmin = CURRENT_USER?.accessLevel === "admin";
+  const [assignments, tempArtists, leadExpenses] = await Promise.all([
     api(`/api/leads/${leadId}/assignments`),
     api(`/api/leads/${leadId}/temp-artists`),
+    isAdmin ? api(`/api/expenses?leadId=${leadId}`) : Promise.resolve([]),
   ]);
   const byTeamId = {};
   assignments.forEach((a) => (byTeamId[a.team_id] = a));
+  // One artist-fee expense per team member per event is the normal case (the
+  // Accounts tab creates entries this way too) — first match is used both to
+  // prefill and to know whether to PATCH vs POST on save.
+  const feeExpenseByTeamId = {};
+  leadExpenses.forEach((e) => { if (e.team_id && !feeExpenseByTeamId[e.team_id]) feeExpenseByTeamId[e.team_id] = e; });
 
   const statusLabel = { pending: "Pending response", accepted: "Accepted", declined: "Declined" };
   const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C" };
@@ -1711,16 +1718,21 @@ async function openAssignTeamModal(leadId) {
           <input id="venueInput" placeholder="e.g. Radhika Function Hall, MG Road" value="${lead.venue || ""}" style="margin-bottom:14px;" />
           ${TEAM.map((m) => {
             const a = byTeamId[m.id];
+            const existingFee = feeExpenseByTeamId[m.id];
             return `
-              <label class="check-row" style="align-items:flex-start;">
-                <input type="checkbox" data-team-id="${m.id}" ${a ? "checked" : ""} />
-                <span style="flex:1;">
-                  <div>${m.name} <span class="muted small">— ${m.role || ""}</span></div>
-                  ${a ? `<div class="muted small" style="color:${statusColor[a.status]};">${statusLabel[a.status]}</div>` : ""}
-                </span>
-              </label>
+              <div class="check-row" style="align-items:flex-start; justify-content:space-between; gap:8px;">
+                <label style="display:flex; align-items:flex-start; gap:8px; flex:1; cursor:pointer;">
+                  <input type="checkbox" data-team-id="${m.id}" ${a ? "checked" : ""} />
+                  <span style="flex:1;">
+                    <div>${m.name} <span class="muted small">— ${m.role || ""}</span></div>
+                    ${a ? `<div class="muted small" style="color:${statusColor[a.status]};">${statusLabel[a.status]}</div>` : ""}
+                  </span>
+                </label>
+                ${isAdmin ? `<input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : ""}" style="width:100px; flex-shrink:0;" />` : ""}
+              </div>
             `;
           }).join("")}
+          ${isAdmin ? `<p class="muted small" style="margin-top:4px;">Enter a fee next to any artist above and it's saved as an expense against this event — no need to add it separately in Accounts.</p>` : ""}
           <button class="btn-ghost full" id="addMemberInlineBtn" style="margin-top:10px;">+ Add new member</button>
 
           <div class="section-label" style="margin-top:16px;">Temporary artists (one-off, this event only)</div>
@@ -1813,8 +1825,8 @@ async function openAssignTeamModal(leadId) {
     const btn = e.currentTarget;
     if (btn.disabled) return;
     btn.disabled = true;
-    const checked = [...root.querySelectorAll("[data-team-id]:checked")].map((c) => c.dataset.teamId);
-    const unchecked = [...root.querySelectorAll("[data-team-id]:not(:checked)")].map((c) => c.dataset.teamId);
+    const checked = [...root.querySelectorAll('input[type="checkbox"][data-team-id]:checked')].map((c) => c.dataset.teamId);
+    const unchecked = [...root.querySelectorAll('input[type="checkbox"][data-team-id]:not(:checked)')].map((c) => c.dataset.teamId);
     try {
       if (!(await submitPendingTempArtist())) { btn.disabled = false; return; }
       const newlyChecked = checked.filter((id) => !byTeamId[id]);
@@ -1823,6 +1835,23 @@ async function openAssignTeamModal(leadId) {
       }
       for (const teamId of unchecked) {
         if (byTeamId[teamId]) await api(`/api/assignments/${byTeamId[teamId].id}`, { method: "DELETE" });
+      }
+      if (isAdmin) {
+        for (const input of root.querySelectorAll(".member-fee-input")) {
+          const teamId = input.dataset.teamId;
+          if (!checked.includes(teamId)) continue; // not assigned — don't record a fee for them
+          const value = input.value.trim();
+          const existing = feeExpenseByTeamId[teamId];
+          if (existing && value && Number(value) !== Number(existing.amount)) {
+            await api(`/api/expenses/${existing.id}`, { method: "PATCH", body: JSON.stringify({ amount: Number(value) }) });
+          } else if (!existing && value) {
+            const member = TEAM.find((m) => m.id === teamId);
+            await api("/api/expenses", {
+              method: "POST",
+              body: JSON.stringify({ head: `Artist fee — ${member?.name || ""}`, amount: Number(value), leadId, teamId, paid: false }),
+            });
+          }
+        }
       }
       const eventTime = root.querySelector("#eventTimeInput").value;
       const soundcheckTime = root.querySelector("#soundcheckTimeInput").value;
