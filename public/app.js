@@ -2230,7 +2230,7 @@ async function renderDashboard(main) {
     </div>
     ${teamNotifs.length > 0 ? `
       <div class="section-label">🔔 Team responses</div>
-      <div class="card" id="teamNotifCard" style="margin-bottom:16px; border-color:#C1602B;">
+      <div class="card reminder-flash" id="teamNotifCard" style="margin-bottom:16px;">
         ${teamNotifs.map((n) => `
           <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
             <div>
