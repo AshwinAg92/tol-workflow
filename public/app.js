@@ -633,7 +633,11 @@ function renderLeadsLog(main) {
   });
 
   const rows = main.querySelector("#leadsRows");
-  const sorted = filtered.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const scheduledStages = ["Confirmed", "Completed", "Tentative"];
+  const sorted = filtered.slice().sort((a, b) => {
+    if (scheduledStages.includes(leadsStageFilter)) return new Date(a.date) - new Date(b.date);
+    return new Date(b.created_at) - new Date(a.created_at);
+  });
   if (sorted.length === 0) {
     rows.innerHTML = `<div class="board-empty">No queries match these filters</div>`;
   } else {
@@ -1841,14 +1845,19 @@ async function openAssignTeamModal(leadId) {
           const teamId = input.dataset.teamId;
           if (!checked.includes(teamId)) continue; // not assigned — don't record a fee for them
           const value = input.value.trim();
+          const numValue = value ? Number(value) : 0;
           const existing = feeExpenseByTeamId[teamId];
-          if (existing && value && Number(value) !== Number(existing.amount)) {
-            await api(`/api/expenses/${existing.id}`, { method: "PATCH", body: JSON.stringify({ amount: Number(value) }) });
-          } else if (!existing && value) {
+          if (existing && numValue <= 0) {
+            // Cleared or set to 0 — remove the fee entirely, rather than leaving
+            // a stale record that reappears next time the modal is opened.
+            await api(`/api/expenses/${existing.id}`, { method: "DELETE" });
+          } else if (existing && numValue > 0 && numValue !== Number(existing.amount)) {
+            await api(`/api/expenses/${existing.id}`, { method: "PATCH", body: JSON.stringify({ amount: numValue }) });
+          } else if (!existing && numValue > 0) {
             const member = TEAM.find((m) => m.id === teamId);
             await api("/api/expenses", {
               method: "POST",
-              body: JSON.stringify({ head: `Artist fee — ${member?.name || ""}`, amount: Number(value), leadId, teamId, paid: false }),
+              body: JSON.stringify({ head: `Artist fee — ${member?.name || ""}`, amount: numValue, leadId, teamId, paid: false }),
             });
           }
         }
