@@ -1163,8 +1163,8 @@ async function renderTeam(main) {
         <div class="muted">${m.role || ""}${m.specialty ? ` · ${m.specialty}` : ""}</div>
         ${m.phone ? `<div class="muted small">${m.phone}</div>` : ""}
         ${m.email ? `<div class="muted small">${m.email}</div>` : ""}
-        <div class="team-count mono">${m.activeLeads.length} active lead${m.activeLeads.length === 1 ? "" : "s"}</div>
-        ${m.activeLeads.map((l) => `<div class="team-lead">› ${l.name}</div>`).join("")}
+        <div class="team-count mono">${m.activeShows.length} active show${m.activeShows.length === 1 ? "" : "s"}</div>
+        ${m.activeShows.map((s) => `<div class="team-lead">› ${s.name}</div>`).join("")}
         ${canManage && !teamIdsWithLogin.has(m.id) ? `<button class="btn-ghost full" data-add-login="${m.id}" style="margin-top:10px;">+ Add login</button>` : ""}
       </div>
     `);
@@ -1236,8 +1236,7 @@ async function renderTeam(main) {
   }
 }
 
-// Shows every event a given team member is booked to perform at — separate from
-// "active leads" above, which is about who's managing the lead, not who's playing.
+// Shows every event a given team member is booked to perform at, upcoming only.
 async function openTeamMemberEventsModal(member) {
   const root = document.getElementById("modalRoot");
   root.innerHTML = `
@@ -1269,7 +1268,6 @@ async function openTeamMemberEventsModal(member) {
   if (!body) return; // modal was closed while loading
   const today = new Date().toISOString().slice(0, 10);
   const upcoming = events.filter((e) => e.date >= today);
-  const past = events.filter((e) => e.date < today);
 
   const rowHtml = (e) => `
     <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
@@ -1282,16 +1280,9 @@ async function openTeamMemberEventsModal(member) {
     </div>
   `;
 
-  body.innerHTML = `
-    ${events.length === 0 ? `<p class="muted small">No events assigned to ${member.name} yet.</p>` : `
-      <div class="section-label">Upcoming</div>
-      ${upcoming.length === 0 ? `<p class="muted small">Nothing upcoming.</p>` : upcoming.map(rowHtml).join("")}
-      ${past.length > 0 ? `
-        <div class="section-label" style="margin-top:14px;">Past</div>
-        ${past.map(rowHtml).join("")}
-      ` : ""}
-    `}
-  `;
+  body.innerHTML = upcoming.length === 0
+    ? `<p class="muted small">No upcoming events for ${member.name}.</p>`
+    : upcoming.map(rowHtml).join("");
 }
 
 

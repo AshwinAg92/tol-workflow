@@ -909,10 +909,17 @@ app.post("/api/admin/clear-demo-data", requireAuth, requireAdmin, async (req, re
 
 // ---------- Team ----------
 app.get("/api/team", requireAuth, async (req, res) => {
-  const leads = (await pool.query("SELECT * FROM leads WHERE stage NOT IN ('Completed', 'Cancelled')")).rows;
+  const today = new Date().toISOString().slice(0, 10);
+  const assignments = (await pool.query(`
+    SELECT event_assignments.team_id, leads.id, leads.name, leads.date
+    FROM event_assignments
+    JOIN leads ON leads.id = event_assignments.lead_id
+    WHERE event_assignments.status != 'declined' AND leads.stage != 'Cancelled' AND leads.date >= $1
+    ORDER BY leads.date ASC
+  `, [today])).rows;
   const team = (await pool.query("SELECT * FROM team")).rows.map((m) => ({
     ...m,
-    activeLeads: leads.filter((l) => l.assigned_to === m.id),
+    activeShows: assignments.filter((a) => a.team_id === m.id),
   }));
   res.json(team);
 });
@@ -924,15 +931,16 @@ app.get("/api/team/:id/assignments", requireAuth, async (req, res) => {
   if (!userHasSection(req.user, "leads") && !userHasSection(req.user, "assign_team")) {
     return res.status(403).json({ error: "You don't have permission to view this" });
   }
+  const today = new Date().toISOString().slice(0, 10);
   const { rows } = await pool.query(`
     SELECT event_assignments.id, event_assignments.status, event_assignments.paid, event_assignments.fee_amount,
       leads.id AS lead_id, leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage,
       leads.event_time, leads.soundcheck_time
     FROM event_assignments
     JOIN leads ON leads.id = event_assignments.lead_id
-    WHERE event_assignments.team_id = $1
+    WHERE event_assignments.team_id = $1 AND leads.date >= $2
     ORDER BY leads.date ASC
-  `, [req.params.id]);
+  `, [req.params.id, today]);
   const canSeeMoney = userHasSection(req.user, "accounts");
   res.json(canSeeMoney ? rows : rows.map(({ fee_amount, paid, ...rest }) => rest));
 });
