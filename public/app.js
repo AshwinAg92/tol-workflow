@@ -466,7 +466,10 @@ function renderNav() {
   const nav = document.getElementById("nav");
   nav.innerHTML = "";
   const perms = CURRENT_USER?.accessLevel === "staff" ? CURRENT_USER.permissions : null;
-  const visibleNav = NAV.filter((n) => n.id === "dashboard" || !Array.isArray(perms) || perms.includes(n.id));
+  let visibleNav = NAV.filter((n) => n.id === "dashboard" || !Array.isArray(perms) || perms.includes(n.id));
+  if (CURRENT_USER?.isPerformer && CURRENT_USER.accessLevel !== "performer") {
+    visibleNav = [visibleNav[0], { id: "myevents", label: "My Events" }, ...visibleNav.slice(1)];
+  }
   if (!visibleNav.some((n) => n.id === currentTab)) currentTab = "dashboard";
   visibleNav.forEach(({ id, label }) => {
     const btn = el(`<button class="nav-item${currentTab === id ? " nav-item-active" : ""}">${label}</button>`);
@@ -1182,6 +1185,9 @@ function openAddMemberModal(onCreated) {
             <label>What can they access?</label>
             ${permissionsChecklistHtml("nm", undefined)}
           </div>
+          <div id="nmPerformerWrap" style="margin-top:10px;">
+            <label class="check-row"><input type="checkbox" id="nmIsPerformer" /> Also a performer (sees own assigned events, artist fee, and accept/decline)</label>
+          </div>
           <label>Role / Specialty</label>
           <input id="nmRole" placeholder="e.g. Logistics & Sound, or Drummer, Photographer" />
           <label>Phone</label>
@@ -1202,7 +1208,10 @@ function openAddMemberModal(onCreated) {
     </div>
   `;
   wirePasswordToggles(root);
-  const toggleNmPerms = () => { root.querySelector("#nmPermsWrap").style.display = root.querySelector("#nmAccess").value === "staff" ? "block" : "none"; };
+  const toggleNmPerms = () => {
+    root.querySelector("#nmPermsWrap").style.display = root.querySelector("#nmAccess").value === "staff" ? "block" : "none";
+    root.querySelector("#nmPerformerWrap").style.display = root.querySelector("#nmAccess").value === "performer" ? "none" : "block";
+  };
   root.querySelector("#nmAccess").addEventListener("change", toggleNmPerms);
   toggleNmPerms();
 
@@ -1229,6 +1238,7 @@ function openAddMemberModal(onCreated) {
     const permissions = accessLevel === "staff"
       ? [...root.querySelectorAll(".nm-perm:checked")].map((cb) => cb.value)
       : undefined;
+    const isPerformer = accessLevel === "performer" ? false : root.querySelector("#nmIsPerformer").checked;
     if (!name || !username || !password) return alert("Name, username, and password are required.");
     try {
       const result = await api("/api/users", {
@@ -1241,6 +1251,7 @@ function openAddMemberModal(onCreated) {
           password,
           accessLevel,
           permissions,
+          isPerformer,
         }),
       });
       const teamData = await api("/api/team");
@@ -1276,12 +1287,18 @@ function openAddLoginForMemberModal(member) {
             <option value="performer">Performer — musicians/photographers: just their events, pay status, and event chat</option>
             ${CURRENT_USER?.accessLevel === "admin" ? `<option value="admin">Admin — full access, including adding/removing logins</option>` : ""}
           </select>
+          <div id="alPerformerWrap" style="margin-top:10px;">
+            <label class="check-row"><input type="checkbox" id="alIsPerformer" /> Also a performer (sees own assigned events, artist fee, and accept/decline)</label>
+          </div>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Add login</button></div>
       </div>
     </div>
   `;
   wirePasswordToggles(root);
+  const toggleAlPerformer = () => { root.querySelector("#alPerformerWrap").style.display = root.querySelector("#alAccess").value === "performer" ? "none" : "block"; };
+  root.querySelector("#alAccess").addEventListener("change", toggleAlPerformer);
+  toggleAlPerformer();
   const close = () => (root.innerHTML = "");
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#cancelModal").addEventListener("click", close);
@@ -1289,6 +1306,7 @@ function openAddLoginForMemberModal(member) {
   root.querySelector("#submitModal").addEventListener("click", async () => {
     const username = root.querySelector("#alUsername").value;
     const password = root.querySelector("#alPassword").value;
+    const accessLevel = root.querySelector("#alAccess").value;
     if (!username || !password) return alert("Username and password are required.");
     try {
       await api("/api/users", {
@@ -1297,7 +1315,8 @@ function openAddLoginForMemberModal(member) {
           existingTeamId: member.id,
           username,
           password,
-          accessLevel: root.querySelector("#alAccess").value,
+          accessLevel,
+          isPerformer: accessLevel === "performer" ? false : root.querySelector("#alIsPerformer").checked,
         }),
       });
       close();
@@ -1328,6 +1347,9 @@ function openEditMemberModal(member, linkedUser) {
               <label>What can they access?</label>
               ${permissionsChecklistHtml("em", linkedUser.permissions)}
             </div>
+            <div id="emPerformerWrap" style="margin-top:10px; display:${linkedUser.access_level === "performer" ? "none" : "block"};">
+              <label class="check-row"><input type="checkbox" id="emIsPerformer" ${linkedUser.is_performer ? "checked" : ""} /> Also a performer (sees own assigned events, artist fee, and accept/decline)</label>
+            </div>
           ` : `<p class="muted small">No login yet for this person — add a username/password below to create one.</p>`}
           <div class="row-2">
             <div><label>Role / title</label><input id="emRole" value="${member.role || ""}" /></div>
@@ -1357,6 +1379,9 @@ function openEditMemberModal(member, linkedUser) {
             <div id="emPermsWrap" style="margin-top:8px;">
               <label>What can they access?</label>
               ${permissionsChecklistHtml("em", undefined)}
+            </div>
+            <div id="emPerformerWrap" style="margin-top:10px;">
+              <label class="check-row"><input type="checkbox" id="emIsPerformer" /> Also a performer (sees own assigned events, artist fee, and accept/decline)</label>
             </div>` : ""}
         </div>
         <div class="modal-foot">
@@ -1370,7 +1395,10 @@ function openEditMemberModal(member, linkedUser) {
   wirePasswordToggles(root);
   const emAccessSelect = root.querySelector("#emAccess");
   if (emAccessSelect) {
-    const toggleEmPerms = () => { const w = root.querySelector("#emPermsWrap"); if (w) w.style.display = emAccessSelect.value === "staff" ? "block" : "none"; };
+    const toggleEmPerms = () => {
+      const w = root.querySelector("#emPermsWrap"); if (w) w.style.display = emAccessSelect.value === "staff" ? "block" : "none";
+      const pw = root.querySelector("#emPerformerWrap"); if (pw) pw.style.display = emAccessSelect.value === "performer" ? "none" : "block";
+    };
     emAccessSelect.addEventListener("change", toggleEmPerms);
   }
   root.querySelector("#genPasswordBtn").addEventListener("click", () => {
@@ -1402,15 +1430,17 @@ function openEditMemberModal(member, linkedUser) {
       const permissions = accessLevel === "staff"
         ? [...root.querySelectorAll(".em-perm:checked")].map((cb) => cb.value)
         : undefined;
+      const emPerformerCb = root.querySelector("#emIsPerformer");
+      const isPerformer = emPerformerCb ? (accessLevel === "performer" ? false : emPerformerCb.checked) : undefined;
       if (linkedUser) {
         await api(`/api/users/${linkedUser.id}`, {
           method: "PATCH",
-          body: JSON.stringify({ username, password: password || undefined, accessLevel, permissions }),
+          body: JSON.stringify({ username, password: password || undefined, accessLevel, permissions, isPerformer }),
         });
       } else if (username && password) {
         await api("/api/users", {
           method: "POST",
-          body: JSON.stringify({ existingTeamId: member.id, username, password, accessLevel, permissions }),
+          body: JSON.stringify({ existingTeamId: member.id, username, password, accessLevel, permissions, isPerformer }),
         });
       }
       const teamData = await api("/api/team");
@@ -2346,6 +2376,7 @@ function renderMain() {
   else if (currentTab === "calendar") renderCalendar(main);
   else if (currentTab === "team") renderTeam(main);
   else if (currentTab === "accounts") renderAccounts(main);
+  else if (currentTab === "myevents") renderMyEvents(main);
 }
 
 // ---------- Auth ----------
@@ -2386,6 +2417,88 @@ function renderLoginScreen(errorMsg) {
 async function handleLogout() {
   await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
   window.location.reload();
+}
+
+// ---------- My Events (for a Staff/Admin account that's also flagged as a performer) ----------
+async function renderMyEvents(main) {
+  main.innerHTML = `<div class="view-head"><div><h2>My Events</h2><p class="muted">Your own assigned events — accept/decline, artist fee, and pay status.</p></div></div><p class="muted">Loading your events…</p>`;
+  const events = await api("/api/my/events");
+  const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined", cancel_requested: "Cancellation requested" };
+  const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C", cancel_requested: "#B6752C" };
+
+  main.innerHTML = `
+    <div class="view-head"><div><h2>My Events</h2><p class="muted">Your own assigned events — accept/decline, artist fee, and pay status.</p></div></div>
+    ${events.length === 0 ? `<p class="muted small">No events assigned to you yet.</p>` : events.map((e) => `
+      <div class="card performer-event-card" style="margin-bottom:14px;">
+        <div class="performer-event-head">
+          <div>
+            <div class="team-name">${e.lead_name}</div>
+            <div class="muted small">${packageName(e.event_type)} · ${fmtDate(e.date)} · ${e.city || ""}</div>
+          </div>
+          ${e.stage === "Cancelled"
+            ? `<span class="tag" style="color:#A64B3C; font-weight:700;">⚠ CANCELLED</span>`
+            : `<span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status]}</span>`}
+        </div>
+        ${e.stage === "Cancelled" ? `<p class="muted small" style="color:#A64B3C; margin-top:4px;">This event has been cancelled by the team — no action needed.</p>` : `
+        <div class="performer-event-row">
+          <span class="muted small">Artist fee:</span>
+          <span class="mono">${e.fee_amount ? inr(e.fee_amount) : "—"}</span>
+        </div>
+        <div class="performer-event-row">
+          <span class="muted small">Payment:</span>
+          <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
+          ${e.paid && e.payment_date ? `<span class="muted small">on ${fmtDate(e.payment_date)}${e.payment_mode ? ` via ${e.payment_mode}` : ""}</span>` : ""}
+        </div>
+        ${e.status === "cancel_requested" ? `
+          <p class="muted small" style="margin-top:8px;">Waiting on admin to review your cancellation request.</p>
+        ` : `
+          <div style="margin-top:10px;">
+            <label class="muted small">Your response</label>
+            <select class="respond-select" data-respond-select="${e.id}">
+              <option value="pending" ${e.status === "pending" ? "selected" : ""}>Pending — not responded yet</option>
+              <option value="accepted" ${e.status === "accepted" ? "selected" : ""}>Accept</option>
+              <option value="declined" ${e.status === "declined" ? "selected" : ""}>Decline</option>
+            </select>
+          </div>
+        `}
+        ${e.status === "accepted" ? `
+          <button class="btn-ghost full" data-request-cancel="${e.id}" style="margin-top:8px; color:#A64B3C;">Request to cancel</button>
+        ` : ""}
+        <button class="btn-ghost full" data-chat-lead="${e.lead_id}" data-chat-name="${e.lead_name}" style="margin-top:10px;">💬 Event chat</button>
+        `}
+      </div>
+    `).join("")}
+  `;
+
+  main.querySelectorAll("[data-respond-select]").forEach((sel) => {
+    sel.addEventListener("change", async () => {
+      const value = sel.value;
+      if (value === "pending") { renderMyEvents(main); return; }
+      try {
+        await api(`/api/my/assignments/${sel.dataset.respondSelect}/respond`, { method: "POST", body: JSON.stringify({ status: value }) });
+        renderMyEvents(main);
+      } catch (err) {
+        alert(err.message);
+        renderMyEvents(main);
+      }
+    });
+  });
+  main.querySelectorAll("[data-request-cancel]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const reason = prompt("Why do you need to cancel this event? This goes to the admin for review.");
+      if (reason === null) return;
+      if (!reason.trim()) return alert("A reason is required.");
+      try {
+        await api(`/api/my/assignments/${btn.dataset.requestCancel}/request-cancel`, { method: "POST", body: JSON.stringify({ reason }) });
+        renderMyEvents(main);
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  });
+  main.querySelectorAll("[data-chat-lead]").forEach((btn) => {
+    btn.addEventListener("click", () => openEventChat(btn.dataset.chatLead, btn.dataset.chatName));
+  });
 }
 
 // ---------- Performer/photographer view (deliberately minimal) ----------

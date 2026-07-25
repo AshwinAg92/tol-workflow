@@ -54,7 +54,7 @@ async function getSessionUser(req) {
     const payload = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
     if (!payload.exp || payload.exp < Date.now()) return null;
     const { rows } = await pool.query(
-      "SELECT id, username, access_level, team_id, permissions FROM users WHERE id = $1",
+      "SELECT id, username, access_level, team_id, permissions, is_performer FROM users WHERE id = $1",
       [payload.uid]
     );
     return rows[0] || null;
@@ -162,13 +162,13 @@ app.get("/api/auth/me", async (req, res) => {
   }
   let permissions = null;
   try { permissions = user.permissions ? JSON.parse(user.permissions) : null; } catch { permissions = null; }
-  res.json({ id: user.id, username: user.username, accessLevel: user.access_level, name, permissions });
+  res.json({ id: user.id, username: user.username, accessLevel: user.access_level, name, permissions, isPerformer: !!user.is_performer });
 });
 
 // ---------- User accounts (admin only) — add teammates with their own login ----------
 app.get("/api/users", requireAuth, requireAdmin, async (req, res) => {
   const { rows } = await pool.query(`
-    SELECT users.id, users.username, users.access_level, users.team_id, users.permissions, team.name AS team_name, team.role AS team_role
+    SELECT users.id, users.username, users.access_level, users.team_id, users.permissions, users.is_performer, team.name AS team_name, team.role AS team_role
     FROM users LEFT JOIN team ON team.id = users.team_id
     ORDER BY users.created_at ASC
   `);
@@ -176,7 +176,7 @@ app.get("/api/users", requireAuth, requireAdmin, async (req, res) => {
 });
 
 app.post("/api/users", requireAuth, requireCapability("manage_team"), async (req, res) => {
-  const { name, roleTitle, phone, specialty, username, password, accessLevel, existingTeamId, permissions } = req.body;
+  const { name, roleTitle, phone, specialty, username, password, accessLevel, existingTeamId, permissions, isPerformer } = req.body;
   if (!username || !password) return res.status(400).json({ error: "Username and password are required" });
   if (!existingTeamId && !name) return res.status(400).json({ error: "Name is required for a new team member" });
   if (!["admin", "staff", "performer"].includes(accessLevel)) return res.status(400).json({ error: "accessLevel must be 'admin', 'staff', or 'performer'" });
@@ -211,11 +211,11 @@ app.post("/api/users", requireAuth, requireCapability("manage_team"), async (req
   const userId = uuid();
   const passwordHash = bcrypt.hashSync(password, 10);
   await pool.query(`
-    INSERT INTO users (id, team_id, username, password_hash, access_level, created_at, permissions)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
-  `, [userId, teamId, username, passwordHash, accessLevel, new Date().toISOString(), Array.isArray(permissions) ? JSON.stringify(permissions) : null]);
+    INSERT INTO users (id, team_id, username, password_hash, access_level, created_at, permissions, is_performer)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+  `, [userId, teamId, username, passwordHash, accessLevel, new Date().toISOString(), Array.isArray(permissions) ? JSON.stringify(permissions) : null, isPerformer ? 1 : 0]);
 
-  res.status(201).json({ id: userId, username, accessLevel, teamId, name });
+  res.status(201).json({ id: userId, username, accessLevel, teamId, name, isPerformer: !!isPerformer });
 });
 
 app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
@@ -228,7 +228,7 @@ app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
 app.patch("/api/users/:id", requireAuth, requireCapability("manage_team"), async (req, res) => {
   const user = (await pool.query("SELECT * FROM users WHERE id = $1", [req.params.id])).rows[0];
   if (!user) return res.status(404).json({ error: "Login not found" });
-  const { username, password, accessLevel, permissions } = req.body;
+  const { username, password, accessLevel, permissions, isPerformer } = req.body;
 
   if (req.user.access_level === "staff") {
     if (user.access_level === "admin") return res.status(403).json({ error: "Managers can't edit an admin's login." });
@@ -256,16 +256,18 @@ app.patch("/api/users/:id", requireAuth, requireCapability("manage_team"), async
       username = $1,
       access_level = $2,
       password_hash = $3,
-      permissions = $4
-    WHERE id = $5
+      permissions = $4,
+      is_performer = $5
+    WHERE id = $6
   `, [
     username || user.username,
     accessLevel || user.access_level,
     password ? bcrypt.hashSync(password, 10) : user.password_hash,
     permissions !== undefined ? (Array.isArray(permissions) ? JSON.stringify(permissions) : null) : user.permissions,
+    isPerformer !== undefined ? (isPerformer ? 1 : 0) : user.is_performer,
     user.id,
   ]);
-  res.json({ id: user.id, username: username || user.username, accessLevel: accessLevel || user.access_level });
+  res.json({ id: user.id, username: username || user.username, accessLevel: accessLevel || user.access_level, isPerformer: !!(isPerformer !== undefined ? isPerformer : user.is_performer) });
 });
 
 // Update a team member's own details (name, role/title, phone, email).
