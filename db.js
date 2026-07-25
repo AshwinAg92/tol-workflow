@@ -187,6 +187,26 @@ async function setup() {
     );
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS message_templates (
+      key TEXT PRIMARY KEY,
+      template TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+  const defaultTemplates = {
+    followup: "Hi {firstName}, just following up on your enquiry with Together, Out Loud for {experience}{dateClause}. Let us know if you have any questions or would like to go ahead — happy to help!",
+    tentative_followup: "Hi {firstName}, following up on your {experience}{dateClause} — we've tentatively held this date for you with Together, Out Loud. Let us know if you'd like to go ahead so we can lock it in for you!",
+    confirmed: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe look forward to creating a memorable experience with you. — Together, Out Loud",
+    document_share: "Hi! Sharing the {label} for your event with Together, Out Loud: {link}",
+  };
+  for (const [key, template] of Object.entries(defaultTemplates)) {
+    await pool.query(
+      `INSERT INTO message_templates (key, template, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING`,
+      [key, template, new Date().toISOString()]
+    );
+  }
+
   // One-time migration: bring any existing single "advance" amount into the new
   // payments ledger as its first entry, so nothing is lost when moving from a
   // single advance field to a full multi-payment ledger.

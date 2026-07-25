@@ -1067,6 +1067,24 @@ app.delete("/api/documents/:id", requireAuth, async (req, res) => {
 });
 
 // ---------- Dashboard ----------
+// ---------- Message templates — self-service wording for Follow-up / Tentative / Confirmed / Document-share messages ----------
+app.get("/api/message-templates", requireAuth, async (req, res) => {
+  const { rows } = await pool.query("SELECT key, template FROM message_templates");
+  const map = {};
+  rows.forEach((r) => (map[r.key] = r.template));
+  res.json(map);
+});
+
+app.patch("/api/message-templates/:key", requireAuth, requireAdmin, async (req, res) => {
+  const { template } = req.body;
+  if (typeof template !== "string" || !template.trim()) return res.status(400).json({ error: "Template text is required" });
+  await pool.query(`
+    INSERT INTO message_templates (key, template, updated_at) VALUES ($1, $2, $3)
+    ON CONFLICT (key) DO UPDATE SET template = $2, updated_at = $3
+  `, [req.params.key, template, new Date().toISOString()]);
+  res.json({ key: req.params.key, template });
+});
+
 app.get("/api/activity", requireAuth, async (req, res) => {
   const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
   const { rows } = await pool.query(

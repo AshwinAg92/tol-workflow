@@ -1,6 +1,7 @@
 // ---------- State ----------
 let CURRENT_USER = null;
 let CONFIG = { stages: [], packages: [], addons: [] };
+let MESSAGE_TEMPLATES = {};
 let LEADS = [];
 let TEAM = [];
 let TASKS = [];
@@ -31,8 +32,17 @@ const NAV = [
   { id: "calendar", label: "Calendar" },
   { id: "team", label: "Team" },
   { id: "accounts", label: "Accounts" },
+  { id: "settings", label: "Settings" },
 ];
-const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "dashboard");
+// "settings" is admin-only (handled directly in renderNav) and isn't something a manager
+// can be granted piecemeal, so it's excluded from the staff permission checklist.
+const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "dashboard" && n.id !== "settings");
+
+// Fills a {placeholder} template with values — any placeholder with no matching value
+// is left as an empty string rather than showing the raw {token} in the sent message.
+function fillTemplate(tpl, vars) {
+  return (tpl || "").replace(/\{(\w+)\}/g, (_, key) => (vars[key] !== undefined && vars[key] !== null ? vars[key] : ""));
+}
 
 function canAssignTeam() {
   if (!CURRENT_USER) return false;
@@ -447,11 +457,12 @@ async function api(path, opts) {
 }
 
 async function loadAll() {
-  [CONFIG, LEADS, TEAM, TASKS] = await Promise.all([
+  [CONFIG, LEADS, TEAM, TASKS, MESSAGE_TEMPLATES] = await Promise.all([
     api("/api/config"),
     api("/api/leads"),
     api("/api/team"),
     api("/api/tasks"),
+    api("/api/message-templates"),
   ]);
 }
 
@@ -468,7 +479,10 @@ function renderNav() {
   const nav = document.getElementById("nav");
   nav.innerHTML = "";
   const perms = CURRENT_USER?.accessLevel === "staff" ? CURRENT_USER.permissions : null;
-  let visibleNav = NAV.filter((n) => n.id === "dashboard" || !Array.isArray(perms) || perms.includes(n.id));
+  let visibleNav = NAV.filter((n) => {
+    if (n.id === "settings") return CURRENT_USER?.accessLevel === "admin";
+    return n.id === "dashboard" || !Array.isArray(perms) || perms.includes(n.id);
+  });
   if (CURRENT_USER?.isPerformer && CURRENT_USER.accessLevel !== "performer") {
     visibleNav = [visibleNav[0], { id: "myevents", label: "My Events" }, ...visibleNav.slice(1)];
   }
@@ -645,9 +659,13 @@ function renderLeadsLog(main) {
     btn.addEventListener("click", () => {
       const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
       const firstName = (lead.name || "").split(" ")[0] || "there";
-      const msg = lead.stage === "Tentative"
-        ? `Hi ${firstName}, following up on your ${packageName(lead.event_type)}${lead.date ? ` on ${fmtDate(lead.date)}` : ""} — we've tentatively held this date for you with Together, Out Loud. Let us know if you'd like to go ahead so we can lock it in for you!`
-        : `Hi ${firstName}, just following up on your enquiry with Together, Out Loud for ${packageName(lead.event_type)}${lead.date ? ` on ${fmtDate(lead.date)}` : ""}. Let us know if you have any questions or would like to go ahead — happy to help!`;
+      const key = lead.stage === "Tentative" ? "tentative_followup" : "followup";
+      const tpl = MESSAGE_TEMPLATES[key] || TEMPLATE_META[key].default;
+      const msg = fillTemplate(tpl, {
+        firstName,
+        experience: packageName(lead.event_type),
+        dateClause: lead.date ? ` on ${fmtDate(lead.date)}` : "",
+      });
       const digitsOnly = (lead.phone || "").replace(/\D/g, "");
       if (digitsOnly) window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
     });
@@ -2246,7 +2264,7 @@ async function renderDocuments(main) {
   function renderRow(d, lead, showPicker) {
     const fullUrl = window.location.origin + d.url;
     const waPhone = lead?.phone ? lead.phone.replace(/\D/g, "") : "";
-    const waText = encodeURIComponent(`Hi! Sharing the ${d.notes || "document"} for your event with Together, Out Loud: ${fullUrl}`);
+    const waText = encodeURIComponent(fillTemplate(MESSAGE_TEMPLATES.document_share || TEMPLATE_META.document_share.default, { label: d.notes || "document", link: fullUrl }));
     const clientsWithPhone = eventLeads.filter((l) => l.phone);
     return `
       <div class="doc-row">
@@ -2308,7 +2326,7 @@ async function renderDocuments(main) {
       if (!doc || !lead || !lead.phone) return;
       const fullUrl = window.location.origin + doc.url;
       const waPhone = lead.phone.replace(/\D/g, "");
-      const waText = encodeURIComponent(`Hi! Sharing the ${doc.notes || "document"} for your event with Together, Out Loud: ${fullUrl}`);
+      const waText = encodeURIComponent(fillTemplate(MESSAGE_TEMPLATES.document_share || TEMPLATE_META.document_share.default, { label: doc.notes || "document", link: fullUrl }));
       window.open(`https://wa.me/${waPhone}?text=${waText}`, "_blank");
       sel.value = "";
     });
@@ -2399,7 +2417,14 @@ function openConfirmationMessageModal(lead) {
   const root = document.getElementById("modalRoot");
   const firstName = (lead.name || "").split(" ")[0] || "there";
   const amountLine = lead.final_amount ? `\nTotal: ₹${Number(lead.final_amount).toLocaleString("en-IN")}` : "";
-  const message = `Hi ${firstName}, wonderful news — your event with Together, Out Loud (${packageName(lead.event_type)}) on ${fmtDate(lead.date)}${lead.city ? ` in ${lead.city}` : ""} is now confirmed!${amountLine}\n\nWe look forward to creating a memorable experience with you. — Together, Out Loud`;
+  const tpl = MESSAGE_TEMPLATES.confirmed || TEMPLATE_META.confirmed.default;
+  const message = fillTemplate(tpl, {
+    firstName,
+    experience: packageName(lead.event_type),
+    date: fmtDate(lead.date),
+    cityClause: lead.city ? ` in ${lead.city}` : "",
+    amountLine,
+  });
   const digitsOnly = (lead.phone || "").replace(/\D/g, "");
   const waLink = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}` : null;
   const mailLink = lead.email ? `mailto:${lead.email}?subject=${encodeURIComponent("Your event is confirmed — Together, Out Loud")}&body=${encodeURIComponent(message)}` : null;
@@ -2486,6 +2511,80 @@ function openNewLeadModal() {
   });
 }
 
+// ---------- Settings — self-service message wording, admin only ----------
+const TEMPLATE_META = {
+  followup: {
+    label: "Follow-up message",
+    description: "Sent from the Leads tab's \"💬 Follow up\" button, for New/Follow-up leads.",
+    placeholders: ["firstName", "experience", "dateClause"],
+    default: "Hi {firstName}, just following up on your enquiry with Together, Out Loud for {experience}{dateClause}. Let us know if you have any questions or would like to go ahead — happy to help!",
+  },
+  tentative_followup: {
+    label: "Tentative client follow-up",
+    description: "Sent from the same \"💬 Follow up\" button, but for Tentative leads instead.",
+    placeholders: ["firstName", "experience", "dateClause"],
+    default: "Hi {firstName}, following up on your {experience}{dateClause} — we've tentatively held this date for you with Together, Out Loud. Let us know if you'd like to go ahead so we can lock it in for you!",
+  },
+  confirmed: {
+    label: "Confirmed client message",
+    description: "Starting text shown when you confirm an event — you can still tweak it per-send before it goes out.",
+    placeholders: ["firstName", "experience", "date", "cityClause", "amountLine"],
+    default: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe look forward to creating a memorable experience with you. — Together, Out Loud",
+  },
+  document_share: {
+    label: "Document share message",
+    description: "Sent with \"Send to client\" / \"Send to…\" on the Documents tab.",
+    placeholders: ["label", "link"],
+    default: "Hi! Sharing the {label} for your event with Together, Out Loud: {link}",
+  },
+};
+
+async function renderSettings(main) {
+  main.innerHTML = `
+    <div class="view-head"><div><h2>Settings</h2><p class="muted">Customize the wording used for client messages yourself — no code changes needed.</p></div></div>
+    <div id="templateCards"></div>
+  `;
+  const container = main.querySelector("#templateCards");
+  container.innerHTML = Object.entries(TEMPLATE_META).map(([key, meta]) => `
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">${meta.label}</div>
+      <p class="muted small" style="margin-top:-4px;">${meta.description}</p>
+      <p class="muted small">Placeholders you can use: ${meta.placeholders.map((p) => `<code>{${p}}</code>`).join(", ")}</p>
+      <textarea id="tpl-${key}" rows="4" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:13px;">${MESSAGE_TEMPLATES[key] || meta.default}</textarea>
+      <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+        <button class="btn-primary" data-save-template="${key}">Save</button>
+        <button class="btn-ghost" data-reset-template="${key}">Reset to default</button>
+        <span class="muted small" data-saved-note="${key}" style="display:none; color:#5C8A6B;">Saved ✓</span>
+      </div>
+    </div>
+  `).join("");
+
+  container.querySelectorAll("[data-reset-template]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.resetTemplate;
+      main.querySelector(`#tpl-${key}`).value = TEMPLATE_META[key].default;
+    });
+  });
+  container.querySelectorAll("[data-save-template]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const key = btn.dataset.saveTemplate;
+      const value = main.querySelector(`#tpl-${key}`).value;
+      btn.disabled = true;
+      try {
+        await api(`/api/message-templates/${key}`, { method: "PATCH", body: JSON.stringify({ template: value }) });
+        MESSAGE_TEMPLATES[key] = value;
+        const note = main.querySelector(`[data-saved-note="${key}"]`);
+        note.style.display = "inline";
+        setTimeout(() => { note.style.display = "none"; }, 2000);
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
 // ---------- Main dispatch ----------
 function renderMain() {
   const main = document.getElementById("main");
@@ -2498,6 +2597,7 @@ function renderMain() {
   else if (currentTab === "team") renderTeam(main);
   else if (currentTab === "accounts") renderAccounts(main);
   else if (currentTab === "myevents") renderMyEvents(main);
+  else if (currentTab === "settings") renderSettings(main);
 }
 
 // ---------- Auth ----------

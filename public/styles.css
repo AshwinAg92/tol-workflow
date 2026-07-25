@@ -4,6 +4,7 @@ body { margin: 0; }
 .tol-app { display:flex; min-height:100vh; font-family:'Inter',sans-serif; background:#F1ECE3; color:#2A2620; }
 .mono { font-family:'JetBrains Mono',monospace; }
 .muted { color:#8A8578; }
+code { background:#EFE9DC; border-radius:4px; padding:1px 5px; font-size:12px; font-family:'JetBrains Mono',monospace; }
 .small { font-size:12px; }
 .right { text-align:right; margin-left:auto; }
 
