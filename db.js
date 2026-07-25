@@ -198,6 +198,7 @@ async function setup() {
       created_at TEXT NOT NULL
     );
   `);
+  await pool.query(`ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS lead_id TEXT REFERENCES leads(id) ON DELETE SET NULL`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS message_templates (
@@ -270,6 +271,23 @@ Warmly,
     `INSERT INTO message_templates (key, template, updated_at) VALUES ('pricing_matrix', $1, $2) ON CONFLICT (key) DO NOTHING`,
     [JSON.stringify(PRICING), new Date().toISOString()]
   );
+
+  // One-time cleanup: activity_log had no lead_id link before this column
+  // existed, so entries logged against the demo leads were never removed by
+  // "Clear demo data" (which could only scope by lead_id). This purges any
+  // pre-existing rows that mention a demo lead by name, exactly once — guarded
+  // by a flag rather than re-run on every boot, so it can never later misfire
+  // against a real lead that happens to share one of these names.
+  const cleanupFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'activity_demo_cleanup_done'")).rows[0];
+  if (!cleanupFlag) {
+    for (const demoName of demoLeadNames) {
+      await pool.query("DELETE FROM activity_log WHERE message LIKE $1", [`%${demoName}%`]);
+    }
+    await pool.query(
+      `INSERT INTO message_templates (key, template, updated_at) VALUES ('activity_demo_cleanup_done', '1', $1) ON CONFLICT (key) DO NOTHING`,
+      [new Date().toISOString()]
+    );
+  }
 
   // One-time migration: bring any existing single "advance" amount into the new
   // payments ledger as its first entry, so nothing is lost when moving from a

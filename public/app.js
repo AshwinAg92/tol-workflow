@@ -2220,9 +2220,12 @@ async function renderDashboard(main) {
       ${activity.length === 0 ? `<p class="muted small">Nothing logged yet today.</p>` : `
         <div class="activity-log">
           ${activity.map((a) => `
-            <div class="dash-list-item" style="display:flex; gap:10px;">
-              <span class="muted small mono" style="flex-shrink:0; width:52px;">${fmtTime(a.created_at)}</span>
-              <span>${a.message}${a.actor && a.actor !== "System" ? ` <span class="muted small">— ${a.actor}</span>` : ""}</span>
+            <div class="dash-list-item" style="display:flex; gap:10px; justify-content:space-between; align-items:flex-start;">
+              <div style="display:flex; gap:10px;">
+                <span class="muted small mono" style="flex-shrink:0; width:52px;">${fmtTime(a.created_at)}</span>
+                <span>${a.message}${a.actor && a.actor !== "System" ? ` <span class="muted small">— ${a.actor}</span>` : ""}</span>
+              </div>
+              ${isAdmin ? `<button class="icon-btn" data-dismiss-activity="${a.id}" title="Remove this entry">✕</button>` : ""}
             </div>
           `).join("")}
         </div>
@@ -2265,6 +2268,12 @@ async function renderDashboard(main) {
   main.querySelectorAll("[data-dismiss-admin-notif]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await api(`/api/admin/notifications/${btn.dataset.dismissAdminNotif}`, { method: "DELETE" });
+      btn.closest(".dash-list-item").remove();
+    });
+  });
+  main.querySelectorAll("[data-dismiss-activity]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await api(`/api/activity/${btn.dataset.dismissActivity}`, { method: "DELETE" });
       btn.closest(".dash-list-item").remove();
     });
   });

@@ -150,12 +150,12 @@ async function actorName(user) {
   }
   return user.username || "Someone";
 }
-async function logActivity(req, message) {
+async function logActivity(req, message, leadId) {
   try {
     const actor = await actorName(req.user);
     await pool.query(
-      "INSERT INTO activity_log (id, message, actor, created_at) VALUES ($1, $2, $3, $4)",
-      [uuid(), message, actor, new Date().toISOString()]
+      "INSERT INTO activity_log (id, message, actor, created_at, lead_id) VALUES ($1, $2, $3, $4, $5)",
+      [uuid(), message, actor, new Date().toISOString(), leadId || null]
     );
   } catch (err) {
     console.error("logActivity failed:", err.message);
@@ -445,7 +445,7 @@ app.post("/api/leads", async (req, res) => {
   ]);
   const created = (await pool.query("SELECT * FROM leads WHERE id = $1", [id])).rows[0];
   res.status(201).json(created);
-  logActivity({ user: null }, `New query received: ${name} — ${packageName(eventType)}${city ? ` in ${city}` : ""}`);
+  logActivity({ user: null }, `New query received: ${name} — ${packageName(eventType)}${city ? ` in ${city}` : ""}`, id);
   // New leads show up immediately in the Leads tab and dashboard "new leads"
   // count — no email/notification needed, the team works off the app directly.
 });
@@ -514,12 +514,12 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   if (req.body.stage !== undefined && req.body.stage !== lead.stage) {
     if (req.body.stage === "Confirmed") {
       const amt = req.body.finalAmount ? ` — ₹${Number(req.body.finalAmount).toLocaleString("en-IN")}` : "";
-      logActivity(req, `Confirmed: ${lead.name}${amt}`);
+      logActivity(req, `Confirmed: ${lead.name}${amt}`, lead.id);
     } else {
-      logActivity(req, `${lead.name}: ${lead.stage} → ${req.body.stage}`);
+      logActivity(req, `${lead.name}: ${lead.stage} → ${req.body.stage}`, lead.id);
     }
   } else if (req.body.advance !== undefined && Number(req.body.advance) !== Number(lead.advance || 0)) {
-    logActivity(req, `Payment recorded for ${lead.name}: ₹${Number(req.body.advance).toLocaleString("en-IN")} received`);
+    logActivity(req, `Payment recorded for ${lead.name}: ₹${Number(req.body.advance).toLocaleString("en-IN")} received`, lead.id);
   }
 });
 
@@ -562,7 +562,7 @@ app.post("/api/leads/:id/quote", requireAuth, async (req, res) => {
     whatsapp,
     mailto,
   });
-  logActivity(req, `Quote sent to ${lead.name}${numericAmount ? `: ₹${numericAmount.toLocaleString("en-IN")}` : ""}`);
+  logActivity(req, `Quote sent to ${lead.name}${numericAmount ? `: ₹${numericAmount.toLocaleString("en-IN")}` : ""}`, lead.id);
 });
 
 // History of every quote ever sent, newest first — so Ashwin can see what's gone to whom.
@@ -614,7 +614,7 @@ app.post("/api/leads/:id/assignments", requireAuth, requireCapability("assign_te
   res.status(201).json(rows);
   if (newlyAdded.length > 0) {
     const names = rows.filter((r) => newlyAdded.includes(r.team_id)).map((r) => r.team_name).join(", ");
-    logActivity(req, `${names} assigned to ${lead.name}`);
+    logActivity(req, `${names} assigned to ${lead.name}`, lead.id);
   }
 });
 
@@ -679,7 +679,7 @@ app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_t
     FROM temp_artists LEFT JOIN expenses ON expenses.id = temp_artists.expense_id WHERE temp_artists.id = $1
   `, [id]);
   res.status(201).json(rows[0]);
-  logActivity(req, `Temporary artist added to ${lead.name}: ${name}${description ? ` (${description})` : ""}${expenseId ? ` — fee ₹${Number(feeAmount).toLocaleString("en-IN")}` : ""}`);
+  logActivity(req, `Temporary artist added to ${lead.name}: ${name}${description ? ` (${description})` : ""}${expenseId ? ` — fee ₹${Number(feeAmount).toLocaleString("en-IN")}` : ""}`, lead.id);
 });
 
 app.patch("/api/temp-artists/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
@@ -905,6 +905,7 @@ app.post("/api/admin/clear-demo-data", requireAuth, requireAdmin, async (req, re
       await pool.query("DELETE FROM tasks WHERE lead_id = ANY($1::text[])", [seedLeadIds]);
       await pool.query("DELETE FROM documents WHERE lead_id = ANY($1::text[])", [seedLeadIds]);
       await pool.query("DELETE FROM notifications WHERE lead_id = ANY($1::text[])", [seedLeadIds]);
+      await pool.query("DELETE FROM activity_log WHERE lead_id = ANY($1::text[])", [seedLeadIds]);
       await pool.query("DELETE FROM leads WHERE id = ANY($1::text[])", [seedLeadIds]);
     }
     await pool.query("DELETE FROM users WHERE team_id IN (SELECT id FROM team WHERE name = ANY($1::text[]))", [demoNames]);
@@ -1048,7 +1049,7 @@ app.post("/api/leads/:id/payments", requireAuth, requireSection("accounts"), req
     VALUES ($1, $2, $3, $4, $5, $6, $7)
   `, [id, req.params.id, Number(amount), date, mode || null, notes || null, new Date().toISOString()]);
   res.status(201).json((await pool.query("SELECT * FROM payments WHERE id = $1", [id])).rows[0]);
-  logActivity(req, `Payment recorded for ${lead.name}: ₹${Number(amount).toLocaleString("en-IN")}${mode ? ` via ${mode}` : ""}`);
+  logActivity(req, `Payment recorded for ${lead.name}: ₹${Number(amount).toLocaleString("en-IN")}${mode ? ` via ${mode}` : ""}`, lead.id);
 });
 
 app.delete("/api/payments/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
@@ -1233,7 +1234,7 @@ app.post("/api/documents", requireAuth, upload.single("file"), async (req, res) 
     const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [req.body.leadId])).rows[0];
     leadName = lead?.name;
   }
-  logActivity(req, `Document uploaded${req.body.notes ? `: ${req.body.notes}` : ""}${leadName ? ` for ${leadName}` : ""} (${req.file.originalname})`);
+  logActivity(req, `Document uploaded${req.body.notes ? `: ${req.body.notes}` : ""}${leadName ? ` for ${leadName}` : ""} (${req.file.originalname})`, req.body.leadId || null);
 });
 
 app.delete("/api/documents/:id", requireAuth, async (req, res) => {
@@ -1271,6 +1272,11 @@ app.get("/api/activity", requireAuth, async (req, res) => {
     [startOfToday.toISOString()]
   );
   res.json(rows);
+});
+
+app.delete("/api/activity/:id", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM activity_log WHERE id = $1", [req.params.id]);
+  res.status(204).end();
 });
 
 app.get("/api/dashboard", requireAuth, async (req, res) => {
