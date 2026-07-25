@@ -83,6 +83,18 @@ function requireAdmin(req, res, next) {
 
 // Gate a section (e.g. "accounts") for staff logins with restricted permissions.
 // Admin always passes. NULL permissions = full access (default for existing staff).
+// Same permission check as requireSection, but as a plain boolean for cases where
+// the request should still succeed — just with financial fields stripped out —
+// rather than being blocked outright (e.g. a manager viewing team assignments for
+// planning purposes shouldn't see fee amounts, but should still see who's playing).
+function userHasSection(user, section) {
+  if (user.access_level === "admin") return true;
+  if (user.access_level !== "staff") return false;
+  let perms = null;
+  try { perms = user.permissions ? JSON.parse(user.permissions) : null; } catch { perms = null; }
+  return !perms || perms.includes(section);
+}
+
 function requireSection(section) {
   return (req, res, next) => {
     if (req.user.access_level === "admin") return next();
@@ -454,11 +466,11 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     }
   }
 
-  const fields = ["stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes"];
+  const fields = ["stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "event_time", "soundcheck_time"];
   const updates = [];
   const values = [];
   fields.forEach((f) => {
-    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f;
+    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f;
     if (req.body[key] !== undefined) {
       values.push(req.body[key]);
       updates.push(`${f} = $${values.length}`);
@@ -557,7 +569,8 @@ app.get("/api/leads/:id/assignments", requireAuth, requireCapability("assign_tea
     WHERE lead_id = $1
     ORDER BY event_assignments.created_at ASC
   `, [req.params.id]);
-  res.json(rows);
+  const canSeeMoney = userHasSection(req.user, "accounts");
+  res.json(canSeeMoney ? rows : rows.map(({ fee_amount, ...rest }) => rest));
 });
 
 app.post("/api/leads/:id/assignments", requireAuth, requireCapability("assign_team"), async (req, res) => {
@@ -620,7 +633,8 @@ app.get("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_te
     LEFT JOIN expenses ON expenses.id = temp_artists.expense_id
     WHERE temp_artists.lead_id = $1 ORDER BY temp_artists.created_at ASC
   `, [req.params.id]);
-  res.json(rows);
+  const canSeeMoney = userHasSection(req.user, "accounts");
+  res.json(canSeeMoney ? rows : rows.map(({ fee_amount, fee_paid, fee_payment_date, fee_payment_mode, expense_id, ...rest }) => rest));
 });
 
 app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_team"), async (req, res) => {
@@ -696,7 +710,7 @@ app.get("/api/my/events", requireAuth, async (req, res) => {
   if (!req.user.team_id) return res.json([]);
   const { rows } = await pool.query(`
     SELECT event_assignments.id, event_assignments.lead_id, event_assignments.team_id, event_assignments.status,
-      leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage,
+      leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage, leads.event_time, leads.soundcheck_time,
       ex.paid AS paid, ex.amount AS fee_amount, ex.payment_date, ex.payment_mode
     FROM event_assignments
     JOIN leads ON leads.id = event_assignments.lead_id

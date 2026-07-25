@@ -65,6 +65,13 @@ function hasLeadsAccess() {
   return !Array.isArray(CURRENT_USER.permissions) || CURRENT_USER.permissions.includes("leads");
 }
 
+function hasAccountsAccess() {
+  if (!CURRENT_USER) return false;
+  if (CURRENT_USER.accessLevel === "admin") return true;
+  if (CURRENT_USER.accessLevel !== "staff") return false;
+  return !Array.isArray(CURRENT_USER.permissions) || CURRENT_USER.permissions.includes("accounts");
+}
+
 function permissionsChecklistHtml(idPrefix, currentPermissions) {
   // A manager (staff, not a true admin) can't grant access broader than their own —
   // disable those checkboxes so it's visually clear, matching the backend's rejection.
@@ -103,6 +110,14 @@ const inr = (n) => (n == null ? "—" : "₹" + Number(n).toLocaleString("en-IN"
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—";
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtTime = (d) => d ? new Date(d).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—";
+// Formats a plain "HH:MM" string (from an <input type="time">, not a full date) into 12-hour display.
+const fmtTimeHM = (hm) => {
+  if (!hm) return "—";
+  const [h, m] = hm.split(":").map(Number);
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${period}`;
+};
 const packageName = (id) => id === "both" ? "Bhajan Jamming & Musical Pheras (Both)" : (CONFIG.packages.find((p) => p.id === id)?.name || id);
 
 const el = (html) => { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstChild; };
@@ -639,7 +654,7 @@ function renderLeadsLog(main) {
             ${l.stage === "New" || l.stage === "Follow-up" || l.stage === "Tentative" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
             ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Tentative") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
             ${l.quote_amount && l.stage !== "Confirmed" && l.stage !== "Completed" ? `<div class="muted small mono">Quoted: ${inr(l.quote_amount)}</div>` : ""}
-            ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Quoted: ${l.quote_amount ? inr(l.quote_amount) : "—"}</div><div class="muted small mono">Final: ${l.final_amount ? inr(l.final_amount) : "—"}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>${canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:4px;">Team</button>` : ""}` : ""}
+            ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Quoted: ${l.quote_amount ? inr(l.quote_amount) : "—"}</div><div class="muted small mono">Final: ${l.final_amount ? inr(l.final_amount) : "—"}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>${(l.event_time || l.soundcheck_time) ? `<div class="muted small">${l.soundcheck_time ? `SC ${fmtTimeHM(l.soundcheck_time)}` : ""}${l.soundcheck_time && l.event_time ? " · " : ""}${l.event_time ? `Event ${fmtTimeHM(l.event_time)}` : ""}</div>` : ""}${canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:4px;">Team</button>` : ""}` : ""}
           </span>
         </div>
       `));
@@ -1039,7 +1054,11 @@ function wireCalendarGrid(container) {
 }
 
 function renderCalendar(main) {
-  const confirmed = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed" || l.stage === "Tentative");
+  const today = new Date().toISOString().slice(0, 10);
+  const upcoming = LEADS
+    .filter((l) => (l.stage === "Confirmed" || l.stage === "Completed" || l.stage === "Tentative") && l.date >= today)
+    .slice()
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
   main.innerHTML = `
     <div class="view-head"><div><h2>Calendar</h2><p class="muted">Confirmed, tentative, and completed events — spot clashes before you quote.</p></div></div>
     <div class="card">${calendarGridMarkup()}</div>
@@ -1049,14 +1068,27 @@ function renderCalendar(main) {
   wireCalendarGrid(main);
 
   const calList = main.querySelector("#calList");
-  if (confirmed.length === 0) calList.innerHTML = `<div class="board-empty">No confirmed events yet</div>`;
-  confirmed.forEach((l) => {
-    calList.appendChild(el(`
-      <div class="list-row">
+  if (upcoming.length === 0) calList.innerHTML = `<div class="board-empty">Nothing upcoming right now</div>`;
+  upcoming.forEach((l) => {
+    const row = el(`
+      <div class="list-row" style="cursor:pointer;">
         <span class="mono">${fmtDate(l.date)}</span><span>${l.name}</span><span class="muted">${l.city || ""}</span>
         <span class="tag" style="color:${STAGE_COLOR[l.stage]}">${l.stage}</span>
       </div>
-    `));
+    `);
+    row.addEventListener("click", () => {
+      if (hasLeadsAccess()) {
+        leadsSearch = l.name;
+        leadsStageFilter = "all";
+        leadsDateFilter = "";
+        currentTab = "leads";
+        renderNav();
+        renderMain();
+      } else if (canAssignTeam()) {
+        openAssignTeamModal(l.id);
+      }
+    });
+    calList.appendChild(row);
   });
 }
 
@@ -1596,6 +1628,11 @@ async function openAssignTeamModal(leadId) {
       <div class="modal-card">
         <div class="modal-head"><h3>Team for ${lead.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
         <div class="modal-body">
+          <div class="section-label">Event day timing</div>
+          <div class="row-2" style="margin-bottom:14px;">
+            <div><label>Event time</label><input id="eventTimeInput" type="time" value="${lead.event_time || ""}" /></div>
+            <div><label>Sound check time</label><input id="soundcheckTimeInput" type="time" value="${lead.soundcheck_time || ""}" /></div>
+          </div>
           ${TEAM.map((m) => {
             const a = byTeamId[m.id];
             return `
@@ -1616,7 +1653,7 @@ async function openAssignTeamModal(leadId) {
               <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
                 <div>
                   <div>${t.name}${t.description ? ` <span class="muted small">— ${t.description}</span>` : ""}</div>
-                  <div class="muted small">${t.phone ? `${t.phone} · ` : ""}${t.fee_amount != null ? `Fee ${inr(t.fee_amount)}${t.fee_paid ? " · Paid" : " · Pending"}` : "No fee recorded"}</div>
+                  <div class="muted small">${t.phone ? `${t.phone}` : ""}${hasAccountsAccess() ? `${t.phone ? " · " : ""}${t.fee_amount != null ? `Fee ${inr(t.fee_amount)}${t.fee_paid ? " · Paid" : " · Pending"}` : "No fee recorded"}` : ""}</div>
                 </div>
                 <button class="icon-btn" data-remove-temp-artist="${t.id}">✕</button>
               </div>
@@ -1628,10 +1665,10 @@ async function openAssignTeamModal(leadId) {
           </div>
           <div class="row-2" style="margin-top:8px;">
             <input id="taDescription" placeholder="Description (e.g. session tabla player)" />
-            <input id="taFee" type="number" placeholder="Fee ₹ (optional)" />
+            ${hasAccountsAccess() ? `<input id="taFee" type="number" placeholder="Fee ₹ (optional)" />` : ""}
           </div>
           <button class="btn-ghost full" id="addTempArtistBtn" style="margin-top:8px;">+ Add temporary artist</button>
-          <p class="muted small" style="margin-top:4px;">Tip: hitting the overall Save button below also adds this if you've filled it in. Any fee entered here counts toward this event's expenses/profit automatically — no need to add it again under Accounts.</p>
+          <p class="muted small" style="margin-top:4px;">Tip: hitting the overall Save button below also adds this if you've filled it in.${hasAccountsAccess() ? " Any fee entered here counts toward this event's expenses/profit automatically — no need to add it again under Accounts." : ""}</p>
         </div>
         <div class="modal-foot">
           <button class="btn-ghost" id="openChatBtn">💬 Event chat</button>
@@ -1662,13 +1699,14 @@ async function openAssignTeamModal(leadId) {
     const name = root.querySelector("#taName").value.trim();
     if (!name) return true; // nothing pending — not an error
     try {
+      const feeInput = root.querySelector("#taFee");
       await api(`/api/leads/${leadId}/temp-artists`, {
         method: "POST",
         body: JSON.stringify({
           name,
           phone: root.querySelector("#taPhone").value.trim(),
           description: root.querySelector("#taDescription").value.trim(),
-          feeAmount: root.querySelector("#taFee").value.trim() || null,
+          feeAmount: feeInput ? (feeInput.value.trim() || null) : null,
         }),
       });
       return true;
@@ -1693,6 +1731,12 @@ async function openAssignTeamModal(leadId) {
       for (const teamId of unchecked) {
         if (byTeamId[teamId]) await api(`/api/assignments/${byTeamId[teamId].id}`, { method: "DELETE" });
       }
+      const eventTime = root.querySelector("#eventTimeInput").value;
+      const soundcheckTime = root.querySelector("#soundcheckTimeInput").value;
+      if (eventTime !== (lead.event_time || "") || soundcheckTime !== (lead.soundcheck_time || "")) {
+        await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ eventTime: eventTime || null, soundcheckTime: soundcheckTime || null }) });
+      }
+      await refreshLeads();
       close();
       renderMain();
     } catch (err) {
@@ -2831,6 +2875,12 @@ async function renderMyEvents(main) {
             : `<span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status]}</span>`}
         </div>
         ${e.stage === "Cancelled" ? `<p class="muted small" style="color:#A64B3C; margin-top:4px;">This event has been cancelled by the team — no action needed.</p>` : `
+        ${e.event_time || e.soundcheck_time ? `
+        <div class="performer-event-row">
+          <span class="muted small">Timing:</span>
+          <span>${e.soundcheck_time ? `Sound check ${fmtTimeHM(e.soundcheck_time)}` : ""}${e.soundcheck_time && e.event_time ? " · " : ""}${e.event_time ? `Event ${fmtTimeHM(e.event_time)}` : ""}</span>
+        </div>
+        ` : ""}
         <div class="performer-event-row">
           <span class="muted small">Artist fee:</span>
           <span class="mono">${e.fee_amount ? inr(e.fee_amount) : "—"}</span>
