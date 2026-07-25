@@ -633,11 +633,7 @@ function renderLeadsLog(main) {
   });
 
   const rows = main.querySelector("#leadsRows");
-  const scheduledStages = ["Confirmed", "Completed", "Tentative"];
-  const sorted = filtered.slice().sort((a, b) => {
-    if (scheduledStages.includes(leadsStageFilter)) return new Date(a.date) - new Date(b.date);
-    return new Date(b.created_at) - new Date(a.created_at);
-  });
+  const sorted = filtered.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
   if (sorted.length === 0) {
     rows.innerHTML = `<div class="board-empty">No queries match these filters</div>`;
   } else {
