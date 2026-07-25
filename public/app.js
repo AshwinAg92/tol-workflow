@@ -2663,7 +2663,7 @@ function openNewLeadModal() {
           </div>
           <div class="row-2">
             <div><label>No. of guests</label><select id="mGuests"><option value="">Not specified</option>${CONFIG.guestRanges.map((g) => `<option value="${g}">${g}</option>`).join("")}</select></div>
-            <div></div>
+            <div><label>Occasion</label><select id="mOccasion"><option value="">Not specified</option>${CONFIG.occasions.map((o) => `<option value="${o}">${o}</option>`).join("")}</select></div>
           </div>
           <label class="check-row" style="margin-top:10px;">
             <input type="checkbox" id="mAlreadyConfirmed" />
@@ -2694,6 +2694,7 @@ function openNewLeadModal() {
         date,
         budget: root.querySelector("#mBudget").value ? Number(root.querySelector("#mBudget").value) : null,
         guestRange: root.querySelector("#mGuests").value || null,
+        occasion: root.querySelector("#mOccasion").value || null,
       }),
     });
     await refreshLeads();
