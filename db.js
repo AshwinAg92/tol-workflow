@@ -166,9 +166,17 @@ async function setup() {
   // team_id nullable already — NULL means "for admin" rather than a specific performer.
   await pool.query(`ALTER TABLE event_assignments ADD COLUMN IF NOT EXISTS cancel_reason TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_performer INTEGER NOT NULL DEFAULT 0`);
-  await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS expense_id TEXT REFERENCES expenses(id) ON DELETE SET NULL`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS event_time TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS soundcheck_time TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS is_seed INTEGER NOT NULL DEFAULT 0`);
+  const demoLeadNames = ["Priya & Raj Sharma", "Anand Bhajan Sangeet Committee", "Meera Foundation", "Kapoor Family (Naming Ceremony)", "Sunrise Housing Society", "Shanti Path Trust", "Choudhury Family"];
+  const seedFlaggedCount = (await pool.query("SELECT COUNT(*) AS c FROM leads WHERE is_seed = 1")).rows[0].c;
+  if (Number(seedFlaggedCount) === 0) {
+    // Backfill for databases seeded before is_seed existed. Guarded to run only
+    // once (no lead flagged yet) so it can never later mislabel a real lead that
+    // happens to share one of these names as demo data.
+    await pool.query("UPDATE leads SET is_seed = 1 WHERE name = ANY($1::text[])", [demoLeadNames]);
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS temp_artists (
@@ -180,6 +188,7 @@ async function setup() {
       created_at TEXT NOT NULL
     );
   `);
+  await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS expense_id TEXT REFERENCES expenses(id) ON DELETE SET NULL`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS activity_log (
@@ -305,8 +314,8 @@ Warmly,
     ];
     for (const l of sample) {
       await pool.query(`
-        INSERT INTO leads (id, name, phone, email, event_type, city, date, budget, stage, quote_amount, advance, assigned_to, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        INSERT INTO leads (id, name, phone, email, event_type, city, date, budget, stage, quote_amount, advance, assigned_to, created_at, is_seed)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 1)
       `, [l.id, l.name, l.phone, l.email, l.event_type, l.city, l.date, l.budget, l.stage, l.quote_amount, l.advance, l.assigned_to, now]);
     }
 

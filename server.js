@@ -461,7 +461,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   // Event day timing is editable by anyone who can plan the team for an event
   // (a manager without full Leads access included); everything else — stage,
   // amounts, notes — needs full Leads access.
-  const leadsOnlyFields = ["stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes"];
+  const leadsOnlyFields = ["stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "date"];
   const sharedFields = ["event_time", "soundcheck_time"];
   if (!hasLeads) {
     const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f);
@@ -815,6 +815,10 @@ app.delete("/api/admin/notifications/:id", requireAuth, requireAdmin, async (req
 
 async function canAccessEventChat(req, leadId) {
   if (req.user.access_level === "admin") return true;
+  // A manager coordinating an event should be able to jump into its chat even
+  // if they aren't personally performing at it — not just admins and performers
+  // who happen to be assigned.
+  if (userHasSection(req.user, "leads") || userHasSection(req.user, "assign_team")) return true;
   if (!req.user.team_id) return false;
   const row = (await pool.query("SELECT id FROM event_assignments WHERE lead_id = $1 AND team_id = $2", [leadId, req.user.team_id])).rows[0];
   return !!row;
@@ -884,24 +888,32 @@ app.delete("/api/announcements/:id", requireAuth, requireAdmin, async (req, res)
 app.post("/api/admin/clear-demo-data", requireAuth, requireAdmin, async (req, res) => {
   const demoNames = ["Divya", "Karan", "Neha", "Devin"];
   try {
-    await pool.query("DELETE FROM event_assignments");
-    await pool.query("DELETE FROM event_messages");
-    await pool.query("DELETE FROM expenses");
-    await pool.query("DELETE FROM quotes");
-    await pool.query("DELETE FROM payments");
-    await pool.query("DELETE FROM tasks");
-    await pool.query("DELETE FROM documents");
-    await pool.query("DELETE FROM notifications");
-    await pool.query("DELETE FROM admin_notifications");
-    await pool.query("DELETE FROM announcements");
+    const seedLeadIds = (await pool.query("SELECT id FROM leads WHERE is_seed = 1")).rows.map((r) => r.id);
+    if (seedLeadIds.length > 0) {
+      const seedAssignmentIds = (await pool.query(
+        "SELECT id FROM event_assignments WHERE lead_id = ANY($1::text[])", [seedLeadIds]
+      )).rows.map((r) => r.id);
+      if (seedAssignmentIds.length > 0) {
+        await pool.query("DELETE FROM admin_notifications WHERE assignment_id = ANY($1::text[])", [seedAssignmentIds]);
+      }
+      await pool.query("DELETE FROM event_assignments WHERE lead_id = ANY($1::text[])", [seedLeadIds]);
+      await pool.query("DELETE FROM event_messages WHERE lead_id = ANY($1::text[])", [seedLeadIds]);
+      await pool.query("DELETE FROM temp_artists WHERE lead_id = ANY($1::text[])", [seedLeadIds]);
+      await pool.query("DELETE FROM expenses WHERE lead_id = ANY($1::text[])", [seedLeadIds]);
+      await pool.query("DELETE FROM quotes WHERE lead_id = ANY($1::text[])", [seedLeadIds]);
+      await pool.query("DELETE FROM payments WHERE lead_id = ANY($1::text[])", [seedLeadIds]);
+      await pool.query("DELETE FROM tasks WHERE lead_id = ANY($1::text[])", [seedLeadIds]);
+      await pool.query("DELETE FROM documents WHERE lead_id = ANY($1::text[])", [seedLeadIds]);
+      await pool.query("DELETE FROM notifications WHERE lead_id = ANY($1::text[])", [seedLeadIds]);
+      await pool.query("DELETE FROM leads WHERE id = ANY($1::text[])", [seedLeadIds]);
+    }
     await pool.query("DELETE FROM users WHERE team_id IN (SELECT id FROM team WHERE name = ANY($1::text[]))", [demoNames]);
     await pool.query("DELETE FROM team WHERE name = ANY($1::text[])", [demoNames]);
-    await pool.query("DELETE FROM leads");
 
     const leadsLeft = Number((await pool.query("SELECT COUNT(*) AS c FROM leads")).rows[0].c);
     const teamLeft = Number((await pool.query("SELECT COUNT(*) AS c FROM team")).rows[0].c);
     const usersLeft = Number((await pool.query("SELECT COUNT(*) AS c FROM users")).rows[0].c);
-    res.json({ ok: true, leadsLeft, teamLeft, usersLeft });
+    res.json({ ok: true, leadsLeft, teamLeft, usersLeft, seedLeadsRemoved: seedLeadIds.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -933,11 +945,13 @@ app.get("/api/team/:id/assignments", requireAuth, async (req, res) => {
   }
   const today = new Date().toISOString().slice(0, 10);
   const { rows } = await pool.query(`
-    SELECT event_assignments.id, event_assignments.status, event_assignments.paid, event_assignments.fee_amount,
+    SELECT event_assignments.id, event_assignments.status,
       leads.id AS lead_id, leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage,
-      leads.event_time, leads.soundcheck_time
+      leads.event_time, leads.soundcheck_time,
+      ex.paid AS paid, ex.amount AS fee_amount
     FROM event_assignments
     JOIN leads ON leads.id = event_assignments.lead_id
+    LEFT JOIN expenses ex ON ex.team_id = event_assignments.team_id AND ex.lead_id = event_assignments.lead_id
     WHERE event_assignments.team_id = $1 AND leads.date >= $2
     ORDER BY leads.date ASC
   `, [req.params.id, today]);

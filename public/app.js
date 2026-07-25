@@ -1103,11 +1103,11 @@ async function renderTeam(main) {
       <div><h2>Team</h2><p class="muted">Your band's musicians, crew, and staff.</p></div>
       ${canManage ? `<button class="btn-primary" id="addMemberBtn">+ Add team member</button>` : ""}
     </div>
-    ${isAdmin && LEADS.length > 0 ? `
+    ${isAdmin && LEADS.some((l) => l.is_seed) ? `
       <div class="card" style="margin-bottom:20px; border-color:#A64B3C;">
         <div class="section-label" style="color:#A64B3C;">Going live</div>
-        <p class="muted small">Wipe all demo leads, bookings, and placeholder team members (Divya/Karan/Neha/Devin) to start fresh with real data. Your own admin login is never touched.</p>
-        <button class="btn-ghost" id="clearDemoBtn" style="color:#A64B3C; border-color:#A64B3C;">🗑 Clear all demo data</button>
+        <p class="muted small">Wipe the ${LEADS.filter((l) => l.is_seed).length} demo leads/bookings (and everything tied to them — tasks, documents, expenses, payments, quotes) and the placeholder team members (Divya/Karan/Neha/Devin). Your real leads, bookings, and everyone else's data are never touched.</p>
+        <button class="btn-ghost" id="clearDemoBtn" style="color:#A64B3C; border-color:#A64B3C;">🗑 Clear demo data</button>
       </div>
     ` : ""}
     ${isAdmin ? `
@@ -1216,11 +1216,12 @@ async function renderTeam(main) {
     const clearBtn = main.querySelector("#clearDemoBtn");
     if (clearBtn) {
       clearBtn.addEventListener("click", async () => {
-        if (!confirm(`This permanently deletes ALL ${LEADS.length} current leads/bookings and everything tied to them (tasks, documents, expenses, payments, quotes), plus the placeholder team members Divya/Karan/Neha/Devin. Your own admin login is kept. This cannot be undone — continue?`)) return;
+        const seedCount = LEADS.filter((l) => l.is_seed).length;
+        if (!confirm(`This permanently deletes the ${seedCount} demo leads/bookings and everything tied to them (tasks, documents, expenses, payments, quotes), plus the placeholder team members Divya/Karan/Neha/Devin. Your real leads and everything else are untouched. Your own admin login is kept. This cannot be undone — continue?`)) return;
         if (!confirm("Are you absolutely sure? Type-to-confirm isn't available here, so this is your last chance to cancel.")) return;
         try {
           const result = await api("/api/admin/clear-demo-data", { method: "POST" });
-          alert(`Done. Leads remaining: ${result.leadsLeft}, team members remaining: ${result.teamLeft}, logins remaining: ${result.usersLeft}.`);
+          alert(`Done. Demo leads removed: ${result.seedLeadsRemoved}. Leads remaining: ${result.leadsLeft}, team members remaining: ${result.teamLeft}, logins remaining: ${result.usersLeft}.`);
           await refreshLeads();
           const teamData = await api("/api/team");
           TEAM = teamData;
