@@ -458,7 +458,7 @@ app.post("/api/leads", async (req, res) => {
 // amount, so Accounts/profit totals aren't double-counted across the group —
 // the others just point back to it for display.
 app.post("/api/leads/combo", requireAuth, async (req, res) => {
-  const { name, phone, email, city, occasion, guestRange, events, budget, finalAmount, alreadyConfirmed, advanceAmount, advanceDate } = req.body;
+  const { name, phone, email, city, occasion, guestRange, events, budget, finalAmount, alreadyConfirmed, advanceAmount, advanceDate, advanceMode } = req.body;
   if (!name) return res.status(400).json({ error: "Name is required" });
   if (!Array.isArray(events) || events.length < 2) return res.status(400).json({ error: "Provide at least two format/date combinations for a combo booking" });
   for (const e of events) {
@@ -489,8 +489,8 @@ app.post("/api/leads/combo", requireAuth, async (req, res) => {
   if (alreadyConfirmed && advanceAmount && Number(advanceAmount) > 0 && advanceDate) {
     await pool.query(`
       INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, created_at)
-      VALUES ($1, $2, $3, $4, NULL, NULL, $5)
-    `, [uuid(), createdIds[0], Number(advanceAmount), advanceDate, now]);
+      VALUES ($1, $2, $3, $4, $5, NULL, $6)
+    `, [uuid(), createdIds[0], Number(advanceAmount), advanceDate, advanceMode || null, now]);
   }
   const rows = (await pool.query("SELECT * FROM leads WHERE id = ANY($1::text[]) ORDER BY date ASC", [createdIds])).rows;
   res.status(201).json(rows);

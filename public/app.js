@@ -2658,6 +2658,11 @@ function openConfirmEventModal(lead) {
             <input id="ceAdvanceAmount" type="number" placeholder="e.g. 20000" />
             <input id="ceAdvanceDate" type="date" value="${new Date().toISOString().slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" />
           </div>
+          <select id="ceAdvanceMode" style="margin-top:8px;">
+            <option value="">Mode —</option>
+            <option value="Cash">Cash</option>
+            <option value="UPI">UPI</option>
+          </select>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Confirm event</button></div>
       </div>
@@ -2682,7 +2687,7 @@ function openConfirmEventModal(lead) {
         try {
           await api(`/api/leads/${lead.id}/payments`, {
             method: "POST",
-            body: JSON.stringify({ amount: Number(advanceAmount), date: root.querySelector("#ceAdvanceDate").value }),
+            body: JSON.stringify({ amount: Number(advanceAmount), date: root.querySelector("#ceAdvanceDate").value, mode: root.querySelector("#ceAdvanceMode").value || null }),
           });
         } catch (err) {
           alert(`Event confirmed, but the advance couldn't be recorded: ${err.message}. You can add it from Accounts instead.`);
@@ -2794,6 +2799,11 @@ function openNewLeadModal() {
               <input id="mComboAdvanceAmount" type="number" placeholder="e.g. 20000" />
               <input id="mComboAdvanceDate" type="date" value="${new Date().toISOString().slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" />
             </div>
+            <select id="mComboAdvanceMode" style="margin-top:8px;">
+              <option value="">Mode —</option>
+              <option value="Cash">Cash</option>
+              <option value="UPI">UPI</option>
+            </select>
           </div>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Add lead</button></div>
@@ -2856,6 +2866,7 @@ function openNewLeadModal() {
           alreadyConfirmed,
           advanceAmount: root.querySelector("#mComboAdvanceAmount").value ? Number(root.querySelector("#mComboAdvanceAmount").value) : null,
           advanceDate: root.querySelector("#mComboAdvanceDate").value || null,
+          advanceMode: root.querySelector("#mComboAdvanceMode").value || null,
         }),
       });
       await refreshLeads();
