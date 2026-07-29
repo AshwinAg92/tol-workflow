@@ -659,6 +659,7 @@ function renderLeadsLog(main) {
             ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Tentative") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
             ${l.quote_amount && l.stage !== "Confirmed" && l.stage !== "Completed" ? `<div class="muted small mono">Quoted: ${inr(l.quote_amount)}</div>` : ""}
             ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Quoted: ${displayQuote ? inr(displayQuote) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div><div class="muted small mono">Final: ${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>${(l.event_time || l.soundcheck_time) ? `<div class="muted small">${l.soundcheck_time ? `SC ${fmtTimeHM(l.soundcheck_time)}` : ""}${l.soundcheck_time && l.event_time ? " · " : ""}${l.event_time ? `Event ${fmtTimeHM(l.event_time)}` : ""}</div>` : ""}${l.venue ? `<div class="muted small">📍 ${l.venue}</div>` : ""}${canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:4px;">Team</button>` : ""}` : ""}
+            ${hasLeadsAccess() ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}" style="margin-top:4px;">✎ Edit</button>` : ""}
             ${CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="margin-top:4px; color:#A64B3C;">🗑 Delete</button>` : ""}
           </span>
         </div>
@@ -693,6 +694,10 @@ function renderLeadsLog(main) {
 
   main.querySelectorAll(".assign-team-btn").forEach((btn) => {
     btn.addEventListener("click", () => openAssignTeamModal(btn.dataset.leadId));
+  });
+
+  main.querySelectorAll(".edit-lead-btn").forEach((btn) => {
+    btn.addEventListener("click", () => openEditLeadModal(btn.dataset.leadId));
   });
 
   main.querySelectorAll(".delete-lead-btn").forEach((btn) => {
@@ -1907,7 +1912,7 @@ async function renderAccounts(main) {
       <label>Choose a client to open their ledger</label>
       <select id="ledgerClientSelect">
         <option value="">Select a client…</option>
-        ${ledgerBookings.slice().sort((a, b) => new Date(a.date) - new Date(b.date)).map((b) => `<option value="${b.id}">${b.name} — ${fmtDate(b.date)}${b.city ? `, ${b.city}` : ""}</option>`).join("")}
+        ${ledgerBookings.slice().sort((a, b) => new Date(a.date) - new Date(b.date)).map((b) => `<option value="${b.id}">${b.name} — ${fmtDate(b.date)}${b.city ? `, ${b.city}` : ""}${b.comboEvents && b.comboEvents.length > 1 ? ` (${b.comboEvents.length} events)` : ""}</option>`).join("")}
       </select>
       <div id="partyLedgerDetail"></div>
     </div>
@@ -1986,7 +1991,7 @@ async function renderAccounts(main) {
     const total = l.final_amount || l.quote_amount || 0;
     const row = el(`
       <div class="table-row" style="grid-template-columns:1.3fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr; cursor:pointer;">
-        <span>${l.name}${l.combo_group_id ? ` <span class="muted small" style="color:#8A5FA8;">🔗</span>` : ""}</span>
+        <span>${l.name}${l.comboEvents && l.comboEvents.length > 1 ? ` <span class="muted small" style="color:#8A5FA8;">🔗 ${l.comboEvents.length} events</span>` : ""}</span>
         <span class="tag" style="color:${STAGE_COLOR[l.stage]}">${l.stage}</span>
         <span class="right mono">${total ? inr(total) : "—"}</span>
         <span class="right mono">${inr(l.received)}</span>
@@ -2125,7 +2130,7 @@ function renderPartyLedgerDetail(container, booking) {
     container.innerHTML = `
       <div class="card" style="margin-top:10px;">
         <div class="view-head" style="margin-bottom:0;">
-          <div class="section-label" style="margin-bottom:0;">${booking.name} — ${fmtDate(booking.date)}</div>
+          <div class="section-label" style="margin-bottom:0;">${booking.name} — ${booking.comboEvents && booking.comboEvents.length > 1 ? booking.comboEvents.map((e) => `${packageName(e.event_type)} (${fmtDate(e.date)})`).join(" + ") : fmtDate(booking.date)}</div>
           <button class="btn-ghost" id="shareLedgerPdfBtn">📄 Share ledger PDF on WhatsApp</button>
         </div>
         <div class="dash-stats" style="grid-template-columns:repeat(4,1fr); margin-bottom:16px; margin-top:10px;">
@@ -2648,6 +2653,11 @@ function openConfirmEventModal(lead) {
           <div class="muted small mono" style="margin-bottom:8px;">Quoted: ${lead.quote_amount ? inr(lead.quote_amount) : "—"}</div>
           <label>Final closed rate (₹)</label>
           <input id="ceAmount" type="number" value="${lead.quote_amount || ""}" placeholder="e.g. 145000" />
+          <label style="margin-top:10px;">Advance received now (optional)</label>
+          <div class="row-2">
+            <input id="ceAdvanceAmount" type="number" placeholder="e.g. 20000" />
+            <input id="ceAdvanceDate" type="date" value="${new Date().toISOString().slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" />
+          </div>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Confirm event</button></div>
       </div>
@@ -2667,6 +2677,17 @@ function openConfirmEventModal(lead) {
     }
     try {
       await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ stage: "Confirmed", finalAmount: finalAmount || null, date: chosenDate }) });
+      const advanceAmount = root.querySelector("#ceAdvanceAmount").value;
+      if (advanceAmount && Number(advanceAmount) > 0) {
+        try {
+          await api(`/api/leads/${lead.id}/payments`, {
+            method: "POST",
+            body: JSON.stringify({ amount: Number(advanceAmount), date: root.querySelector("#ceAdvanceDate").value }),
+          });
+        } catch (err) {
+          alert(`Event confirmed, but the advance couldn't be recorded: ${err.message}. You can add it from Accounts instead.`);
+        }
+      }
       await refreshLeads();
       openConfirmationMessageModal({ ...lead, stage: "Confirmed", final_amount: finalAmount || null, date: chosenDate });
     } catch (err) {
@@ -2768,6 +2789,11 @@ function openNewLeadModal() {
           <div id="comboFinalRateField" style="display:none; margin-top:8px;">
             <label>Final combined rate (₹)</label>
             <input id="mComboFinalRate" placeholder="e.g. 175000" />
+            <label style="margin-top:8px;">Advance received now (optional)</label>
+            <div class="row-2">
+              <input id="mComboAdvanceAmount" type="number" placeholder="e.g. 20000" />
+              <input id="mComboAdvanceDate" type="date" value="${new Date().toISOString().slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" />
+            </div>
           </div>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Add lead</button></div>
@@ -2828,6 +2854,8 @@ function openNewLeadModal() {
           guestRange: root.querySelector("#mGuests").value || null,
           occasion: root.querySelector("#mOccasion").value || null,
           alreadyConfirmed,
+          advanceAmount: root.querySelector("#mComboAdvanceAmount").value ? Number(root.querySelector("#mComboAdvanceAmount").value) : null,
+          advanceDate: root.querySelector("#mComboAdvanceDate").value || null,
         }),
       });
       await refreshLeads();
@@ -2862,6 +2890,67 @@ function openNewLeadModal() {
       openConfirmEventModal(freshLead);
     } else {
       renderMain();
+    }
+  });
+}
+
+function openEditLeadModal(leadId) {
+  const lead = LEADS.find((l) => l.id === leadId);
+  if (!lead) return;
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>Edit lead</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-body">
+          <label>Name / organisation</label>
+          <input id="mName" value="${lead.name || ""}" />
+          <div class="row-2">
+            <div><label>Phone</label><input id="mPhone" value="${lead.phone || ""}" placeholder="+91 ..." /></div>
+            <div><label>Email</label><input id="mEmail" value="${lead.email || ""}" placeholder="name@example.com" /></div>
+          </div>
+          <div class="row-2">
+            <div><label>Format wanted</label><select id="mType">${CONFIG.packages.map((p) => `<option value="${p.id}" ${p.id === lead.event_type ? "selected" : ""}>${p.name}</option>`).join("")}</select></div>
+            <div><label>City</label><input id="mCity" value="${lead.city || ""}" placeholder="e.g. Siliguri" /></div>
+          </div>
+          <div class="row-2">
+            <div><label>No. of guests</label><select id="mGuests"><option value="">Not specified</option>${CONFIG.guestRanges.map((g) => `<option value="${g}" ${g === lead.guest_range ? "selected" : ""}>${g}</option>`).join("")}</select></div>
+            <div><label>Occasion</label><select id="mOccasion"><option value="">Not specified</option>${CONFIG.occasions.map((o) => `<option value="${o}" ${o === lead.occasion ? "selected" : ""}>${o}</option>`).join("")}</select></div>
+          </div>
+          ${lead.combo_group_id ? `<p class="muted small">This event is part of a combo booking. Editing the format/date here only changes this one event — the shared client details are separate per event.</p>` : ""}
+        </div>
+        <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Save changes</button></div>
+      </div>
+    </div>
+  `;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#submitModal").addEventListener("click", async () => {
+    const name = root.querySelector("#mName").value.trim();
+    if (!name) return alert("Name is required.");
+    const btn = root.querySelector("#submitModal");
+    btn.disabled = true;
+    try {
+      await api(`/api/leads/${leadId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name,
+          phone: root.querySelector("#mPhone").value.trim() || null,
+          email: root.querySelector("#mEmail").value.trim() || null,
+          eventType: root.querySelector("#mType").value,
+          city: root.querySelector("#mCity").value.trim() || null,
+          guestRange: root.querySelector("#mGuests").value || null,
+          occasion: root.querySelector("#mOccasion").value || null,
+        }),
+      });
+      await refreshLeads();
+      close();
+      renderMain();
+    } catch (err) {
+      alert(err.message);
+      btn.disabled = false;
     }
   });
 }

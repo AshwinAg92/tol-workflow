@@ -458,7 +458,7 @@ app.post("/api/leads", async (req, res) => {
 // amount, so Accounts/profit totals aren't double-counted across the group —
 // the others just point back to it for display.
 app.post("/api/leads/combo", requireAuth, async (req, res) => {
-  const { name, phone, email, city, occasion, guestRange, events, budget, finalAmount, alreadyConfirmed } = req.body;
+  const { name, phone, email, city, occasion, guestRange, events, budget, finalAmount, alreadyConfirmed, advanceAmount, advanceDate } = req.body;
   if (!name) return res.status(400).json({ error: "Name is required" });
   if (!Array.isArray(events) || events.length < 2) return res.status(400).json({ error: "Provide at least two format/date combinations for a combo booking" });
   for (const e of events) {
@@ -486,6 +486,12 @@ app.post("/api/leads/combo", requireAuth, async (req, res) => {
     ]);
     createdIds.push(id);
   }
+  if (alreadyConfirmed && advanceAmount && Number(advanceAmount) > 0 && advanceDate) {
+    await pool.query(`
+      INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, created_at)
+      VALUES ($1, $2, $3, $4, NULL, NULL, $5)
+    `, [uuid(), createdIds[0], Number(advanceAmount), advanceDate, now]);
+  }
   const rows = (await pool.query("SELECT * FROM leads WHERE id = ANY($1::text[]) ORDER BY date ASC", [createdIds])).rows;
   res.status(201).json(rows);
   logActivity(req, `Combo booking added for ${name}: ${events.map((e) => packageName(e.eventType)).join(" + ")}${alreadyConfirmed && finalAmount ? ` — ₹${Number(finalAmount).toLocaleString("en-IN")}` : ""}`, createdIds[0]);
@@ -502,10 +508,13 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   // Event day timing is editable by anyone who can plan the team for an event
   // (a manager without full Leads access included); everything else — stage,
   // amounts, notes — needs full Leads access.
-  const leadsOnlyFields = ["stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "date"];
+  const leadsOnlyFields = [
+    "stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "date",
+    "name", "phone", "email", "city", "event_type", "occasion", "guest_range",
+  ];
   const sharedFields = ["event_time", "soundcheck_time", "venue"];
   if (!hasLeads) {
-    const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f);
+    const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f);
     const attemptedRestricted = leadsOnlyFields.some((f) => req.body[keyFor(f)] !== undefined);
     if (attemptedRestricted) return res.status(403).json({ error: "You don't have permission to update those fields" });
   }
@@ -527,7 +536,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const updates = [];
   const values = [];
   fields.forEach((f) => {
-    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f;
+    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f;
     if (req.body[key] !== undefined) {
       values.push(req.body[key]);
       updates.push(`${f} = $${values.length}`);
@@ -1091,7 +1100,7 @@ app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, re
   const expensesByLead = {};
   expenseSums.forEach((e) => (expensesByLead[e.lead_id] = Number(e.total)));
 
-  const bookings = rows.map((l) => {
+  const perLead = rows.map((l) => {
     const revenue = l.final_amount || l.quote_amount || 0;
     const expenses = expensesByLead[l.id] || 0;
     if (l.combo_group_id) {
@@ -1111,6 +1120,26 @@ app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, re
     }
     return { ...l, received: receivedByLead[l.id] || 0, expenses, profit: revenue - expenses };
   });
+
+  // Collapse each combo group into one row for display — Disha's Bhajan
+  // Jamming + Musical Pheras should read as one booking in Accounts, not two,
+  // even though they're separate leads underneath for calendar/team planning.
+  const seenCombo = new Set();
+  const bookings = [];
+  for (const l of perLead) {
+    if (!l.combo_group_id) { bookings.push(l); continue; }
+    if (seenCombo.has(l.combo_group_id)) continue;
+    seenCombo.add(l.combo_group_id);
+    const group = perLead.filter((x) => x.combo_group_id === l.combo_group_id);
+    const primary = group.find((x) => x.is_combo_primary) || group[0];
+    bookings.push({
+      ...primary,
+      comboEvents: group.map((x) => ({ id: x.id, event_type: x.event_type, date: x.date })),
+      received: group.reduce((s, x) => s + x.received, 0),
+      expenses: group.reduce((s, x) => s + x.expenses, 0),
+      profit: primary.profit,
+    });
+  }
   const totals = bookings.reduce(
     (acc, l) => {
       acc.quoted += l.final_amount || l.quote_amount || 0;
@@ -1133,7 +1162,7 @@ app.get("/api/ledger", requireAuth, requireSection("accounts"), async (req, res)
     LEFT JOIN team ON team.id = expenses.team_id
     ORDER BY expenses.created_at ASC
   `)).rows;
-  const result = leads.map((l) => {
+  const perLead = leads.map((l) => {
     const leadPayments = payments.filter((p) => p.lead_id === l.id);
     const leadExpenses = expenses.filter((e) => e.lead_id === l.id);
     const totalReceived = leadPayments.reduce((s, p) => s + p.amount, 0);
@@ -1141,6 +1170,32 @@ app.get("/api/ledger", requireAuth, requireSection("accounts"), async (req, res)
     const total = l.final_amount || l.quote_amount || 0;
     return { ...l, payments: leadPayments, expenses: leadExpenses, totalReceived, totalExpenses, profit: total - totalExpenses, balance: total - totalReceived };
   });
+
+  // Combo bookings collapse into a single ledger entry — combined payments,
+  // combined expenses across every linked event, one balance/profit figure —
+  // so the client picker and ledger detail show one "Disha", not two.
+  const seenCombo = new Set();
+  const result = [];
+  for (const l of perLead) {
+    if (!l.combo_group_id) { result.push(l); continue; }
+    if (seenCombo.has(l.combo_group_id)) continue;
+    seenCombo.add(l.combo_group_id);
+    const group = perLead.filter((x) => x.combo_group_id === l.combo_group_id);
+    const primary = group.find((x) => x.is_combo_primary) || group[0];
+    const total = primary.final_amount || primary.quote_amount || 0;
+    const totalExpenses = group.reduce((s, x) => s + x.totalExpenses, 0);
+    const totalReceived = group.reduce((s, x) => s + x.totalReceived, 0);
+    result.push({
+      ...primary,
+      comboEvents: group.map((x) => ({ id: x.id, event_type: x.event_type, date: x.date })),
+      payments: group.flatMap((x) => x.payments),
+      expenses: group.flatMap((x) => x.expenses),
+      totalReceived,
+      totalExpenses,
+      profit: total - totalExpenses,
+      balance: total - totalReceived,
+    });
+  }
   res.json(result);
 });
 
