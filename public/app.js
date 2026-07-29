@@ -638,9 +638,13 @@ function renderLeadsLog(main) {
     rows.innerHTML = `<div class="board-empty">No queries match these filters</div>`;
   } else {
     sorted.forEach((l) => {
+      const comboSiblings = l.combo_group_id ? LEADS.filter((s) => s.combo_group_id === l.combo_group_id && s.id !== l.id) : [];
+      const comboPrimary = l.combo_group_id ? (l.is_combo_primary ? l : comboSiblings.find((s) => s.is_combo_primary)) : null;
+      const displayQuote = comboPrimary ? comboPrimary.quote_amount : l.quote_amount;
+      const displayFinal = comboPrimary ? comboPrimary.final_amount : l.final_amount;
       rows.appendChild(el(`
         <div class="table-row leads-table-row">
-          <span><div class="lead-name">${l.name}</div><div class="muted small">${l.phone || ""}</div>${l.occasion && (l.stage === "Confirmed" || l.stage === "Completed") ? `<div class="muted small">${l.occasion}</div>` : ""}${l.alt_date ? `<div class="muted small" style="color:#B6752C;">Alt date: ${fmtDate(l.alt_date)}</div>` : ""}</span>
+          <span><div class="lead-name">${l.name}</div><div class="muted small">${l.phone || ""}</div>${l.combo_group_id ? `<div class="muted small" style="color:#8A5FA8;">🔗 Combo with ${comboSiblings.map((s) => `${packageName(s.event_type)} (${fmtDate(s.date)})`).join(", ")}</div>` : ""}${l.occasion && (l.stage === "Confirmed" || l.stage === "Completed") ? `<div class="muted small">${l.occasion}</div>` : ""}${l.alt_date ? `<div class="muted small" style="color:#B6752C;">Alt date: ${fmtDate(l.alt_date)}</div>` : ""}</span>
           <span>${packageName(l.event_type)}</span>
           <span>${l.city || "—"}</span>
           <span class="mono">${fmtDate(l.date)}</span>
@@ -654,7 +658,7 @@ function renderLeadsLog(main) {
             ${l.stage === "New" || l.stage === "Follow-up" || l.stage === "Tentative" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
             ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Tentative") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
             ${l.quote_amount && l.stage !== "Confirmed" && l.stage !== "Completed" ? `<div class="muted small mono">Quoted: ${inr(l.quote_amount)}</div>` : ""}
-            ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Quoted: ${l.quote_amount ? inr(l.quote_amount) : "—"}</div><div class="muted small mono">Final: ${l.final_amount ? inr(l.final_amount) : "—"}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>${(l.event_time || l.soundcheck_time) ? `<div class="muted small">${l.soundcheck_time ? `SC ${fmtTimeHM(l.soundcheck_time)}` : ""}${l.soundcheck_time && l.event_time ? " · " : ""}${l.event_time ? `Event ${fmtTimeHM(l.event_time)}` : ""}</div>` : ""}${l.venue ? `<div class="muted small">📍 ${l.venue}</div>` : ""}${canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:4px;">Team</button>` : ""}` : ""}
+            ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Quoted: ${displayQuote ? inr(displayQuote) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div><div class="muted small mono">Final: ${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>${(l.event_time || l.soundcheck_time) ? `<div class="muted small">${l.soundcheck_time ? `SC ${fmtTimeHM(l.soundcheck_time)}` : ""}${l.soundcheck_time && l.event_time ? " · " : ""}${l.event_time ? `Event ${fmtTimeHM(l.event_time)}` : ""}</div>` : ""}${l.venue ? `<div class="muted small">📍 ${l.venue}</div>` : ""}${canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:4px;">Team</button>` : ""}` : ""}
             ${CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="margin-top:4px; color:#A64B3C;">🗑 Delete</button>` : ""}
           </span>
         </div>
@@ -1982,13 +1986,13 @@ async function renderAccounts(main) {
     const total = l.final_amount || l.quote_amount || 0;
     const row = el(`
       <div class="table-row" style="grid-template-columns:1.3fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr; cursor:pointer;">
-        <span>${l.name}</span>
+        <span>${l.name}${l.combo_group_id ? ` <span class="muted small" style="color:#8A5FA8;">🔗</span>` : ""}</span>
         <span class="tag" style="color:${STAGE_COLOR[l.stage]}">${l.stage}</span>
         <span class="right mono">${total ? inr(total) : "—"}</span>
         <span class="right mono">${inr(l.received)}</span>
         <span class="right mono">${inr(total - l.received)}</span>
         <span class="right mono">${l.expenses ? inr(l.expenses) : "—"}</span>
-        <span class="right mono" style="color:${l.profit >= 0 ? "#5C8A6B" : "#A64B3C"};">${inr(l.profit)}</span>
+        <span class="right mono" style="color:${l.profit == null ? "inherit" : l.profit >= 0 ? "#5C8A6B" : "#A64B3C"};">${l.profit == null ? "See combo" : inr(l.profit)}</span>
       </div>
     `);
     row.addEventListener("click", () => {
@@ -2725,15 +2729,33 @@ function openNewLeadModal() {
             <div><label>Phone</label><input id="mPhone" placeholder="+91 ..." /></div>
             <div><label>Email</label><input id="mEmail" placeholder="name@example.com" /></div>
           </div>
-          <div class="row-2">
-            <div><label>Format wanted</label><select id="mType">${CONFIG.packages.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}</select></div>
-            <div><label>City</label><input id="mCity" placeholder="e.g. Siliguri" /></div>
+          <label class="check-row" style="margin-top:6px;">
+            <input type="checkbox" id="mIsCombo" />
+            <span>Combo booking — same client, multiple formats/dates under one combined price (e.g. Bhajan Jamming on the 20th + Musical Pheras on the 21st)</span>
+          </label>
+
+          <div id="singleEventFields">
+            <div class="row-2">
+              <div><label>Format wanted</label><select id="mType">${CONFIG.packages.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}</select></div>
+              <div><label>City</label><input id="mCity" placeholder="e.g. Siliguri" /></div>
+            </div>
+            <div class="row-2">
+              <div><label>Event date</label><input id="mDate" type="date" /></div>
+              <div><label>Budget (optional)</label><input id="mBudget" placeholder="e.g. 90000" /></div>
+            </div>
           </div>
-          <div class="row-2">
-            <div><label>Event date</label><input id="mDate" type="date" /></div>
-            <div><label>Budget (optional)</label><input id="mBudget" placeholder="e.g. 90000" /></div>
+
+          <div id="comboEventFields" style="display:none;">
+            <label>City</label>
+            <input id="mComboCity" placeholder="e.g. Siliguri" style="margin-bottom:10px;" />
+            <label>Formats &amp; dates</label>
+            <div id="comboRows"></div>
+            <button class="btn-ghost" id="addComboRowBtn" style="margin-top:4px; font-size:12px; padding:4px 10px;">+ Add another format/date</button>
+            <label style="margin-top:10px;">Combined price (₹)</label>
+            <input id="mComboBudget" placeholder="e.g. 175000 (covers all events above)" />
           </div>
-          <div class="row-2">
+
+          <div class="row-2" style="margin-top:10px;">
             <div><label>No. of guests</label><select id="mGuests"><option value="">Not specified</option>${CONFIG.guestRanges.map((g) => `<option value="${g}">${g}</option>`).join("")}</select></div>
             <div><label>Occasion</label><select id="mOccasion"><option value="">Not specified</option>${CONFIG.occasions.map((o) => `<option value="${o}">${o}</option>`).join("")}</select></div>
           </div>
@@ -2743,6 +2765,10 @@ function openNewLeadModal() {
             <input type="checkbox" id="mAlreadyConfirmed" />
             <span>Already confirmed — skip straight to Confirmed (e.g. someone you know called and booked directly)</span>
           </label>
+          <div id="comboFinalRateField" style="display:none; margin-top:8px;">
+            <label>Final combined rate (₹)</label>
+            <input id="mComboFinalRate" placeholder="e.g. 175000" />
+          </div>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Add lead</button></div>
       </div>
@@ -2752,11 +2778,66 @@ function openNewLeadModal() {
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#cancelModal").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+
+  const comboRowsEl = root.querySelector("#comboRows");
+  function addComboRow() {
+    comboRowsEl.insertAdjacentHTML("beforeend", `
+      <div class="row-2 combo-row" style="margin-top:6px;">
+        <select class="combo-type">${CONFIG.packages.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}</select>
+        <input class="combo-date" type="date" />
+      </div>
+    `);
+  }
+  addComboRow();
+  addComboRow();
+  root.querySelector("#addComboRowBtn").addEventListener("click", addComboRow);
+
+  root.querySelector("#mIsCombo").addEventListener("change", (e) => {
+    root.querySelector("#singleEventFields").style.display = e.target.checked ? "none" : "";
+    root.querySelector("#comboEventFields").style.display = e.target.checked ? "" : "none";
+  });
+  root.querySelector("#mAlreadyConfirmed").addEventListener("change", (e) => {
+    root.querySelector("#comboFinalRateField").style.display = (e.target.checked && root.querySelector("#mIsCombo").checked) ? "" : "none";
+  });
+  root.querySelector("#mIsCombo").addEventListener("change", (e) => {
+    root.querySelector("#comboFinalRateField").style.display = (e.target.checked && root.querySelector("#mAlreadyConfirmed").checked) ? "" : "none";
+  });
+
   root.querySelector("#submitModal").addEventListener("click", async () => {
     const name = root.querySelector("#mName").value;
-    const date = root.querySelector("#mDate").value;
-    if (!name || !date) return alert("Name and event date are required.");
+    if (!name) return alert("Name is required.");
     const alreadyConfirmed = root.querySelector("#mAlreadyConfirmed").checked;
+    const isCombo = root.querySelector("#mIsCombo").checked;
+
+    if (isCombo) {
+      const events = [...comboRowsEl.querySelectorAll(".combo-row")].map((row) => ({
+        eventType: row.querySelector(".combo-type").value,
+        date: row.querySelector(".combo-date").value,
+      }));
+      if (events.some((e) => !e.date)) return alert("Every row needs a date.");
+      const created = await api("/api/leads/combo", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          phone: root.querySelector("#mPhone").value,
+          email: root.querySelector("#mEmail").value,
+          city: root.querySelector("#mComboCity").value,
+          events,
+          budget: root.querySelector("#mComboBudget").value ? Number(root.querySelector("#mComboBudget").value) : null,
+          finalAmount: root.querySelector("#mComboFinalRate").value ? Number(root.querySelector("#mComboFinalRate").value) : null,
+          guestRange: root.querySelector("#mGuests").value || null,
+          occasion: root.querySelector("#mOccasion").value || null,
+          alreadyConfirmed,
+        }),
+      });
+      await refreshLeads();
+      close();
+      renderMain();
+      return;
+    }
+
+    const date = root.querySelector("#mDate").value;
+    if (!date) return alert("Event date is required.");
     const created = await api("/api/leads", {
       method: "POST",
       body: JSON.stringify({

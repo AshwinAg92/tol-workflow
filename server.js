@@ -410,6 +410,7 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   res.json(rows.map((l) => ({
     id: l.id, name: l.name, date: l.date, city: l.city, event_type: l.event_type, stage: l.stage,
     event_time: l.event_time, soundcheck_time: l.soundcheck_time, occasion: l.occasion, venue: l.venue,
+    combo_group_id: l.combo_group_id, is_combo_primary: l.is_combo_primary,
   })));
 });
 
@@ -448,6 +449,46 @@ app.post("/api/leads", async (req, res) => {
   logActivity({ user: null }, `New query received: ${name} — ${packageName(eventType)}${city ? ` in ${city}` : ""}`, id);
   // New leads show up immediately in the Leads tab and dashboard "new leads"
   // count — no email/notification needed, the team works off the app directly.
+});
+
+// Combo booking: one client confirming multiple formats/dates under a single
+// combined price (e.g. Bhajan Jamming on the 20th + Musical Pheras on the
+// 21st, priced as one package). Creates one lead per format/date, linked via
+// combo_group_id. Only the first ("primary") lead carries the quote/final
+// amount, so Accounts/profit totals aren't double-counted across the group —
+// the others just point back to it for display.
+app.post("/api/leads/combo", requireAuth, async (req, res) => {
+  const { name, phone, email, city, occasion, guestRange, events, budget, finalAmount, alreadyConfirmed } = req.body;
+  if (!name) return res.status(400).json({ error: "Name is required" });
+  if (!Array.isArray(events) || events.length < 2) return res.status(400).json({ error: "Provide at least two format/date combinations for a combo booking" });
+  for (const e of events) {
+    if (!e.eventType || !e.date) return res.status(400).json({ error: "Each event needs a format and a date" });
+  }
+  const comboGroupId = uuid();
+  const now = new Date().toISOString();
+  const createdIds = [];
+  for (let i = 0; i < events.length; i++) {
+    const isPrimary = i === 0;
+    const id = uuid();
+    await pool.query(`
+      INSERT INTO leads (
+        id, name, phone, email, event_type, city, date, budget, stage, advance,
+        quote_amount, final_amount, occasion, guest_range, combo_group_id, is_combo_primary, created_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,$12,$13,$14,$15,$16)
+    `, [
+      id, name, phone || null, email || null, events[i].eventType, city || null, events[i].date,
+      isPrimary ? (budget || null) : null,
+      alreadyConfirmed ? "Confirmed" : "New",
+      isPrimary ? (budget || null) : null,
+      isPrimary && alreadyConfirmed ? (finalAmount || null) : null,
+      occasion || null, guestRange || null, comboGroupId, isPrimary ? 1 : 0, now,
+    ]);
+    createdIds.push(id);
+  }
+  const rows = (await pool.query("SELECT * FROM leads WHERE id = ANY($1::text[]) ORDER BY date ASC", [createdIds])).rows;
+  res.status(201).json(rows);
+  logActivity(req, `Combo booking added for ${name}: ${events.map((e) => packageName(e.eventType)).join(" + ")}${alreadyConfirmed && finalAmount ? ` — ₹${Number(finalAmount).toLocaleString("en-IN")}` : ""}`, createdIds[0]);
 });
 
 app.patch("/api/leads/:id", requireAuth, async (req, res) => {
@@ -1053,6 +1094,21 @@ app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, re
   const bookings = rows.map((l) => {
     const revenue = l.final_amount || l.quote_amount || 0;
     const expenses = expensesByLead[l.id] || 0;
+    if (l.combo_group_id) {
+      const groupLeadIds = rows.filter((r) => r.combo_group_id === l.combo_group_id).map((r) => r.id);
+      const groupExpenses = groupLeadIds.reduce((sum, id) => sum + (expensesByLead[id] || 0), 0);
+      if (l.is_combo_primary) {
+        // Primary carries the combined price — its profit accounts for every
+        // linked event's expenses, not just its own, so the group nets out
+        // correctly instead of splitting oddly across rows.
+        return { ...l, received: receivedByLead[l.id] || 0, expenses, profit: revenue - groupExpenses };
+      }
+      // Non-primary combo events have no revenue of their own by design (the
+      // price lives on the primary) — show their own expenses for visibility,
+      // but skip a per-row profit figure since it would misleadingly look
+      // negative even though the group as a whole may be profitable.
+      return { ...l, received: receivedByLead[l.id] || 0, expenses, profit: null };
+    }
     return { ...l, received: receivedByLead[l.id] || 0, expenses, profit: revenue - expenses };
   });
   const totals = bookings.reduce(
@@ -1060,7 +1116,7 @@ app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, re
       acc.quoted += l.final_amount || l.quote_amount || 0;
       acc.received += l.received;
       acc.expenses += l.expenses;
-      acc.profit += l.profit;
+      acc.profit += l.profit || 0;
       return acc;
     },
     { quoted: 0, received: 0, expenses: 0, profit: 0 }

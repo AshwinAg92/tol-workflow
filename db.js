@@ -169,6 +169,8 @@ async function setup() {
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS event_time TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS soundcheck_time TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS is_seed INTEGER NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS combo_group_id TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS is_combo_primary INTEGER NOT NULL DEFAULT 0`);
   const demoLeadNames = ["Priya & Raj Sharma", "Anand Bhajan Sangeet Committee", "Meera Foundation", "Kapoor Family (Naming Ceremony)", "Sunrise Housing Society", "Shanti Path Trust", "Choudhury Family"];
   const seedFlaggedCount = (await pool.query("SELECT COUNT(*) AS c FROM leads WHERE is_seed = 1")).rows[0].c;
   if (Number(seedFlaggedCount) === 0) {
