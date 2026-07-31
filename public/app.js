@@ -598,12 +598,7 @@ function renderLeadsLog(main) {
     </div>
 
     <div class="filter-row" id="filterRow"></div>
-    <div class="table leads-table">
-      <div class="table-head leads-table-row">
-        <span>Query</span><span>Format</span><span>City</span><span>Date</span><span>Submitted</span><span>Stage</span><span></span>
-      </div>
-      <div id="leadsRows"></div>
-    </div>
+    <div id="leadsRows"></div>
   `;
 
   main.querySelector("#leadsSearchInput").addEventListener("input", (e) => {
@@ -643,42 +638,58 @@ function renderLeadsLog(main) {
       const displayQuote = comboPrimary ? comboPrimary.quote_amount : l.quote_amount;
       const displayFinal = comboPrimary ? comboPrimary.final_amount : l.final_amount;
       const hasExtraDetails = l.guest_range || l.how_heard || l.details || l.whatsapp_optin != null || l.notes;
-      rows.appendChild(el(`
-        <div class="table-row leads-table-row">
-          <span><div class="lead-name">${l.name}</div><div class="muted small">${l.phone || ""}</div>${l.combo_group_id ? `<div class="muted small" style="color:#8A5FA8;">🔗 Combo with ${comboSiblings.map((s) => `${packageName(s.event_type)} (${fmtDate(s.date)})`).join(", ")}</div>` : ""}${l.occasion && (l.stage === "Confirmed" || l.stage === "Completed") ? `<div class="muted small">${l.occasion}</div>` : ""}${l.alt_date ? `<div class="muted small" style="color:#B6752C;">Alt date: ${fmtDate(l.alt_date)}</div>` : ""}</span>
-          <span>${packageName(l.event_type)}</span>
-          <span>${l.city || "—"}</span>
-          <span class="mono">${fmtDate(l.date)}</span>
-          <span class="muted small">${fmtDateTime(l.created_at)}</span>
-          <span>
-            <select class="stage-select" data-lead-id="${l.id}" style="color:${STAGE_COLOR[l.stage]}">
+      const isConfirmedOrDone = l.stage === "Confirmed" || l.stage === "Completed";
+      const displayReceived = comboPrimary ? comboPrimary.received : l.received;
+      const balance = (displayFinal || displayQuote || 0) - (displayReceived || 0);
+      const card = el(`
+        <div class="card lead-card" style="margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+            <div>
+              <div class="lead-name">${l.name}</div>
+              <div class="muted small">${l.phone || ""}</div>
+              ${l.combo_group_id ? `<div class="muted small" style="color:#8A5FA8;">🔗 Combo with ${comboSiblings.map((s) => `${packageName(s.event_type)} (${fmtDate(s.date)})`).join(", ")}</div>` : ""}
+              ${l.occasion && isConfirmedOrDone ? `<div class="muted small">${l.occasion}</div>` : ""}
+              ${l.alt_date ? `<div class="muted small" style="color:#B6752C;">Alt date: ${fmtDate(l.alt_date)}</div>` : ""}
+            </div>
+            <select class="stage-select" data-lead-id="${l.id}" style="color:${STAGE_COLOR[l.stage]}; flex-shrink:0; width:auto;">
               ${CONFIG.stages.filter((s) => s !== "Completed" || s === l.stage).map((s) => `<option value="${s}" ${s === l.stage ? "selected" : ""}>${s}</option>`).join("")}
             </select>
-          </span>
-          <span style="display:flex; flex-direction:column; gap:4px;">
+          </div>
+          <div class="muted small" style="margin-top:8px;">${packageName(l.event_type)} · ${l.city || "—"} · <span class="mono">${fmtDate(l.date)}</span></div>
+          <div class="muted small">Submitted ${fmtDateTime(l.created_at)}</div>
+          ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}</div>` : ""}
+          ${isConfirmedOrDone ? `
+            <div class="lead-card-financials">
+              <div><span class="muted small">Final</span><div class="mono">${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
+              <div><span class="muted small">Received</span><div class="mono">${inr(displayReceived || 0)}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
+              <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
+            </div>
+            ${(l.event_time || l.soundcheck_time) ? `<div class="muted small" style="margin-top:6px;">${l.soundcheck_time ? `SC ${fmtTimeHM(l.soundcheck_time)}` : ""}${l.soundcheck_time && l.event_time ? " · " : ""}${l.event_time ? `Event ${fmtTimeHM(l.event_time)}` : ""}</div>` : ""}
+            ${l.venue ? `<div class="muted small">📍 ${l.venue}</div>` : ""}
+          ` : ""}
+          <div class="lead-card-actions">
             ${l.stage === "New" || l.stage === "Follow-up" || l.stage === "Tentative" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
             ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Tentative") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
-            ${l.quote_amount && l.stage !== "Confirmed" && l.stage !== "Completed" ? `<div class="muted small mono">Quoted: ${inr(l.quote_amount)}</div>` : ""}
-            ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Quoted: ${displayQuote ? inr(displayQuote) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div><div class="muted small mono">Final: ${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>${(l.event_time || l.soundcheck_time) ? `<div class="muted small">${l.soundcheck_time ? `SC ${fmtTimeHM(l.soundcheck_time)}` : ""}${l.soundcheck_time && l.event_time ? " · " : ""}${l.event_time ? `Event ${fmtTimeHM(l.event_time)}` : ""}</div>` : ""}${l.venue ? `<div class="muted small">📍 ${l.venue}</div>` : ""}${canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:4px;">Team</button>` : ""}` : ""}
-            ${hasExtraDetails ? `<button class="btn-ghost toggle-details-btn" data-lead-id="${l.id}" style="margin-top:4px;">ℹ️ Details</button>` : ""}
-            ${hasLeadsAccess() && l.stage !== "Completed" ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}" style="margin-top:4px;">✎ Edit</button>` : ""}
-            ${CURRENT_USER?.accessLevel === "admin" && l.stage !== "Completed" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="margin-top:4px; color:#A64B3C;">🗑 Delete</button>` : ""}
-            ${l.stage === "Completed" ? `<div class="muted small" style="margin-top:4px;">🔒 Completed — locked</div>` : ""}
-          </span>
-        </div>
-      `));
-      if (hasExtraDetails) {
-        rows.appendChild(el(`
-          <div class="lead-details-panel" data-details-for="${l.id}" style="display:none; padding:10px 14px; background:#F5F0E4; border-bottom:1px solid #EFE9DC; font-size:13px;">
-            ${l.guest_range ? `<div><strong>Guests:</strong> ${l.guest_range}</div>` : ""}
-            ${l.occasion && !(l.stage === "Confirmed" || l.stage === "Completed") ? `<div><strong>Occasion:</strong> ${l.occasion}</div>` : ""}
-            ${l.how_heard ? `<div><strong>Heard about us via:</strong> ${l.how_heard}</div>` : ""}
-            ${l.whatsapp_optin != null ? `<div><strong>OK to WhatsApp:</strong> ${l.whatsapp_optin ? "Yes" : "No"}</div>` : ""}
-            ${l.details ? `<div style="margin-top:4px;"><strong>Customer's notes:</strong><br />${l.details}</div>` : ""}
-            ${l.notes ? `<div style="margin-top:4px;"><strong>Internal notes:</strong><br />${l.notes}</div>` : ""}
+            ${isConfirmedOrDone && hasAccountsAccess() ? `<button class="btn-ghost payments-btn" data-lead-id="${l.id}">💰 Payments</button>` : ""}
+            ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team</button>` : ""}
+            ${hasExtraDetails ? `<button class="btn-ghost toggle-details-btn" data-lead-id="${l.id}">ℹ️ Details</button>` : ""}
+            ${hasLeadsAccess() && l.stage !== "Completed" ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}">✎ Edit</button>` : ""}
+            ${CURRENT_USER?.accessLevel === "admin" && l.stage !== "Completed" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="color:#A64B3C;">🗑 Delete</button>` : ""}
+            ${l.stage === "Completed" ? `<span class="muted small">🔒 Completed — locked</span>` : ""}
           </div>
-        `));
-      }
+          ${hasExtraDetails ? `
+            <div class="lead-details-panel" data-details-for="${l.id}" style="display:none;">
+              ${l.guest_range ? `<div><strong>Guests:</strong> ${l.guest_range}</div>` : ""}
+              ${l.occasion && !isConfirmedOrDone ? `<div><strong>Occasion:</strong> ${l.occasion}</div>` : ""}
+              ${l.how_heard ? `<div><strong>Heard about us via:</strong> ${l.how_heard}</div>` : ""}
+              ${l.whatsapp_optin != null ? `<div><strong>OK to WhatsApp:</strong> ${l.whatsapp_optin ? "Yes" : "No"}</div>` : ""}
+              ${l.details ? `<div style="margin-top:4px;"><strong>Customer's notes:</strong><br />${l.details}</div>` : ""}
+              ${l.notes ? `<div style="margin-top:4px;"><strong>Internal notes:</strong><br />${l.notes}</div>` : ""}
+            </div>
+          ` : ""}
+        </div>
+      `);
+      rows.appendChild(card);
     });
   }
 
@@ -709,6 +720,10 @@ function renderLeadsLog(main) {
 
   main.querySelectorAll(".assign-team-btn").forEach((btn) => {
     btn.addEventListener("click", () => openAssignTeamModal(btn.dataset.leadId));
+  });
+
+  main.querySelectorAll(".payments-btn").forEach((btn) => {
+    btn.addEventListener("click", () => openLeadPaymentsModal(btn.dataset.leadId));
   });
 
   main.querySelectorAll(".edit-lead-btn").forEach((btn) => {
@@ -744,6 +759,27 @@ function renderLeadsLog(main) {
       const leadId = sel.dataset.leadId;
       const newStage = sel.value;
       const lead = LEADS.find((l) => l.id === leadId);
+      // Completed events are locked — the only thing the server allows is
+      // moving the stage away from Completed, alone, to "reopen" it. Route
+      // that as a plain single-field PATCH rather than the full Confirm
+      // modal (which sends stage+finalAmount+date together and would be
+      // rejected as an edit attempt on a locked record).
+      if (lead.stage === "Completed" && newStage !== "Completed") {
+        if (!confirm(`Reopen "${lead.name}" by moving it back to ${newStage}? You can re-confirm it properly afterward if needed.`)) {
+          renderMain();
+          return;
+        }
+        sel.disabled = true;
+        try {
+          await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ stage: newStage }) });
+          await refreshLeads();
+          renderMain();
+        } catch (err) {
+          alert(err.message);
+          renderMain();
+        }
+        return;
+      }
       if (newStage === "Confirmed" && lead.stage !== "Confirmed") {
         openConfirmEventModal(lead);
         return;
@@ -1713,6 +1749,150 @@ function openEditLoginModal(user) {
       alert(err.message);
     }
   });
+}
+
+// One place to finish "the payment status" for an event right after it wraps —
+// client payments received, balance due, and every artist's paid/pending
+// status — without leaving the Leads tab to go find it all in Accounts.
+async function openLeadPaymentsModal(leadId) {
+  const lead = LEADS.find((l) => l.id === leadId);
+  if (!lead) return;
+
+  // Combo bookings track money on the primary event only — redirect there
+  // instead of showing a confusing empty screen for the secondary one.
+  if (lead.combo_group_id && !lead.is_combo_primary) {
+    const primary = LEADS.find((l) => l.combo_group_id === lead.combo_group_id && l.is_combo_primary);
+    if (primary) return openLeadPaymentsModal(primary.id);
+  }
+
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>Payments — ${lead.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-body"><p class="muted small">Loading…</p></div>
+        <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
+      </div>
+    </div>
+  `;
+  const close = () => { root.innerHTML = ""; renderMain(); };
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+
+  const [payments, expenses] = await Promise.all([
+    api(`/api/leads/${leadId}/payments`),
+    api(`/api/expenses?leadId=${leadId}`),
+  ]);
+  draw(payments, expenses);
+
+  function draw(payments, expenses) {
+    const total = lead.final_amount || lead.quote_amount || 0;
+    const received = payments.reduce((s, p) => s + p.amount, 0);
+    const balance = total - received;
+    const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+    const pendingExpenses = expenses.filter((e) => !e.paid);
+    const body = root.querySelector(".modal-body");
+    body.innerHTML = `
+      <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:16px;">
+        <div class="card summary-card"><div class="muted">Final rate</div><div class="mono big">${inr(total)}</div></div>
+        <div class="card summary-card"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
+        <div class="card summary-card"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
+      </div>
+
+      <div class="section-label">Client payments</div>
+      <div style="margin-bottom:10px;">
+        ${payments.length === 0 ? `<p class="muted small">No payments recorded yet.</p>` : payments.map((p) => `
+          <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <div class="mono">${inr(p.amount)}</div>
+              <div class="muted small">${fmtDate(p.payment_date)}${p.payment_mode ? ` · ${p.payment_mode}` : ""}</div>
+            </div>
+            <button class="icon-btn" data-delete-payment="${p.id}">✕</button>
+          </div>
+        `).join("")}
+      </div>
+      <div class="row-2">
+        <input id="lpAmount" type="number" placeholder="Amount ₹" />
+        <input id="lpDate" type="date" value="${new Date().toISOString().slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" />
+      </div>
+      <select id="lpMode" style="margin-top:8px;">
+        <option value="">Mode —</option>
+        <option value="Cash">Cash</option>
+        <option value="UPI">UPI</option>
+      </select>
+      <button class="btn-primary full" id="lpAddBtn" style="margin-top:10px;">Add payment</button>
+
+      <div class="section-label" style="margin-top:20px;">Artist payments${totalExpenses ? ` — ${inr(totalExpenses)} total${pendingExpenses.length ? `, ${inr(pendingExpenses.reduce((s, e) => s + e.amount, 0))} pending` : ""}` : ""}</div>
+      <div>
+        ${expenses.length === 0 ? `<p class="muted small">No artist fees or other costs logged for this event yet — add them from the Team button.</p>` : expenses.map((e) => {
+          const member = TEAM.find((m) => m.id === e.team_id);
+          return `
+            <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <div>${e.head}${member ? ` <span class="muted small">— ${member.name}</span>` : ""}</div>
+                <div class="muted small mono">${inr(e.amount)}${e.paid && e.payment_date ? ` · Paid ${fmtDate(e.payment_date)}${e.payment_mode ? ` (${e.payment_mode})` : ""}` : ""}</div>
+              </div>
+              ${e.paid
+                ? `<span class="tag" style="color:#5C8A6B;">Paid</span>`
+                : `<button class="btn-ghost mark-expense-paid-btn" data-expense-id="${e.id}">Mark paid</button>`}
+            </div>
+          `;
+        }).join("")}
+      </div>
+    `;
+
+    body.querySelectorAll("[data-delete-payment]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Remove this payment?")) return;
+        await api(`/api/payments/${btn.dataset.deletePayment}`, { method: "DELETE" });
+        const [freshPayments, freshExpenses] = await Promise.all([
+          api(`/api/leads/${leadId}/payments`), api(`/api/expenses?leadId=${leadId}`),
+        ]);
+        draw(freshPayments, freshExpenses);
+      });
+    });
+
+    body.querySelectorAll(".mark-expense-paid-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await api(`/api/expenses/${btn.dataset.expenseId}`, { method: "PATCH", body: JSON.stringify({ paid: true }) });
+          const [freshPayments, freshExpenses] = await Promise.all([
+            api(`/api/leads/${leadId}/payments`), api(`/api/expenses?leadId=${leadId}`),
+          ]);
+          draw(freshPayments, freshExpenses);
+        } catch (err) {
+          alert(err.message);
+          btn.disabled = false;
+        }
+      });
+    });
+
+    body.querySelector("#lpAddBtn").addEventListener("click", async () => {
+      const amount = body.querySelector("#lpAmount").value;
+      const date = body.querySelector("#lpDate").value;
+      if (!amount || Number(amount) <= 0) return alert("Enter a valid amount.");
+      if (!date) return alert("Pick a date.");
+      const btn = body.querySelector("#lpAddBtn");
+      btn.disabled = true;
+      try {
+        await api(`/api/leads/${leadId}/payments`, {
+          method: "POST",
+          body: JSON.stringify({ amount: Number(amount), date, mode: body.querySelector("#lpMode").value || null }),
+        });
+        await refreshLeads();
+        const [freshPayments, freshExpenses] = await Promise.all([
+          api(`/api/leads/${leadId}/payments`), api(`/api/expenses?leadId=${leadId}`),
+        ]);
+        draw(freshPayments, freshExpenses);
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
 }
 
 async function openAssignTeamModal(leadId) {
@@ -3281,7 +3461,12 @@ async function renderMyEvents(main) {
   main.innerHTML = `<div class="view-head"><div><h2>My Events</h2><p class="muted">Your own assigned events — accept/decline, artist fee, and pay status.</p></div></div><p class="muted">Loading your events…</p>`;
   const allEvents = await api("/api/my/events");
   const today = new Date().toISOString().slice(0, 10);
+  const sixtyDaysAgo = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
   const events = allEvents.filter((e) => e.date >= today);
+  // Upcoming events need the full accept/decline workflow; past ones are just
+  // for checking "did I get paid for that gig" — so a lighter read-only card,
+  // capped to the last 60 days so this doesn't grow forever.
+  const recentPast = allEvents.filter((e) => e.date < today && e.date >= sixtyDaysAgo && e.stage !== "Cancelled").sort((a, b) => new Date(b.date) - new Date(a.date));
   const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined", cancel_requested: "Cancellation requested" };
   const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C", cancel_requested: "#B6752C" };
 
@@ -3339,6 +3524,26 @@ async function renderMyEvents(main) {
         `}
       </div>
     `).join("")}
+
+    ${recentPast.length > 0 ? `
+      <div class="section-label" style="margin-top:20px;">Recently completed — pay status</div>
+      ${recentPast.map((e) => `
+        <div class="card performer-event-card" style="margin-bottom:10px;">
+          <div class="performer-event-head">
+            <div>
+              <div class="team-name">${e.lead_name}</div>
+              <div class="muted small">${packageName(e.event_type)} · ${fmtDate(e.date)}</div>
+            </div>
+            <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
+          </div>
+          <div class="performer-event-row">
+            <span class="muted small">Artist fee:</span>
+            <span class="mono">${e.fee_amount ? inr(e.fee_amount) : "—"}</span>
+          </div>
+          ${e.paid && e.payment_date ? `<div class="muted small">Paid on ${fmtDate(e.payment_date)}${e.payment_mode ? ` via ${e.payment_mode}` : ""}</div>` : ""}
+        </div>
+      `).join("")}
+    ` : ""}
   `;
 
   main.querySelectorAll("[data-respond-select]").forEach((sel) => {
@@ -3441,6 +3646,10 @@ async function renderPerformerApp() {
   // past/completed gigs are dropped here (the Calendar section above still
   // shows everything, since browsing past months there is legitimate).
   const upcomingEvents = activeEvents.filter((e) => e.date >= today0);
+  // Performers still need to check "did I get paid" for a gig they just did,
+  // even though it's no longer "upcoming" — capped to 60 days back.
+  const sixtyDaysAgo0 = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+  const recentPastEvents = activeEvents.filter((e) => e.date < today0 && e.date >= sixtyDaysAgo0).sort((a, b) => new Date(b.date) - new Date(a.date));
   const paidCount = activeEvents.filter((e) => e.paid).length;
   const unpaidCount = activeEvents.length - paidCount;
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -3546,6 +3755,26 @@ async function renderPerformerApp() {
         `}
       </div>
     `).join("")}
+
+    ${recentPastEvents.length > 0 ? `
+      <div class="section-label" style="margin-top:20px;">Recently completed — pay status</div>
+      ${recentPastEvents.map((e) => `
+        <div class="card performer-event-card" style="margin-bottom:10px;">
+          <div class="performer-event-head">
+            <div>
+              <div class="team-name">${e.lead_name}</div>
+              <div class="muted small">${packageName(e.event_type)} · ${fmtDate(e.date)}</div>
+            </div>
+            <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
+          </div>
+          <div class="performer-event-row">
+            <span class="muted small">Artist fee:</span>
+            <span class="mono">${e.fee_amount ? inr(e.fee_amount) : "—"}</span>
+          </div>
+          ${e.paid && e.payment_date ? `<div class="muted small">Paid on ${fmtDate(e.payment_date)}${e.payment_mode ? ` via ${e.payment_mode}` : ""}</div>` : ""}
+        </div>
+      `).join("")}
+    ` : ""}
 
     <div class="section-label" style="margin-top:20px;">Your tasks</div>
     <div class="card" id="perfTasksCard" style="margin-bottom:20px;">

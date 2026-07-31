@@ -400,16 +400,25 @@ app.patch("/api/pricing", requireAuth, requireAdmin, async (req, res) => {
 // ---------- Leads ----------
 app.get("/api/leads", requireAuth, async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM leads ORDER BY created_at DESC");
+  // The old single `advance` column is dead — nothing writes to it anymore.
+  // Real payments live in the payments table (recorded via Accounts, the
+  // Confirm-event flow, or combo bookings). Compute the true received total
+  // per lead here so every screen shows accurate figures, not a stale ₹0.
+  const paymentSums = (await pool.query("SELECT lead_id, COALESCE(SUM(amount), 0) AS total FROM payments GROUP BY lead_id")).rows;
+  const receivedByLead = {};
+  paymentSums.forEach((p) => (receivedByLead[p.lead_id] = Number(p.total)));
+  const withReceived = rows.map((l) => ({ ...l, received: receivedByLead[l.id] || 0 }));
+
   let hasLeadsAccess = true;
   if (req.user.access_level === "staff") {
     let perms = null;
     try { perms = req.user.permissions ? JSON.parse(req.user.permissions) : null; } catch { perms = null; }
     if (perms && !perms.includes("leads")) hasLeadsAccess = false;
   }
-  if (hasLeadsAccess) return res.json(rows);
+  if (hasLeadsAccess) return res.json(withReceived);
   // Restricted staff (e.g. a manager who can assign team but not view the pipeline)
   // still need basic event info for the calendar and team assignment — nothing sensitive.
-  res.json(rows.map((l) => ({
+  res.json(withReceived.map((l) => ({
     id: l.id, name: l.name, date: l.date, city: l.city, event_type: l.event_type, stage: l.stage,
     event_time: l.event_time, soundcheck_time: l.soundcheck_time, occasion: l.occasion, venue: l.venue,
     combo_group_id: l.combo_group_id, is_combo_primary: l.is_combo_primary,
