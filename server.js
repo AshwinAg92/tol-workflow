@@ -507,6 +507,18 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const canAssignTeam = userHasSection(req.user, "assign_team");
   if (!hasLeads && !canAssignTeam) return res.status(403).json({ error: "You don't have permission to update this event" });
 
+  // Completed events are a closed record — no edits at all, with one deliberate
+  // escape hatch: a Leads-access user can move the stage away from Completed
+  // (as a standalone action) to "reopen" it if something genuinely needs
+  // correcting, after which normal editing rules apply again.
+  if (lead.stage === "Completed") {
+    const onlyReopening = Object.keys(req.body).length === 1 && req.body.stage !== undefined && req.body.stage !== "Completed";
+    if (!onlyReopening) {
+      return res.status(403).json({ error: "Completed events can't be edited — they're a closed record. Change the stage away from Completed first if something needs correcting." });
+    }
+    if (!hasLeads) return res.status(403).json({ error: "Only a Leads-access user can reopen a Completed event." });
+  }
+
   // Event day timing is editable by anyone who can plan the team for an event
   // (a manager without full Leads access included); everything else — stage,
   // amounts, notes — needs full Leads access.
@@ -581,6 +593,9 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
 app.delete("/api/leads/:id", requireAuth, requireAdmin, async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
+  if (lead.stage === "Completed") {
+    return res.status(403).json({ error: "Completed events can't be deleted — they're a closed record of past business." });
+  }
 
   const assignmentIds = (await pool.query("SELECT id FROM event_assignments WHERE lead_id = $1", [req.params.id])).rows.map((r) => r.id);
   if (assignmentIds.length > 0) {
@@ -1534,8 +1549,8 @@ function getMailTransport() {
 async function sendBackupEmail(recipient) {
   const transport = getMailTransport();
   if (!transport) throw new Error("Email isn't configured (SMTP_HOST/SMTP_USER/SMTP_PASS missing) — set those in Railway's Variables tab first.");
-  const to = recipient || process.env.TEAM_NOTIFY_EMAIL;
-  if (!to) throw new Error("No recipient email configured (TEAM_NOTIFY_EMAIL is empty).");
+  const to = recipient || process.env.BACKUP_EMAIL || "togetheroutloudclub@gmail.com";
+  if (!to) throw new Error("No recipient email configured.");
   const buffer = await buildBackupWorkbook();
   const today = new Date().toISOString().slice(0, 10);
   await transport.sendMail({

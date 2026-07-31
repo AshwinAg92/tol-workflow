@@ -661,8 +661,9 @@ function renderLeadsLog(main) {
             ${l.quote_amount && l.stage !== "Confirmed" && l.stage !== "Completed" ? `<div class="muted small mono">Quoted: ${inr(l.quote_amount)}</div>` : ""}
             ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Quoted: ${displayQuote ? inr(displayQuote) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div><div class="muted small mono">Final: ${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>${(l.event_time || l.soundcheck_time) ? `<div class="muted small">${l.soundcheck_time ? `SC ${fmtTimeHM(l.soundcheck_time)}` : ""}${l.soundcheck_time && l.event_time ? " · " : ""}${l.event_time ? `Event ${fmtTimeHM(l.event_time)}` : ""}</div>` : ""}${l.venue ? `<div class="muted small">📍 ${l.venue}</div>` : ""}${canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:4px;">Team</button>` : ""}` : ""}
             ${hasExtraDetails ? `<button class="btn-ghost toggle-details-btn" data-lead-id="${l.id}" style="margin-top:4px;">ℹ️ Details</button>` : ""}
-            ${hasLeadsAccess() ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}" style="margin-top:4px;">✎ Edit</button>` : ""}
-            ${CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="margin-top:4px; color:#A64B3C;">🗑 Delete</button>` : ""}
+            ${hasLeadsAccess() && l.stage !== "Completed" ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}" style="margin-top:4px;">✎ Edit</button>` : ""}
+            ${CURRENT_USER?.accessLevel === "admin" && l.stage !== "Completed" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="margin-top:4px; color:#A64B3C;">🗑 Delete</button>` : ""}
+            ${l.stage === "Completed" ? `<div class="muted small" style="margin-top:4px;">🔒 Completed — locked</div>` : ""}
           </span>
         </div>
       `));
@@ -3028,7 +3029,7 @@ async function renderSettings(main) {
 
     <div class="card" style="margin-bottom:16px;">
       <div class="section-label">Data backup</div>
-      <p class="muted small" style="margin-top:-4px;">A full export of every lead, payment, expense, quote, team assignment, and task is emailed automatically on the 1st of each month. You can also get one right now:</p>
+      <p class="muted small" style="margin-top:-4px;">A full export of every lead, payment, expense, quote, team assignment, and task is emailed to togetheroutloudclub@gmail.com automatically on the 1st of each month. You can also get one right now:</p>
       <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px;">
         <a class="btn-ghost" href="/api/admin/backup" id="downloadBackupBtn">⬇ Download now</a>
         <button class="btn-primary" id="emailBackupBtn">✉️ Email it to me now</button>
@@ -3278,13 +3279,15 @@ async function handleLogout() {
 // ---------- My Events (for a Staff/Admin account that's also flagged as a performer) ----------
 async function renderMyEvents(main) {
   main.innerHTML = `<div class="view-head"><div><h2>My Events</h2><p class="muted">Your own assigned events — accept/decline, artist fee, and pay status.</p></div></div><p class="muted">Loading your events…</p>`;
-  const events = await api("/api/my/events");
+  const allEvents = await api("/api/my/events");
+  const today = new Date().toISOString().slice(0, 10);
+  const events = allEvents.filter((e) => e.date >= today);
   const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined", cancel_requested: "Cancellation requested" };
   const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C", cancel_requested: "#B6752C" };
 
   main.innerHTML = `
     <div class="view-head"><div><h2>My Events</h2><p class="muted">Your own assigned events — accept/decline, artist fee, and pay status.</p></div></div>
-    ${events.length === 0 ? `<p class="muted small">No events assigned to you yet.</p>` : events.map((e) => `
+    ${events.length === 0 ? `<p class="muted small">No upcoming events assigned to you.</p>` : events.map((e) => `
       <div class="card performer-event-card" style="margin-bottom:14px;">
         <div class="performer-event-head">
           <div>
@@ -3433,6 +3436,11 @@ async function renderPerformerApp() {
   const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined", cancel_requested: "Cancellation requested" };
   const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C", cancel_requested: "#B6752C" };
   const activeEvents = events.filter((e) => e.stage !== "Cancelled");
+  const today0 = new Date().toISOString().slice(0, 10);
+  // "Your events" below is a flat upcoming list, not a browsable calendar, so
+  // past/completed gigs are dropped here (the Calendar section above still
+  // shows everything, since browsing past months there is legitimate).
+  const upcomingEvents = activeEvents.filter((e) => e.date >= today0);
   const paidCount = activeEvents.filter((e) => e.paid).length;
   const unpaidCount = activeEvents.length - paidCount;
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -3490,7 +3498,7 @@ async function renderPerformerApp() {
     <div class="card" id="perfCalCard" style="margin-bottom:20px;">${performerCalendarMarkup(activeEvents)}</div>
 
     <div class="section-label">Your events</div>
-    ${events.length === 0 ? `<p class="muted small" style="margin-bottom:20px;">No events assigned to you yet.</p>` : events.map((e) => `
+    ${upcomingEvents.length === 0 ? `<p class="muted small" style="margin-bottom:20px;">No upcoming events assigned to you.</p>` : upcomingEvents.map((e) => `
       <div class="card performer-event-card">
         <div class="performer-event-head">
           <div>
