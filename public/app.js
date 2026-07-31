@@ -1846,11 +1846,18 @@ async function openLeadPaymentsModal(leadId) {
     body.querySelectorAll("[data-delete-payment]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         if (!confirm("Remove this payment?")) return;
-        await api(`/api/payments/${btn.dataset.deletePayment}`, { method: "DELETE" });
-        const [freshPayments, freshExpenses] = await Promise.all([
-          api(`/api/leads/${leadId}/payments`), api(`/api/expenses?leadId=${leadId}`),
-        ]);
-        draw(freshPayments, freshExpenses);
+        btn.disabled = true;
+        try {
+          await api(`/api/payments/${btn.dataset.deletePayment}`, { method: "DELETE" });
+          await refreshLeads();
+          const [freshPayments, freshExpenses] = await Promise.all([
+            api(`/api/leads/${leadId}/payments`), api(`/api/expenses?leadId=${leadId}`),
+          ]);
+          draw(freshPayments, freshExpenses);
+        } catch (err) {
+          alert(err.message);
+          btn.disabled = false;
+        }
       });
     });
 
@@ -1859,6 +1866,7 @@ async function openLeadPaymentsModal(leadId) {
         btn.disabled = true;
         try {
           await api(`/api/expenses/${btn.dataset.expenseId}`, { method: "PATCH", body: JSON.stringify({ paid: true }) });
+          await refreshLeads();
           const [freshPayments, freshExpenses] = await Promise.all([
             api(`/api/leads/${leadId}/payments`), api(`/api/expenses?leadId=${leadId}`),
           ]);
@@ -2402,6 +2410,7 @@ function renderPartyLedgerDetail(container, booking) {
     container.querySelectorAll("[data-delete-payment]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         await api(`/api/payments/${btn.dataset.deletePayment}`, { method: "DELETE" });
+        await refreshLeads();
         const fresh = await api(`/api/leads/${booking.id}/payments`);
         draw(fresh);
       });
