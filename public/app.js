@@ -1787,12 +1787,13 @@ async function openLeadPaymentsModal(leadId) {
   draw(payments, expenses);
 
   function draw(payments, expenses) {
+    const body = root.querySelector(".modal-body");
+    if (!body) return; // modal was closed while loading — nothing to update
     const total = lead.final_amount || lead.quote_amount || 0;
     const received = payments.reduce((s, p) => s + p.amount, 0);
     const balance = total - received;
     const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
     const pendingExpenses = expenses.filter((e) => !e.paid);
-    const body = root.querySelector(".modal-body");
     body.innerHTML = `
       <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:16px;">
         <div class="card summary-card"><div class="muted">Final rate</div><div class="mono big">${inr(total)}</div></div>
