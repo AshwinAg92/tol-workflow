@@ -1795,10 +1795,10 @@ async function openLeadPaymentsModal(leadId) {
     const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
     const pendingExpenses = expenses.filter((e) => !e.paid);
     body.innerHTML = `
-      <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:16px;">
-        <div class="card summary-card"><div class="muted">Final rate</div><div class="mono big">${inr(total)}</div></div>
-        <div class="card summary-card"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
-        <div class="card summary-card"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
+      <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:16px; gap:8px;">
+        <div class="card summary-card summary-card-compact"><div class="muted">Final rate</div><div class="mono big">${inr(total)}</div></div>
+        <div class="card summary-card summary-card-compact"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
+        <div class="card summary-card summary-card-compact"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
       </div>
 
       <div class="section-label">Client payments</div>
@@ -1831,7 +1831,7 @@ async function openLeadPaymentsModal(leadId) {
           return `
             <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
               <div>
-                <div>${e.head}${member ? ` <span class="muted small">— ${member.name}</span>` : ""}</div>
+                <div>${e.head}${member && !e.head.includes(member.name) ? ` <span class="muted small">— ${member.name}</span>` : ""}</div>
                 <div class="muted small mono">${inr(e.amount)}${e.paid && e.payment_date ? ` · Paid ${fmtDate(e.payment_date)}${e.payment_mode ? ` (${e.payment_mode})` : ""}` : ""}</div>
               </div>
               ${e.paid
@@ -2344,11 +2344,11 @@ function renderPartyLedgerDetail(container, booking) {
           <div class="section-label" style="margin-bottom:0;">${booking.name} — ${booking.comboEvents && booking.comboEvents.length > 1 ? booking.comboEvents.map((e) => `${packageName(e.event_type)} (${fmtDate(e.date)})`).join(" + ") : fmtDate(booking.date)}</div>
           <button class="btn-ghost" id="shareLedgerPdfBtn">📄 Share ledger PDF on WhatsApp</button>
         </div>
-        <div class="dash-stats" style="grid-template-columns:repeat(4,1fr); margin-bottom:16px; margin-top:10px;">
-          <div class="card summary-card"><div class="muted">Amount confirmed</div><div class="mono big">${inr(total)}</div></div>
-          <div class="card summary-card"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
-          <div class="card summary-card"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
-          <div class="card summary-card"><div class="muted">Profit</div><div class="mono big" style="color:${profit >= 0 ? "#5C8A6B" : "#A64B3C"};">${inr(profit)}</div></div>
+        <div class="dash-stats" style="grid-template-columns:repeat(2,1fr); margin-bottom:16px; margin-top:10px; gap:8px;">
+          <div class="card summary-card summary-card-compact"><div class="muted">Amount confirmed</div><div class="mono big">${inr(total)}</div></div>
+          <div class="card summary-card summary-card-compact"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
+          <div class="card summary-card summary-card-compact"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
+          <div class="card summary-card summary-card-compact"><div class="muted">Profit</div><div class="mono big" style="color:${profit >= 0 ? "#5C8A6B" : "#A64B3C"};">${inr(profit)}</div></div>
         </div>
         <div class="section-label">Payments received (date-wise)</div>
         <div style="margin-bottom:14px;">
@@ -3414,6 +3414,12 @@ async function renderSettings(main) {
 // ---------- Main dispatch ----------
 function renderMain() {
   const main = document.getElementById("main");
+  // Without this, switching tabs (or logging back in) can leave the view
+  // scrolled to wherever the previous screen was, instead of starting fresh
+  // at the top.
+  main.scrollTop = 0;
+  main.scrollLeft = 0;
+  window.scrollTo(0, 0);
   if (currentTab === "dashboard") renderDashboard(main);
   else if (currentTab === "leads") renderLeadsLog(main);
   else if (currentTab === "quotation") renderQuotation(main);

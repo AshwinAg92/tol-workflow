@@ -115,6 +115,9 @@ nav { display:flex; flex-direction:column; gap:2px; }
 
 .accounts-summary { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:20px; }
 .summary-card .big { font-size:22px; margin-top:4px; }
+.summary-card-compact { padding:10px !important; overflow:hidden; }
+.summary-card-compact .muted { font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.summary-card-compact .mono.big { font-size:15px; margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
 .table { background:#FBF9F5; border-radius:10px; overflow:hidden; }
 .table-head, .table-row { display:grid; grid-template-columns:2fr 100px 1fr 1fr 1fr; gap:10px; padding:10px 14px; font-size:12.5px; align-items:center; }
