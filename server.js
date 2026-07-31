@@ -458,8 +458,16 @@ app.post("/api/leads", async (req, res) => {
   const created = (await pool.query("SELECT * FROM leads WHERE id = $1", [id])).rows[0];
   res.status(201).json(created);
   logActivity({ user: null }, `New query received: ${name} — ${packageName(eventType)}${city ? ` in ${city}` : ""}`, id);
-  // New leads show up immediately in the Leads tab and dashboard "new leads"
-  // count — no email/notification needed, the team works off the app directly.
+
+  // Flashing in-app alert (same feed used for team responses) plus an email —
+  // so a new query is hard to miss whether you're in the app or not.
+  pool.query(`
+    INSERT INTO admin_notifications (id, message, assignment_id, created_at)
+    VALUES ($1, $2, NULL, $3)
+  `, [uuid(), `New query: ${name} — ${packageName(eventType)}${city ? ` in ${city}` : ""}, wants ${date}`, new Date().toISOString()]
+  ).catch((err) => console.error("Failed to create new-lead notification:", err.message));
+
+  sendNewLeadEmail(created).catch((err) => console.error("New-lead email failed (not fatal):", err.message));
 });
 
 // Combo booking: one client confirming multiple formats/dates under a single
@@ -1552,6 +1560,30 @@ function getMailTransport() {
     port: Number(process.env.SMTP_PORT) || 587,
     secure: Number(process.env.SMTP_PORT) === 465,
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  });
+}
+
+async function sendNewLeadEmail(lead) {
+  const transport = getMailTransport();
+  if (!transport) return; // email not configured — the in-app notification still covers it
+  const to = process.env.TEAM_NOTIFY_EMAIL || process.env.BACKUP_EMAIL || "togetheroutloudclub@gmail.com";
+  const lines = [
+    `Name: ${lead.name}`,
+    lead.phone ? `Phone: ${lead.phone}` : null,
+    lead.email ? `Email: ${lead.email}` : null,
+    `Format: ${packageName(lead.event_type)}`,
+    lead.city ? `City: ${lead.city}` : null,
+    `Date wanted: ${lead.date}`,
+    lead.occasion ? `Occasion: ${lead.occasion}` : null,
+    lead.guest_range ? `Guests: ${lead.guest_range}` : null,
+    lead.budget ? `Budget: ₹${Number(lead.budget).toLocaleString("en-IN")}` : null,
+    lead.details ? `\nTheir notes: ${lead.details}` : null,
+  ].filter(Boolean);
+  await transport.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to,
+    subject: `New query — ${lead.name} (${packageName(lead.event_type)})`,
+    text: lines.join("\n"),
   });
 }
 
