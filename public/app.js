@@ -642,6 +642,7 @@ function renderLeadsLog(main) {
       const comboPrimary = l.combo_group_id ? (l.is_combo_primary ? l : comboSiblings.find((s) => s.is_combo_primary)) : null;
       const displayQuote = comboPrimary ? comboPrimary.quote_amount : l.quote_amount;
       const displayFinal = comboPrimary ? comboPrimary.final_amount : l.final_amount;
+      const hasExtraDetails = l.guest_range || l.how_heard || l.details || l.whatsapp_optin != null || l.notes;
       rows.appendChild(el(`
         <div class="table-row leads-table-row">
           <span><div class="lead-name">${l.name}</div><div class="muted small">${l.phone || ""}</div>${l.combo_group_id ? `<div class="muted small" style="color:#8A5FA8;">🔗 Combo with ${comboSiblings.map((s) => `${packageName(s.event_type)} (${fmtDate(s.date)})`).join(", ")}</div>` : ""}${l.occasion && (l.stage === "Confirmed" || l.stage === "Completed") ? `<div class="muted small">${l.occasion}</div>` : ""}${l.alt_date ? `<div class="muted small" style="color:#B6752C;">Alt date: ${fmtDate(l.alt_date)}</div>` : ""}</span>
@@ -659,11 +660,24 @@ function renderLeadsLog(main) {
             ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Tentative") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
             ${l.quote_amount && l.stage !== "Confirmed" && l.stage !== "Completed" ? `<div class="muted small mono">Quoted: ${inr(l.quote_amount)}</div>` : ""}
             ${l.stage === "Confirmed" || l.stage === "Completed" ? `<div class="muted small mono">Quoted: ${displayQuote ? inr(displayQuote) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div><div class="muted small mono">Final: ${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div><div class="muted small mono">Advance: ${inr(l.advance || 0)}</div>${(l.event_time || l.soundcheck_time) ? `<div class="muted small">${l.soundcheck_time ? `SC ${fmtTimeHM(l.soundcheck_time)}` : ""}${l.soundcheck_time && l.event_time ? " · " : ""}${l.event_time ? `Event ${fmtTimeHM(l.event_time)}` : ""}</div>` : ""}${l.venue ? `<div class="muted small">📍 ${l.venue}</div>` : ""}${canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}" style="margin-top:4px;">Team</button>` : ""}` : ""}
+            ${hasExtraDetails ? `<button class="btn-ghost toggle-details-btn" data-lead-id="${l.id}" style="margin-top:4px;">ℹ️ Details</button>` : ""}
             ${hasLeadsAccess() ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}" style="margin-top:4px;">✎ Edit</button>` : ""}
             ${CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="margin-top:4px; color:#A64B3C;">🗑 Delete</button>` : ""}
           </span>
         </div>
       `));
+      if (hasExtraDetails) {
+        rows.appendChild(el(`
+          <div class="lead-details-panel" data-details-for="${l.id}" style="display:none; padding:10px 14px; background:#F5F0E4; border-bottom:1px solid #EFE9DC; font-size:13px;">
+            ${l.guest_range ? `<div><strong>Guests:</strong> ${l.guest_range}</div>` : ""}
+            ${l.occasion && !(l.stage === "Confirmed" || l.stage === "Completed") ? `<div><strong>Occasion:</strong> ${l.occasion}</div>` : ""}
+            ${l.how_heard ? `<div><strong>Heard about us via:</strong> ${l.how_heard}</div>` : ""}
+            ${l.whatsapp_optin != null ? `<div><strong>OK to WhatsApp:</strong> ${l.whatsapp_optin ? "Yes" : "No"}</div>` : ""}
+            ${l.details ? `<div style="margin-top:4px;"><strong>Customer's notes:</strong><br />${l.details}</div>` : ""}
+            ${l.notes ? `<div style="margin-top:4px;"><strong>Internal notes:</strong><br />${l.notes}</div>` : ""}
+          </div>
+        `));
+      }
     });
   }
 
@@ -698,6 +712,13 @@ function renderLeadsLog(main) {
 
   main.querySelectorAll(".edit-lead-btn").forEach((btn) => {
     btn.addEventListener("click", () => openEditLeadModal(btn.dataset.leadId));
+  });
+
+  main.querySelectorAll(".toggle-details-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const panel = main.querySelector(`[data-details-for="${btn.dataset.leadId}"]`);
+      if (panel) panel.style.display = panel.style.display === "none" ? "block" : "none";
+    });
   });
 
   main.querySelectorAll(".delete-lead-btn").forEach((btn) => {
@@ -2929,6 +2950,8 @@ function openEditLeadModal(leadId) {
             <div><label>Occasion</label><select id="mOccasion"><option value="">Not specified</option>${CONFIG.occasions.map((o) => `<option value="${o}" ${o === lead.occasion ? "selected" : ""}>${o}</option>`).join("")}</select></div>
           </div>
           ${lead.combo_group_id ? `<p class="muted small">This event is part of a combo booking. Editing the format/date here only changes this one event — the shared client details are separate per event.</p>` : ""}
+          <label>Internal notes (not shown to the client)</label>
+          <textarea id="mNotes" rows="3" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:14px;">${lead.notes || ""}</textarea>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Save changes</button></div>
       </div>
@@ -2954,6 +2977,7 @@ function openEditLeadModal(leadId) {
           city: root.querySelector("#mCity").value.trim() || null,
           guestRange: root.querySelector("#mGuests").value || null,
           occasion: root.querySelector("#mOccasion").value || null,
+          notes: root.querySelector("#mNotes").value.trim() || null,
         }),
       });
       await refreshLeads();
@@ -3001,6 +3025,16 @@ async function renderSettings(main) {
     <div class="view-head"><div><h2>Settings</h2><p class="muted">Customize wording and options yourself — no code changes needed. Tap a section to expand it.</p></div></div>
 
     <div id="templateCards"></div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">Data backup</div>
+      <p class="muted small" style="margin-top:-4px;">A full export of every lead, payment, expense, quote, team assignment, and task is emailed automatically on the 1st of each month. You can also get one right now:</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px;">
+        <a class="btn-ghost" href="/api/admin/backup" id="downloadBackupBtn">⬇ Download now</a>
+        <button class="btn-primary" id="emailBackupBtn">✉️ Email it to me now</button>
+        <span class="muted small" id="backupSentNote" style="display:none; color:#5C8A6B;">Sent ✓</span>
+      </div>
+    </div>
 
     <div class="card" style="margin-bottom:16px;">
       <div class="section-label">Pricing</div>
@@ -3115,6 +3149,24 @@ async function renderSettings(main) {
   });
   pricingEditor.dataset.currentPkg = pricingSelect.value;
   renderPricingEditor();
+
+  main.querySelector("#emailBackupBtn").addEventListener("click", async () => {
+    const btn = main.querySelector("#emailBackupBtn");
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = "Sending…";
+    try {
+      await api("/api/admin/backup/email", { method: "POST", body: JSON.stringify({}) });
+      const note = main.querySelector("#backupSentNote");
+      note.style.display = "inline";
+      setTimeout(() => { note.style.display = "none"; }, 3000);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  });
 
   main.querySelector("#savePricingBtn").addEventListener("click", async () => {
     syncVisibleRowsIntoDraft(pricingSelect.value);

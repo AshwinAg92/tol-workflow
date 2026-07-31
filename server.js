@@ -6,6 +6,8 @@ const fs = require("fs");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
+const nodemailer = require("nodemailer");
+const XLSX = require("xlsx");
 const { v4: uuid } = require("uuid");
 const { pool, ready } = require("./db");
 const { STAGES, PACKAGES, ADDONS, PRICING, TEAM, EXPERIENCES, OCCASIONS, GUEST_RANGES, HOW_HEARD } = require("./config");
@@ -1486,9 +1488,111 @@ async function autoCompletePastEvents() {
   }
 }
 
+// ---------- Monthly data backup ----------
+// A full export of every table, emailed to the admin so there's always an
+// off-app copy of everything captured — not just leads, but payments,
+// expenses, team, quotes, assignments, tasks, documents metadata, and the
+// activity log. `users` is deliberately excluded (password hashes).
+const BACKUP_TABLES = [
+  ["Leads", "SELECT * FROM leads ORDER BY created_at DESC"],
+  ["Payments", "SELECT * FROM payments ORDER BY payment_date DESC"],
+  ["Expenses", "SELECT * FROM expenses ORDER BY created_at DESC"],
+  ["Team", "SELECT * FROM team ORDER BY name ASC"],
+  ["Quotes", "SELECT * FROM quotes ORDER BY created_at DESC"],
+  ["EventAssignments", "SELECT * FROM event_assignments ORDER BY created_at DESC"],
+  ["TempArtists", "SELECT * FROM temp_artists ORDER BY created_at DESC"],
+  ["Tasks", "SELECT * FROM tasks ORDER BY created_at DESC"],
+  ["Documents", "SELECT id, lead_id, original_name, notes, uploaded_at FROM documents ORDER BY uploaded_at DESC"],
+  ["ActivityLog", "SELECT * FROM activity_log ORDER BY created_at DESC"],
+  ["Announcements", "SELECT * FROM announcements ORDER BY created_at DESC"],
+];
+
+async function buildBackupWorkbook() {
+  const wb = XLSX.utils.book_new();
+  for (const [sheetName, query] of BACKUP_TABLES) {
+    try {
+      const { rows } = await pool.query(query);
+      const ws = XLSX.utils.json_to_sheet(rows);
+      XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
+    } catch (err) {
+      console.error(`Backup: failed to export ${sheetName}:`, err.message);
+    }
+  }
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+}
+
+function getMailTransport() {
+  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) return null;
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT) || 587,
+    secure: Number(process.env.SMTP_PORT) === 465,
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  });
+}
+
+async function sendBackupEmail(recipient) {
+  const transport = getMailTransport();
+  if (!transport) throw new Error("Email isn't configured (SMTP_HOST/SMTP_USER/SMTP_PASS missing) — set those in Railway's Variables tab first.");
+  const to = recipient || process.env.TEAM_NOTIFY_EMAIL;
+  if (!to) throw new Error("No recipient email configured (TEAM_NOTIFY_EMAIL is empty).");
+  const buffer = await buildBackupWorkbook();
+  const today = new Date().toISOString().slice(0, 10);
+  await transport.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to,
+    subject: `Together, Out Loud — data backup (${today})`,
+    text: "Attached is a full export of all leads, payments, expenses, team, quotes, assignments, tasks, and activity as of today.",
+    attachments: [{ filename: `tol-backup-${today}.xlsx`, content: buffer }],
+  });
+}
+
+// Sends once per calendar month (checked hourly alongside autoCompletePastEvents),
+// tracked via a flag in message_templates so it can't double-send even across
+// restarts, and so it retries automatically on the next hourly check if the
+// first attempt in a given month fails (e.g. SMTP misconfigured).
+async function runMonthlyBackupCheck() {
+  try {
+    const monthKey = new Date().toISOString().slice(0, 7); // "2026-08"
+    const flag = (await pool.query("SELECT template FROM message_templates WHERE key = 'last_backup_sent_month'")).rows[0];
+    if (flag?.template === monthKey) return; // already sent this month
+    await sendBackupEmail();
+    await pool.query(`
+      INSERT INTO message_templates (key, template, updated_at) VALUES ('last_backup_sent_month', $1, $2)
+      ON CONFLICT (key) DO UPDATE SET template = $1, updated_at = $2
+    `, [monthKey, new Date().toISOString()]);
+    console.log(`Monthly backup emailed for ${monthKey}`);
+  } catch (err) {
+    console.error("Monthly backup failed (will retry next hour):", err.message);
+  }
+}
+
+app.get("/api/admin/backup", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const buffer = await buildBackupWorkbook();
+    const today = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="tol-backup-${today}.xlsx"`);
+    res.send(buffer);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/backup/email", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    await sendBackupEmail(req.body?.email);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3300;
 ready.then(() => {
   app.listen(PORT, () => console.log(`TOL workflow app running on http://localhost:${PORT}`));
   autoCompletePastEvents();
   setInterval(autoCompletePastEvents, 60 * 60 * 1000);
+  runMonthlyBackupCheck();
+  setInterval(runMonthlyBackupCheck, 60 * 60 * 1000);
 });
