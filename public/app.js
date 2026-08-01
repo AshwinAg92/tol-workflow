@@ -20,6 +20,7 @@ const STAGE_COLOR = {
   Tentative: "#9B6EA8",
   Confirmed: "#5C8A6B",
   Completed: "#2E5C63",
+  "Not Interested": "#A8A296",
   Cancelled: "#A64B3C",
 };
 
