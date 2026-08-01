@@ -169,6 +169,8 @@ async function setup() {
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS event_time TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS soundcheck_time TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS is_seed INTEGER NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS pcs TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS duration TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS combo_group_id TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS is_combo_primary INTEGER NOT NULL DEFAULT 0`);
   const demoLeadNames = ["Priya & Raj Sharma", "Anand Bhajan Sangeet Committee", "Meera Foundation", "Kapoor Family (Naming Ceremony)", "Sunrise Housing Society", "Shanti Path Trust", "Choudhury Family"];
@@ -287,6 +289,24 @@ Warmly,
     }
     await pool.query(
       `INSERT INTO message_templates (key, template, updated_at) VALUES ('activity_demo_cleanup_done', '1', $1) ON CONFLICT (key) DO NOTHING`,
+      [new Date().toISOString()]
+    );
+  }
+
+  // One-time upgrade: the "confirmed" client message template gained several
+  // new auto-filled fields (location, occasion, pcs, duration, fee, advance,
+  // outstanding). Push the new default into place once for anyone still on
+  // the original seed text — but never touch it again after this, so a
+  // deliberate later edit in Settings is never overwritten.
+  const confirmedTplFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'confirmed_template_v2_applied'")).rows[0];
+  if (!confirmedTplFlag) {
+    const newConfirmedDefault = "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe are pleased to confirm our booking for: {clientName}\nLocation: {location}\nDate: {date}\nOccasion: {occasion}\nSet: {pieces} Pieces\nDuration: {duration}\nPerformance Fee: ₹{performanceFee}/-\nAdvance: ₹{advance}/-\nOutstanding: ₹{outstanding}\n\nAs discussed, we request your support in arranging the travel, accommodation, meals, local transfers, and venue technical requirements.\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud";
+    await pool.query(`
+      INSERT INTO message_templates (key, template, updated_at) VALUES ('confirmed', $1, $2)
+      ON CONFLICT (key) DO UPDATE SET template = $1, updated_at = $2
+    `, [newConfirmedDefault, new Date().toISOString()]);
+    await pool.query(
+      `INSERT INTO message_templates (key, template, updated_at) VALUES ('confirmed_template_v2_applied', '1', $1) ON CONFLICT (key) DO NOTHING`,
       [new Date().toISOString()]
     );
   }

@@ -1027,7 +1027,11 @@ async function renderQuotation(main) {
     try {
       const result = await api(`/api/leads/${leadId}/quote`, {
         method: "POST",
-        body: JSON.stringify({ amount: charges || null, subject, body }),
+        body: JSON.stringify({
+          amount: charges || null, subject, body,
+          pcs: main.querySelector("#qSet").value || null,
+          duration: main.querySelector("#qDuration").value || null,
+        }),
       });
       await refreshLeads();
 
@@ -2906,7 +2910,8 @@ function openConfirmEventModal(lead) {
         }
       }
       await refreshLeads();
-      openConfirmationMessageModal({ ...lead, stage: "Confirmed", final_amount: finalAmount || null, date: chosenDate });
+      const freshLead = LEADS.find((l) => l.id === lead.id) || { ...lead, stage: "Confirmed", final_amount: finalAmount || null, date: chosenDate };
+      openConfirmationMessageModal(freshLead);
     } catch (err) {
       alert(err.message);
     }
@@ -2916,14 +2921,25 @@ function openConfirmEventModal(lead) {
 function openConfirmationMessageModal(lead) {
   const root = document.getElementById("modalRoot");
   const firstName = (lead.name || "").split(" ")[0] || "there";
+  const finalAmount = lead.final_amount || lead.quote_amount || 0;
+  const received = lead.received || 0;
+  const outstanding = finalAmount - received;
   const amountLine = lead.final_amount ? `\nTotal: ₹${Number(lead.final_amount).toLocaleString("en-IN")}` : "";
   const tpl = MESSAGE_TEMPLATES.confirmed || TEMPLATE_META.confirmed.default;
   const message = fillTemplate(tpl, {
     firstName,
+    clientName: lead.name || "",
     experience: packageName(lead.event_type),
     date: fmtDate(lead.date),
     cityClause: lead.city ? ` in ${lead.city}` : "",
     amountLine,
+    location: lead.venue || lead.city || "",
+    occasion: lead.occasion || "",
+    pieces: lead.pcs || "",
+    duration: lead.duration || "75-90 Minutes",
+    performanceFee: finalAmount ? Number(finalAmount).toLocaleString("en-IN") : "",
+    advance: Number(received || 0).toLocaleString("en-IN"),
+    outstanding: finalAmount ? Number(outstanding).toLocaleString("en-IN") : "",
   });
   const digitsOnly = (lead.phone || "").replace(/\D/g, "");
   const waLink = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}` : null;
@@ -3197,9 +3213,9 @@ const TEMPLATE_META = {
   },
   confirmed: {
     label: "Confirmed client message",
-    description: "Starting text shown when you confirm an event — you can still tweak it per-send before it goes out.",
-    placeholders: ["firstName", "experience", "date", "cityClause", "amountLine"],
-    default: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe look forward to creating a memorable experience with you. — Together, Out Loud",
+    description: "Starting text shown when you confirm an event — you can still tweak it per-send before it goes out. Location, Set, Duration, Fee, Advance, and Outstanding are pulled automatically from the lead.",
+    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "amountLine", "location", "occasion", "pieces", "duration", "performanceFee", "advance", "outstanding"],
+    default: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe are pleased to confirm our booking for: {clientName}\nLocation: {location}\nDate: {date}\nOccasion: {occasion}\nSet: {pieces} Pieces\nDuration: {duration}\nPerformance Fee: ₹{performanceFee}/-\nAdvance: ₹{advance}/-\nOutstanding: ₹{outstanding}\n\nAs discussed, we request your support in arranging the travel, accommodation, meals, local transfers, and venue technical requirements.\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud",
   },
   document_share: {
     label: "Document share message",

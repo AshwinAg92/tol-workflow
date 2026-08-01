@@ -421,7 +421,7 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   res.json(withReceived.map((l) => ({
     id: l.id, name: l.name, date: l.date, city: l.city, event_type: l.event_type, stage: l.stage,
     event_time: l.event_time, soundcheck_time: l.soundcheck_time, occasion: l.occasion, venue: l.venue,
-    combo_group_id: l.combo_group_id, is_combo_primary: l.is_combo_primary,
+    combo_group_id: l.combo_group_id, is_combo_primary: l.is_combo_primary, pcs: l.pcs, duration: l.duration,
   })));
 });
 
@@ -541,7 +541,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   // amounts, notes — needs full Leads access.
   const leadsOnlyFields = [
     "stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "date",
-    "name", "phone", "email", "city", "event_type", "occasion", "guest_range",
+    "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration",
   ];
   const sharedFields = ["event_time", "soundcheck_time", "venue"];
   if (!hasLeads) {
@@ -646,14 +646,17 @@ app.post("/api/leads/:id/quote", requireAuth, async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
-  const { amount, subject, body } = req.body;
+  const { amount, subject, body, pcs, duration } = req.body;
   if (!body || !body.trim()) return res.status(400).json({ error: "Quote text is required" });
 
   const numericAmount = amount !== undefined && amount !== null && amount !== "" ? Number(amount) : null;
   const finalSubject = subject && subject.trim() ? subject : "Quotation — Together, Out Loud";
 
   const newStage = (lead.stage === "New") ? "Follow-up" : lead.stage;
-  await pool.query("UPDATE leads SET quote_amount = $1, stage = $2 WHERE id = $3", [numericAmount, newStage, lead.id]);
+  await pool.query(
+    "UPDATE leads SET quote_amount = $1, stage = $2, pcs = COALESCE($3, pcs), duration = COALESCE($4, duration) WHERE id = $5",
+    [numericAmount, newStage, pcs || null, duration || null, lead.id]
+  );
   await pool.query(`
     INSERT INTO quotes (id, lead_id, subject, body, amount, created_at)
     VALUES ($1, $2, $3, $4, $5, $6)
