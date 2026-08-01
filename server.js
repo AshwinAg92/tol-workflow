@@ -1560,6 +1560,9 @@ function getMailTransport() {
     port: Number(process.env.SMTP_PORT) || 587,
     secure: Number(process.env.SMTP_PORT) === 465,
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    // Railway's network can't route to some mail providers (e.g. Gmail) over
+    // IPv6 -- every send was failing with ENETUNREACH until this was forced.
+    family: 4,
   });
 }
 
