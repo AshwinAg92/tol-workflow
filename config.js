@@ -9,6 +9,7 @@ const PACKAGES = [
   { id: "bollywood", name: "Bollywood Jamming", rate: 80000 },
   { id: "satsang", name: "Devotional Satsang", rate: 55000 },
   { id: "shraddhanjali", name: "Shraddhanjali Satsang", rate: 50000 },
+  { id: "jam_pheras_both", name: "Both (Bhajan Jamming & Musical Pheras)", rate: 150000 },
 ];
 
 const ADDONS = [

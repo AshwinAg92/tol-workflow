@@ -638,7 +638,6 @@ function renderLeadsLog(main) {
       const comboPrimary = l.combo_group_id ? (l.is_combo_primary ? l : comboSiblings.find((s) => s.is_combo_primary)) : null;
       const displayQuote = comboPrimary ? comboPrimary.quote_amount : l.quote_amount;
       const displayFinal = comboPrimary ? comboPrimary.final_amount : l.final_amount;
-      const hasExtraDetails = l.guest_range || l.how_heard || l.details || l.whatsapp_optin != null || l.notes;
       const isConfirmedOrDone = l.stage === "Confirmed" || l.stage === "Completed";
       const displayReceived = comboPrimary ? comboPrimary.received : l.received;
       const balance = (displayFinal || displayQuote || 0) - (displayReceived || 0);
@@ -673,21 +672,10 @@ function renderLeadsLog(main) {
             ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Tentative") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
             ${isConfirmedOrDone && hasAccountsAccess() ? `<button class="btn-ghost payments-btn" data-lead-id="${l.id}">💰 Payments</button>` : ""}
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team</button>` : ""}
-            ${hasExtraDetails ? `<button class="btn-ghost toggle-details-btn" data-lead-id="${l.id}">ℹ️ Details</button>` : ""}
             ${hasLeadsAccess() && l.stage !== "Completed" ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}">✎ Edit</button>` : ""}
             ${CURRENT_USER?.accessLevel === "admin" && l.stage !== "Completed" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="color:#A64B3C;">🗑 Delete</button>` : ""}
             ${l.stage === "Completed" ? `<span class="muted small">🔒 Completed — locked</span>` : ""}
           </div>
-          ${hasExtraDetails ? `
-            <div class="lead-details-panel" data-details-for="${l.id}" style="display:none;">
-              ${l.guest_range ? `<div><strong>Guests:</strong> ${l.guest_range}</div>` : ""}
-              ${l.occasion && !isConfirmedOrDone ? `<div><strong>Occasion:</strong> ${l.occasion}</div>` : ""}
-              ${l.how_heard ? `<div><strong>Heard about us via:</strong> ${l.how_heard}</div>` : ""}
-              ${l.whatsapp_optin != null ? `<div><strong>OK to WhatsApp:</strong> ${l.whatsapp_optin ? "Yes" : "No"}</div>` : ""}
-              ${l.details ? `<div style="margin-top:4px;"><strong>Customer's notes:</strong><br />${l.details}</div>` : ""}
-              ${l.notes ? `<div style="margin-top:4px;"><strong>Internal notes:</strong><br />${l.notes}</div>` : ""}
-            </div>
-          ` : ""}
         </div>
       `);
       rows.appendChild(card);
@@ -729,13 +717,6 @@ function renderLeadsLog(main) {
 
   main.querySelectorAll(".edit-lead-btn").forEach((btn) => {
     btn.addEventListener("click", () => openEditLeadModal(btn.dataset.leadId));
-  });
-
-  main.querySelectorAll(".toggle-details-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const panel = main.querySelector(`[data-details-for="${btn.dataset.leadId}"]`);
-      if (panel) panel.style.display = panel.style.display === "none" ? "block" : "none";
-    });
   });
 
   main.querySelectorAll(".delete-lead-btn").forEach((btn) => {
@@ -3154,9 +3135,14 @@ function openEditLeadModal(leadId) {
             <div><label>City</label><input id="mCity" value="${lead.city || ""}" placeholder="e.g. Siliguri" /></div>
           </div>
           <div class="row-2">
+            <div><label>Event date</label><input id="mDate" type="date" value="${lead.date || ""}" /></div>
+            <div><label>Quoted amount (₹)</label><input id="mQuoteAmount" type="number" value="${lead.quote_amount || ""}" placeholder="e.g. 150000" /></div>
+          </div>
+          <div class="row-2">
             <div><label>No. of guests</label><select id="mGuests"><option value="">Not specified</option>${CONFIG.guestRanges.map((g) => `<option value="${g}" ${g === lead.guest_range ? "selected" : ""}>${g}</option>`).join("")}</select></div>
             <div><label>Occasion</label><select id="mOccasion"><option value="">Not specified</option>${CONFIG.occasions.map((o) => `<option value="${o}" ${o === lead.occasion ? "selected" : ""}>${o}</option>`).join("")}</select></div>
           </div>
+          ${(lead.stage === "Confirmed" || lead.stage === "Completed") ? `<label>Final confirmed amount (₹)</label><input id="mFinalAmount" type="number" value="${lead.final_amount || ""}" placeholder="e.g. 150000" />` : ""}
           ${lead.combo_group_id ? `<p class="muted small">This event is part of a combo booking. Editing the format/date here only changes this one event — the shared client details are separate per event.</p>` : ""}
           <label>Internal notes (not shown to the client)</label>
           <textarea id="mNotes" rows="3" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:14px;">${lead.notes || ""}</textarea>
@@ -3183,9 +3169,12 @@ function openEditLeadModal(leadId) {
           email: root.querySelector("#mEmail").value.trim() || null,
           eventType: root.querySelector("#mType").value,
           city: root.querySelector("#mCity").value.trim() || null,
+          date: root.querySelector("#mDate").value || lead.date,
+          quoteAmount: root.querySelector("#mQuoteAmount").value ? Number(root.querySelector("#mQuoteAmount").value) : null,
           guestRange: root.querySelector("#mGuests").value || null,
           occasion: root.querySelector("#mOccasion").value || null,
           notes: root.querySelector("#mNotes").value.trim() || null,
+          ...(root.querySelector("#mFinalAmount") ? { finalAmount: root.querySelector("#mFinalAmount").value ? Number(root.querySelector("#mFinalAmount").value) : null } : {}),
         }),
       });
       await refreshLeads();
