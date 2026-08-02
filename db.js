@@ -229,7 +229,7 @@ async function setup() {
   const quoteBody = (sessionConditions) => `🎶 *QUOTATION — {formatUpper}*
 _Together, Out Loud_
 
-Hi! Thank you for considering us for your event — here are the details of our offering. 💛
+Hi {firstName}! Thank you for considering us for your event — here are the details of our offering. 💛
 
 📍 *Location:* {location}
 📅 *Date:* {date}
@@ -268,6 +268,23 @@ Warmly,
     await pool.query(
       `INSERT INTO message_templates (key, template, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING`,
       [`quotation_${pkg.id}`, quoteBody(isPheras ? onePheraCondition : twoConditions), new Date().toISOString()]
+    );
+  }
+
+  // One-time fix: quotation templates seeded before this greeted with a bare
+  // "Hi!" and no name. Add {firstName} to any template still using the
+  // original wording, without touching anything already customized further.
+  const greetingFixFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'quote_greeting_firstname_applied'")).rows[0];
+  if (!greetingFixFlag) {
+    await pool.query(`
+      UPDATE message_templates
+      SET template = REPLACE(template, 'Hi! Thank you for considering us', 'Hi {firstName}! Thank you for considering us'),
+          updated_at = $1
+      WHERE key LIKE 'quotation_%' AND template LIKE 'Hi! Thank you for considering us%'
+    `, [new Date().toISOString()]);
+    await pool.query(
+      `INSERT INTO message_templates (key, template, updated_at) VALUES ('quote_greeting_firstname_applied', '1', $1) ON CONFLICT (key) DO NOTHING`,
+      [new Date().toISOString()]
     );
   }
 

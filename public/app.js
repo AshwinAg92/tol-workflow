@@ -793,7 +793,7 @@ function renderLeadsLog(main) {
 // editable draft in the exact wording he uses, tweaks anything he wants,
 // then sends via WhatsApp/email. No code change ever needed to adjust
 // wording, amount, or format — the textarea is the source of truth.
-function buildQuoteText({ eventType, format, location, date, guests, duration, setPieces, formatType, charges }) {
+function buildQuoteText({ eventType, format, location, date, guests, duration, setPieces, formatType, charges, firstName }) {
   const amountLine = charges ? `₹${Number(charges).toLocaleString("en-IN")}/-` : "________";
   const isPheras = (format || "").trim().toLowerCase() === "musical pheras";
   const sessionConditions = isPheras
@@ -803,7 +803,7 @@ function buildQuoteText({ eventType, format, location, date, guests, duration, s
   const fallback = `🎶 *QUOTATION — {formatUpper}*
 _Together, Out Loud_
 
-Hi! Thank you for considering us for your event — here are the details of our offering. 💛
+Hi {firstName}! Thank you for considering us for your event — here are the details of our offering. 💛
 
 📍 *Location:* {location}
 📅 *Date:* {date}
@@ -846,6 +846,7 @@ Warmly,
     formatType: formatType || "",
     amountLine,
     sessionConditions,
+    firstName: firstName || "",
   });
 }
 
@@ -970,6 +971,7 @@ async function renderQuotation(main) {
       setPieces: main.querySelector("#qSet").value,
       formatType: main.querySelector("#qFormatType").value,
       charges: main.querySelector("#qCharges").value,
+      firstName: lead ? (lead.name || "").trim().split(" ")[0] : "",
     });
   }
 
@@ -3216,7 +3218,7 @@ const TEMPLATE_META = {
   },
 };
 
-const QUOTE_TEMPLATE_PLACEHOLDERS = ["formatUpper", "location", "date", "guests", "duration", "setPieces", "formatType", "amountLine", "sessionConditions"];
+const QUOTE_TEMPLATE_PLACEHOLDERS = ["firstName", "formatUpper", "location", "date", "guests", "duration", "setPieces", "formatType", "amountLine", "sessionConditions"];
 
 async function renderSettings(main) {
   main.innerHTML = `
