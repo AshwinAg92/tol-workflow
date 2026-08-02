@@ -1,6 +1,6 @@
 // Shared business config — edit these to change pricing, stages, formats, or team.
 
-const STAGES = ["New", "Follow-up", "Tentative", "Confirmed", "Completed", "Not Interested", "Cancelled"];
+const STAGES = ["New", "Follow-up", "Interested", "Tentative", "Confirmed", "Completed", "Not Interested", "Cancelled"];
 
 const PACKAGES = [
   { id: "jam", name: "Bhajan Jamming", rate: 60000 },
