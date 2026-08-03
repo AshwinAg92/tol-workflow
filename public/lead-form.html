@@ -170,10 +170,19 @@
         </div>
 
         <div class="q">
-          <label class="qlabel">Would you like us to contact you on WhatsApp?</label>
+          <label class="qlabel">Is the number above your WhatsApp number?</label>
           <div class="radio-group">
-            <label class="radio-row"><input type="radio" name="whatsapp" value="yes" checked /> Yes</label>
-            <label class="radio-row"><input type="radio" name="whatsapp" value="no" /> No</label>
+            <label class="radio-row"><input type="radio" name="whatsappSame" value="yes" checked /> Yes</label>
+            <label class="radio-row"><input type="radio" name="whatsappSame" value="no" /> No, it's a different number</label>
+          </div>
+        </div>
+
+        <div class="q" id="whatsappNumberRow" style="display:none;">
+          <label class="qlabel">Your WhatsApp number</label>
+          <div class="phone-row">
+            <input id="waCountryCode" class="country-code" list="waCountryCodeList" placeholder="Country or code" autocomplete="off" onfocus="this.select()" />
+            <datalist id="waCountryCodeList"></datalist>
+            <input id="waPhone" type="tel" placeholder="98765 43210" />
           </div>
         </div>
 
@@ -243,6 +252,20 @@
     countryCodeList.innerHTML = COUNTRY_CODES.map(c => `<option value="${c.label}"></option>`).join("");
     countryCodeInput.value = "🇮🇳 +91 India";
 
+    const waCountryCodeInput = document.getElementById("waCountryCode");
+    const waCountryCodeList = document.getElementById("waCountryCodeList");
+    waCountryCodeList.innerHTML = COUNTRY_CODES.map(c => `<option value="${c.label}"></option>`).join("");
+    waCountryCodeInput.value = "🇮🇳 +91 India";
+
+    const whatsappNumberRow = document.getElementById("whatsappNumberRow");
+    document.querySelectorAll('input[name="whatsappSame"]').forEach(radio => {
+      radio.addEventListener("change", () => {
+        const isDifferent = document.querySelector('input[name="whatsappSame"]:checked').value === "no";
+        whatsappNumberRow.style.display = isDifferent ? "" : "none";
+        document.getElementById("waPhone").required = isDifferent;
+      });
+    });
+
     // Pulls just the "+xx" number out of whatever the person typed or picked —
     // works whether they selected a suggestion or typed a code/country directly.
     function extractCountryCode(text) {
@@ -269,9 +292,11 @@
       btn.disabled = true;
       btn.textContent = "Sending…";
 
-      const whatsappOptin = document.querySelector('input[name="whatsapp"]:checked').value === "yes";
+      const whatsappSame = document.querySelector('input[name="whatsappSame"]:checked').value === "yes";
       const countryCode = extractCountryCode(countryCodeInput.value);
       const fullPhone = `${countryCode} ${document.getElementById("phone").value}`.trim();
+      const waCode = extractCountryCode(waCountryCodeInput.value);
+      const waFullPhone = `${waCode} ${document.getElementById("waPhone").value}`.trim();
 
       const payload = {
         name: document.getElementById("name").value,
@@ -284,7 +309,8 @@
         guestRange: guestRangeSelect.value,
         details: document.getElementById("details").value,
         howHeard: howHeardSelect.value,
-        whatsappOptin: whatsappOptin,
+        whatsappOptin: true,
+        whatsappNumber: whatsappSame ? fullPhone : waFullPhone,
         altDate: document.getElementById("altDate").value || null,
       };
 

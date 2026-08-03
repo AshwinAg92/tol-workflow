@@ -438,7 +438,7 @@ app.get("/api/availability", async (req, res) => {
 app.post("/api/leads", async (req, res) => {
   const {
     name, phone, email, eventType, city, date, budget, notes,
-    venue, occasion, guestRange, details, howHeard, whatsappOptin, altDate,
+    venue, occasion, guestRange, details, howHeard, whatsappOptin, altDate, whatsappNumber,
   } = req.body;
   if (!name || !eventType || !date) {
     return res.status(400).json({ error: "name, eventType, and date are required" });
@@ -447,13 +447,13 @@ app.post("/api/leads", async (req, res) => {
   await pool.query(`
     INSERT INTO leads (
       id, name, phone, email, event_type, city, date, budget, stage, advance, notes, created_at,
-      venue, occasion, guest_range, details, how_heard, whatsapp_optin, alt_date
+      venue, occasion, guest_range, details, how_heard, whatsapp_optin, alt_date, whatsapp_number
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'New', 0, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'New', 0, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
   `, [
     id, name, phone || null, email || null, eventType, city || null, date, budget || null, notes || null, new Date().toISOString(),
     venue || null, occasion || null, guestRange || null,
-    details || null, howHeard || null, whatsappOptin ? 1 : 0, altDate || null,
+    details || null, howHeard || null, whatsappOptin ? 1 : 0, altDate || null, whatsappNumber || null,
   ]);
   const created = (await pool.query("SELECT * FROM leads WHERE id = $1", [id])).rows[0];
   res.status(201).json(created);
@@ -541,11 +541,11 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   // amounts, notes — needs full Leads access.
   const leadsOnlyFields = [
     "stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "date",
-    "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration",
+    "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration", "whatsapp_number",
   ];
   const sharedFields = ["event_time", "soundcheck_time", "venue"];
   if (!hasLeads) {
-    const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f);
+    const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f);
     const attemptedRestricted = leadsOnlyFields.some((f) => req.body[keyFor(f)] !== undefined);
     if (attemptedRestricted) return res.status(403).json({ error: "You don't have permission to update those fields" });
   }
@@ -567,7 +567,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const updates = [];
   const values = [];
   fields.forEach((f) => {
-    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f;
+    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f;
     if (req.body[key] !== undefined) {
       values.push(req.body[key]);
       updates.push(`${f} = $${values.length}`);
@@ -663,7 +663,7 @@ app.post("/api/leads/:id/quote", requireAuth, async (req, res) => {
   `, [uuid(), lead.id, finalSubject, body, numericAmount, new Date().toISOString()]);
 
   // WhatsApp click-to-chat needs just digits (country code + number, no + or spaces).
-  const digitsOnly = (lead.phone || "").replace(/\D/g, "");
+  const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
   const whatsapp = digitsOnly
     ? { link: `https://wa.me/${digitsOnly}?text=${encodeURIComponent(body)}` }
     : { link: null, reason: "No phone number on file for this lead" };

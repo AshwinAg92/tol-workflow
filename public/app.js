@@ -715,7 +715,7 @@ async function renderLeadsLog(main) {
         experience: packageName(lead.event_type),
         dateClause: lead.date ? ` on ${fmtDate(lead.date)}` : "",
       });
-      const digitsOnly = (lead.phone || "").replace(/\D/g, "");
+      const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
       if (digitsOnly) window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
     });
   });
@@ -2405,7 +2405,7 @@ function renderPartyLedgerDetail(container, booking) {
       btn.textContent = "Preparing PDF…";
       try {
         await downloadLedgerPDF(booking, payments);
-        const digitsOnly = (booking.phone || "").replace(/\D/g, "");
+        const digitsOnly = (booking.whatsapp_number || booking.phone || "").replace(/\D/g, "");
         if (digitsOnly) {
           const msg = `Hi ${(booking.name || "").split(" ")[0] || "there"}, sharing your payment ledger with Together, Out Loud. Please find the PDF attached.`;
           window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
@@ -2753,7 +2753,7 @@ async function renderDocuments(main) {
 
   function renderRow(d, lead, showPicker) {
     const fullUrl = window.location.origin + d.url;
-    const waPhone = lead?.phone ? lead.phone.replace(/\D/g, "") : "";
+    const waPhone = lead ? (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "") : "";
     const waText = encodeURIComponent(fillTemplate(MESSAGE_TEMPLATES.document_share || TEMPLATE_META.document_share.default, { label: d.notes || "document", link: fullUrl }));
     const clientsWithPhone = eventLeads.filter((l) => l.phone);
     return `
@@ -2813,9 +2813,9 @@ async function renderDocuments(main) {
       if (!sel.value) return;
       const doc = general.find((d) => d.id === sel.dataset.docId);
       const lead = eventLeads.find((l) => l.id === sel.value);
-      if (!doc || !lead || !lead.phone) return;
+      if (!doc || !lead || !(lead.whatsapp_number || lead.phone)) return;
       const fullUrl = window.location.origin + doc.url;
-      const waPhone = lead.phone.replace(/\D/g, "");
+      const waPhone = (lead.whatsapp_number || lead.phone).replace(/\D/g, "");
       const waText = encodeURIComponent(fillTemplate(MESSAGE_TEMPLATES.document_share || TEMPLATE_META.document_share.default, { label: doc.notes || "document", link: fullUrl }));
       window.open(`https://wa.me/${waPhone}?text=${waText}`, "_blank");
       sel.value = "";
@@ -2956,7 +2956,7 @@ function openConfirmationMessageModal(lead) {
   if (isPheras) {
     message = message.replace(/^Duration:.*\n?/m, "");
   }
-  const digitsOnly = (lead.phone || "").replace(/\D/g, "");
+  const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
   const waLink = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}` : null;
   const mailLink = lead.email ? `mailto:${lead.email}?subject=${encodeURIComponent("Your event is confirmed — Together, Out Loud")}&body=${encodeURIComponent(message)}` : null;
 
@@ -3163,6 +3163,8 @@ function openEditLeadModal(leadId) {
             <div><label>Phone</label><input id="mPhone" value="${lead.phone || ""}" placeholder="+91 ..." /></div>
             <div><label>Email</label><input id="mEmail" value="${lead.email || ""}" placeholder="name@example.com" /></div>
           </div>
+          <label>WhatsApp number <span class="muted small">(only if different from phone above)</span></label>
+          <input id="mWhatsapp" value="${lead.whatsapp_number || ""}" placeholder="+91 ... (leave blank if same as phone)" />
           <div class="row-2">
             <div><label>Format wanted</label><select id="mType">${CONFIG.packages.map((p) => `<option value="${p.id}" ${p.id === lead.event_type ? "selected" : ""}>${p.name}</option>`).join("")}</select></div>
             <div><label>City</label><input id="mCity" value="${lead.city || ""}" placeholder="e.g. Siliguri" /></div>
@@ -3200,6 +3202,7 @@ function openEditLeadModal(leadId) {
           name,
           phone: root.querySelector("#mPhone").value.trim() || null,
           email: root.querySelector("#mEmail").value.trim() || null,
+          whatsappNumber: root.querySelector("#mWhatsapp").value.trim() || null,
           eventType: root.querySelector("#mType").value,
           city: root.querySelector("#mCity").value.trim() || null,
           date: root.querySelector("#mDate").value || lead.date,

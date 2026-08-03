@@ -170,6 +170,7 @@ async function setup() {
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS soundcheck_time TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS is_seed INTEGER NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS pcs TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS whatsapp_number TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS duration TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS combo_group_id TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS is_combo_primary INTEGER NOT NULL DEFAULT 0`);
