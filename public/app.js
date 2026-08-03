@@ -561,7 +561,15 @@ function goToLeads(stage) {
 }
 
 // ---------- Leads log ----------
-function renderLeadsLog(main) {
+async function renderLeadsLog(main) {
+  // LEADS is only otherwise updated after specific actions (adding/editing/
+  // deleting a lead, etc.) -- if a new query comes in from the public form
+  // while this tab is just sitting open in memory, it wouldn't show up until
+  // something else happened to trigger a refresh. Always refresh on open so
+  // this is never stale.
+  main.innerHTML = `<div class="view-head"><div><h2>Leads</h2><p class="muted">Every query received, across every format.</p></div></div><p class="muted">Loading…</p>`;
+  await refreshLeads();
+
   const filtered = (leadsFilter === "all" ? LEADS : LEADS.filter((l) => l.event_type === leadsFilter))
     .filter((l) => leadsStageFilter === "all" || l.stage === leadsStageFilter)
     .filter((l) => !leadsSearch || l.name.toLowerCase().includes(leadsSearch.toLowerCase()))
@@ -851,6 +859,8 @@ Warmly,
 }
 
 async function renderQuotation(main) {
+  main.innerHTML = `<div class="view-head"><div><h2>Quotation</h2></div></div><p class="muted">Loading…</p>`;
+  await refreshLeads();
   const quotable = LEADS.filter((l) => l.stage !== "Completed");
   const preselect = quotable.find((l) => l.id === quotationLeadId) ? quotationLeadId : (quotable[0]?.id || null);
   quotationLeadId = null; // one-shot — doesn't stick if the user later opens Quotation from the nav
@@ -1127,7 +1137,9 @@ function wireCalendarGrid(container) {
   container.querySelector("#nextMonth").addEventListener("click", () => { calMonth++; if (calMonth > 12) { calMonth = 1; calYear++; } renderMain(); });
 }
 
-function renderCalendar(main) {
+async function renderCalendar(main) {
+  main.innerHTML = `<div class="view-head"><div><h2>Calendar</h2></div></div><p class="muted">Loading…</p>`;
+  await refreshLeads();
   const today = new Date().toISOString().slice(0, 10);
   const upcoming = LEADS
     .filter((l) => (l.stage === "Confirmed" || l.stage === "Completed" || l.stage === "Tentative") && l.date >= today)
