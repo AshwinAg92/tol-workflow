@@ -816,8 +816,7 @@ Hi {firstName}! Thank you for considering us for your event — here are the det
 📍 *Location:* {location}
 📅 *Date:* {date}
 👥 *Guests:* {guests}
-⏱️ *Duration:* {duration}
-
+${isPheras ? "" : "⏱️ *Duration:* {duration}\n"}
 *PERFORMANCE DETAILS*
 🎸 Pcs (No. of Musicians): {setPieces}
 🎤 Format: {formatType}

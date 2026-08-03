@@ -226,7 +226,7 @@ async function setup() {
 
   // One quotation template per package/experience — same content Ashwin already had,
   // just split out so each experience can be worded differently going forward.
-  const quoteBody = (sessionConditions) => `🎶 *QUOTATION — {formatUpper}*
+  const quoteBody = (sessionConditions, includeDuration = true) => `🎶 *QUOTATION — {formatUpper}*
 _Together, Out Loud_
 
 Hi {firstName}! Thank you for considering us for your event — here are the details of our offering. 💛
@@ -234,8 +234,7 @@ Hi {firstName}! Thank you for considering us for your event — here are the det
 📍 *Location:* {location}
 📅 *Date:* {date}
 👥 *Guests:* {guests}
-⏱️ *Duration:* {duration}
-
+${includeDuration ? "⏱️ *Duration:* {duration}\n" : ""}
 *PERFORMANCE DETAILS*
 🎸 Pcs (No. of Musicians): {setPieces}
 🎤 Format: {formatType}
@@ -267,7 +266,24 @@ Warmly,
     const isPheras = pkg.id === "pheras";
     await pool.query(
       `INSERT INTO message_templates (key, template, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING`,
-      [`quotation_${pkg.id}`, quoteBody(isPheras ? onePheraCondition : twoConditions), new Date().toISOString()]
+      [`quotation_${pkg.id}`, quoteBody(isPheras ? onePheraCondition : twoConditions, !isPheras), new Date().toISOString()]
+    );
+  }
+
+  // One-time fix: Musical Pheras' quotation template shouldn't state a fixed
+  // duration -- a pheras ceremony runs as long as the ceremony itself takes,
+  // not a fixed 75-90 minute session. Strip that line from the live template
+  // if it's still there, without touching anything already customized further.
+  const pherasDurationFixFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'pheras_duration_removed'")).rows[0];
+  if (!pherasDurationFixFlag) {
+    await pool.query(`
+      UPDATE message_templates
+      SET template = REPLACE(template, '⏱️ *Duration:* {duration}\n', ''), updated_at = $1
+      WHERE key = 'quotation_pheras'
+    `, [new Date().toISOString()]);
+    await pool.query(
+      `INSERT INTO message_templates (key, template, updated_at) VALUES ('pheras_duration_removed', '1', $1) ON CONFLICT (key) DO NOTHING`,
+      [new Date().toISOString()]
     );
   }
 
