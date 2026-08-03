@@ -670,7 +670,8 @@ async function renderLeadsLog(main) {
           </div>
           <div class="muted small" style="margin-top:8px;">${packageName(l.event_type)} · ${l.city || "—"} · <span class="mono">${fmtDate(l.date)}</span></div>
           <div class="muted small">Submitted ${fmtDateTime(l.created_at)}</div>
-          ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}</div>` : ""}
+          ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}${l.last_quoted_at ? ` <span class="muted">— sent ${fmtDate(l.last_quoted_at.slice(0, 10))}</span>` : ""}</div>` : ""}
+          ${l.notes && !isConfirmedOrDone ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#F5F0E4; border-radius:4px;">📝 ${l.notes}</div>` : ""}
           ${isConfirmedOrDone ? `
             <div class="lead-card-financials">
               <div><span class="muted small">Final</span><div class="mono">${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
@@ -3179,7 +3180,7 @@ function openEditLeadModal(leadId) {
           </div>
           ${(lead.stage === "Confirmed" || lead.stage === "Completed") ? `<label>Final confirmed amount (₹)</label><input id="mFinalAmount" type="number" value="${lead.final_amount || ""}" placeholder="e.g. 150000" />` : ""}
           ${lead.combo_group_id ? `<p class="muted small">This event is part of a combo booking. Editing the format/date here only changes this one event — the shared client details are separate per event.</p>` : ""}
-          <label>Internal notes (not shown to the client)</label>
+          <label>Internal notes <span class="muted small">(not shown to the client — shows on the Leads card, e.g. "follow up after 10 Aug")</span></label>
           <textarea id="mNotes" rows="3" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:14px;">${lead.notes || ""}</textarea>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Save changes</button></div>
