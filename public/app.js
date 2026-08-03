@@ -363,6 +363,7 @@ async function downloadLedgerPDF(booking, payments) {
 async function downloadQuotePDF({ clientName, date, fields }) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
+  const isPheras = (fields.format || "").trim().toLowerCase() === "musical pheras";
   const { pageWidth, marginX } = await pdfLetterhead(doc, "QUOTATION", `For ${fields.format || ""} — Together, Out Loud`);
   const contentW = pageWidth - marginX * 2;
   let y = 40;
@@ -379,7 +380,8 @@ async function downloadQuotePDF({ clientName, date, fields }) {
   y += intro.length * 5 + 4;
 
   y = pdfInfoRow(doc, [
-    ["Location", fields.location], ["Date", fields.eventDate], ["Guests", fields.guests], ["Duration", fields.duration],
+    ["Location", fields.location], ["Date", fields.eventDate], ["Guests", fields.guests],
+    ...(isPheras ? [] : [["Duration", fields.duration]]),
   ], marginX, contentW, y);
   doc.setDrawColor(...PDF_COLORS.line);
   doc.line(marginX, y, pageWidth - marginX, y);
@@ -391,8 +393,11 @@ async function downloadQuotePDF({ clientName, date, fields }) {
   doc.setTextColor(...PDF_COLORS.dark);
   doc.text(`•  Pcs (No. of Musicians): ${fields.pcs || "—"}`, marginX + 4, y);
   y += 6;
-  doc.text(`•  Format: ${fields.formatType || "—"}`, marginX + 4, y);
-  y += 10;
+  if (!isPheras) {
+    doc.text(`•  Format: ${fields.formatType || "—"}`, marginX + 4, y);
+    y += 4;
+  }
+  y += 6;
 
   doc.setFillColor(...PDF_COLORS.card);
   doc.setDrawColor(...PDF_COLORS.rust);
@@ -409,7 +414,6 @@ async function downloadQuotePDF({ clientName, date, fields }) {
   y += 22;
 
   y = pdfHeaderBar(doc, "Session Conditions", marginX, y, contentW, PDF_COLORS.brown);
-  const isPheras = (fields.format || "").trim().toLowerCase() === "musical pheras";
   const sessionConditionItems = ["No food, alcohol, or beverages to be consumed or served during the session."];
   if (!isPheras) sessionConditionItems.push("Session duration will be 75 to 90 minutes.");
   y = pdfList(doc, sessionConditionItems, marginX + 4, contentW - 4, y, { numbered: true, bulletColor: PDF_COLORS.brown, size: 9 });
@@ -819,8 +823,7 @@ Hi {firstName}! Thank you for considering us for your event — here are the det
 ${isPheras ? "" : "⏱️ *Duration:* {duration}\n"}
 *PERFORMANCE DETAILS*
 🎸 Pcs (No. of Musicians): {setPieces}
-🎤 Format: {formatType}
-💰 *Performance Charges: {amountLine}*
+${isPheras ? "" : "🎤 Format: {formatType}\n"}💰 *Performance Charges: {amountLine}*
 
 *SESSION CONDITIONS*
 {sessionConditions}
@@ -880,11 +883,11 @@ async function renderQuotation(main) {
         </div>
         <div class="row-2">
           <div><label>No. of guests</label><input id="qGuests" placeholder="e.g. 80-100" /></div>
-          <div><label>Duration</label><input id="qDuration" value="75-90 Minutes" /></div>
+          <div id="qDurationWrap"><label>Duration</label><input id="qDuration" value="75-90 Minutes" /></div>
         </div>
         <div class="row-2">
           <div><label>Pcs (No. of Musicians)</label><input id="qSet" type="number" placeholder="e.g. 5" /></div>
-          <div><label>Format</label>
+          <div id="qFormatTypeWrap"><label>Format</label>
             <select id="qFormatType">
               <option value="Private">Private</option>
               <option value="Public">Public</option>
@@ -965,20 +968,27 @@ async function renderQuotation(main) {
     main.querySelector("#qSubject").value = `Quotation for ${packageName(lead.event_type)} — Together, Out Loud`;
     main.querySelector("#qSet").value = "";
     main.querySelector("#qCharges").value = "";
+    // A pheras ceremony runs as long as the ceremony itself takes, and doesn't
+    // have a Private/Public distinction the way a jamming session does — so
+    // neither field applies and both are hidden rather than asked for.
+    const isPheras = lead.event_type === "pheras";
+    main.querySelector("#qDurationWrap").style.display = isPheras ? "none" : "";
+    main.querySelector("#qFormatTypeWrap").style.display = isPheras ? "none" : "";
     applyStandardPricing();
   }
 
   function generateDraft() {
     const lead = LEADS.find((l) => l.id === leadSelect.value);
+    const isPheras = lead && lead.event_type === "pheras";
     main.querySelector("#qBody").value = buildQuoteText({
       eventType: lead ? lead.event_type : "",
       format: lead ? packageName(lead.event_type) : "",
       location: main.querySelector("#qLocation").value,
       date: main.querySelector("#qDate").value,
       guests: main.querySelector("#qGuests").value,
-      duration: main.querySelector("#qDuration").value,
+      duration: isPheras ? "" : main.querySelector("#qDuration").value,
       setPieces: main.querySelector("#qSet").value,
-      formatType: main.querySelector("#qFormatType").value,
+      formatType: isPheras ? "" : main.querySelector("#qFormatType").value,
       charges: main.querySelector("#qCharges").value,
       firstName: lead ? (lead.name || "").trim().split(" ")[0] : "",
     });
@@ -991,13 +1001,14 @@ async function renderQuotation(main) {
   generateDraft();
 
   function validateQuoteFields() {
+    const lead = LEADS.find((l) => l.id === leadSelect.value);
+    const isPheras = lead && lead.event_type === "pheras";
     const required = [
       ["#qLocation", "Location"],
       ["#qDate", "Date"],
       ["#qGuests", "No. of guests"],
-      ["#qDuration", "Duration"],
+      ...(isPheras ? [] : [["#qDuration", "Duration"], ["#qFormatType", "Format"]]),
       ["#qSet", "Pcs (No. of Musicians)"],
-      ["#qFormatType", "Format"],
       ["#qCharges", "Performance charges"],
     ];
     const missing = required.filter(([sel]) => !main.querySelector(sel).value.toString().trim());
@@ -1024,7 +1035,7 @@ async function renderQuotation(main) {
         body: JSON.stringify({
           amount: charges || null, subject, body,
           pcs: main.querySelector("#qSet").value || null,
-          duration: main.querySelector("#qDuration").value || null,
+          duration: (LEADS.find((l) => l.id === leadId)?.event_type === "pheras") ? null : (main.querySelector("#qDuration").value || null),
         }),
       });
       await refreshLeads();
@@ -2920,9 +2931,10 @@ function openConfirmationMessageModal(lead) {
   const finalAmount = lead.final_amount || lead.quote_amount || 0;
   const received = lead.received || 0;
   const outstanding = finalAmount - received;
+  const isPheras = lead.event_type === "pheras";
   const amountLine = lead.final_amount ? `\nTotal: ₹${Number(lead.final_amount).toLocaleString("en-IN")}` : "";
   const tpl = MESSAGE_TEMPLATES.confirmed || TEMPLATE_META.confirmed.default;
-  const message = fillTemplate(tpl, {
+  let message = fillTemplate(tpl, {
     firstName,
     clientName: lead.name || "",
     experience: packageName(lead.event_type),
@@ -2937,6 +2949,13 @@ function openConfirmationMessageModal(lead) {
     advance: Number(received || 0).toLocaleString("en-IN"),
     outstanding: finalAmount ? Number(outstanding).toLocaleString("en-IN") : "",
   });
+  // The Confirmed template is shared across every package (unlike the quote
+  // wording, which is per-package) -- so Pheras' "no fixed duration" is
+  // handled here by dropping the line after filling, rather than forking the
+  // whole template.
+  if (isPheras) {
+    message = message.replace(/^Duration:.*\n?/m, "");
+  }
   const digitsOnly = (lead.phone || "").replace(/\D/g, "");
   const waLink = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}` : null;
   const mailLink = lead.email ? `mailto:${lead.email}?subject=${encodeURIComponent("Your event is confirmed — Together, Out Loud")}&body=${encodeURIComponent(message)}` : null;

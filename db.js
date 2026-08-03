@@ -226,7 +226,7 @@ async function setup() {
 
   // One quotation template per package/experience — same content Ashwin already had,
   // just split out so each experience can be worded differently going forward.
-  const quoteBody = (sessionConditions, includeDuration = true) => `🎶 *QUOTATION — {formatUpper}*
+  const quoteBody = (sessionConditions, includeDuration = true, includeFormat = true) => `🎶 *QUOTATION — {formatUpper}*
 _Together, Out Loud_
 
 Hi {firstName}! Thank you for considering us for your event — here are the details of our offering. 💛
@@ -237,8 +237,7 @@ Hi {firstName}! Thank you for considering us for your event — here are the det
 ${includeDuration ? "⏱️ *Duration:* {duration}\n" : ""}
 *PERFORMANCE DETAILS*
 🎸 Pcs (No. of Musicians): {setPieces}
-🎤 Format: {formatType}
-💰 *Performance Charges: {amountLine}*
+${includeFormat ? "🎤 Format: {formatType}\n" : ""}💰 *Performance Charges: {amountLine}*
 
 *SESSION CONDITIONS*
 ${sessionConditions}
@@ -266,7 +265,7 @@ Warmly,
     const isPheras = pkg.id === "pheras";
     await pool.query(
       `INSERT INTO message_templates (key, template, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING`,
-      [`quotation_${pkg.id}`, quoteBody(isPheras ? onePheraCondition : twoConditions, !isPheras), new Date().toISOString()]
+      [`quotation_${pkg.id}`, quoteBody(isPheras ? onePheraCondition : twoConditions, !isPheras, !isPheras), new Date().toISOString()]
     );
   }
 
@@ -283,6 +282,22 @@ Warmly,
     `, [new Date().toISOString()]);
     await pool.query(
       `INSERT INTO message_templates (key, template, updated_at) VALUES ('pheras_duration_removed', '1', $1) ON CONFLICT (key) DO NOTHING`,
+      [new Date().toISOString()]
+    );
+  }
+
+  // Follow-up one-time fix: also strip the Private/Public Format line from
+  // Musical Pheras -- separate flag since the duration fix above already ran
+  // and consumed its own flag on an earlier deploy.
+  const pherasFormatFixFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'pheras_format_removed'")).rows[0];
+  if (!pherasFormatFixFlag) {
+    await pool.query(`
+      UPDATE message_templates
+      SET template = REPLACE(template, '🎤 Format: {formatType}\n', ''), updated_at = $1
+      WHERE key = 'quotation_pheras'
+    `, [new Date().toISOString()]);
+    await pool.query(
+      `INSERT INTO message_templates (key, template, updated_at) VALUES ('pheras_format_removed', '1', $1) ON CONFLICT (key) DO NOTHING`,
       [new Date().toISOString()]
     );
   }
