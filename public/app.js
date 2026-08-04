@@ -646,7 +646,10 @@ async function renderLeadsLog(main, skipRefresh) {
   });
 
   const rows = main.querySelector("#leadsRows");
-  const sorted = filtered.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+  const sorted = filtered.slice().sort((a, b) => {
+    if (leadsStageFilter === "Follow-up") return new Date(b.created_at) - new Date(a.created_at);
+    return new Date(a.date) - new Date(b.date);
+  });
   if (sorted.length === 0) {
     rows.innerHTML = `<div class="board-empty">No queries match these filters</div>`;
   } else {
