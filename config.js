@@ -9,7 +9,7 @@ const PACKAGES = [
   { id: "bollywood", name: "Bollywood Jamming", rate: 80000 },
   { id: "satsang", name: "Devotional Satsang", rate: 55000 },
   { id: "shraddhanjali", name: "Shraddhanjali Satsang", rate: 50000 },
-  { id: "jam_pheras_both", name: "Both (Bhajan Jamming & Musical Pheras)", rate: 150000 },
+  { id: "jam_pheras_both", name: "Combo (Bhajan Jamming & Musical Pheras)", rate: 150000 },
 ];
 
 const ADDONS = [
@@ -37,14 +37,11 @@ const TEAM = [
   { id: "t4", name: "Neha", role: "Accounts" },
 ];
 
-// Options specific to the public enquiry form.
-const EXPERIENCES = [
-  { id: "pheras", name: "Musical Pheras" },
-  { id: "jam", name: "Bhajan Jamming" },
-  { id: "both", name: "Both" },
-  { id: "satsang", name: "Devotional Satsang" },
-  { id: "shraddhanjali", name: "Shraddhanjali Satsang" },
-];
+// Options specific to the public enquiry form -- derived directly from
+// PACKAGES so the two can never drift out of sync (they used to be two
+// separate lists, which caused the combo package to have mismatched ids
+// between the public form and the admin app).
+const EXPERIENCES = PACKAGES.map((p) => ({ id: p.id, name: p.name }));
 
 const OCCASIONS = [
   "Wedding", "Engagement", "Sangeet", "Reception", "Housewarming", "Birthday",

@@ -167,6 +167,10 @@ async function logActivity(req, message, leadId) {
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use("/api", (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  next();
+});
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/uploads", express.static(UPLOAD_DIR));
 
@@ -443,7 +447,7 @@ app.get("/api/availability", async (req, res) => {
 app.post("/api/leads", async (req, res) => {
   const {
     name, phone, email, eventType, city, date, budget, notes,
-    venue, occasion, guestRange, details, howHeard, whatsappOptin, altDate, whatsappNumber,
+    venue, occasion, guestRange, details, howHeard, whatsappOptin, altDate, whatsappNumber, pcs,
   } = req.body;
   if (!name || !eventType || !date) {
     return res.status(400).json({ error: "name, eventType, and date are required" });
@@ -452,13 +456,13 @@ app.post("/api/leads", async (req, res) => {
   await pool.query(`
     INSERT INTO leads (
       id, name, phone, email, event_type, city, date, budget, stage, advance, notes, created_at,
-      venue, occasion, guest_range, details, how_heard, whatsapp_optin, alt_date, whatsapp_number
+      venue, occasion, guest_range, details, how_heard, whatsapp_optin, alt_date, whatsapp_number, pcs
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'New', 0, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'New', 0, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
   `, [
     id, name, phone || null, email || null, eventType, city || null, date, budget || null, notes || null, new Date().toISOString(),
     venue || null, occasion || null, guestRange || null,
-    details || null, howHeard || null, whatsappOptin ? 1 : 0, altDate || null, whatsappNumber || null,
+    details || null, howHeard || null, whatsappOptin ? 1 : 0, altDate || null, whatsappNumber || null, pcs || null,
   ]);
   const created = (await pool.query("SELECT * FROM leads WHERE id = $1", [id])).rows[0];
   res.status(201).json(created);
@@ -1494,7 +1498,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const weekAhead = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
-  const [upcomingRes, followUpsRes, accountsRes, paymentsRes, tasksRes, newLeadsRes, tentativeRes] = await Promise.all([
+  const [upcomingRes, followUpsRes, accountsRes, paymentsRes, tasksRes, newLeadsRes, tentativeRes, interestedRes] = await Promise.all([
     pool.query(`SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1 ORDER BY date ASC LIMIT 5`, [today]),
     pool.query(`SELECT * FROM leads WHERE stage = 'Follow-up' ORDER BY date ASC`),
     pool.query(`SELECT id, final_amount, quote_amount FROM leads WHERE stage IN ('Confirmed', 'Completed')`),
@@ -1502,6 +1506,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
     pool.query(`SELECT * FROM tasks WHERE done = 0 AND (due_date <= $1 OR due_date IS NULL) ORDER BY due_date ASC LIMIT 8`, [weekAhead]),
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage = 'New'`),
     pool.query(`SELECT * FROM leads WHERE stage = 'Tentative' ORDER BY date ASC`),
+    pool.query(`SELECT * FROM leads WHERE stage = 'Interested' ORDER BY date ASC`),
   ]);
 
   const totalQuoted = accountsRes.rows.reduce((s, l) => s + (l.final_amount || l.quote_amount || 0), 0);
@@ -1513,6 +1518,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
     tasksDueSoon: tasksRes.rows,
     newLeadsCount: Number(newLeadsRes.rows[0].c),
     tentativeBookings: tentativeRes.rows,
+    interestedLeads: interestedRes.rows,
     outstanding: totalQuoted - totalReceived,
   });
 });

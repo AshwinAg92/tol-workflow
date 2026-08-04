@@ -671,7 +671,7 @@ async function renderLeadsLog(main) {
           <div class="muted small" style="margin-top:8px;">${packageName(l.event_type)} · ${l.city || "—"} · <span class="mono">${fmtDate(l.date)}</span></div>
           <div class="muted small">Submitted ${fmtDateTime(l.created_at)}</div>
           ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}${l.last_quoted_at ? ` <span class="muted">— sent ${fmtDate(l.last_quoted_at.slice(0, 10))}</span>` : ""}</div>` : ""}
-          ${l.notes && !isConfirmedOrDone ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#F5F0E4; border-radius:4px;">📝 ${l.notes}</div>` : ""}
+          ${l.notes ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#F5F0E4; border-radius:4px;">📝 ${l.notes}</div>` : ""}
           ${isConfirmedOrDone ? `
             <div class="lead-card-financials">
               <div><span class="muted small">Final</span><div class="mono">${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
@@ -685,6 +685,7 @@ async function renderLeadsLog(main) {
             ${l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
             ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
             ${isConfirmedOrDone && hasAccountsAccess() ? `<button class="btn-ghost payments-btn" data-lead-id="${l.id}">💰 Payments</button>` : ""}
+            ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost confirmation-msg-btn" data-lead-id="${l.id}">✅ Confirmation msg</button>` : ""}
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team</button>` : ""}
             ${hasLeadsAccess() && l.stage !== "Completed" ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}">✎ Edit</button>` : ""}
             ${CURRENT_USER?.accessLevel === "admin" && l.stage !== "Completed" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="color:#A64B3C;">🗑 Delete</button>` : ""}
@@ -727,6 +728,13 @@ async function renderLeadsLog(main) {
 
   main.querySelectorAll(".payments-btn").forEach((btn) => {
     btn.addEventListener("click", () => openLeadPaymentsModal(btn.dataset.leadId));
+  });
+
+  main.querySelectorAll(".confirmation-msg-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
+      if (lead) openConfirmationMessageModal(lead);
+    });
   });
 
   main.querySelectorAll(".edit-lead-btn").forEach((btn) => {
@@ -2507,6 +2515,7 @@ async function renderDashboard(main) {
       ${hasLeadsAccess() ? `
       <button class="card dash-stat dash-stat-click" id="statNew"><div class="muted">New queries</div><div class="mono big">${data.newLeadsCount}</div></button>
       <button class="card dash-stat dash-stat-click" id="statFollowup"><div class="muted">Awaiting follow-up</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${data.pendingFollowUps.length}</div></button>
+      <button class="card dash-stat dash-stat-click" id="statInterested"><div class="muted">Interested</div><div class="mono big" style="color:${STAGE_COLOR.Interested}">${data.interestedLeads.length}</div></button>
       <button class="card dash-stat dash-stat-click" id="statTentative"><div class="muted">Tentative holds</div><div class="mono big" style="color:${STAGE_COLOR.Tentative}">${data.tentativeBookings.length}</div></button>
       ` : ""}
       <button class="card dash-stat dash-stat-click" id="statUpcoming"><div class="muted">Upcoming events</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${data.upcomingEvents.length}</div></button>
@@ -2621,6 +2630,8 @@ async function renderDashboard(main) {
   if (statNewEl) statNewEl.addEventListener("click", () => goToLeads("New"));
   const statFollowupEl = main.querySelector("#statFollowup");
   if (statFollowupEl) statFollowupEl.addEventListener("click", () => goToLeads("Follow-up"));
+  const statInterestedEl = main.querySelector("#statInterested");
+  if (statInterestedEl) statInterestedEl.addEventListener("click", () => goToLeads("Interested"));
   const statTentativeEl = main.querySelector("#statTentative");
   if (statTentativeEl) statTentativeEl.addEventListener("click", () => goToLeads("Tentative"));
   main.querySelector("#statUpcoming").addEventListener("click", () => {
@@ -2633,8 +2644,10 @@ async function renderDashboard(main) {
 }
 
 // ---------- Tasks ----------
-function renderTasks(main) {
-  const chatEvents = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed");
+async function renderTasks(main) {
+  main.innerHTML = `<div class="view-head"><div><h2>Tasks &amp; Chats</h2></div></div><p class="muted">Loading…</p>`;
+  await refreshLeads();
+  const chatEvents = LEADS.filter((l) => l.stage === "Confirmed");
   main.innerHTML = `
     <div class="view-head"><div><h2>Tasks &amp; Chats</h2><p class="muted">The checklist behind each booking, and the team chat for each event.</p></div></div>
 
@@ -3029,6 +3042,10 @@ function openNewLeadModal() {
             <div><label>No. of guests</label><select id="mGuests"><option value="">Not specified</option>${CONFIG.guestRanges.map((g) => `<option value="${g}">${g}</option>`).join("")}</select></div>
             <div><label>Occasion</label><select id="mOccasion"><option value="">Not specified</option>${CONFIG.occasions.map((o) => `<option value="${o}">${o}</option>`).join("")}</select></div>
           </div>
+          <div class="row-2" id="mPcsRow">
+            <div><label>Pcs (No. of Musicians)</label><input id="mPcs" type="number" placeholder="e.g. 5" /></div>
+            <div></div>
+          </div>
           <label>Venue (optional)</label>
           <input id="mVenue" placeholder="e.g. Radhika Function Hall, MG Road" />
           <label class="check-row" style="margin-top:10px;">
@@ -3082,6 +3099,9 @@ function openNewLeadModal() {
   root.querySelector("#mIsCombo").addEventListener("change", (e) => {
     root.querySelector("#comboFinalRateField").style.display = (e.target.checked && root.querySelector("#mAlreadyConfirmed").checked) ? "" : "none";
   });
+  root.querySelector("#mType").addEventListener("change", (e) => {
+    root.querySelector("#mPcsRow").style.display = e.target.value === "pheras" ? "none" : "";
+  });
 
   root.querySelector("#submitModal").addEventListener("click", async () => {
     const name = root.querySelector("#mName").value;
@@ -3134,6 +3154,7 @@ function openNewLeadModal() {
         guestRange: root.querySelector("#mGuests").value || null,
         occasion: root.querySelector("#mOccasion").value || null,
         venue: root.querySelector("#mVenue").value || null,
+        pcs: root.querySelector("#mPcs").value || null,
       }),
     });
     await refreshLeads();
