@@ -565,14 +565,18 @@ function goToLeads(stage) {
 }
 
 // ---------- Leads log ----------
-async function renderLeadsLog(main) {
+async function renderLeadsLog(main, skipRefresh) {
   // LEADS is only otherwise updated after specific actions (adding/editing/
   // deleting a lead, etc.) -- if a new query comes in from the public form
   // while this tab is just sitting open in memory, it wouldn't show up until
-  // something else happened to trigger a refresh. Always refresh on open so
-  // this is never stale.
-  main.innerHTML = `<div class="view-head"><div><h2>Leads</h2><p class="muted">Every query received, across every format.</p></div></div><p class="muted">Loading…</p>`;
-  await refreshLeads();
+  // something else happened to trigger a refresh. Always refresh when the tab
+  // is first opened so this is never stale -- but NOT on every keystroke while
+  // searching/filtering (skipRefresh=true), since that turned every letter
+  // typed into a network round-trip and felt like the page was reloading.
+  if (!skipRefresh) {
+    main.innerHTML = `<div class="view-head"><div><h2>Leads</h2><p class="muted">Every query received, across every format.</p></div></div><p class="muted">Loading…</p>`;
+    await refreshLeads();
+  }
 
   const filtered = (leadsFilter === "all" ? LEADS : LEADS.filter((l) => l.event_type === leadsFilter))
     .filter((l) => leadsStageFilter === "all" || l.stage === leadsStageFilter)
@@ -618,26 +622,26 @@ async function renderLeadsLog(main) {
   main.querySelector("#leadsSearchInput").addEventListener("input", (e) => {
     const cursorPos = e.target.selectionStart;
     leadsSearch = e.target.value;
-    renderMain();
+    renderLeadsLog(main, true);
     const newInput = document.querySelector("#leadsSearchInput");
     if (newInput) {
       newInput.focus();
       newInput.setSelectionRange(cursorPos, cursorPos);
     }
   });
-  main.querySelector("#leadsDateInput").addEventListener("change", (e) => { leadsDateFilter = e.target.value; renderMain(); });
-  main.querySelector("#leadsStageSelect").addEventListener("change", (e) => { leadsStageFilter = e.target.value; renderMain(); });
+  main.querySelector("#leadsDateInput").addEventListener("change", (e) => { leadsDateFilter = e.target.value; renderLeadsLog(main, true); });
+  main.querySelector("#leadsStageSelect").addEventListener("change", (e) => { leadsStageFilter = e.target.value; renderLeadsLog(main, true); });
   const clearAllBtn = main.querySelector("#clearAllFilters");
-  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsDateFilter = ""; leadsStageFilter = "all"; renderMain(); });
+  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsDateFilter = ""; leadsStageFilter = "all"; renderLeadsLog(main, true); });
 
   const filterRow = main.querySelector("#filterRow");
   const allChip = el(`<button class="filter-chip${leadsFilter === "all" ? " filter-chip-active" : ""}">All <span class="mono">${LEADS.length}</span></button>`);
-  allChip.addEventListener("click", () => { leadsFilter = "all"; renderMain(); });
+  allChip.addEventListener("click", () => { leadsFilter = "all"; renderLeadsLog(main, true); });
   filterRow.appendChild(allChip);
 
   CONFIG.packages.forEach((p) => {
     const chip = el(`<button class="filter-chip${leadsFilter === p.id ? " filter-chip-active" : ""}">${p.name} <span class="mono">${countFor(p.id)}</span></button>`);
-    chip.addEventListener("click", () => { leadsFilter = p.id; renderMain(); });
+    chip.addEventListener("click", () => { leadsFilter = p.id; renderLeadsLog(main, true); });
     filterRow.appendChild(chip);
   });
 
