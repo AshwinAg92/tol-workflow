@@ -2481,7 +2481,10 @@ async function renderDashboard(main) {
       </div>
     ` : ""}
     ${teamNotifs.length > 0 ? `
-      <div class="section-label">🔔 Notifications</div>
+      <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>🔔 Notifications</span>
+        <button class="btn-ghost" id="clearAllNotifsBtn" style="font-size:11.5px; padding:3px 8px; font-weight:400;">Clear all</button>
+      </div>
       <div class="card reminder-flash" id="teamNotifCard" style="margin-bottom:16px;">
         ${teamNotifs.map((n) => `
           <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
@@ -2526,7 +2529,10 @@ async function renderDashboard(main) {
     </div>
     ${isAdmin ? `
     <div class="card" style="margin-bottom:16px;">
-      <div class="section-label">📋 Today's activity</div>
+      <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>📋 Today's activity</span>
+        ${activity.length > 0 ? `<button class="btn-ghost" id="clearAllActivityBtn" style="font-size:11.5px; padding:3px 8px; font-weight:400;">Clear all</button>` : ""}
+      </div>
       ${activity.length === 0 ? `<p class="muted small">Nothing logged yet today.</p>` : `
         <div class="activity-log">
           ${activity.map((a) => `
@@ -2582,12 +2588,28 @@ async function renderDashboard(main) {
       btn.closest(".dash-list-item").remove();
     });
   });
+  const clearAllNotifsBtn = main.querySelector("#clearAllNotifsBtn");
+  if (clearAllNotifsBtn) {
+    clearAllNotifsBtn.addEventListener("click", async () => {
+      if (!confirm("Clear all notifications? Any pending cancellation requests will still need resolving from the affected event's Team page.")) return;
+      await api("/api/admin/notifications", { method: "DELETE" });
+      renderMain();
+    });
+  }
   main.querySelectorAll("[data-dismiss-activity]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await api(`/api/activity/${btn.dataset.dismissActivity}`, { method: "DELETE" });
       btn.closest(".dash-list-item").remove();
     });
   });
+  const clearAllActivityBtn = main.querySelector("#clearAllActivityBtn");
+  if (clearAllActivityBtn) {
+    clearAllActivityBtn.addEventListener("click", async () => {
+      if (!confirm("Clear today's entire activity log?")) return;
+      await api("/api/activity", { method: "DELETE" });
+      renderMain();
+    });
+  }
   const generalMsgBtn = main.querySelector("#sendGeneralMsgBtn");
   if (generalMsgBtn) {
     generalMsgBtn.addEventListener("click", async () => {
@@ -2647,7 +2669,7 @@ async function renderDashboard(main) {
 async function renderTasks(main) {
   main.innerHTML = `<div class="view-head"><div><h2>Tasks &amp; Chats</h2></div></div><p class="muted">Loading…</p>`;
   await refreshLeads();
-  const chatEvents = LEADS.filter((l) => l.stage === "Confirmed");
+  const chatEvents = LEADS.filter((l) => l.stage === "Confirmed").sort((a, b) => new Date(a.date) - new Date(b.date));
   main.innerHTML = `
     <div class="view-head"><div><h2>Tasks &amp; Chats</h2><p class="muted">The checklist behind each booking, and the team chat for each event.</p></div></div>
 

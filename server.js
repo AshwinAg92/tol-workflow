@@ -939,6 +939,11 @@ app.delete("/api/admin/notifications/:id", requireAuth, requireAdmin, async (req
   res.status(204).end();
 });
 
+app.delete("/api/admin/notifications", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM admin_notifications");
+  res.status(204).end();
+});
+
 async function canAccessEventChat(req, leadId) {
   if (req.user.access_level === "admin") return true;
   // A manager coordinating an event should be able to jump into its chat even
@@ -1491,6 +1496,12 @@ app.get("/api/activity", requireAuth, requireAdmin, async (req, res) => {
 
 app.delete("/api/activity/:id", requireAuth, requireAdmin, async (req, res) => {
   await pool.query("DELETE FROM activity_log WHERE id = $1", [req.params.id]);
+  res.status(204).end();
+});
+
+app.delete("/api/activity", requireAuth, requireAdmin, async (req, res) => {
+  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+  await pool.query("DELETE FROM activity_log WHERE created_at >= $1", [startOfToday.toISOString()]);
   res.status(204).end();
 });
 
