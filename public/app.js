@@ -2518,7 +2518,7 @@ async function renderDashboard(main) {
       <button class="card dash-stat dash-stat-click" id="statInterested"><div class="muted">Interested</div><div class="mono big" style="color:${STAGE_COLOR.Interested}">${data.interestedLeads.length}</div></button>
       <button class="card dash-stat dash-stat-click" id="statTentative"><div class="muted">Tentative holds</div><div class="mono big" style="color:${STAGE_COLOR.Tentative}">${data.tentativeBookings.length}</div></button>
       ` : ""}
-      <button class="card dash-stat dash-stat-click" id="statUpcoming"><div class="muted">Upcoming events</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${data.upcomingEvents.length}</div></button>
+      <button class="card dash-stat dash-stat-click" id="statUpcoming"><div class="muted">Upcoming events</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${data.upcomingEventsCount}</div></button>
     </div>
     <div class="card" id="dashCalCard" style="margin-bottom:16px;">
       <div class="section-label">Calendar</div>
@@ -2544,7 +2544,7 @@ async function renderDashboard(main) {
     ` : ""}
     <div class="dash-grid">
       <div class="card">
-        <div class="section-label">Upcoming events</div>
+        <div class="section-label">Upcoming events${data.upcomingEventsCount > data.upcomingEvents.length ? ` <span class="muted" style="font-weight:400;">(next ${data.upcomingEvents.length} of ${data.upcomingEventsCount} — see all in Leads)</span>` : ""}</div>
         ${data.upcomingEvents.length === 0 ? `<p class="muted small">Nothing confirmed and upcoming yet.</p>` : data.upcomingEvents.map((l) => `
           <div class="dash-list-item dash-list-item-click" data-lead-id="${l.id}">
             <div>${l.name} — <span class="mono">${fmtDate(l.date)}</span></div>

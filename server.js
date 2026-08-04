@@ -1498,8 +1498,9 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const weekAhead = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
-  const [upcomingRes, followUpsRes, accountsRes, paymentsRes, tasksRes, newLeadsRes, tentativeRes, interestedRes] = await Promise.all([
+  const [upcomingRes, upcomingCountRes, followUpsRes, accountsRes, paymentsRes, tasksRes, newLeadsRes, tentativeRes, interestedRes] = await Promise.all([
     pool.query(`SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1 ORDER BY date ASC LIMIT 5`, [today]),
+    pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1`, [today]),
     pool.query(`SELECT * FROM leads WHERE stage = 'Follow-up' ORDER BY date ASC`),
     pool.query(`SELECT id, final_amount, quote_amount FROM leads WHERE stage IN ('Confirmed', 'Completed')`),
     pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments`),
@@ -1514,6 +1515,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
 
   res.json({
     upcomingEvents: upcomingRes.rows,
+    upcomingEventsCount: Number(upcomingCountRes.rows[0].c),
     pendingFollowUps: followUpsRes.rows,
     tasksDueSoon: tasksRes.rows,
     newLeadsCount: Number(newLeadsRes.rows[0].c),
