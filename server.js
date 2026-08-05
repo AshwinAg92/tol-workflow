@@ -470,9 +470,11 @@ app.post("/api/leads", async (req, res) => {
 
   // Flashing in-app alert (same feed used for team responses) plus an email —
   // so a new query is hard to miss whether you're in the app or not.
+  // Admin-only — a new sales enquiry isn't a manager's concern, unlike the
+  // event-coordination notifications below which they now share with admin.
   pool.query(`
-    INSERT INTO admin_notifications (id, message, assignment_id, created_at)
-    VALUES ($1, $2, NULL, $3)
+    INSERT INTO admin_notifications (id, message, assignment_id, audience, created_at)
+    VALUES ($1, $2, NULL, 'admin', $3)
   `, [uuid(), `New query: ${name} — ${packageName(eventType)}${city ? ` in ${city}` : ""}, wants ${date}`, new Date().toISOString()]
   ).catch((err) => console.error("Failed to create new-lead notification:", err.message));
 
@@ -950,24 +952,32 @@ app.post("/api/assignments/:id/resolve-cancel", requireAuth, requireCapability("
 // Managers (assign_team capability) see this feed too, not just admin — they're
 // usually the ones coordinating artists day-to-day, so seeing accept/decline and
 // cancellation requests here (not just the admin) avoids everything routing
-// through one person.
+// through one person. New sales-lead alerts (audience='admin') stay admin-only.
 app.get("/api/admin/notifications", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const isAdmin = req.user.access_level === "admin";
   const { rows } = await pool.query(`
     SELECT admin_notifications.*, event_assignments.status AS assignment_status
     FROM admin_notifications
     LEFT JOIN event_assignments ON event_assignments.id = admin_notifications.assignment_id
+    ${isAdmin ? "" : "WHERE admin_notifications.audience = 'coordination'"}
     ORDER BY admin_notifications.created_at DESC LIMIT 15
   `);
   res.json(rows);
 });
 
 app.delete("/api/admin/notifications/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const isAdmin = req.user.access_level === "admin";
+  if (!isAdmin) {
+    const n = (await pool.query("SELECT audience FROM admin_notifications WHERE id = $1", [req.params.id])).rows[0];
+    if (n && n.audience !== "coordination") return res.status(403).json({ error: "Not yours to dismiss" });
+  }
   await pool.query("DELETE FROM admin_notifications WHERE id = $1", [req.params.id]);
   res.status(204).end();
 });
 
 app.delete("/api/admin/notifications", requireAuth, requireCapability("assign_team"), async (req, res) => {
-  await pool.query("DELETE FROM admin_notifications");
+  const isAdmin = req.user.access_level === "admin";
+  await pool.query(isAdmin ? "DELETE FROM admin_notifications" : "DELETE FROM admin_notifications WHERE audience = 'coordination'");
   res.status(204).end();
 });
 
@@ -1027,8 +1037,8 @@ app.post("/api/messages/general", requireAuth, async (req, res) => {
     if (t) authorName = t.name;
   }
   await pool.query(`
-    INSERT INTO admin_notifications (id, message, assignment_id, created_at)
-    VALUES ($1, $2, NULL, $3)
+    INSERT INTO admin_notifications (id, message, assignment_id, audience, created_at)
+    VALUES ($1, $2, NULL, 'admin', $3)
   `, [uuid(), `${authorName}: "${body.trim()}"`, new Date().toISOString()]);
   res.status(201).json({ ok: true });
 });

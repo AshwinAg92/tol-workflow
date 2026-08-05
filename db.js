@@ -189,6 +189,17 @@ async function setup() {
   await pool.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS mime_type TEXT`);
   await pool.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_data BYTEA`);
   await pool.query(`ALTER TABLE documents ALTER COLUMN stored_name DROP NOT NULL`);
+  // Managers now share this feed with admin (artist accept/decline, cancellation
+  // requests, event chat, confirmed events) — but new sales-lead alerts are an
+  // admin-only concern, so every row is tagged with who it's for. Existing rows
+  // default to 'coordination' since they were all manager-relevant event
+  // activity before this column existed.
+  await pool.query(`ALTER TABLE admin_notifications ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'coordination'`);
+  // Backfill: notifications created before the audience column existed default to
+  // 'coordination' (fine for artist-response/cancellation ones), but any that are
+  // actually new-lead alerts need reclassifying to 'admin' so they stop showing to
+  // managers. Idempotent — only touches rows still mistagged as coordination.
+  await pool.query(`UPDATE admin_notifications SET audience = 'admin' WHERE message LIKE 'New query:%' AND audience = 'coordination'`);
   const demoLeadNames = ["Priya & Raj Sharma", "Anand Bhajan Sangeet Committee", "Meera Foundation", "Kapoor Family (Naming Ceremony)", "Sunrise Housing Society", "Shanti Path Trust", "Choudhury Family"];
   const seedFlaggedCount = (await pool.query("SELECT COUNT(*) AS c FROM leads WHERE is_seed = 1")).rows[0].c;
   if (Number(seedFlaggedCount) === 0) {
