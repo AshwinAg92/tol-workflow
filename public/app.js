@@ -1939,13 +1939,15 @@ async function openLeadPaymentsModal(leadId) {
 async function openAssignTeamModal(leadId) {
   const lead = LEADS.find((l) => l.id === leadId);
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
-  const [assignments, tempArtists, leadExpenses, myReimbursements, leadDocuments] = await Promise.all([
+  const [assignments, tempArtists, leadExpenses, myReimbursements, allDocuments] = await Promise.all([
     api(`/api/leads/${leadId}/assignments`),
     api(`/api/leads/${leadId}/temp-artists`),
     isAdmin ? api(`/api/expenses?leadId=${leadId}`) : Promise.resolve([]),
     api(`/api/my/reimbursements`).catch(() => []),
-    api(`/api/documents?leadId=${leadId}`).catch(() => []),
+    api(`/api/documents`).catch(() => []),
   ]);
+  const leadDocuments = allDocuments.filter((d) => d.lead_id === leadId);
+  const generalDocuments = allDocuments.filter((d) => !d.lead_id);
   const leadReimbursements = myReimbursements.filter((r) => r.lead_id === leadId);
   const reimbStatusLabel = { 0: "Pending approval", 1: "Approved" };
   const waClientPhone = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
@@ -2077,6 +2079,25 @@ async function openAssignTeamModal(leadId) {
               }).join("")}
             </div>
           `}
+
+          ${generalDocuments.length > 0 ? `
+            <div class="muted small" style="margin-top:10px; margin-bottom:4px;">From your document library — send any of these straight to this client:</div>
+            <div id="libraryDocList" style="margin-bottom:8px; border:1px solid #EFE9DC; border-radius:8px; max-height:180px; overflow-y:auto;">
+              ${generalDocuments.map((d) => {
+                const fullUrl = window.location.origin + d.url;
+                const waText = encodeURIComponent(fillTemplate(MESSAGE_TEMPLATES.document_share || TEMPLATE_META.document_share.default, { label: d.notes || "document", link: fullUrl }));
+                return `
+                <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px; border-bottom:1px solid #EFE9DC;">
+                  <div style="min-width:0;">
+                    <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${d.notes ? `<strong>${d.notes}</strong> — ` : ""}${d.original_name}</div>
+                  </div>
+                  ${waClientPhone ? `<a class="btn-ghost" href="https://wa.me/${waClientPhone}?text=${waText}" target="_blank" style="font-size:12px; padding:3px 8px; flex-shrink:0;">Send to client</a>` : `<span class="muted small" style="flex-shrink:0;">No phone on file</span>`}
+                </div>
+              `;
+              }).join("")}
+            </div>
+          ` : ""}
+
           <div class="row-2" style="margin-top:8px;">
             <input type="text" id="eventDocLabel" list="eventDocLabelOptions" placeholder="Label (e.g. Tech Rider, Contract)" />
             <input type="file" id="eventDocFile" />
@@ -2995,7 +3016,9 @@ async function renderTasks(main) {
 
 // ---------- Documents ----------
 async function renderDocuments(main) {
-  const eventLeads = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed");
+  // Completed events drop off here — once an event's done there's no more need to
+  // send it documents — and the remaining (Confirmed) events sort latest-first.
+  const eventLeads = LEADS.filter((l) => l.stage === "Confirmed").slice().sort((a, b) => new Date(b.date) - new Date(a.date));
   main.innerHTML = `
     <div class="view-head"><div><h2>Documents</h2><p class="muted">General files, plus files kept against a specific confirmed event — tag riders/contracts and send them straight to the client.</p></div></div>
     <div class="card" style="margin-bottom:16px;">
@@ -3066,8 +3089,14 @@ async function renderDocuments(main) {
     `;
   });
 
-  // Any documents attached to a lead that's no longer Confirmed/Completed (e.g. still New) still show up so nothing's hidden.
-  const orphanLeadIds = Object.keys(byLead).filter((id) => !eventLeads.some((l) => l.id === id));
+  // Completed events' documents are intentionally left out entirely — once an
+  // event's done, its files aren't part of this workflow anymore. Other stray
+  // leads (e.g. still New) still show up here so nothing's silently hidden.
+  const orphanLeadIds = Object.keys(byLead).filter((id) => {
+    if (eventLeads.some((l) => l.id === id)) return false;
+    const lead = LEADS.find((l) => l.id === id);
+    return !lead || lead.stage !== "Completed";
+  });
   orphanLeadIds.forEach((id) => {
     const lead = LEADS.find((l) => l.id === id);
     html += `
