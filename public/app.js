@@ -2650,16 +2650,24 @@ async function renderAccounts(main) {
 async function renderDashboard(main) {
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
   const canCoordinate = isAdmin || canAssignTeam();
-  const [data, announcements, teamNotifs, activity] = await Promise.all([
+  const [data, announcements, teamNotifs, activity, stickyNote] = await Promise.all([
     api("/api/dashboard"),
     api("/api/announcements"),
     canCoordinate ? api("/api/admin/notifications") : Promise.resolve([]),
     isAdmin ? api("/api/activity") : Promise.resolve([]),
+    api("/api/my/sticky-note").catch(() => ({ content: "" })),
   ]);
   main.innerHTML = `
     <div class="view-head">
       <div><h2>Dashboard</h2><p class="muted">The three things that matter today — click any card to see the list.</p></div>
       <button class="btn-ghost" id="dashExportBtn">⬇ Export to Excel</button>
+    </div>
+    <div class="card" id="stickyNoteCard" style="margin-bottom:16px; background:#FBF3D9; border-color:#E8D488;">
+      <div class="section-label" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <span>📌 Sticky note</span>
+        <span class="muted small" id="stickyNoteStatus" style="font-weight:400;"></span>
+      </div>
+      <textarea id="stickyNoteInput" rows="3" placeholder="Jot something down for yourself…" style="width:100%; padding:8px 10px; border:1px solid #E0CE8A; border-radius:6px; font-family:inherit; font-size:13px; background:#FFFDF6; resize:vertical;">${stickyNote.content || ""}</textarea>
     </div>
     ${!canCoordinate ? `
       <div class="card" style="margin-bottom:16px;">
@@ -2768,6 +2776,29 @@ async function renderDashboard(main) {
   `;
 
   wireCalendarGrid(main.querySelector("#dashCalCard"));
+  {
+    const noteInput = main.querySelector("#stickyNoteInput");
+    const noteStatus = main.querySelector("#stickyNoteStatus");
+    let saveTimeout = null;
+    const saveNote = async () => {
+      noteStatus.textContent = "Saving…";
+      try {
+        await api("/api/my/sticky-note", { method: "PUT", body: JSON.stringify({ content: noteInput.value }) });
+        noteStatus.textContent = "Saved ✓";
+        setTimeout(() => { if (noteStatus.textContent === "Saved ✓") noteStatus.textContent = ""; }, 1500);
+      } catch (err) {
+        noteStatus.textContent = "Couldn't save";
+      }
+    };
+    noteInput.addEventListener("input", () => {
+      noteStatus.textContent = "";
+      if (saveTimeout) clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(saveNote, 800);
+    });
+    noteInput.addEventListener("blur", () => {
+      if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null; saveNote(); }
+    });
+  }
   main.querySelectorAll("[data-resolve-cancel]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await api(`/api/assignments/${btn.dataset.resolveCancel}/resolve-cancel`, {

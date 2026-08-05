@@ -210,6 +210,14 @@ async function setup() {
   }
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS sticky_notes (
+      user_id TEXT PRIMARY KEY REFERENCES users(id),
+      content TEXT,
+      updated_at TEXT
+    );
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS temp_artists (
       id TEXT PRIMARY KEY,
       lead_id TEXT REFERENCES leads(id),

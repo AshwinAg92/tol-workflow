@@ -1660,6 +1660,22 @@ app.delete("/api/activity", requireAuth, requireAdmin, async (req, res) => {
   res.status(204).end();
 });
 
+// ---------- Sticky note — personal, per-login scratchpad on the Dashboard ----------
+app.get("/api/my/sticky-note", requireAuth, async (req, res) => {
+  const row = (await pool.query("SELECT content FROM sticky_notes WHERE user_id = $1", [req.user.id])).rows[0];
+  res.json({ content: row?.content || "" });
+});
+
+app.put("/api/my/sticky-note", requireAuth, async (req, res) => {
+  const { content } = req.body;
+  await pool.query(`
+    INSERT INTO sticky_notes (user_id, content, updated_at)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (user_id) DO UPDATE SET content = $2, updated_at = $3
+  `, [req.user.id, content || "", new Date().toISOString()]);
+  res.json({ ok: true });
+});
+
 app.get("/api/dashboard", requireAuth, async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const weekAhead = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
