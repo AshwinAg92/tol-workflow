@@ -762,6 +762,25 @@ app.patch("/api/assignments/:id", requireAuth, requireAdmin, async (req, res) =>
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
 });
 
+// A manager (or admin) can record an artist's response on their behalf — many
+// artists don't use their own login, so this is how their accept/decline gets
+// captured instead of waiting on /api/my/assignments/:id/respond.
+app.patch("/api/assignments/:id/mark-response", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const a = (await pool.query("SELECT * FROM event_assignments WHERE id = $1", [req.params.id])).rows[0];
+  if (!a) return res.status(404).json({ error: "Assignment not found" });
+  const { status } = req.body;
+  if (!["pending", "accepted", "declined"].includes(status)) return res.status(400).json({ error: "status must be 'pending', 'accepted' or 'declined'" });
+  await pool.query("UPDATE event_assignments SET status = $1, responded_at = $2 WHERE id = $3", [
+    status, status === "pending" ? null : new Date().toISOString(), a.id,
+  ]);
+  const lead = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [a.lead_id])).rows[0];
+  const member = (await pool.query("SELECT name FROM team WHERE id = $1", [a.team_id])).rows[0];
+  if (lead) {
+    logActivity(req, `Marked ${member ? member.name : "artist"} as ${status} for ${lead.name} (${lead.date})`, a.lead_id);
+  }
+  res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
+});
+
 // ---------- Temporary artists — one-off performers hired for a single event, not part of the permanent team ----------
 // Their fee (if given) lives as a row in the same `expenses` table used everywhere
 // else in Accounts, linked via temp_artists.expense_id — so it automatically counts
@@ -1144,9 +1163,11 @@ app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, re
   // Expenses committed to an event (artist fees + any other head) count against
   // its profit whether or not they've actually been paid out yet — the cost is
   // real the moment it's booked, not only once cash has left the account.
+  // Unapproved reimbursements aren't real commitments yet — they only count
+  // toward expenses/profit once an admin approves them.
   const expenseSums = (await pool.query(`
     SELECT lead_id, COALESCE(SUM(amount), 0) AS total
-    FROM expenses WHERE lead_id = ANY($1::text[]) GROUP BY lead_id
+    FROM expenses WHERE lead_id = ANY($1::text[]) AND approved = 1 GROUP BY lead_id
   `, [rows.map((r) => r.id)])).rows;
   const expensesByLead = {};
   expenseSums.forEach((e) => (expensesByLead[e.lead_id] = Number(e.total)));
@@ -1211,6 +1232,7 @@ app.get("/api/ledger", requireAuth, requireSection("accounts"), async (req, res)
   const expenses = (await pool.query(`
     SELECT expenses.*, team.name AS team_name FROM expenses
     LEFT JOIN team ON team.id = expenses.team_id
+    WHERE expenses.approved = 1
     ORDER BY expenses.created_at ASC
   `)).rows;
   const perLead = leads.map((l) => {
@@ -1306,7 +1328,7 @@ app.get("/api/transactions", requireAuth, requireSection("accounts"), async (req
     FROM expenses e
     LEFT JOIN team t ON t.id = e.team_id
     LEFT JOIN leads l ON l.id = e.lead_id
-    WHERE e.paid = 1 AND e.payment_date IS NOT NULL
+    WHERE e.paid = 1 AND e.payment_date IS NOT NULL AND e.approved = 1
 
     UNION ALL
 
@@ -1329,9 +1351,11 @@ app.get("/api/transactions", requireAuth, requireSection("accounts"), async (req
 
 app.get("/api/expenses", requireAuth, requireSection("accounts"), async (req, res) => {
   const { leadId } = req.query;
+  // Unapproved reimbursements live in their own approval queue (/api/reimbursements/pending)
+  // rather than mixing into the general expenses list until an admin signs off on them.
   const { rows } = leadId
-    ? await pool.query("SELECT * FROM expenses WHERE lead_id = $1 ORDER BY created_at DESC", [leadId])
-    : await pool.query("SELECT * FROM expenses ORDER BY created_at DESC");
+    ? await pool.query("SELECT * FROM expenses WHERE lead_id = $1 AND approved = 1 ORDER BY created_at DESC", [leadId])
+    : await pool.query("SELECT * FROM expenses WHERE approved = 1 ORDER BY created_at DESC");
   res.json(rows);
 });
 
@@ -1374,6 +1398,85 @@ app.patch("/api/expenses/:id", requireAuth, requireSection("accounts"), requireA
 app.delete("/api/expenses/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   await pool.query("DELETE FROM expenses WHERE id = $1", [req.params.id]);
   res.status(204).end();
+});
+
+// ---------- Reimbursements — a manager can log an artist's out-of-pocket expense ----------
+// without needing Accounts access. It's stored as a normal expense (so it's ready
+// to flow into profit/expense totals once live) but with approved=0, so it stays
+// invisible everywhere financial (Accounts totals, pending expenses, profit) until
+// an admin reviews it and approves — at which point they also set the payment
+// details, same as any other expense.
+app.post("/api/reimbursements", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const { leadId, teamId, artistName, amount, notes } = req.body;
+  if (amount === undefined || amount === null || amount === "" || isNaN(Number(amount)) || Number(amount) < 0) {
+    return res.status(400).json({ error: "Enter a valid amount" });
+  }
+  let resolvedName = artistName;
+  if (teamId) {
+    const member = (await pool.query("SELECT name FROM team WHERE id = $1", [teamId])).rows[0];
+    if (!member) return res.status(400).json({ error: "Artist not found" });
+    resolvedName = member.name;
+  }
+  if (!resolvedName) return res.status(400).json({ error: "Choose an artist or enter a name" });
+  const id = uuid();
+  const requestedBy = await actorName(req.user);
+  await pool.query(`
+    INSERT INTO expenses (id, lead_id, team_id, head, amount, paid, notes, created_at, category, approved, requested_by)
+    VALUES ($1, $2, $3, $4, $5, 0, $6, $7, 'reimbursement', 0, $8)
+  `, [id, leadId || null, teamId || null, `Reimbursement — ${resolvedName}`, Number(amount), notes || null, new Date().toISOString(), requestedBy]);
+  const row = (await pool.query("SELECT * FROM expenses WHERE id = $1", [id])).rows[0];
+  res.status(201).json(row);
+  const lead = leadId ? (await pool.query("SELECT name, date FROM leads WHERE id = $1", [leadId])).rows[0] : null;
+  logActivity(req, `Reimbursement requested for ${resolvedName}${lead ? ` (${lead.name})` : ""} — ₹${Number(amount).toLocaleString("en-IN")}, pending admin approval`, leadId || null);
+});
+
+// A manager can see the status of reimbursements they personally submitted,
+// without needing the "accounts" section that would expose everyone else's numbers.
+app.get("/api/my/reimbursements", requireAuth, async (req, res) => {
+  const requestedBy = await actorName(req.user);
+  const { rows } = await pool.query(
+    "SELECT * FROM expenses WHERE category = 'reimbursement' AND requested_by = $1 ORDER BY created_at DESC",
+    [requestedBy]
+  );
+  res.json(rows);
+});
+
+// Admin-only: all reimbursements awaiting approval, across every artist/event.
+app.get("/api/reimbursements/pending", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const { rows } = await pool.query(
+    "SELECT * FROM expenses WHERE category = 'reimbursement' AND approved = 0 ORDER BY created_at ASC"
+  );
+  res.json(rows);
+});
+
+// Admin approves a reimbursement, setting payment details in the same step (or
+// leaving it unpaid, to be settled later like any other expense).
+app.post("/api/reimbursements/:id/approve", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const exp = (await pool.query("SELECT * FROM expenses WHERE id = $1 AND category = 'reimbursement'", [req.params.id])).rows[0];
+  if (!exp) return res.status(404).json({ error: "Reimbursement not found" });
+  const { paid, paymentDate, paymentMode, amount } = req.body;
+  const nowPaid = paid ? 1 : 0;
+  await pool.query(`
+    UPDATE expenses SET approved = 1, amount = $1, paid = $2, payment_date = $3, payment_mode = $4 WHERE id = $5
+  `, [
+    amount !== undefined && amount !== null && amount !== "" ? Number(amount) : exp.amount,
+    nowPaid,
+    nowPaid ? (paymentDate || new Date().toISOString().slice(0, 10)) : (paymentDate || null),
+    paymentMode || null,
+    exp.id,
+  ]);
+  const updated = (await pool.query("SELECT * FROM expenses WHERE id = $1", [exp.id])).rows[0];
+  res.json(updated);
+  logActivity(req, `Approved reimbursement: ${exp.head} — ₹${Number(updated.amount).toLocaleString("en-IN")}${nowPaid ? " (paid)" : ""}`, exp.lead_id);
+});
+
+// Admin rejects a reimbursement request outright — just removes it.
+app.delete("/api/reimbursements/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const exp = (await pool.query("SELECT * FROM expenses WHERE id = $1 AND category = 'reimbursement'", [req.params.id])).rows[0];
+  if (!exp) return res.status(404).json({ error: "Reimbursement not found" });
+  await pool.query("DELETE FROM expenses WHERE id = $1", [exp.id]);
+  res.status(204).end();
+  logActivity(req, `Rejected reimbursement request: ${exp.head} — ₹${Number(exp.amount).toLocaleString("en-IN")}`, exp.lead_id);
 });
 
 // ---------- Tasks ----------

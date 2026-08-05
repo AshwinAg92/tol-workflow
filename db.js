@@ -175,6 +175,13 @@ async function setup() {
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS duration TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS combo_group_id TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS is_combo_primary INTEGER NOT NULL DEFAULT 0`);
+  // Reimbursements: managers can submit these for artists without full Accounts
+  // access, but they only become real committed expenses once an admin approves
+  // them (with payment details) — approved defaults to 1 so every expense created
+  // the normal (admin-only) way is unaffected by this gate.
+  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'expense'`);
+  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approved INTEGER NOT NULL DEFAULT 1`);
+  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS requested_by TEXT`);
   const demoLeadNames = ["Priya & Raj Sharma", "Anand Bhajan Sangeet Committee", "Meera Foundation", "Kapoor Family (Naming Ceremony)", "Sunrise Housing Society", "Shanti Path Trust", "Choudhury Family"];
   const seedFlaggedCount = (await pool.query("SELECT COUNT(*) AS c FROM leads WHERE is_seed = 1")).rows[0].c;
   if (Number(seedFlaggedCount) === 0) {

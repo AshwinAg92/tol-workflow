@@ -1934,11 +1934,14 @@ async function openLeadPaymentsModal(leadId) {
 async function openAssignTeamModal(leadId) {
   const lead = LEADS.find((l) => l.id === leadId);
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
-  const [assignments, tempArtists, leadExpenses] = await Promise.all([
+  const [assignments, tempArtists, leadExpenses, myReimbursements] = await Promise.all([
     api(`/api/leads/${leadId}/assignments`),
     api(`/api/leads/${leadId}/temp-artists`),
     isAdmin ? api(`/api/expenses?leadId=${leadId}`) : Promise.resolve([]),
+    api(`/api/my/reimbursements`).catch(() => []),
   ]);
+  const leadReimbursements = myReimbursements.filter((r) => r.lead_id === leadId);
+  const reimbStatusLabel = { 0: "Pending approval", 1: "Approved" };
   const byTeamId = {};
   assignments.forEach((a) => (byTeamId[a.team_id] = a));
   // One artist-fee expense per team member per event is the normal case (the
@@ -1972,14 +1975,21 @@ async function openAssignTeamModal(leadId) {
                   <input type="checkbox" data-team-id="${m.id}" ${a ? "checked" : ""} />
                   <span style="flex:1;">
                     <div>${m.name} <span class="muted small">— ${m.role || ""}</span></div>
-                    ${a ? `<div class="muted small" style="color:${statusColor[a.status]};">${statusLabel[a.status]}</div>` : ""}
+                    ${a ? `
+                      <select class="mark-response-select" data-assignment-id="${a.id}" style="margin-top:2px; font-size:12.5px; padding:2px 6px; color:${statusColor[a.status]};">
+                        <option value="pending" ${a.status === "pending" ? "selected" : ""}>Pending response</option>
+                        <option value="accepted" ${a.status === "accepted" ? "selected" : ""}>Accepted</option>
+                        <option value="declined" ${a.status === "declined" ? "selected" : ""}>Declined</option>
+                      </select>
+                    ` : ""}
                   </span>
                 </label>
                 ${isAdmin ? `<input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : ""}" style="width:100px; flex-shrink:0;" />` : ""}
               </div>
             `;
           }).join("")}
-          ${isAdmin ? `<p class="muted small" style="margin-top:4px;">Enter a fee next to any artist above and it's saved as an expense against this event — no need to add it separately in Accounts.</p>` : ""}
+          <p class="muted small" style="margin-top:4px;">Not every artist uses their own login — use the status dropdown to record their response yourself.</p>
+          ${isAdmin ? `<p class="muted small" style="margin-top:2px;">Enter a fee next to any artist above and it's saved as an expense against this event — no need to add it separately in Accounts.</p>` : ""}
           <button class="btn-ghost full" id="addMemberInlineBtn" style="margin-top:10px;">+ Add new member</button>
 
           <div class="section-label" style="margin-top:16px;">Temporary artists (one-off, this event only)</div>
@@ -2004,6 +2014,32 @@ async function openAssignTeamModal(leadId) {
           </div>
           <button class="btn-ghost full" id="addTempArtistBtn" style="margin-top:8px;">+ Add temporary artist</button>
           <p class="muted small" style="margin-top:4px;">Tip: hitting the overall Save button below also adds this if you've filled it in.${hasAccountsAccess() ? " Any fee entered here counts toward this event's expenses/profit automatically — no need to add it again under Accounts." : ""}</p>
+
+          <div class="section-label" style="margin-top:16px;">Artist reimbursements</div>
+          ${leadReimbursements.length > 0 ? `
+            <div id="reimbList" style="margin-bottom:8px;">
+              ${leadReimbursements.map((r) => `
+                <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
+                  <div>
+                    <div>${r.head.replace(/^Reimbursement — /, "")} <span class="muted small">— ${inr(r.amount)}</span></div>
+                    <div class="muted small" style="color:${r.approved ? "#5C8A6B" : "#B6752C"};">${reimbStatusLabel[r.approved]}${r.notes ? ` · ${r.notes}` : ""}</div>
+                  </div>
+                </div>
+              `).join("")}
+            </div>
+          ` : ""}
+          <div class="row-2" style="margin-top:8px;">
+            <select id="reimbTeamId">
+              <option value="">Choose artist…</option>
+              ${TEAM.map((m) => `<option value="${m.id}">${m.name}</option>`).join("")}
+              <option value="__other__">Other / not on roster…</option>
+            </select>
+            <input id="reimbAmount" type="number" placeholder="Amount ₹" />
+          </div>
+          <input id="reimbArtistName" placeholder="Artist name" style="margin-top:8px; display:none;" />
+          <input id="reimbNotes" placeholder="What was this for? (e.g. cab fare, travel)" style="margin-top:8px;" />
+          <button class="btn-ghost full" id="addReimbursementBtn" style="margin-top:8px;">+ Submit reimbursement</button>
+          <p class="muted small" style="margin-top:4px;">Sent to admin for approval and payment — this is separate from the artist's performance fee.</p>
         </div>
         <div class="modal-foot">
           <button class="btn-ghost" id="openChatBtn">💬 Event chat</button>
@@ -2020,6 +2056,49 @@ async function openAssignTeamModal(leadId) {
   root.querySelector("#openChatBtn").addEventListener("click", () => openEventChat(leadId, lead.name));
   root.querySelector("#addMemberInlineBtn").addEventListener("click", () => {
     openAddMemberModal(() => openAssignTeamModal(leadId));
+  });
+  root.querySelector("#reimbTeamId").addEventListener("change", (e) => {
+    root.querySelector("#reimbArtistName").style.display = e.target.value === "__other__" ? "block" : "none";
+  });
+  root.querySelector("#addReimbursementBtn").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
+    const teamIdVal = root.querySelector("#reimbTeamId").value;
+    const amount = root.querySelector("#reimbAmount").value.trim();
+    const artistName = root.querySelector("#reimbArtistName").value.trim();
+    if (!teamIdVal) return alert("Choose an artist.");
+    if (teamIdVal === "__other__" && !artistName) return alert("Enter the artist's name.");
+    if (!amount) return alert("Enter an amount.");
+    btn.disabled = true;
+    try {
+      await api("/api/reimbursements", {
+        method: "POST",
+        body: JSON.stringify({
+          leadId,
+          teamId: teamIdVal === "__other__" ? null : teamIdVal,
+          artistName: teamIdVal === "__other__" ? artistName : null,
+          amount,
+          notes: root.querySelector("#reimbNotes").value.trim(),
+        }),
+      });
+      openAssignTeamModal(leadId);
+    } catch (err) {
+      alert(err.message);
+      btn.disabled = false;
+    }
+  });
+  root.querySelectorAll(".mark-response-select").forEach((sel) => {
+    sel.addEventListener("change", async () => {
+      try {
+        await api(`/api/assignments/${sel.dataset.assignmentId}/mark-response`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: sel.value }),
+        });
+        openAssignTeamModal(leadId);
+      } catch (err) {
+        alert(err.message);
+      }
+    });
   });
   root.querySelectorAll("[data-remove-temp-artist]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -2123,10 +2202,11 @@ async function openAssignTeamModal(leadId) {
 
 // ---------- Accounts ----------
 async function renderAccounts(main) {
-  const [{ bookings, totals }, expenses, ledgerBookings] = await Promise.all([
+  const [{ bookings, totals }, expenses, ledgerBookings, pendingReimbursements] = await Promise.all([
     api("/api/accounts"),
     api("/api/expenses"),
     api("/api/ledger"),
+    api("/api/reimbursements/pending").catch(() => []),
   ]);
 
   main.innerHTML = `
@@ -2194,6 +2274,14 @@ async function renderAccounts(main) {
         <span>Date</span><span>Party</span><span class="right">Amount</span><span>Mode</span><span></span>
       </div>
       <div id="txnRows"><div class="board-empty">Loading…</div></div>
+    </div>
+
+    <div class="section-label">Reimbursement requests${pendingReimbursements.length ? ` (${pendingReimbursements.length} pending)` : ""}</div>
+    <div class="table" style="margin-bottom:24px;">
+      <div class="table-head" style="grid-template-columns:1.3fr 1fr 0.7fr 1fr 0.9fr 0.9fr 1.1fr;">
+        <span>Artist / reason</span><span>Event</span><span class="right">Amount</span><span>Requested by</span><span>Payment date</span><span>Mode</span><span></span>
+      </div>
+      <div id="reimbRows"></div>
     </div>
 
     <div class="section-label">Pending expenses (not yet paid)</div>
@@ -2306,6 +2394,63 @@ async function renderAccounts(main) {
     });
   }
   renderExpenseRows();
+
+  function renderReimbRows() {
+    const reimbRows = main.querySelector("#reimbRows");
+    if (pendingReimbursements.length === 0) { reimbRows.innerHTML = `<div class="board-empty">No reimbursement requests pending</div>`; return; }
+    reimbRows.innerHTML = "";
+    pendingReimbursements.forEach((r) => {
+      const lead = LEADS.find((l) => l.id === r.lead_id);
+      const row = el(`
+        <div class="table-row" style="grid-template-columns:1.3fr 1fr 0.7fr 1fr 0.9fr 0.9fr 1.1fr;">
+          <span>${r.head}${r.notes ? `<div class="muted small">${r.notes}</div>` : ""}</span>
+          <span class="muted">${lead ? lead.name : "General"}</span>
+          <span class="right mono"><input type="number" class="reimb-amount" data-reimb-id="${r.id}" value="${r.amount}" style="width:90px;" /></span>
+          <span class="muted small">${r.requested_by || "—"}</span>
+          <span><input type="date" class="reimb-date" data-reimb-id="${r.id}" max="${new Date().toISOString().slice(0, 10)}" /></span>
+          <span>
+            <select class="reimb-mode" data-reimb-id="${r.id}">
+              <option value="">Mode —</option>
+              <option value="Cash">Cash</option>
+              <option value="UPI">UPI</option>
+            </select>
+          </span>
+          <span style="display:flex; gap:4px;">
+            <button class="btn-ghost reimb-approve-btn" data-reimb-id="${r.id}">Approve</button>
+            <button class="icon-btn" data-reject-reimb="${r.id}">✕</button>
+          </span>
+        </div>
+      `);
+      reimbRows.appendChild(row);
+    });
+    reimbRows.querySelectorAll(".reimb-approve-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.reimbId;
+        const amount = reimbRows.querySelector(`.reimb-amount[data-reimb-id="${id}"]`).value;
+        const date = reimbRows.querySelector(`.reimb-date[data-reimb-id="${id}"]`).value;
+        const mode = reimbRows.querySelector(`.reimb-mode[data-reimb-id="${id}"]`).value;
+        const markPaid = confirm("Mark this reimbursement as paid now? Cancel to approve it as unpaid (settle later).");
+        if (markPaid && !date) return alert("Enter the payment date before marking this paid.");
+        try {
+          await api(`/api/reimbursements/${id}/approve`, {
+            method: "POST",
+            body: JSON.stringify({ amount, paid: markPaid, paymentDate: date || null, paymentMode: mode || null }),
+          });
+          renderMain();
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+    });
+    reimbRows.querySelectorAll("[data-reject-reimb]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Reject and remove this reimbursement request?")) return;
+        await api(`/api/reimbursements/${btn.dataset.rejectReimb}`, { method: "DELETE" });
+        renderMain();
+      });
+    });
+  }
+  renderReimbRows();
 
   main.querySelector("#expType").addEventListener("change", (e) => {
     main.querySelector("#expCustomHead").style.display = e.target.value === "custom" ? "block" : "none";
