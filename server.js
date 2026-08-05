@@ -605,6 +605,12 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     if (req.body.stage === "Confirmed") {
       const amt = req.body.finalAmount ? ` — ₹${Number(req.body.finalAmount).toLocaleString("en-IN")}` : "";
       logActivity(req, `Confirmed: ${lead.name}${amt}`, lead.id);
+      // Surfaced in the shared admin/manager notifications feed too — a new
+      // Confirmed event usually means artists need staffing soon.
+      pool.query(`
+        INSERT INTO admin_notifications (id, message, assignment_id, created_at)
+        VALUES ($1, $2, NULL, $3)
+      `, [uuid(), `New event confirmed: ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""} — needs staffing.`, new Date().toISOString()]).catch(() => {});
     } else {
       logActivity(req, `${lead.name}: ${lead.stage} → ${req.body.stage}`, lead.id);
     }
@@ -922,7 +928,8 @@ app.post("/api/my/assignments/:id/request-cancel", requireAuth, async (req, res)
 });
 
 // Admin approves or rejects a performer's cancellation request.
-app.post("/api/assignments/:id/resolve-cancel", requireAuth, requireAdmin, async (req, res) => {
+// A manager coordinating events can resolve these too, not just admin.
+app.post("/api/assignments/:id/resolve-cancel", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const a = (await pool.query("SELECT * FROM event_assignments WHERE id = $1", [req.params.id])).rows[0];
   if (!a) return res.status(404).json({ error: "Assignment not found" });
   if (a.status !== "cancel_requested") return res.status(400).json({ error: "No pending cancellation request on this assignment" });
@@ -940,7 +947,11 @@ app.post("/api/assignments/:id/resolve-cancel", requireAuth, requireAdmin, async
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
 });
 
-app.get("/api/admin/notifications", requireAuth, requireAdmin, async (req, res) => {
+// Managers (assign_team capability) see this feed too, not just admin — they're
+// usually the ones coordinating artists day-to-day, so seeing accept/decline and
+// cancellation requests here (not just the admin) avoids everything routing
+// through one person.
+app.get("/api/admin/notifications", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const { rows } = await pool.query(`
     SELECT admin_notifications.*, event_assignments.status AS assignment_status
     FROM admin_notifications
@@ -950,12 +961,12 @@ app.get("/api/admin/notifications", requireAuth, requireAdmin, async (req, res) 
   res.json(rows);
 });
 
-app.delete("/api/admin/notifications/:id", requireAuth, requireAdmin, async (req, res) => {
+app.delete("/api/admin/notifications/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
   await pool.query("DELETE FROM admin_notifications WHERE id = $1", [req.params.id]);
   res.status(204).end();
 });
 
-app.delete("/api/admin/notifications", requireAuth, requireAdmin, async (req, res) => {
+app.delete("/api/admin/notifications", requireAuth, requireCapability("assign_team"), async (req, res) => {
   await pool.query("DELETE FROM admin_notifications");
   res.status(204).end();
 });

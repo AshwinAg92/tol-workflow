@@ -2727,10 +2727,11 @@ function renderPartyLedgerDetail(container, booking) {
 // ---------- Dashboard ----------
 async function renderDashboard(main) {
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
+  const canCoordinate = isAdmin || canAssignTeam();
   const [data, announcements, teamNotifs, activity] = await Promise.all([
     api("/api/dashboard"),
     api("/api/announcements"),
-    isAdmin ? api("/api/admin/notifications") : Promise.resolve([]),
+    canCoordinate ? api("/api/admin/notifications") : Promise.resolve([]),
     isAdmin ? api("/api/activity") : Promise.resolve([]),
   ]);
   main.innerHTML = `
@@ -2738,7 +2739,7 @@ async function renderDashboard(main) {
       <div><h2>Dashboard</h2><p class="muted">The three things that matter today — click any card to see the list.</p></div>
       <button class="btn-ghost" id="dashExportBtn">⬇ Export to Excel</button>
     </div>
-    ${!isAdmin ? `
+    ${!canCoordinate ? `
       <div class="card" style="margin-bottom:16px;">
         <div class="section-label">✉️ Message admin</div>
         <p class="muted small" style="margin-top:-4px;">Not about a specific event? Send a quick note here instead.</p>
