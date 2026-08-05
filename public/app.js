@@ -1138,7 +1138,7 @@ function wireCalendarGrid(container) {
     calCells.appendChild(el(`
       <div class="cal-cell${d ? "" : " cal-cell-empty"}">
         ${d ? `<div class="cal-day">${d}</div>` : ""}
-        ${evs.map((ev) => `<div class="cal-event${ev.stage === "Tentative" ? " cal-event-tentative" : ""}" data-lead-id="${ev.id}" style="cursor:pointer;${ev.stage === "Tentative" ? ` background:transparent; border:1px dashed ${STAGE_COLOR.Tentative}; color:${STAGE_COLOR.Tentative};` : ""}" title="Click to open ${ev.name}${ev.stage === "Tentative" ? " (Tentative)" : ""}">${ev.name.split(" ")[0]}${ev.stage === "Tentative" ? " ⏳" : ""}</div>`).join("")}
+        ${evs.map((ev) => `<div class="cal-event${ev.stage === "Tentative" ? " cal-event-tentative" : ""}" data-lead-id="${ev.id}" style="cursor:pointer;${ev.stage === "Tentative" ? ` background:transparent; border:1px dashed ${STAGE_COLOR.Tentative}; color:${STAGE_COLOR.Tentative};` : ""}" title="Click to chat about ${ev.name}${ev.stage === "Tentative" ? " (Tentative)" : ""}">${ev.name.split(" ")[0]}${ev.stage === "Tentative" ? " ⏳" : ""}</div>`).join("")}
       </div>
     `));
   });
@@ -1146,16 +1146,7 @@ function wireCalendarGrid(container) {
     pill.addEventListener("click", () => {
       const lead = LEADS.find((l) => l.id === pill.dataset.leadId);
       if (!lead) return;
-      if (hasLeadsAccess()) {
-        leadsSearch = lead.name;
-        leadsStageFilter = "all";
-        leadsDateFilter = "";
-        currentTab = "leads";
-        renderNav();
-        renderMain();
-      } else if (canAssignTeam()) {
-        openAssignTeamModal(lead.id);
-      }
+      openEventChat(lead.id, lead.name);
     });
   });
 
@@ -1183,11 +1174,16 @@ async function renderCalendar(main) {
   if (upcoming.length === 0) calList.innerHTML = `<div class="board-empty">Nothing upcoming right now</div>`;
   upcoming.forEach((l) => {
     const row = el(`
-      <div class="list-row" style="cursor:pointer;">
+      <div class="list-row" style="grid-template-columns:110px 1fr 100px 90px 70px; cursor:pointer;">
         <span class="mono">${fmtDate(l.date)}</span><span>${l.name}${l.occasion ? ` <span class="muted small">— ${l.occasion}</span>` : ""}</span><span class="muted">${l.city || ""}</span>
         <span class="tag" style="color:${STAGE_COLOR[l.stage]}">${l.stage}</span>
+        <button class="btn-ghost open-event-chat-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="font-size:12px; padding:3px 8px;">💬 Chat</button>
       </div>
     `);
+    row.querySelector(".open-event-chat-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openEventChat(l.id, l.name);
+    });
     row.addEventListener("click", () => {
       if (hasLeadsAccess()) {
         leadsSearch = l.name;
@@ -1969,6 +1965,8 @@ async function openAssignTeamModal(leadId) {
           ${TEAM.map((m) => {
             const a = byTeamId[m.id];
             const existingFee = feeExpenseByTeamId[m.id];
+            const waDigits = (m.phone || "").replace(/\D/g, "");
+            const waMsg = `Hi ${m.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.venue ? ` at ${lead.venue}` : lead.city ? ` in ${lead.city}` : ""}.${lead.event_time ? ` Event time: ${lead.event_time}.` : ""}${lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : ""} Let us know if you have any questions!`;
             return `
               <div class="check-row" style="align-items:flex-start; justify-content:space-between; gap:8px;">
                 <label style="display:flex; align-items:flex-start; gap:8px; flex:1; cursor:pointer;">
@@ -1982,6 +1980,7 @@ async function openAssignTeamModal(leadId) {
                         <option value="declined" ${a.status === "declined" ? "selected" : ""}>Declined</option>
                       </select>
                     ` : ""}
+                    ${a && a.status === "accepted" && waDigits ? `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" target="_blank" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>` : ""}
                   </span>
                 </label>
                 ${isAdmin ? `<input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : ""}" style="width:100px; flex-shrink:0;" />` : ""}
@@ -1994,15 +1993,20 @@ async function openAssignTeamModal(leadId) {
 
           <div class="section-label" style="margin-top:16px;">Temporary artists (one-off, this event only)</div>
           <div id="tempArtistList">
-            ${tempArtists.length === 0 ? `<p class="muted small">None added yet.</p>` : tempArtists.map((t) => `
+            ${tempArtists.length === 0 ? `<p class="muted small">None added yet.</p>` : tempArtists.map((t) => {
+              const waDigits = (t.phone || "").replace(/\D/g, "");
+              const waMsg = `Hi ${t.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.venue ? ` at ${lead.venue}` : lead.city ? ` in ${lead.city}` : ""}.${lead.event_time ? ` Event time: ${lead.event_time}.` : ""}${lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : ""} Let us know if you have any questions!`;
+              return `
               <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
                 <div>
                   <div>${t.name}${t.description ? ` <span class="muted small">— ${t.description}</span>` : ""}</div>
                   <div class="muted small">${t.phone ? `${t.phone}` : ""}${hasAccountsAccess() ? `${t.phone ? " · " : ""}${t.fee_amount != null ? `Fee ${inr(t.fee_amount)}${t.fee_paid ? " · Paid" : " · Pending"}` : "No fee recorded"}` : ""}</div>
+                  ${waDigits ? `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" target="_blank" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>` : ""}
                 </div>
                 <button class="icon-btn" data-remove-temp-artist="${t.id}">✕</button>
               </div>
-            `).join("")}
+            `;
+            }).join("")}
           </div>
           <div class="row-2" style="margin-top:8px;">
             <input id="taName" placeholder="Name" />
@@ -2704,9 +2708,12 @@ async function renderDashboard(main) {
       <div class="card">
         <div class="section-label">Upcoming events${data.upcomingEventsCount > data.upcomingEvents.length ? ` <span class="muted" style="font-weight:400;">(next ${data.upcomingEvents.length} of ${data.upcomingEventsCount} — see all in Leads)</span>` : ""}</div>
         ${data.upcomingEvents.length === 0 ? `<p class="muted small">Nothing confirmed and upcoming yet.</p>` : data.upcomingEvents.map((l) => `
-          <div class="dash-list-item dash-list-item-click" data-lead-id="${l.id}">
-            <div>${l.name} — <span class="mono">${fmtDate(l.date)}</span></div>
-            <div class="muted">${packageName(l.event_type)} · ${l.city || ""}</div>
+          <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+            <div class="dash-list-item-click" data-lead-id="${l.id}" style="flex:1; cursor:pointer;">
+              <div>${l.name} — <span class="mono">${fmtDate(l.date)}</span></div>
+              <div class="muted">${packageName(l.event_type)} · ${l.city || ""}</div>
+            </div>
+            <button class="btn-ghost open-event-chat-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="flex-shrink:0; font-size:12px; padding:4px 8px;">💬 Chat</button>
           </div>
         `).join("")}
       </div>
@@ -2814,6 +2821,12 @@ async function renderDashboard(main) {
   });
   main.querySelectorAll(".dash-list-item-click").forEach((row) => {
     row.addEventListener("click", () => openEventForCurrentUser(row.dataset.leadId));
+  });
+  main.querySelectorAll(".open-event-chat-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openEventChat(btn.dataset.leadId, btn.dataset.leadName);
+    });
   });
 }
 
