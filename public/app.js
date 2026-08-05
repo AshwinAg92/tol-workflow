@@ -893,7 +893,8 @@ async function renderQuotation(main) {
         <select id="leadSelect">
           ${quotable.map((l) => `<option value="${l.id}" ${l.id === preselect ? "selected" : ""}>${l.name} — ${fmtDate(l.date)}${l.city ? `, ${l.city}` : ""}</option>`).join("")}
         </select>
-        <div class="row-2">
+        <div id="leadContextCard" style="margin:10px 0 4px; padding:10px 12px; background:#F5F0E4; border-radius:6px; font-size:12.5px; display:none;"></div>
+        <div class="row-2" style="margin-top:14px;">
           <div><label>Location</label><input id="qLocation" placeholder="e.g. Siliguri" /></div>
           <div><label>Date</label><input id="qDate" placeholder="e.g. 14th September 2026" /></div>
         </div>
@@ -991,6 +992,29 @@ async function renderQuotation(main) {
     main.querySelector("#qDurationWrap").style.display = isPheras ? "none" : "";
     main.querySelector("#qFormatTypeWrap").style.display = isPheras ? "none" : "";
     applyStandardPricing();
+
+    // Everything the client already told us on the enquiry form, surfaced here
+    // so whoever's quoting doesn't have to flip back to Leads to check it.
+    const ctx = main.querySelector("#leadContextCard");
+    const rows = [
+      lead.occasion ? ["Occasion", lead.occasion] : null,
+      lead.details ? ["Tell us about your event", lead.details] : null,
+      lead.guest_range ? ["Guest range (as submitted)", lead.guest_range] : null,
+      lead.budget ? ["Budget mentioned", inr(lead.budget)] : null,
+      lead.alt_date ? ["Alternate date", fmtDate(lead.alt_date)] : null,
+      lead.how_heard ? ["Heard about us via", lead.how_heard] : null,
+      (lead.phone || lead.whatsapp_number) ? ["Contact", `${lead.phone || ""}${lead.whatsapp_number && lead.whatsapp_number !== lead.phone ? ` (WhatsApp: ${lead.whatsapp_number})` : ""}`] : null,
+      lead.email ? ["Email", lead.email] : null,
+    ].filter(Boolean);
+    if (rows.length === 0) {
+      ctx.style.display = "none";
+    } else {
+      ctx.style.display = "block";
+      ctx.innerHTML = `
+        <div class="muted" style="font-weight:600; margin-bottom:6px; text-transform:uppercase; font-size:11px; letter-spacing:0.02em;">From their enquiry</div>
+        ${rows.map(([label, value]) => `<div style="margin-bottom:4px;"><span class="muted">${label}:</span> ${value}</div>`).join("")}
+      `;
+    }
   }
 
   function generateDraft() {
