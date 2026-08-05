@@ -1138,7 +1138,7 @@ function wireCalendarGrid(container) {
     calCells.appendChild(el(`
       <div class="cal-cell${d ? "" : " cal-cell-empty"}">
         ${d ? `<div class="cal-day">${d}</div>` : ""}
-        ${evs.map((ev) => `<div class="cal-event${ev.stage === "Tentative" ? " cal-event-tentative" : ""}" data-lead-id="${ev.id}" style="cursor:pointer;${ev.stage === "Tentative" ? ` background:transparent; border:1px dashed ${STAGE_COLOR.Tentative}; color:${STAGE_COLOR.Tentative};` : ""}" title="Click to chat about ${ev.name}${ev.stage === "Tentative" ? " (Tentative)" : ""}">${ev.name.split(" ")[0]}${ev.stage === "Tentative" ? " ⏳" : ""}</div>`).join("")}
+        ${evs.map((ev) => `<div class="cal-event${ev.stage === "Tentative" ? " cal-event-tentative" : ""}" data-lead-id="${ev.id}" style="cursor:pointer;${ev.stage === "Tentative" ? ` background:transparent; border:1px dashed ${STAGE_COLOR.Tentative}; color:${STAGE_COLOR.Tentative};` : ""}" title="Click to open ${ev.name}${ev.stage === "Tentative" ? " (Tentative)" : ""}">${ev.name.split(" ")[0]}${ev.stage === "Tentative" ? " ⏳" : ""}</div>`).join("")}
       </div>
     `));
   });
@@ -1146,7 +1146,16 @@ function wireCalendarGrid(container) {
     pill.addEventListener("click", () => {
       const lead = LEADS.find((l) => l.id === pill.dataset.leadId);
       if (!lead) return;
-      openEventChat(lead.id, lead.name);
+      if (hasLeadsAccess()) {
+        leadsSearch = lead.name;
+        leadsStageFilter = "all";
+        leadsDateFilter = "";
+        currentTab = "leads";
+        renderNav();
+        renderMain();
+      } else if (canAssignTeam()) {
+        openAssignTeamModal(lead.id);
+      }
     });
   });
 
