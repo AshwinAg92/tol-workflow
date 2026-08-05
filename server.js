@@ -130,13 +130,13 @@ function requireCapability(capability) {
   };
 }
 
-const UPLOAD_DIR = path.join(__dirname, "uploads");
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+// Documents are stored in Postgres (as bytea), not on local disk — Railway's
+// container filesystem is wiped on every redeploy, which was silently losing
+// every uploaded file each time we shipped new code. The database is the one
+// thing on this project that reliably survives redeploys, so files live there
+// via memoryStorage (req.file.buffer) instead of multer.diskStorage.
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-    filename: (req, file, cb) => cb(null, `${uuid()}-${file.originalname}`),
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 15 * 1024 * 1024 }, // 15MB
 });
 
@@ -172,7 +172,7 @@ app.use("/api", (req, res, next) => {
   next();
 });
 app.use(express.static(path.join(__dirname, "public")));
-app.use("/uploads", express.static(UPLOAD_DIR));
+// Document files are served from Postgres now — see /api/documents/:id/file below.
 
 const packageName = (id) => PACKAGES.find((p) => p.id === id)?.name || id;
 
@@ -627,9 +627,6 @@ app.delete("/api/leads/:id", requireAuth, requireAdmin, async (req, res) => {
   if (assignmentIds.length > 0) {
     await pool.query("DELETE FROM admin_notifications WHERE assignment_id = ANY($1::text[])", [assignmentIds]);
   }
-  const docs = (await pool.query("SELECT stored_name FROM documents WHERE lead_id = $1", [req.params.id])).rows;
-  docs.forEach((d) => fs.unlink(path.join(UPLOAD_DIR, d.stored_name), () => {}));
-
   await pool.query("DELETE FROM event_assignments WHERE lead_id = $1", [req.params.id]);
   await pool.query("DELETE FROM event_messages WHERE lead_id = $1", [req.params.id]);
   await pool.query("DELETE FROM temp_artists WHERE lead_id = $1", [req.params.id]);
@@ -1535,23 +1532,40 @@ app.delete("/api/tasks/:id", requireAuth, async (req, res) => {
 });
 
 // ---------- Documents ----------
+// File bytes live in Postgres (bytea), not on disk — see the memory-storage
+// note above. List/attach queries deliberately exclude file_data so listing
+// documents doesn't ship megabytes of base64 on every page load; the actual
+// bytes are only read out in the dedicated /file route below.
+const DOC_LIST_COLUMNS = "id, lead_id, original_name, notes, uploaded_at";
+
 app.get("/api/documents", requireAuth, async (req, res) => {
   const { leadId } = req.query;
   const { rows } = leadId
-    ? await pool.query("SELECT * FROM documents WHERE lead_id = $1 ORDER BY uploaded_at DESC", [leadId])
-    : await pool.query("SELECT * FROM documents ORDER BY uploaded_at DESC");
-  res.json(rows.map((d) => ({ ...d, url: `/uploads/${d.stored_name}` })));
+    ? await pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents WHERE lead_id = $1 ORDER BY uploaded_at DESC`, [leadId])
+    : await pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents ORDER BY uploaded_at DESC`);
+  res.json(rows.map((d) => ({ ...d, url: `/api/documents/${d.id}/file` })));
+});
+
+// Deliberately public (no requireAuth) — this is the link sent to clients over
+// WhatsApp, who have no session with the app. Same security model as the old
+// disk-based /uploads/:storedName route: unguessable UUID, not indexed anywhere.
+app.get("/api/documents/:id/file", async (req, res) => {
+  const doc = (await pool.query("SELECT original_name, mime_type, file_data FROM documents WHERE id = $1", [req.params.id])).rows[0];
+  if (!doc || !doc.file_data) return res.status(404).send("File not found");
+  res.setHeader("Content-Type", doc.mime_type || "application/octet-stream");
+  res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(doc.original_name)}"`);
+  res.send(doc.file_data);
 });
 
 app.post("/api/documents", requireAuth, upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
   const id = uuid();
   await pool.query(`
-    INSERT INTO documents (id, lead_id, original_name, stored_name, notes, uploaded_at)
-    VALUES ($1, $2, $3, $4, $5, $6)
-  `, [id, req.body.leadId || null, req.file.originalname, req.file.filename, req.body.notes || null, new Date().toISOString()]);
-  const doc = (await pool.query("SELECT * FROM documents WHERE id = $1", [id])).rows[0];
-  res.status(201).json({ ...doc, url: `/uploads/${doc.stored_name}` });
+    INSERT INTO documents (id, lead_id, original_name, notes, uploaded_at, mime_type, file_data)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+  `, [id, req.body.leadId || null, req.file.originalname, req.body.notes || null, new Date().toISOString(), req.file.mimetype, req.file.buffer]);
+  const doc = (await pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents WHERE id = $1`, [id])).rows[0];
+  res.status(201).json({ ...doc, url: `/api/documents/${doc.id}/file` });
   let leadName = null;
   if (req.body.leadId) {
     const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [req.body.leadId])).rows[0];
@@ -1561,18 +1575,13 @@ app.post("/api/documents", requireAuth, upload.single("file"), async (req, res) 
 });
 
 app.delete("/api/documents/:id", requireAuth, async (req, res) => {
-  const doc = (await pool.query("SELECT * FROM documents WHERE id = $1", [req.params.id])).rows[0];
-  if (doc) {
-    fs.unlink(path.join(UPLOAD_DIR, doc.stored_name), () => {});
-    await pool.query("DELETE FROM documents WHERE id = $1", [req.params.id]);
-  }
+  await pool.query("DELETE FROM documents WHERE id = $1", [req.params.id]);
   res.status(204).end();
 });
 
 // Copies a document from the general library onto a specific event, without
-// re-uploading — the file itself is duplicated on disk (not just the DB row
-// pointed at the same stored_name), so deleting either copy later never
-// breaks the other one.
+// re-uploading — the bytes are duplicated into a new row (not just referenced),
+// so deleting either copy later never breaks the other one.
 app.post("/api/documents/:id/attach", requireAuth, async (req, res) => {
   const source = (await pool.query("SELECT * FROM documents WHERE id = $1", [req.params.id])).rows[0];
   if (!source) return res.status(404).json({ error: "Document not found" });
@@ -1580,22 +1589,14 @@ app.post("/api/documents/:id/attach", requireAuth, async (req, res) => {
   if (!leadId) return res.status(400).json({ error: "leadId is required" });
   const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [leadId])).rows[0];
   if (!lead) return res.status(404).json({ error: "Event not found" });
-  const ext = path.extname(source.stored_name);
-  const newStoredName = `${uuid()}${ext}`;
-  try {
-    await new Promise((resolve, reject) => {
-      fs.copyFile(path.join(UPLOAD_DIR, source.stored_name), path.join(UPLOAD_DIR, newStoredName), (err) => (err ? reject(err) : resolve()));
-    });
-  } catch (err) {
-    return res.status(500).json({ error: "Couldn't copy the file — try re-uploading it instead." });
-  }
+  if (!source.file_data) return res.status(500).json({ error: "This document's file is missing and can't be attached — try re-uploading it." });
   const id = uuid();
   await pool.query(`
-    INSERT INTO documents (id, lead_id, original_name, stored_name, notes, uploaded_at)
-    VALUES ($1, $2, $3, $4, $5, $6)
-  `, [id, leadId, source.original_name, newStoredName, source.notes, new Date().toISOString()]);
-  const doc = (await pool.query("SELECT * FROM documents WHERE id = $1", [id])).rows[0];
-  res.status(201).json({ ...doc, url: `/uploads/${doc.stored_name}` });
+    INSERT INTO documents (id, lead_id, original_name, notes, uploaded_at, mime_type, file_data)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+  `, [id, leadId, source.original_name, source.notes, new Date().toISOString(), source.mime_type, source.file_data]);
+  const doc = (await pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents WHERE id = $1`, [id])).rows[0];
+  res.status(201).json({ ...doc, url: `/api/documents/${doc.id}/file` });
   logActivity(req, `Attached document "${source.notes || source.original_name}" to ${lead.name}`, leadId);
 });
 

@@ -182,6 +182,13 @@ async function setup() {
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'expense'`);
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approved INTEGER NOT NULL DEFAULT 1`);
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS requested_by TEXT`);
+  // Documents used to live as files on the container's local disk, which Railway
+  // wipes on every redeploy — silently losing every upload. They now live as
+  // bytes directly in Postgres instead, which is what the app already relies on
+  // for everything else surviving redeploys. stored_name is no longer written to.
+  await pool.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS mime_type TEXT`);
+  await pool.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_data BYTEA`);
+  await pool.query(`ALTER TABLE documents ALTER COLUMN stored_name DROP NOT NULL`);
   const demoLeadNames = ["Priya & Raj Sharma", "Anand Bhajan Sangeet Committee", "Meera Foundation", "Kapoor Family (Naming Ceremony)", "Sunrise Housing Society", "Shanti Path Trust", "Choudhury Family"];
   const seedFlaggedCount = (await pool.query("SELECT COUNT(*) AS c FROM leads WHERE is_seed = 1")).rows[0].c;
   if (Number(seedFlaggedCount) === 0) {
