@@ -2081,7 +2081,7 @@ async function openAssignTeamModal(leadId) {
           `}
 
           ${generalDocuments.length > 0 ? `
-            <div class="muted small" style="margin-top:10px; margin-bottom:4px;">From your document library — send any of these straight to this client:</div>
+            <div class="muted small" style="margin-top:10px; margin-bottom:4px;">From your document library — attach any of these to this event, or send straight to the client:</div>
             <div id="libraryDocList" style="margin-bottom:8px; border:1px solid #EFE9DC; border-radius:8px; max-height:180px; overflow-y:auto;">
               ${generalDocuments.map((d) => {
                 const fullUrl = window.location.origin + d.url;
@@ -2091,7 +2091,10 @@ async function openAssignTeamModal(leadId) {
                   <div style="min-width:0;">
                     <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${d.notes ? `<strong>${d.notes}</strong> — ` : ""}${d.original_name}</div>
                   </div>
-                  ${waClientPhone ? `<a class="btn-ghost" href="https://wa.me/${waClientPhone}?text=${waText}" target="_blank" style="font-size:12px; padding:3px 8px; flex-shrink:0;">Send to client</a>` : `<span class="muted small" style="flex-shrink:0;">No phone on file</span>`}
+                  <div style="display:flex; gap:4px; flex-shrink:0;">
+                    <button class="btn-ghost attach-library-doc-btn" data-doc-id="${d.id}" style="font-size:12px; padding:3px 8px;">+ Attach to event</button>
+                    ${waClientPhone ? `<a class="btn-ghost" href="https://wa.me/${waClientPhone}?text=${waText}" target="_blank" style="font-size:12px; padding:3px 8px;">Send to client</a>` : ""}
+                  </div>
                 </div>
               `;
               }).join("")}
@@ -2161,6 +2164,24 @@ async function openAssignTeamModal(leadId) {
       if (!confirm("Delete this document?")) return;
       await fetch(`/api/documents/${btn.dataset.deleteEventDoc}`, { method: "DELETE" });
       openAssignTeamModal(leadId);
+    });
+  });
+  root.querySelectorAll(".attach-library-doc-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Attaching…";
+      try {
+        await api(`/api/documents/${btn.dataset.docId}/attach`, {
+          method: "POST",
+          body: JSON.stringify({ leadId }),
+        });
+        openAssignTeamModal(leadId);
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+        btn.textContent = original;
+      }
     });
   });
   root.querySelector("#uploadEventDocBtn").addEventListener("click", async (e) => {
@@ -3017,8 +3038,9 @@ async function renderTasks(main) {
 // ---------- Documents ----------
 async function renderDocuments(main) {
   // Completed events drop off here — once an event's done there's no more need to
-  // send it documents — and the remaining (Confirmed) events sort latest-first.
-  const eventLeads = LEADS.filter((l) => l.stage === "Confirmed").slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+  // send it documents — and the remaining (Confirmed) events sort soonest-first,
+  // same convention as the Calendar tab's "Upcoming confirmed events" list.
+  const eventLeads = LEADS.filter((l) => l.stage === "Confirmed").slice().sort((a, b) => new Date(a.date) - new Date(b.date));
   main.innerHTML = `
     <div class="view-head"><div><h2>Documents</h2><p class="muted">General files, plus files kept against a specific confirmed event — tag riders/contracts and send them straight to the client.</p></div></div>
     <div class="card" style="margin-bottom:16px;">

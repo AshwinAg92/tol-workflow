@@ -1569,6 +1569,36 @@ app.delete("/api/documents/:id", requireAuth, async (req, res) => {
   res.status(204).end();
 });
 
+// Copies a document from the general library onto a specific event, without
+// re-uploading — the file itself is duplicated on disk (not just the DB row
+// pointed at the same stored_name), so deleting either copy later never
+// breaks the other one.
+app.post("/api/documents/:id/attach", requireAuth, async (req, res) => {
+  const source = (await pool.query("SELECT * FROM documents WHERE id = $1", [req.params.id])).rows[0];
+  if (!source) return res.status(404).json({ error: "Document not found" });
+  const { leadId } = req.body;
+  if (!leadId) return res.status(400).json({ error: "leadId is required" });
+  const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [leadId])).rows[0];
+  if (!lead) return res.status(404).json({ error: "Event not found" });
+  const ext = path.extname(source.stored_name);
+  const newStoredName = `${uuid()}${ext}`;
+  try {
+    await new Promise((resolve, reject) => {
+      fs.copyFile(path.join(UPLOAD_DIR, source.stored_name), path.join(UPLOAD_DIR, newStoredName), (err) => (err ? reject(err) : resolve()));
+    });
+  } catch (err) {
+    return res.status(500).json({ error: "Couldn't copy the file — try re-uploading it instead." });
+  }
+  const id = uuid();
+  await pool.query(`
+    INSERT INTO documents (id, lead_id, original_name, stored_name, notes, uploaded_at)
+    VALUES ($1, $2, $3, $4, $5, $6)
+  `, [id, leadId, source.original_name, newStoredName, source.notes, new Date().toISOString()]);
+  const doc = (await pool.query("SELECT * FROM documents WHERE id = $1", [id])).rows[0];
+  res.status(201).json({ ...doc, url: `/uploads/${doc.stored_name}` });
+  logActivity(req, `Attached document "${source.notes || source.original_name}" to ${lead.name}`, leadId);
+});
+
 // ---------- Dashboard ----------
 // ---------- Message templates — self-service wording for Follow-up / Tentative / Confirmed / Document-share messages ----------
 app.get("/api/message-templates", requireAuth, async (req, res) => {
