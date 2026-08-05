@@ -1827,11 +1827,13 @@ async function openLeadPaymentsModal(leadId) {
     const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
     const pendingExpenses = expenses.filter((e) => !e.paid);
     body.innerHTML = `
-      <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:16px; gap:8px;">
+      <div class="dash-stats" style="grid-template-columns:repeat(2,1fr); margin-bottom:16px; gap:8px;">
         <div class="card summary-card summary-card-compact"><div class="muted">Final rate</div><div class="mono big">${inr(total)}</div></div>
         <div class="card summary-card summary-card-compact"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
         <div class="card summary-card summary-card-compact"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
+        <div class="card summary-card summary-card-compact"><div class="muted">Profit</div><div class="mono big" style="color:${(total - totalExpenses) >= 0 ? "#5C8A6B" : "#A64B3C"};">${inr(total - totalExpenses)}</div></div>
       </div>
+      ${hasAccountsAccess() ? `<button class="btn-ghost full" id="lpShareLedgerBtn" style="margin-bottom:14px;">📄 Share ledger PDF on WhatsApp</button>` : ""}
 
       <div class="section-label">Client payments</div>
       <div style="margin-bottom:10px;">
@@ -1875,6 +1877,27 @@ async function openLeadPaymentsModal(leadId) {
       </div>
     `;
 
+    const shareLedgerBtn = body.querySelector("#lpShareLedgerBtn");
+    if (shareLedgerBtn) {
+      shareLedgerBtn.addEventListener("click", async () => {
+        shareLedgerBtn.disabled = true;
+        shareLedgerBtn.textContent = "Preparing PDF…";
+        try {
+          await downloadLedgerPDF(lead, payments);
+          const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
+          if (digitsOnly) {
+            const msg = `Hi ${(lead.name || "").split(" ")[0] || "there"}, sharing your payment ledger with Together, Out Loud. Please find the PDF attached.`;
+            window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
+            alert("PDF downloaded, and WhatsApp is opening in a new tab — attach the downloaded PDF file to that chat to send it.");
+          } else {
+            alert("PDF downloaded — this client has no phone number on file, so WhatsApp couldn't be opened automatically.");
+          }
+        } finally {
+          shareLedgerBtn.disabled = false;
+          shareLedgerBtn.textContent = "📄 Share ledger PDF on WhatsApp";
+        }
+      });
+    }
     body.querySelectorAll("[data-delete-payment]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         if (!confirm("Remove this payment?")) return;
@@ -2319,12 +2342,12 @@ async function openAssignTeamModal(leadId) {
 
 // ---------- Accounts ----------
 async function renderAccounts(main) {
-  const [{ bookings, totals }, expenses, ledgerBookings, pendingReimbursements] = await Promise.all([
+  const [{ bookings, totals }, expenses, pendingReimbursements] = await Promise.all([
     api("/api/accounts"),
     api("/api/expenses"),
-    api("/api/ledger"),
     api("/api/reimbursements/pending").catch(() => []),
   ]);
+  const sortedBookings = bookings.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
 
   main.innerHTML = `
     <div class="view-head">
@@ -2337,23 +2360,13 @@ async function renderAccounts(main) {
       <div class="card summary-card"><div class="muted">Outstanding</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${inr(totals.outstanding)}</div></div>
       <div class="card summary-card"><div class="muted">Total profit</div><div class="mono big" style="color:${totals.profit >= 0 ? "#5C8A6B" : "#A64B3C"}">${inr(totals.profit)}</div></div>
     </div>
-    <div class="table" style="margin-bottom:24px;">
-      <div class="table-head" style="grid-template-columns:1.3fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr;"><span>Booking</span><span>Status</span><span class="right">Final rate</span><span class="right">Received</span><span class="right">Balance</span><span class="right">Expenses</span><span class="right">Profit</span></div>
-      <div id="acctRows"></div>
-    </div>
 
-    <div class="section-label">Party ledger</div>
-    <div class="card" style="margin-bottom:24px;">
-      <label>Choose a client to open their ledger</label>
-      <select id="ledgerClientSelect">
-        <option value="">Select a client…</option>
-        ${ledgerBookings.slice().sort((a, b) => new Date(a.date) - new Date(b.date)).map((b) => `<option value="${b.id}">${b.name} — ${fmtDate(b.date)}${b.city ? `, ${b.city}` : ""}${b.comboEvents && b.comboEvents.length > 1 ? ` (${b.comboEvents.length} events)` : ""}</option>`).join("")}
-      </select>
-      <div id="partyLedgerDetail"></div>
-    </div>
+    <div class="section-label">Events — tap one to add a payment or view its ledger</div>
+    <input type="text" id="acctSearch" placeholder="🔍 Search events by name…" style="margin-bottom:10px;" />
+    <div id="acctCards" style="margin-bottom:24px;"></div>
 
-    <div class="section-label">Artist fees &amp; other expenses</div>
-    <div class="card" style="margin-bottom:14px;">
+    <div class="section-label">Add an expense or artist fee</div>
+    <div class="card" style="margin-bottom:20px;">
       <div class="upload-form" style="margin-bottom:0;">
         <select id="expLead">
           <option value="">Not tied to a specific event</option>
@@ -2385,106 +2398,100 @@ async function renderAccounts(main) {
       </div>
     </div>
 
+    <div class="section-label">Pending expenses (not yet paid)${expenses.filter((e) => !e.paid).length ? ` — ${expenses.filter((e) => !e.paid).length}` : ""}</div>
+    <div class="card" style="margin-bottom:20px;"><div id="expenseRows"></div></div>
+
+    <div class="section-label">Reimbursement requests${pendingReimbursements.length ? ` — ${pendingReimbursements.length} pending` : ""}</div>
+    <div class="card" style="margin-bottom:20px;"><div id="reimbRows"></div></div>
+
     <div class="section-label">Recent transactions</div>
-    <div class="table" style="margin-bottom:24px;">
-      <div class="table-head" style="grid-template-columns:1fr 1.3fr 1fr 0.9fr 0.7fr;">
-        <span>Date</span><span>Party</span><span class="right">Amount</span><span>Mode</span><span></span>
-      </div>
-      <div id="txnRows"><div class="board-empty">Loading…</div></div>
-    </div>
-
-    <div class="section-label">Reimbursement requests${pendingReimbursements.length ? ` (${pendingReimbursements.length} pending)` : ""}</div>
-    <div class="table" style="margin-bottom:24px;">
-      <div class="table-head" style="grid-template-columns:1.3fr 1fr 0.7fr 1fr 0.9fr 0.9fr 1.1fr;">
-        <span>Artist / reason</span><span>Event</span><span class="right">Amount</span><span>Requested by</span><span>Payment date</span><span>Mode</span><span></span>
-      </div>
-      <div id="reimbRows"></div>
-    </div>
-
-    <div class="section-label">Pending expenses (not yet paid)</div>
-    <div class="table">
-      <div class="table-head" style="grid-template-columns:1.2fr 1.1fr 0.9fr 0.6fr 1fr 0.8fr 0.9fr;">
-        <span>Head</span><span>Event</span><span class="right">Amount</span><span>Paid</span><span>Payment date</span><span>Mode</span><span></span>
-      </div>
-      <div id="expenseRows"></div>
-    </div>
+    <div class="card"><div id="txnRows"><p class="muted small">Loading…</p></div></div>
   `;
 
   api("/api/transactions").then((txns) => {
     const txnRows = main.querySelector("#txnRows");
     if (!txnRows) return;
-    if (txns.length === 0) { txnRows.innerHTML = `<div class="board-empty">No transactions recorded yet</div>`; return; }
+    if (txns.length === 0) { txnRows.innerHTML = `<p class="muted small">No transactions recorded yet</p>`; return; }
     txnRows.innerHTML = "";
     txns.forEach((t) => {
       txnRows.appendChild(el(`
-        <div class="table-row" style="grid-template-columns:1fr 1.3fr 1fr 0.9fr 0.7fr;">
-          <span class="mono">${fmtDate(t.date)}</span>
-          <span>${t.party_name}<div class="muted small">${t.description}</div></span>
-          <span class="right mono" style="color:${t.direction === "in" ? "#5C8A6B" : "#A64B3C"};">${t.direction === "in" ? "+" : "−"}${inr(t.amount)}</span>
-          <span>${t.mode || "—"}</span>
-          <span class="tag" style="color:${t.direction === "in" ? "#5C8A6B" : "#A64B3C"};">${t.direction === "in" ? "Received" : "Paid out"}</span>
+        <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+          <div>
+            <div>${t.party_name} <span class="muted small">— ${t.description}</span></div>
+            <div class="muted small mono">${fmtDate(t.date)}${t.mode ? ` · ${t.mode}` : ""}</div>
+          </div>
+          <span class="mono" style="color:${t.direction === "in" ? "#5C8A6B" : "#A64B3C"}; flex-shrink:0;">${t.direction === "in" ? "+" : "−"}${inr(t.amount)}</span>
         </div>
       `));
     });
   });
 
-  const rows = main.querySelector("#acctRows");
-  if (bookings.length === 0) rows.innerHTML = `<div class="board-empty">No confirmed or completed bookings yet</div>`;
-  bookings.forEach((l) => {
-    const total = l.final_amount || l.quote_amount || 0;
-    const row = el(`
-      <div class="table-row" style="grid-template-columns:1.3fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr; cursor:pointer;">
-        <span>${l.name}${l.comboEvents && l.comboEvents.length > 1 ? ` <span class="muted small" style="color:#8A5FA8;">🔗 ${l.comboEvents.length} events</span>` : ""}</span>
-        <span class="tag" style="color:${STAGE_COLOR[l.stage]}">${l.stage}</span>
-        <span class="right mono">${total ? inr(total) : "—"}</span>
-        <span class="right mono">${inr(l.received)}</span>
-        <span class="right mono">${inr(total - l.received)}</span>
-        <span class="right mono">${l.expenses ? inr(l.expenses) : "—"}</span>
-        <span class="right mono" style="color:${l.profit == null ? "inherit" : l.profit >= 0 ? "#5C8A6B" : "#A64B3C"};">${l.profit == null ? "See combo" : inr(l.profit)}</span>
-      </div>
-    `);
-    row.addEventListener("click", () => {
-      const select = main.querySelector("#ledgerClientSelect");
-      select.value = l.id;
-      select.dispatchEvent(new Event("change"));
-      select.scrollIntoView({ behavior: "smooth", block: "center" });
+  // ---- Events: searchable, tap-to-manage cards ----
+  const acctCards = main.querySelector("#acctCards");
+  function renderAcctCards(filterText) {
+    const q = (filterText || "").trim().toLowerCase();
+    const filtered = q ? sortedBookings.filter((l) => l.name.toLowerCase().includes(q)) : sortedBookings;
+    if (filtered.length === 0) {
+      acctCards.innerHTML = `<div class="board-empty">${sortedBookings.length === 0 ? "No confirmed or completed bookings yet" : "No events match that search"}</div>`;
+      return;
+    }
+    acctCards.innerHTML = "";
+    filtered.forEach((l) => {
+      const total = l.final_amount || l.quote_amount || 0;
+      const balance = total - l.received;
+      const card = el(`
+        <div class="card lead-card" style="margin-bottom:10px; cursor:pointer;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+            <div>
+              <div class="lead-name">${l.name}${l.comboEvents && l.comboEvents.length > 1 ? ` <span class="muted small" style="color:#8A5FA8;">🔗 ${l.comboEvents.length} events</span>` : ""}</div>
+              <div class="muted small">${fmtDate(l.date)}${l.city ? ` · ${l.city}` : ""}</div>
+            </div>
+            <span class="tag" style="color:${STAGE_COLOR[l.stage]}; flex-shrink:0;">${l.stage}</span>
+          </div>
+          <div class="lead-card-financials acct-financials">
+            <div><span class="muted small">Final</span><div class="mono">${total ? inr(total) : "—"}</div></div>
+            <div><span class="muted small">Received</span><div class="mono">${inr(l.received)}</div></div>
+            <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
+            <div><span class="muted small">Profit</span><div class="mono" style="color:${l.profit == null ? "inherit" : l.profit >= 0 ? "#5C8A6B" : "#A64B3C"};">${l.profit == null ? "See combo" : inr(l.profit)}</div></div>
+          </div>
+        </div>
+      `);
+      card.addEventListener("click", () => openLeadPaymentsModal(l.id));
+      acctCards.appendChild(card);
     });
-    rows.appendChild(row);
-  });
+  }
+  renderAcctCards("");
+  main.querySelector("#acctSearch").addEventListener("input", (e) => renderAcctCards(e.target.value));
 
-  main.querySelector("#ledgerClientSelect").addEventListener("change", (e) => {
-    const detail = main.querySelector("#partyLedgerDetail");
-    if (!e.target.value) { detail.innerHTML = ""; return; }
-    const booking = ledgerBookings.find((b) => b.id === e.target.value);
-    if (booking) renderPartyLedgerDetail(detail, booking);
-  });
-
+  // ---- Pending expenses: compact tap-friendly rows ----
   function renderExpenseRows() {
     const expRows = main.querySelector("#expenseRows");
     const pending = expenses.filter((e) => !e.paid);
-    if (pending.length === 0) { expRows.innerHTML = `<div class="board-empty">Nothing pending — all expenses are paid</div>`; return; }
+    if (pending.length === 0) { expRows.innerHTML = `<p class="muted small">Nothing pending — all expenses are paid</p>`; return; }
     expRows.innerHTML = "";
     pending.forEach((e) => {
       const lead = LEADS.find((l) => l.id === e.lead_id);
       const member = TEAM.find((m) => m.id === e.team_id);
       expRows.appendChild(el(`
-        <div class="table-row" style="grid-template-columns:1.2fr 1.1fr 0.9fr 0.6fr 1fr 0.8fr 0.9fr;">
-          <span>${e.head}</span>
-          <span class="muted">${lead ? lead.name : "General"}${member ? ` · ${member.name}` : ""}</span>
-          <span class="right mono">${inr(e.amount)}</span>
-          <span><input type="checkbox" class="exp-paid" data-exp-id="${e.id}" ${e.paid ? "checked" : ""} /></span>
-          <span><input type="date" class="exp-date" data-exp-id="${e.id}" value="${e.payment_date || ""}" max="${new Date().toISOString().slice(0, 10)}" /></span>
-          <span>
-            <select class="exp-mode" data-exp-id="${e.id}">
-              <option value="">—</option>
+        <div class="dash-list-item">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+            <div>
+              <div>${e.head}${member && !e.head.includes(member.name) ? ` <span class="muted small">— ${member.name}</span>` : ""}</div>
+              <div class="muted small">${lead ? lead.name : "General"}</div>
+            </div>
+            <span class="mono" style="flex-shrink:0;">${inr(e.amount)}</span>
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px;">
+            <input type="date" class="exp-date" data-exp-id="${e.id}" value="${e.payment_date || ""}" max="${new Date().toISOString().slice(0, 10)}" style="flex:1; min-width:130px;" />
+            <select class="exp-mode" data-exp-id="${e.id}" style="width:100px;">
+              <option value="">Mode —</option>
               <option value="Cash" ${e.payment_mode === "Cash" ? "selected" : ""}>Cash</option>
               <option value="UPI" ${e.payment_mode === "UPI" ? "selected" : ""}>UPI</option>
             </select>
-          </span>
-          <span style="display:flex; gap:4px;">
-            <button class="btn-ghost exp-save-btn" data-exp-id="${e.id}">Done</button>
+            <label class="muted small" style="display:flex; align-items:center; gap:4px; white-space:nowrap;"><input type="checkbox" class="exp-paid" data-exp-id="${e.id}" ${e.paid ? "checked" : ""} /> Paid</label>
+            <button class="btn-ghost exp-save-btn" data-exp-id="${e.id}" style="padding:5px 10px; font-size:12.5px;">Done</button>
             <button class="icon-btn" data-delete-exp="${e.id}">✕</button>
-          </span>
+          </div>
         </div>
       `));
     });
@@ -2512,33 +2519,34 @@ async function renderAccounts(main) {
   }
   renderExpenseRows();
 
+  // ---- Reimbursement requests: compact tap-friendly rows ----
   function renderReimbRows() {
     const reimbRows = main.querySelector("#reimbRows");
-    if (pendingReimbursements.length === 0) { reimbRows.innerHTML = `<div class="board-empty">No reimbursement requests pending</div>`; return; }
+    if (pendingReimbursements.length === 0) { reimbRows.innerHTML = `<p class="muted small">No reimbursement requests pending</p>`; return; }
     reimbRows.innerHTML = "";
     pendingReimbursements.forEach((r) => {
       const lead = LEADS.find((l) => l.id === r.lead_id);
-      const row = el(`
-        <div class="table-row" style="grid-template-columns:1.3fr 1fr 0.7fr 1fr 0.9fr 0.9fr 1.1fr;">
-          <span>${r.head}${r.notes ? `<div class="muted small">${r.notes}</div>` : ""}</span>
-          <span class="muted">${lead ? lead.name : "General"}</span>
-          <span class="right mono"><input type="number" class="reimb-amount" data-reimb-id="${r.id}" value="${r.amount}" style="width:90px;" /></span>
-          <span class="muted small">${r.requested_by || "—"}</span>
-          <span><input type="date" class="reimb-date" data-reimb-id="${r.id}" max="${new Date().toISOString().slice(0, 10)}" /></span>
-          <span>
-            <select class="reimb-mode" data-reimb-id="${r.id}">
+      reimbRows.appendChild(el(`
+        <div class="dash-list-item">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+            <div>
+              <div>${r.head}${r.notes ? ` <span class="muted small">— ${r.notes}</span>` : ""}</div>
+              <div class="muted small">${lead ? lead.name : "General"} · requested by ${r.requested_by || "—"}</div>
+            </div>
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px;">
+            <input type="number" class="reimb-amount" data-reimb-id="${r.id}" value="${r.amount}" style="width:90px;" />
+            <input type="date" class="reimb-date" data-reimb-id="${r.id}" max="${new Date().toISOString().slice(0, 10)}" style="flex:1; min-width:130px;" />
+            <select class="reimb-mode" data-reimb-id="${r.id}" style="width:100px;">
               <option value="">Mode —</option>
               <option value="Cash">Cash</option>
               <option value="UPI">UPI</option>
             </select>
-          </span>
-          <span style="display:flex; gap:4px;">
-            <button class="btn-ghost reimb-approve-btn" data-reimb-id="${r.id}">Approve</button>
+            <button class="btn-ghost reimb-approve-btn" data-reimb-id="${r.id}" style="padding:5px 10px; font-size:12.5px;">Approve</button>
             <button class="icon-btn" data-reject-reimb="${r.id}">✕</button>
-          </span>
+          </div>
         </div>
-      `);
-      reimbRows.appendChild(row);
+      `));
     });
     reimbRows.querySelectorAll(".reimb-approve-btn").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -2612,116 +2620,6 @@ async function renderAccounts(main) {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expenses), "Expenses");
     XLSX.writeFile(wb, `TOL-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
   });
-}
-
-// ---------- Ledger — one row per Confirmed/Completed event, full payment history ----------
-// Renders one client's ledger detail inline (used inside the Accounts tab) —
-// not a modal, so it stays visible while adding several payments in a row.
-function renderPartyLedgerDetail(container, booking) {
-  const today = new Date().toISOString().slice(0, 10);
-  const total = booking.final_amount || booking.quote_amount || 0;
-
-  const draw = (payments) => {
-    const received = payments.reduce((s, p) => s + p.amount, 0);
-    const balance = total - received;
-    const expensesList = booking.expenses || [];
-    const totalExpenses = booking.totalExpenses || 0;
-    const profit = total - totalExpenses;
-    container.innerHTML = `
-      <div class="card" style="margin-top:10px;">
-        <div class="view-head" style="margin-bottom:0;">
-          <div class="section-label" style="margin-bottom:0;">${booking.name} — ${booking.comboEvents && booking.comboEvents.length > 1 ? booking.comboEvents.map((e) => `${packageName(e.event_type)} (${fmtDate(e.date)})`).join(" + ") : fmtDate(booking.date)}</div>
-          <button class="btn-ghost" id="shareLedgerPdfBtn">📄 Share ledger PDF on WhatsApp</button>
-        </div>
-        <div class="dash-stats" style="grid-template-columns:repeat(2,1fr); margin-bottom:16px; margin-top:10px; gap:8px;">
-          <div class="card summary-card summary-card-compact"><div class="muted">Amount confirmed</div><div class="mono big">${inr(total)}</div></div>
-          <div class="card summary-card summary-card-compact"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
-          <div class="card summary-card summary-card-compact"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
-          <div class="card summary-card summary-card-compact"><div class="muted">Profit</div><div class="mono big" style="color:${profit >= 0 ? "#5C8A6B" : "#A64B3C"};">${inr(profit)}</div></div>
-        </div>
-        <div class="section-label">Payments received (date-wise)</div>
-        <div style="margin-bottom:14px;">
-          ${payments.length === 0 ? `<p class="muted small">No payments recorded yet.</p>` : payments.map((p) => `
-            <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
-              <div>
-                <div class="mono">${inr(p.amount)}</div>
-                <div class="muted small">${fmtDate(p.payment_date)}${p.payment_mode ? ` · ${p.payment_mode}` : ""}</div>
-              </div>
-              <button class="icon-btn" data-delete-payment="${p.id}">✕</button>
-            </div>
-          `).join("")}
-        </div>
-        <div class="section-label">Expenses for this event (artist fees &amp; other)</div>
-        <div style="margin-bottom:14px;">
-          ${expensesList.length === 0 ? `<p class="muted small">No expenses recorded yet for this event. Add artist fees or other costs below in "Artist fees &amp; other expenses".</p>` : expensesList.map((e) => `
-            <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
-              <div>
-                <div class="mono">${inr(e.amount)}</div>
-                <div class="muted small">${e.head}${e.team_name ? ` · ${e.team_name}` : ""} · ${e.paid ? "Paid" : "Pending"}</div>
-              </div>
-            </div>
-          `).join("")}
-          ${expensesList.length > 0 ? `<div class="dash-list-item" style="display:flex; justify-content:space-between; font-weight:600;"><span>Total expenses</span><span class="mono">${inr(totalExpenses)}</span></div>` : ""}
-        </div>
-        <div class="section-label">Add a payment</div>
-        <div class="row-2">
-          <div><label>Amount (₹)</label><input id="payAmount" type="number" placeholder="e.g. 20000" /></div>
-          <div><label>Date received</label><input id="payDate" type="date" max="${today}" /></div>
-        </div>
-        <label>Mode</label>
-        <select id="payMode">
-          <option value="">—</option>
-          <option value="Cash">Cash</option>
-          <option value="UPI">UPI</option>
-        </select>
-        <button class="btn-primary full" id="addPaymentBtn" style="margin-top:12px;">Done — add payment</button>
-      </div>
-    `;
-    container.querySelector("#shareLedgerPdfBtn").addEventListener("click", async () => {
-      const btn = container.querySelector("#shareLedgerPdfBtn");
-      btn.disabled = true;
-      btn.textContent = "Preparing PDF…";
-      try {
-        await downloadLedgerPDF(booking, payments);
-        const digitsOnly = (booking.whatsapp_number || booking.phone || "").replace(/\D/g, "");
-        if (digitsOnly) {
-          const msg = `Hi ${(booking.name || "").split(" ")[0] || "there"}, sharing your payment ledger with Together, Out Loud. Please find the PDF attached.`;
-          window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
-          alert("PDF downloaded, and WhatsApp is opening in a new tab — attach the downloaded PDF file to that chat to send it.");
-        } else {
-          alert("PDF downloaded — this client has no phone number on file, so WhatsApp couldn't be opened automatically.");
-        }
-      } finally {
-        btn.disabled = false;
-        btn.textContent = "📄 Share ledger PDF on WhatsApp";
-      }
-    });
-    container.querySelectorAll("[data-delete-payment]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        await api(`/api/payments/${btn.dataset.deletePayment}`, { method: "DELETE" });
-        await refreshLeads();
-        const fresh = await api(`/api/leads/${booking.id}/payments`);
-        draw(fresh);
-      });
-    });
-    container.querySelector("#addPaymentBtn").addEventListener("click", async () => {
-      const amount = container.querySelector("#payAmount").value;
-      const date = container.querySelector("#payDate").value;
-      const mode = container.querySelector("#payMode").value;
-      if (!amount || Number(amount) <= 0) return alert("Enter a valid amount.");
-      if (!date) return alert("Date received is required.");
-      try {
-        await api(`/api/leads/${booking.id}/payments`, { method: "POST", body: JSON.stringify({ amount, date, mode: mode || null }) });
-        const fresh = await api(`/api/leads/${booking.id}/payments`);
-        draw(fresh);
-        await refreshLeads();
-      } catch (err) {
-        alert(err.message);
-      }
-    });
-  };
-
-  draw(booking.payments);
 }
 
 // ---------- Dashboard ----------
