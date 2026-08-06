@@ -139,15 +139,10 @@
 
   /* reels */
   .reels{padding:90px 0; overflow:hidden;}
-  .reel-track{display:flex; gap:18px; margin-top:36px; animation:reelscroll 32s linear infinite;}
-  .reels:hover .reel-track{animation-play-state:paused;}
-  .reel-frame{
-    flex-shrink:0; width:190px; height:340px; border-radius:18px; background:var(--panel-reel, #F3E4D2);
-    border:2px dashed var(--hairline); display:flex; align-items:center; justify-content:center;
-    font-family:'JetBrains Mono'; font-size:11px; color:var(--muted); text-align:center; padding:16px;
-  }
-  @keyframes reelscroll{ from{transform:translateX(0);} to{transform:translateX(-50%);} }
-  @media (prefers-reduced-motion:reduce){ .reel-track{animation:none; overflow-x:auto;} }
+  .reel-track{display:flex; gap:18px; margin-top:36px; overflow-x:auto; padding-bottom:12px; scroll-snap-type:x proximity; -webkit-overflow-scrolling:touch;}
+  .reel-track::-webkit-scrollbar{height:8px;}
+  .reel-track::-webkit-scrollbar-thumb{background:var(--hairline); border-radius:4px;}
+  .reel-track .instagram-media{scroll-snap-align:start; flex-shrink:0; margin:0 !important;}
 
   /* instagram feed */
   .igfeed{padding:70px 0;}
@@ -422,14 +417,14 @@
   <div class="wrap">
     <span class="tag">FEATURED MOMENTS</span>
     <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">Numbers we're proud of.</h2>
-    <p class="stats-note">⚠️ Placeholder figures — replace with your real numbers before this goes live.</p>
+    <p class="stats-note">Pulled live from your Instagram — real numbers, not placeholders.</p>
     <div class="stats-grid">
-      <div class="stat"><div class="num" style="color:var(--terracotta);">300+</div><div class="lbl">Events</div></div>
-      <div class="stat"><div class="num" style="color:var(--peacock);">2,00,000+</div><div class="lbl">People Connected</div></div>
-      <div class="stat"><div class="num" style="color:var(--gulal);">Multiple</div><div class="lbl">Cities Across India</div></div>
-      <div class="stat"><div class="num" style="color:var(--marigold);">Growing</div><div class="lbl">International Presence</div></div>
-      <div class="stat"><div class="num" style="color:var(--terracotta);">100%</div><div class="lbl">Live Music</div></div>
-      <div class="stat"><div class="num" style="color:var(--peacock);">Countless</div><div class="lbl">Memories Created</div></div>
+      <div class="stat"><div class="num" style="color:var(--terracotta);">10,500+</div><div class="lbl">Instagram Family</div></div>
+      <div class="stat"><div class="num" style="color:var(--peacock);">5,37,000+</div><div class="lbl">Likes On Our Reels</div></div>
+      <div class="stat"><div class="num" style="color:var(--gulal);">12+</div><div class="lbl">Cities Across India</div></div>
+      <div class="stat"><div class="num" style="color:var(--marigold);">Europe</div><div class="lbl">International Shows, and counting</div></div>
+      <div class="stat"><div class="num" style="color:var(--terracotta);">100%</div><div class="lbl">Live Music, No Backing Tracks</div></div>
+      <div class="stat"><div class="num" style="color:var(--peacock);">268+</div><div class="lbl">Reels &amp; Moments Shared</div></div>
     </div>
   </div>
 </section>
@@ -438,16 +433,16 @@
   <div class="wrap">
     <span class="tag">EVENT REEL</span>
     <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">See us live.</h2>
-    <p class="stats-note">⚠️ Placeholder frames — send your Instagram Reel links and these become real embeds.</p>
-    <div class="reel-track">
-      <div class="reel-frame">Reel 1<br>— your link here —</div>
-      <div class="reel-frame">Reel 2<br>— your link here —</div>
-      <div class="reel-frame">Reel 3<br>— your link here —</div>
-      <div class="reel-frame">Reel 4<br>— your link here —</div>
-      <div class="reel-frame">Reel 1<br>— your link here —</div>
-      <div class="reel-frame">Reel 2<br>— your link here —</div>
-      <div class="reel-frame">Reel 3<br>— your link here —</div>
-      <div class="reel-frame">Reel 4<br>— your link here —</div>
+    <p class="stats-note">Real reels, straight from @togetheroutloudclub.</p>
+    <div class="reel-track" id="reelTrack">
+      <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DanSi_NT5-I/" data-instgrm-version="14"></blockquote>
+      <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DZxf0kOTJVl/" data-instgrm-version="14"></blockquote>
+      <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DYH74-azZdI/" data-instgrm-version="14"></blockquote>
+      <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DaqIL6fTOY6/" data-instgrm-version="14"></blockquote>
+      <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/Da8eXoYzqRl/" data-instgrm-version="14"></blockquote>
+      <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DRZBxRuDICS/" data-instgrm-version="14"></blockquote>
+      <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DaDkS-3TgnN/" data-instgrm-version="14"></blockquote>
+      <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DX7GRM9T4ea/" data-instgrm-version="14"></blockquote>
     </div>
   </div>
 </section>
@@ -456,11 +451,16 @@
   <div class="wrap">
     <span class="tag">INSTAGRAM</span>
     <h2 style="margin-top:14px; font-size:clamp(26px,3.6vw,36px);">Follow along.</h2>
-    <div class="igfeed-box">
-      <div style="font-family:'Space Grotesk'; font-weight:700; font-size:15px;">📸 Live feed pending setup</div>
-      <p>A live-updating Instagram feed needs a small embed tool connected to your account (free options like SnapWidget or Elfsight work well). Let me know which one you'd like and I'll wire it in — for now, here's a direct link:</p>
-      <a class="contact-btn" href="https://www.instagram.com/togetheroutloudclub" target="_blank" style="margin-top:16px; display:inline-flex;">📷 @togetheroutloudclub</a>
+    <p class="stats-note">Your 6 most recent posts, straight from Instagram.</p>
+    <div class="reel-track">
+      <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/Dbn6DNBTH6F/" data-instgrm-version="14"></blockquote>
+      <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DblOCvfsXQ2/" data-instgrm-version="14"></blockquote>
+      <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DblEQgSzp5y/" data-instgrm-version="14"></blockquote>
+      <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/Dbir9pbTV1_/" data-instgrm-version="14"></blockquote>
+      <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DbdvN3tTI3X/" data-instgrm-version="14"></blockquote>
+      <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/Dbdo7-DT2bc/" data-instgrm-version="14"></blockquote>
     </div>
+    <a class="contact-btn" href="https://www.instagram.com/togetheroutloudclub" target="_blank" style="margin-top:20px; display:inline-flex;">📷 See more @togetheroutloudclub</a>
   </div>
 </section>
 
@@ -475,7 +475,7 @@
       </details>
       <details class="faq-item">
         <summary>Can you perform internationally?</summary>
-        <p>Yes — we're based in India and travel for events, including internationally. Reach out with your location and dates and we'll work out the logistics together.</p>
+        <p>Yes — we've already taken Together, Out Loud on tour across Europe, alongside shows in multiple cities across India. Reach out with your location and dates and we'll work out the logistics together.</p>
       </details>
       <details class="faq-item">
         <summary>Do you travel?</summary>
@@ -549,5 +549,6 @@
   }
 </script>
 
+<script async src="//www.instagram.com/embed.js"></script>
 </body>
 </html>
