@@ -680,6 +680,7 @@ async function renderLeadsLog(main, skipRefresh) {
           <div class="muted small">Submitted ${fmtDateTime(l.created_at)}</div>
           ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}${l.last_quoted_at ? ` <span class="muted">— sent ${fmtDate(l.last_quoted_at.slice(0, 10))}</span>` : ""}</div>` : ""}
           ${l.notes ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#F5F0E4; border-radius:4px;">📝 ${l.notes}</div>` : ""}
+          ${l.stage === "Cancelled" && l.cancellation_reason ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#FBEAE7; border-radius:4px; color:#A64B3C;">❌ Cancelled: ${l.cancellation_reason}</div>` : ""}
           ${isConfirmedOrDone ? `
             <div class="lead-card-financials">
               <div><span class="muted small">Final</span><div class="mono">${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
@@ -796,9 +797,24 @@ async function renderLeadsLog(main, skipRefresh) {
         openConfirmEventModal(lead);
         return;
       }
+      let cancellationReason;
+      if (newStage === "Cancelled" && lead.stage !== "Cancelled") {
+        cancellationReason = prompt(`Why is "${lead.name}" being cancelled? (This is shared with any artists already assigned, and kept on record.)`);
+        if (cancellationReason === null) {
+          // They backed out of the prompt — don't change the stage at all.
+          renderMain();
+          return;
+        }
+      }
       sel.disabled = true;
       try {
-        await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ stage: newStage }) });
+        await api(`/api/leads/${leadId}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            stage: newStage,
+            ...(cancellationReason !== undefined ? { cancellation_reason: cancellationReason || null } : {}),
+          }),
+        });
         await refreshLeads();
         renderMain();
       } catch (err) {

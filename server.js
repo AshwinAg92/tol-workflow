@@ -678,6 +678,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const leadsOnlyFields = [
     "stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "date",
     "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration", "whatsapp_number",
+    "cancellation_reason",
   ];
   const sharedFields = ["event_time", "soundcheck_time", "venue"];
   if (!hasLeads) {
@@ -718,11 +719,12 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   if (req.body.stage === "Cancelled" && lead.stage !== "Cancelled") {
     const assigned = (await pool.query("SELECT team_id FROM event_assignments WHERE lead_id = $1", [req.params.id])).rows;
     const now = new Date().toISOString();
+    const reasonSuffix = req.body.cancellation_reason ? ` Reason: ${req.body.cancellation_reason}` : "";
     for (const a of assigned) {
       await pool.query(`
         INSERT INTO notifications (id, team_id, message, created_at)
         VALUES ($1, $2, $3, $4)
-      `, [uuid(), a.team_id, `Event cancelled: ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""} — no longer happening.`, now]);
+      `, [uuid(), a.team_id, `Event cancelled: ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""} — no longer happening.${reasonSuffix}`, now]);
     }
   }
 
@@ -739,7 +741,8 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
         VALUES ($1, $2, NULL, $3)
       `, [uuid(), `New event confirmed: ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""} — needs staffing.`, new Date().toISOString()]).catch(() => {});
     } else {
-      logActivity(req, `${lead.name}: ${lead.stage} → ${req.body.stage}`, lead.id);
+      const reasonSuffix = req.body.stage === "Cancelled" && req.body.cancellation_reason ? ` — ${req.body.cancellation_reason}` : "";
+      logActivity(req, `${lead.name}: ${lead.stage} → ${req.body.stage}${reasonSuffix}`, lead.id);
     }
   } else if (req.body.advance !== undefined && Number(req.body.advance) !== Number(lead.advance || 0)) {
     logActivity(req, `Payment recorded for ${lead.name}: ₹${Number(req.body.advance).toLocaleString("en-IN")} received`, lead.id);

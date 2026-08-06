@@ -186,6 +186,7 @@ async function setup() {
   // wipes on every redeploy — silently losing every upload. They now live as
   // bytes directly in Postgres instead, which is what the app already relies on
   // for everything else surviving redeploys. stored_name is no longer written to.
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS cancellation_reason TEXT`);
   await pool.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS mime_type TEXT`);
   await pool.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_data BYTEA`);
   await pool.query(`ALTER TABLE documents ALTER COLUMN stored_name DROP NOT NULL`);
