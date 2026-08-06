@@ -537,6 +537,21 @@
   document.getElementById('yr').textContent = new Date().getFullYear();
   const nav = document.getElementById('siteNav');
   window.addEventListener('scroll', () => nav.classList.toggle('scrolled', window.scrollY > 20));
+
+  // Smooth-scroll to anchors while accounting for the fixed nav (and the
+  // draft banner, when present) so section headings don't end up hidden
+  // underneath it.
+  document.querySelectorAll('a[href^="#"]').forEach((link) => {
+    link.addEventListener('click', (e) => {
+      const target = document.querySelector(link.getAttribute('href'));
+      if (!target) return;
+      e.preventDefault();
+      const navBottom = nav.getBoundingClientRect().bottom;
+      const targetTop = target.getBoundingClientRect().top;
+      const offset = window.scrollY + targetTop - navBottom - 24;
+      window.scrollTo({ top: offset, behavior: 'smooth' });
+    });
+  });
   const revealEls = document.querySelectorAll('.reveal');
   if ('IntersectionObserver' in window) {
     const obs = new IntersectionObserver((entries) => {
