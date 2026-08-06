@@ -193,13 +193,13 @@
   .btn-text{font-weight:700; font-size:14.5px; color:var(--ink); border-bottom:2px solid var(--marigold); padding-bottom:3px; font-family:'Space Grotesk';}
 
   .photo-slot{
-    position:relative; height:340px; border:2px dashed var(--hairline); border-radius:20px;
-    background:rgba(255,255,255,0.35);
+    position:relative; border-radius:20px; overflow:visible; aspect-ratio:3/4; max-height:460px;
   }
-  .photo-slot-label{
-    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center;
-    font-family:'JetBrains Mono'; font-size:11px; color:var(--muted); letter-spacing:0.06em; white-space:nowrap;
+  .photo-slot img{
+    width:100%; height:100%; object-fit:cover; border-radius:20px; display:block;
+    box-shadow:0 18px 40px rgba(43,36,32,0.18); border:4px solid var(--paper);
   }
+  .photo-slot .sticker{position:absolute; z-index:2;}
 
   .eq{display:flex; align-items:flex-end; gap:6px; height:48px;}
   .eq span{width:6px; border-radius:3px; animation:eqbounce 1.3s ease-in-out infinite; transform-origin:bottom;}
@@ -439,7 +439,7 @@
     .about-grid{grid-template-columns:1fr;}
     .hero-about{grid-template-columns:1fr; gap:24px; margin-top:36px;}
     .tix-grid{grid-template-columns:1fr;}
-    .photo-slot{height:280px; margin-top:16px;}
+    .photo-slot{margin-top:16px; max-height:360px;}
     .sticker-stack{height:220px;}
     .stats-grid{grid-template-columns:repeat(2,1fr); gap:20px;}
     .hero{padding:60px 20px 40px;}
@@ -514,13 +514,8 @@
         <p class="mission-line">Our mission: building communities through music.</p>
       </div>
       <div class="photo-slot">
-        <div class="photo-slot-label">📷 Your photo goes here</div>
-        <div class="sticker-stack">
-          <div class="sticker s1">GUITAR ✓</div>
-          <div class="sticker s2">TABLA ✓</div>
-          <div class="sticker s4">DRUMS ✓</div>
-          <div class="sticker s3">COMMUNITY ✓</div>
-        </div>
+        <img src="/founders.jpg" alt="Prakriti and Ashwin performing live together on stage" width="900" height="1184" />
+        <div class="sticker s2" style="bottom:-14px; left:-18px; top:auto; font-size:14px;">LIVE ✓</div>
       </div>
     </div>
   </div>
@@ -991,6 +986,7 @@
     { url: '/gallery-seed/crowd-06.jpg', caption: 'A college jam session' },
     { url: '/gallery-seed/crowd-07.jpg', caption: 'Backstage, before the next set' },
     { url: '/gallery-seed/crowd-08.jpg', caption: 'A family satsang evening' },
+    { url: '/gallery-seed/crowd-09.jpg', caption: 'Prakriti and Ashwin, mid-set' },
   ];
 
   fetch('/api/public/gallery').then((r) => r.json()).then((items) => {
