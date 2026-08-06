@@ -3638,8 +3638,12 @@ async function renderWebsiteContent(main) {
       cities: main.querySelector("#statCities").value.trim() || null,
       international: main.querySelector("#statIntl").value.trim() || null,
     };
-    await api("/api/site-content/stats_override", { method: "PUT", body: JSON.stringify({ value }) });
-    alert("Saved.");
+    try {
+      await api("/api/site-content/stats_override", { method: "PUT", body: JSON.stringify({ value }) });
+      alert("Saved.");
+    } catch (err) {
+      alert(`Couldn't save: ${err.message}`);
+    }
   });
 
   // ---- Cities ----
@@ -3652,7 +3656,11 @@ async function renderWebsiteContent(main) {
     list.querySelectorAll("[data-remove-city]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         cities.splice(Number(btn.dataset.removeCity), 1);
-        await api("/api/site-content/cities", { method: "PUT", body: JSON.stringify({ value: cities }) });
+        try {
+          await api("/api/site-content/cities", { method: "PUT", body: JSON.stringify({ value: cities }) });
+        } catch (err) {
+          alert(`Couldn't save: ${err.message}`);
+        }
         renderCities();
       });
     });
@@ -3663,8 +3671,13 @@ async function renderWebsiteContent(main) {
     const val = input.value.trim();
     if (!val) return;
     cities.push(val);
-    await api("/api/site-content/cities", { method: "PUT", body: JSON.stringify({ value: cities }) });
-    input.value = "";
+    try {
+      await api("/api/site-content/cities", { method: "PUT", body: JSON.stringify({ value: cities }) });
+      input.value = "";
+    } catch (err) {
+      cities.pop();
+      alert(`Couldn't save: ${err.message}`);
+    }
     renderCities();
   });
 
@@ -3698,6 +3711,8 @@ async function renderWebsiteContent(main) {
       try {
         await api(`/api/site-content/${contentKey}`, { method: "PUT", body: JSON.stringify({ value: rows }) });
         alert("Saved.");
+      } catch (err) {
+        alert(`Couldn't save: ${err.message}`);
       } finally {
         btn.disabled = false;
       }
