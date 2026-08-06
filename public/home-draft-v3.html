@@ -192,11 +192,19 @@
   .btn-primary:hover{background:var(--ember); transform:rotate(0.4deg) scale(1.03);}
   .btn-text{font-weight:700; font-size:14.5px; color:var(--ink); border-bottom:2px solid var(--marigold); padding-bottom:3px; font-family:'Space Grotesk';}
 
+  .photo-slot{
+    position:relative; height:340px; border:2px dashed var(--hairline); border-radius:20px;
+    background:rgba(255,255,255,0.35);
+  }
+  .photo-slot-label{
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center;
+    font-family:'JetBrains Mono'; font-size:11px; color:var(--muted); letter-spacing:0.06em; white-space:nowrap;
+  }
   .badge-pass{
-    position:absolute; top:6px; right:2%; width:118px; height:146px; background:var(--paper);
+    position:absolute; top:16px; right:16px; width:118px; height:146px; background:var(--paper);
     border:2px dashed var(--peacock); border-radius:14px; transform:rotate(8deg);
     display:none; align-items:center; justify-content:center; padding:14px; text-align:center;
-    box-shadow:0 10px 24px rgba(43,36,32,0.08);
+    box-shadow:0 10px 24px rgba(43,36,32,0.08); z-index:2;
   }
   .badge-pass .hole{width:14px; height:14px; border-radius:50%; background:var(--cream); border:1.5px solid var(--hairline); position:absolute; top:9px; left:50%; transform:translateX(-50%);}
   .badge-pass .txt{font-family:'JetBrains Mono',monospace; font-size:9.5px; color:var(--peacock); letter-spacing:0.07em; line-height:1.7; font-weight:700;}
@@ -392,7 +400,8 @@
     .about-grid{grid-template-columns:1fr;}
     .hero-about{grid-template-columns:1fr; gap:24px; margin-top:36px;}
     .tix-grid{grid-template-columns:1fr;}
-    .sticker-stack{height:220px; margin-top:16px;}
+    .photo-slot{height:280px; margin-top:16px;}
+    .sticker-stack{height:220px;}
   }
   :focus-visible{outline:2px solid var(--terracotta); outline-offset:3px;}
 </style>
@@ -429,11 +438,6 @@
       <a class="btn-primary" href="/lead-form.html">Enquire Now →</a>
       <a class="btn-text" href="#experiences">See the sets ↓</a>
     </div>
-    <div class="badge-pass">
-      <div class="hole"></div>
-      <div class="txt">ALL ACCESS<br>———<br>TOGETHER<br>OUT LOUD<br>———<br>LIVE BAND</div>
-    </div>
-
     <div class="hero-about" id="about">
       <div>
         <span class="tag">WHO WE ARE</span>
@@ -442,11 +446,18 @@
         <div class="about-byline">— PRAKRITI &amp; ASHWIN, FOUNDERS</div>
         <p class="mission-line">Our mission: building communities through music.</p>
       </div>
-      <div class="sticker-stack">
-        <div class="sticker s1">GUITAR ✓</div>
-        <div class="sticker s2">TABLA ✓</div>
-        <div class="sticker s4">DRUMS ✓</div>
-        <div class="sticker s3">COMMUNITY ✓</div>
+      <div class="photo-slot">
+        <div class="photo-slot-label">📷 Your photo goes here</div>
+        <div class="badge-pass">
+          <div class="hole"></div>
+          <div class="txt">ALL ACCESS<br>———<br>TOGETHER<br>OUT LOUD<br>———<br>LIVE BAND</div>
+        </div>
+        <div class="sticker-stack">
+          <div class="sticker s1">GUITAR ✓</div>
+          <div class="sticker s2">TABLA ✓</div>
+          <div class="sticker s4">DRUMS ✓</div>
+          <div class="sticker s3">COMMUNITY ✓</div>
+        </div>
       </div>
     </div>
   </div>
