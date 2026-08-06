@@ -137,7 +137,7 @@
     display:flex; align-items:center; justify-content:space-between; padding:17px 26px;
     transition:background .3s, box-shadow .3s;
   }
-  nav.scrolled{background:rgba(254,246,237,0.92); backdrop-filter:blur(8px); box-shadow:0 1px 0 var(--hairline);}
+  nav.scrolled{background:rgba(254,246,237,0.55); backdrop-filter:blur(8px); box-shadow:0 1px 0 var(--hairline);}
   .brand{display:flex; align-items:center; gap:10px;}
   .brand img{width:32px; height:32px; border-radius:50%; object-fit:cover;}
   .brand span{font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:15.5px;}
@@ -147,7 +147,7 @@
     transition:transform .2s, background .2s;
   }
   .nav-cta:hover{background:var(--ember); transform:rotate(0.5deg) scale(1.03);}
-  .nav-links{display:flex; align-items:center; gap:26px;}
+  .nav-links{display:flex; align-items:center; gap:18px; flex-wrap:nowrap;}
   .nav-links a{
     font-family:'Space Grotesk'; font-weight:600; font-size:13.5px; color:var(--ink);
     border-bottom:2px solid transparent; padding-bottom:3px; transition:border-color .2s, color .2s;
@@ -385,7 +385,7 @@
   .reveal.in{opacity:1; transform:translateY(0);}
 
   @media (min-width:900px){ .badge-pass{display:flex;} }
-  @media (max-width:900px){
+  @media (max-width:1040px){
     .nav-links{display:none;}
   }
   @media (max-width:760px){
@@ -410,7 +410,9 @@
   <div class="nav-links">
     <a href="#about">About Us</a>
     <a href="#experiences">What We Do</a>
+    <a href="#upcoming">Upcoming Events</a>
     <a href="#journey">Our Journey</a>
+    <a href="#faq">FAQ</a>
     <a href="#contact">Contact Us</a>
   </div>
   <a class="nav-cta" href="/lead-form.html">Enquire Now</a>
@@ -585,7 +587,7 @@
   </div>
 </section>
 
-<section class="upcoming reveal">
+<section class="upcoming reveal" id="upcoming">
   <div class="wrap">
     <span class="tag">WHAT'S NEXT</span>
     <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">Upcoming events.</h2>
@@ -651,7 +653,7 @@
   </div>
 </section>
 
-<section class="faq reveal">
+<section class="faq reveal" id="faq">
   <div class="wrap">
     <span class="tag">FAQS</span>
     <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">Questions, answered.</h2>
@@ -695,6 +697,7 @@
     <div class="contact-actions">
       <a class="contact-btn" href="https://wa.me/918250200518" target="_blank" rel="noopener noreferrer">💬 WhatsApp</a>
       <a class="contact-btn" href="https://www.instagram.com/togetheroutloudclub" target="_blank" rel="noopener noreferrer">📷 Instagram</a>
+      <a class="contact-btn" href="https://www.youtube.com/@togetheroutloud" target="_blank" rel="noopener noreferrer">▶️ YouTube</a>
       <a class="contact-btn" href="mailto:togetheroutloudclub@gmail.com">✉️ Email</a>
     </div>
   </div>
@@ -716,6 +719,7 @@
   <div class="foot-email">
     <a href="https://wa.me/918250200518" target="_blank" rel="noopener noreferrer">WhatsApp</a> ·
     <a href="https://www.instagram.com/togetheroutloudclub" target="_blank" rel="noopener noreferrer">Instagram</a> ·
+    <a href="https://www.youtube.com/@togetheroutloud" target="_blank" rel="noopener noreferrer">YouTube</a> ·
     <a href="mailto:togetheroutloudclub@gmail.com">togetheroutloudclub@gmail.com</a>
   </div>
   <div class="foot-copy">© <span id="yr"></span> Together, Out Loud. All rights reserved.</div>
