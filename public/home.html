@@ -854,11 +854,30 @@
     }
   }).catch(() => {});
 
+  // Seed set of real crowd photos (from actual events), shown alongside
+  // anything uploaded later via the Website tab's Gallery uploader.
+  const GALLERY_SEED = [
+    { url: '/gallery-seed/crowd-01.jpg', caption: 'Full room, full voice' },
+    { url: '/gallery-seed/crowd-02.jpg', caption: 'Diwali jamming under the lights' },
+    { url: '/gallery-seed/crowd-03.jpg', caption: 'A private celebration, live' },
+    { url: '/gallery-seed/crowd-04.jpg', caption: 'Strangers who became a choir' },
+    { url: '/gallery-seed/crowd-05.jpg', caption: 'Every hand up, every voice in' },
+    { url: '/gallery-seed/crowd-06.jpg', caption: 'A college jam session' },
+    { url: '/gallery-seed/crowd-07.jpg', caption: 'Backstage, before the next set' },
+    { url: '/gallery-seed/crowd-08.jpg', caption: 'A family satsang evening' },
+  ];
+
   fetch('/api/public/gallery').then((r) => r.json()).then((items) => {
-    if (!Array.isArray(items) || !items.length) return;
+    const uploaded = Array.isArray(items) ? items : [];
+    const all = [...GALLERY_SEED, ...uploaded];
+    if (!all.length) return;
     document.getElementById('gallerySection').classList.remove('hidden');
-    document.getElementById('galleryGrid').innerHTML = items.map((g) => `<img src="${g.url}" alt="${escapeHtml(g.caption || 'Together, Out Loud')}" loading="lazy" />`).join('');
-  }).catch(() => {});
+    document.getElementById('galleryGrid').innerHTML = all.map((g) => `<img src="${g.url}" alt="${escapeHtml(g.caption || 'Together, Out Loud')}" loading="lazy" />`).join('');
+  }).catch(() => {
+    // Even if the CMS gallery fetch fails, still show the seed photos.
+    document.getElementById('gallerySection').classList.remove('hidden');
+    document.getElementById('galleryGrid').innerHTML = GALLERY_SEED.map((g) => `<img src="${g.url}" alt="${escapeHtml(g.caption)}" loading="lazy" />`).join('');
+  });
 
   fetch('/api/public/site-content/cities').then((r) => r.json()).then((items) => {
     if (!Array.isArray(items) || !items.length) return;
