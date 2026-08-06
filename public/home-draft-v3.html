@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Together, Out Loud — DRAFT v3</title>
+<link rel="icon" href="/logo.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,600&family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --cream:#FEF6ED;
+    --paper:#FFFDF8;
+    --ink:#2B2420;
+    --muted:#8A6A54;
+    --terracotta:#C1602B;
+    --ember:#C7401E;
+    --marigold:#F0A438;
+    --peacock:#1C7A80;
+    --gulal:#E6467F;
+    --hairline:#EAD9BE;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0; background:var(--cream); color:var(--ink);
+    font-family:'Inter',sans-serif; line-height:1.55; -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  h1,h2,h3{font-family:'Fraunces',serif; font-weight:600; margin:0; letter-spacing:-0.01em;}
+  em{font-style:italic; font-weight:600;}
+  a{color:inherit; text-decoration:none;}
+  .wrap{max-width:1140px; margin:0 auto; padding:0 26px;}
+  .tag{
+    font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:0.1em; text-transform:uppercase;
+    border:1.5px dashed var(--terracotta); color:var(--terracotta); padding:6px 13px; border-radius:999px; display:inline-block;
+    transform:rotate(-1.5deg);
+  }
+  .draft-banner{
+    position:fixed; top:0; left:0; right:0; z-index:100; background:var(--ink); color:var(--cream);
+    text-align:center; font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:700;
+    padding:7px; letter-spacing:0.04em;
+  }
+  nav{
+    position:fixed; top:34px; left:0; right:0; z-index:50;
+    display:flex; align-items:center; justify-content:space-between; padding:17px 26px;
+    transition:background .3s, box-shadow .3s;
+  }
+  nav.scrolled{background:rgba(254,246,237,0.92); backdrop-filter:blur(8px); box-shadow:0 1px 0 var(--hairline);}
+  .brand{display:flex; align-items:center; gap:10px;}
+  .brand img{width:32px; height:32px; border-radius:50%;}
+  .brand span{font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:15.5px;}
+  .nav-cta{
+    background:var(--terracotta); color:var(--cream); padding:11px 22px; border-radius:999px;
+    font-family:'Space Grotesk'; font-weight:700; font-size:13.5px; transform:rotate(-1.2deg); display:inline-block;
+    transition:transform .2s, background .2s;
+  }
+  .nav-cta:hover{background:var(--ember); transform:rotate(0.5deg) scale(1.03);}
+
+  /* confetti dots */
+  .confetti{position:absolute; border-radius:50%; opacity:0.85; pointer-events:none;}
+
+  /* marquee */
+  .marquee{
+    position:relative; overflow:hidden; white-space:nowrap; background:var(--paper);
+    padding:12px 0; margin-top:88px; border-top:2px solid var(--ink); border-bottom:2px solid var(--ink);
+  }
+  .marquee-track{display:inline-block; animation:scroll 24s linear infinite;}
+  .marquee span.word{
+    font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:14.5px; text-transform:uppercase;
+    letter-spacing:0.05em; padding:0 24px;
+  }
+  .marquee span.dot{padding:0 4px;}
+  @keyframes scroll{ from{transform:translateX(0);} to{transform:translateX(-50%);} }
+
+  /* hero */
+  .hero{min-height:92vh; display:flex; flex-direction:column; justify-content:center; padding:70px 26px 50px; position:relative;}
+  .hero-inner{max-width:1140px; margin:0 auto; width:100%; position:relative;}
+  .hero h1{font-size:clamp(42px,7.6vw,88px); line-height:1.02;}
+  .hero h1 .c1{color:var(--terracotta);}
+  .hero h1 .c2{color:var(--peacock);}
+  .hero h1 .c3{color:var(--gulal);}
+  .hero p.lede{font-size:clamp(16px,2vw,19px); color:var(--muted); max-width:520px; margin-top:24px; font-weight:500;}
+  .hero-actions{display:flex; align-items:center; gap:20px; margin-top:34px; flex-wrap:wrap;}
+  .btn-primary{
+    background:var(--terracotta); color:var(--cream); padding:16px 30px; border-radius:999px;
+    font-family:'Space Grotesk'; font-weight:700; font-size:15px; display:inline-block;
+    transition:transform .2s, background .2s; transform:rotate(-0.8deg);
+  }
+  .btn-primary:hover{background:var(--ember); transform:rotate(0.4deg) scale(1.03);}
+  .btn-text{font-weight:700; font-size:14.5px; color:var(--ink); border-bottom:2px solid var(--marigold); padding-bottom:3px; font-family:'Space Grotesk';}
+
+  .badge-pass{
+    position:absolute; top:6px; right:2%; width:118px; height:146px; background:var(--paper);
+    border:2px dashed var(--peacock); border-radius:14px; transform:rotate(8deg);
+    display:none; align-items:center; justify-content:center; padding:14px; text-align:center;
+    box-shadow:0 10px 24px rgba(43,36,32,0.08);
+  }
+  .badge-pass .hole{width:14px; height:14px; border-radius:50%; background:var(--cream); border:1.5px solid var(--hairline); position:absolute; top:9px; left:50%; transform:translateX(-50%);}
+  .badge-pass .txt{font-family:'JetBrains Mono',monospace; font-size:9.5px; color:var(--peacock); letter-spacing:0.07em; line-height:1.7; font-weight:700;}
+
+  .eq{display:flex; align-items:flex-end; gap:6px; height:48px;}
+  .eq span{width:6px; border-radius:3px; animation:eqbounce 1.3s ease-in-out infinite; transform-origin:bottom;}
+  .eq span:nth-child(1){height:35%; background:var(--terracotta); animation-delay:-1.1s;}
+  .eq span:nth-child(2){height:70%; background:var(--peacock); animation-delay:-0.4s;}
+  .eq span:nth-child(3){height:100%; background:var(--marigold); animation-delay:-0.9s;}
+  .eq span:nth-child(4){height:55%; background:var(--gulal); animation-delay:-0.2s;}
+  .eq span:nth-child(5){height:85%; background:var(--terracotta); animation-delay:-1.3s;}
+  .eq span:nth-child(6){height:40%; background:var(--peacock); animation-delay:-0.6s;}
+  .eq span:nth-child(7){height:65%; background:var(--marigold); animation-delay:-1.5s;}
+  @keyframes eqbounce{0%,100%{transform:scaleY(0.35);} 50%{transform:scaleY(1);}}
+  @media (prefers-reduced-motion:reduce){ .eq span, .marquee-track{animation:none;} }
+
+  /* about */
+  .about{padding:90px 0 60px; position:relative;}
+  .about-grid{display:grid; grid-template-columns:1fr 1fr; gap:50px; align-items:center;}
+  .about h2{font-size:clamp(30px,4.4vw,44px); line-height:1.08;}
+  .about p{color:var(--muted); font-size:16px; max-width:480px; margin-top:18px; font-weight:500;}
+  .about-byline{margin-top:20px; font-family:'Space Grotesk'; font-weight:700; font-size:13.5px; color:var(--terracotta);}
+  .sticker-stack{position:relative; height:270px;}
+  .sticker{
+    position:absolute; border-radius:16px; padding:18px 20px; font-family:'Space Grotesk'; font-weight:700;
+    box-shadow:0 12px 26px rgba(43,36,32,0.12); font-size:16px;
+  }
+  .s1{background:var(--terracotta); color:var(--cream); top:0; left:8%; transform:rotate(-6deg);}
+  .s2{background:var(--peacock); color:var(--cream); top:88px; left:38%; transform:rotate(4deg);}
+  .s3{background:var(--marigold); color:var(--ink); top:176px; left:4%; transform:rotate(3deg);}
+  .s4{background:var(--gulal); color:var(--cream); top:44px; left:66%; transform:rotate(-3deg); font-size:13.5px; padding:12px 16px;}
+
+  /* experiences as tickets */
+  .experiences{padding:90px 0; background:var(--paper); border-top:1px solid var(--hairline); border-bottom:1px solid var(--hairline);}
+  .section-head{max-width:600px; margin-bottom:44px;}
+  .section-head h2{font-size:clamp(30px,4.4vw,44px); margin-top:12px; line-height:1.08;}
+  .tix-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:22px;}
+  .tix{
+    background:var(--cream); border-radius:16px; padding:26px; position:relative; overflow:hidden;
+    border:1px solid var(--hairline); transition:transform .25s, box-shadow .25s;
+  }
+  .tix:hover{transform:rotate(-0.6deg) translateY(-3px); box-shadow:0 14px 28px rgba(43,36,32,0.1);}
+  .tix::before, .tix::after{
+    content:""; position:absolute; top:50%; width:18px; height:18px; background:var(--paper);
+    border-radius:50%; transform:translateY(-50%); border:1px solid var(--hairline);
+  }
+  .tix::before{left:-10px;}
+  .tix::after{right:-10px;}
+  .tix .topbar{width:34px; height:5px; border-radius:3px; margin-bottom:14px;}
+  .tix .num{font-family:'JetBrains Mono'; font-size:10.5px; color:var(--muted); letter-spacing:0.1em;}
+  .tix h3{font-family:'Space Grotesk'; font-weight:700; font-size:21px; margin-top:8px; color:var(--ink);}
+  .tix p{color:var(--muted); font-size:14px; margin-top:10px; font-weight:500;}
+  .tix .stub{border-top:1px dashed var(--hairline); margin-top:16px; padding-top:11px; font-family:'JetBrains Mono'; font-size:10px; letter-spacing:0.08em; font-weight:700;}
+
+  .tribute{
+    margin-top:26px; padding:24px 26px; border-radius:16px; background:transparent;
+    border:1px dashed var(--hairline); display:flex; align-items:baseline; gap:16px; flex-wrap:wrap;
+  }
+  .tribute h3{font-family:'Space Grotesk'; font-weight:700; font-size:16px; color:var(--ink);}
+  .tribute p{color:var(--muted); font-size:13.5px; margin:4px 0 0; font-weight:500;}
+
+  /* occasions */
+  .occasions{padding:80px 0;}
+  .chip-row{display:flex; flex-wrap:wrap; gap:12px; margin-top:28px;}
+  .chip{
+    border:2px solid; background:var(--paper); padding:10px 18px; border-radius:999px;
+    font-size:13.5px; font-family:'Space Grotesk'; font-weight:600; color:var(--ink);
+  }
+
+  /* cta */
+  .cta-band{background:var(--terracotta); color:var(--cream); padding:90px 26px; text-align:center; position:relative; overflow:hidden;}
+  .cta-band h2{font-size:clamp(32px,5.6vw,54px); color:var(--cream); max-width:740px; margin:0 auto; line-height:1.05;}
+  .cta-band .btn-primary{background:var(--cream); color:var(--ember); margin-top:30px;}
+  .cta-band .btn-primary:hover{background:#FFF;}
+  .cta-band .eq span{background:rgba(254,246,237,0.7);}
+
+  footer{padding:50px 26px 36px; text-align:center;}
+  footer img{width:36px; border-radius:50%; margin-bottom:10px;}
+  footer .foot-name{font-family:'Space Grotesk'; font-weight:700; font-size:16px;}
+  footer .foot-tag{color:var(--muted); font-size:12.5px; margin-top:6px; font-weight:500;}
+  footer .foot-email{margin-top:14px; font-size:13px;}
+  footer .foot-email a{color:var(--terracotta); font-weight:700;}
+  footer .foot-copy{margin-top:20px; font-size:11.5px; color:var(--muted);}
+
+  .reveal{opacity:0; transform:translateY(16px); transition:opacity .6s ease, transform .6s ease;}
+  .reveal.in{opacity:1; transform:translateY(0);}
+
+  @media (min-width:900px){ .badge-pass{display:flex;} }
+  @media (max-width:760px){
+    .about-grid{grid-template-columns:1fr;}
+    .tix-grid{grid-template-columns:1fr;}
+    .sticker-stack{height:220px; margin-top:16px;}
+  }
+  :focus-visible{outline:2px solid var(--terracotta); outline-offset:3px;}
+</style>
+</head>
+<body>
+
+<div class="draft-banner">🚧 DRAFT V3 — not live, review only 🚧</div>
+
+<nav id="siteNav">
+  <a class="brand" href="#top">
+    <img src="/logo.png" alt="Together, Out Loud" />
+    <span>TOGETHER, OUT LOUD</span>
+  </a>
+  <a class="nav-cta" href="/lead-form.html">Enquire Now</a>
+</nav>
+
+<header class="hero" id="top">
+  <div class="hero-inner">
+    <span class="confetti" style="width:10px; height:10px; background:var(--marigold); top:8px; left:4%;"></span>
+    <span class="confetti" style="width:7px; height:7px; background:var(--peacock); top:60px; left:52%;"></span>
+    <span class="confetti" style="width:12px; height:12px; background:var(--gulal); top:180px; left:88%;"></span>
+    <span class="tag">LIVE · LOUD · TOGETHER</span>
+    <h1 style="margin-top:18px;">We play <span class="c1">bhajans,</span><br>we play <span class="c2">pheras,</span><br>we play it <em class="c3">out loud.</em></h1>
+    <p class="lede">A live band for weddings, satsangs and celebrations that'd rather feel a room sing than hit play on a Spotify list. Bhajan Jamming, Musical Pheras, Bollywood sets — all live, all us.</p>
+    <div class="hero-actions">
+      <a class="btn-primary" href="/lead-form.html">Enquire Now →</a>
+      <a class="btn-text" href="#experiences">See the sets ↓</a>
+    </div>
+    <div class="badge-pass">
+      <div class="hole"></div>
+      <div class="txt">ALL ACCESS<br>———<br>TOGETHER<br>OUT LOUD<br>———<br>LIVE BAND</div>
+    </div>
+  </div>
+</header>
+
+<div class="marquee">
+  <div class="marquee-track">
+    <span class="word" style="color:var(--terracotta);">BHAJAN JAMMING</span><span class="dot">✦</span><span class="word" style="color:var(--peacock);">MUSICAL PHERAS</span><span class="dot">✦</span><span class="word" style="color:var(--gulal);">BOLLYWOOD JAMMING</span><span class="dot">✦</span><span class="word" style="color:var(--marigold);">DEVOTIONAL SATSANG</span><span class="dot">✦</span><span class="word" style="color:var(--terracotta);">BHAJAN CLUBBING</span><span class="dot">✦</span>
+    <span class="word" style="color:var(--terracotta);">BHAJAN JAMMING</span><span class="dot">✦</span><span class="word" style="color:var(--peacock);">MUSICAL PHERAS</span><span class="dot">✦</span><span class="word" style="color:var(--gulal);">BOLLYWOOD JAMMING</span><span class="dot">✦</span><span class="word" style="color:var(--marigold);">DEVOTIONAL SATSANG</span><span class="dot">✦</span><span class="word" style="color:var(--terracotta);">BHAJAN CLUBBING</span><span class="dot">✦</span>
+  </div>
+</div>
+
+<section class="about reveal">
+  <div class="wrap about-grid">
+    <div>
+      <span class="tag">WHO WE ARE</span>
+      <h2 style="margin-top:16px;">Devotional roots.<br>Party <em style="color:var(--gulal);">energy.</em></h2>
+      <p>Together, Out Loud started as bhajan jam sessions and grew into a full live band — moving between kirtan, wedding pheras, satsangs and full Bollywood sets depending on what the room needs. No backing tracks, no karaoke. Just a band that shows up and plays.</p>
+      <div class="about-byline">— ASHWIN, ON STAGE AT EVERY SHOW</div>
+    </div>
+    <div class="sticker-stack">
+      <div class="sticker s1">HARMONIUM ✓</div>
+      <div class="sticker s2">TABLA ✓</div>
+      <div class="sticker s4">FULL BAND</div>
+      <div class="sticker s3">LIVE, ALWAYS</div>
+    </div>
+  </div>
+</section>
+
+<section class="experiences reveal" id="experiences">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="tag">THE SETS</span>
+      <h2>Five formats.<br>One loud band.</h2>
+    </div>
+    <div class="tix-grid">
+      <div class="tix">
+        <div class="topbar" style="background:var(--terracotta);"></div>
+        <div class="num">SET 01</div>
+        <h3>Bhajan Jamming</h3>
+        <p>Live harmonium, tabla and vocals — call-and-response kirtan that has the whole room singing by song two.</p>
+        <div class="stub" style="color:var(--terracotta);">ADMIT ONE · LIVE</div>
+      </div>
+      <div class="tix">
+        <div class="topbar" style="background:var(--gulal);"></div>
+        <div class="num">SET 02</div>
+        <h3>Bhajan Clubbing</h3>
+        <p>Same devotional core, dance-floor tempo. A club-style spin on bhajan jamming that doesn't let up.</p>
+        <div class="stub" style="color:var(--gulal);">ADMIT ONE · LIVE</div>
+      </div>
+      <div class="tix">
+        <div class="topbar" style="background:var(--peacock);"></div>
+        <div class="num">SET 03</div>
+        <h3>Musical Pheras</h3>
+        <p>Live music woven through the pheras themselves — turns the walk around the fire into a moment you'll actually remember.</p>
+        <div class="stub" style="color:var(--peacock);">ADMIT ONE · LIVE</div>
+      </div>
+      <div class="tix">
+        <div class="topbar" style="background:var(--marigold);"></div>
+        <div class="num">SET 04</div>
+        <h3>Bollywood Jamming</h3>
+        <p>The songs everyone actually wants — old classics, current chartbusters, played live, loud, together.</p>
+        <div class="stub" style="color:var(--marigold);">ADMIT ONE · LIVE</div>
+      </div>
+      <div class="tix">
+        <div class="topbar" style="background:var(--terracotta);"></div>
+        <div class="num">SET 05</div>
+        <h3>Devotional Satsang</h3>
+        <p>A soulful evening of bhajans, shaped for spiritual gatherings, temple functions and satsangs of any size.</p>
+        <div class="stub" style="color:var(--terracotta);">ADMIT ONE · LIVE</div>
+      </div>
+      <div class="tix" style="display:flex; flex-direction:column; justify-content:center; border-style:dashed;">
+        <span class="tag" style="margin-bottom:10px;">PLANNING A WEDDING?</span>
+        <p style="color:var(--muted); font-size:14px; margin:0;">Musical Pheras pairs naturally with Bhajan Jamming for a fully live wedding day — ask us for the combo.</p>
+      </div>
+    </div>
+
+    <div class="tribute">
+      <h3>Shraddhanjali Satsang</h3>
+      <p>For families who want to honour a loved one's memory with a gentle, respectful evening of devotional bhajans. Same care, quieter energy.</p>
+    </div>
+  </div>
+</section>
+
+<section class="occasions reveal">
+  <div class="wrap">
+    <span class="tag">WHERE WE SHOW UP</span>
+    <h2 style="font-size:clamp(26px,3.8vw,36px); margin-top:14px;">Weddings. Satsangs.<br>Everything else.</h2>
+    <div class="chip-row">
+      <span class="chip" style="border-color:var(--terracotta);">Weddings</span>
+      <span class="chip" style="border-color:var(--peacock);">Engagements</span>
+      <span class="chip" style="border-color:var(--gulal);">Sangeet</span>
+      <span class="chip" style="border-color:var(--marigold);">Receptions</span>
+      <span class="chip" style="border-color:var(--terracotta);">Housewarmings</span>
+      <span class="chip" style="border-color:var(--peacock);">Birthdays</span>
+      <span class="chip" style="border-color:var(--gulal);">Corporate Events</span>
+      <span class="chip" style="border-color:var(--marigold);">Spiritual Gatherings</span>
+      <span class="chip" style="border-color:var(--terracotta);">Temple Events</span>
+      <span class="chip" style="border-color:var(--peacock);">Private Celebrations</span>
+    </div>
+  </div>
+</section>
+
+<section class="cta-band reveal">
+  <span class="tag" style="border-color:var(--cream); color:var(--cream);">READY WHEN YOU ARE</span>
+  <h2 style="margin-top:18px;">Let's make some noise.</h2>
+  <a class="btn-primary" href="/lead-form.html">Enquire Now →</a>
+  <div class="eq" style="justify-content:center; margin-top:36px;" aria-hidden="true">
+    <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+  </div>
+</section>
+
+<footer>
+  <img src="/logo.png" alt="" />
+  <div class="foot-name">TOGETHER, OUT LOUD</div>
+  <div class="foot-tag">BHAJAN JAMMING · MUSICAL PHERAS · DEVOTIONAL SATSANG · BOLLYWOOD JAMMING</div>
+  <div class="foot-email">Write to us at <a href="mailto:togetheroutloudclub@gmail.com">togetheroutloudclub@gmail.com</a></div>
+  <div class="foot-copy">© <span id="yr"></span> Together, Out Loud. All rights reserved.</div>
+</footer>
+
+<script>
+  document.getElementById('yr').textContent = new Date().getFullYear();
+  const nav = document.getElementById('siteNav');
+  window.addEventListener('scroll', () => nav.classList.toggle('scrolled', window.scrollY > 20));
+  const revealEls = document.querySelectorAll('.reveal');
+  if ('IntersectionObserver' in window) {
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); obs.unobserve(e.target); } });
+    }, { threshold: 0.15 });
+    revealEls.forEach((el) => obs.observe(el));
+  } else {
+    revealEls.forEach((el) => el.classList.add('in'));
+  }
+</script>
+
+</body>
+</html>
