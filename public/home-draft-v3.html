@@ -302,6 +302,15 @@
   .gallery-grid img{width:100%; border-radius:12px; display:block; object-fit:cover;}
   .cities-chip-row{display:flex; flex-wrap:wrap; gap:10px; margin-top:20px;}
 
+  /* inline mid-page CTAs */
+  .inline-cta{
+    margin-top:44px; padding-top:32px; border-top:1px dashed var(--hairline);
+    display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap;
+  }
+  .inline-cta p{font-family:'Fraunces'; font-style:italic; font-weight:500; font-size:18px; color:var(--ink); margin:0; max-width:420px;}
+  .inline-cta .btn-primary{margin-top:0;}
+  @media (max-width:600px){ .inline-cta{flex-direction:column; align-items:flex-start;} }
+
   /* about */
   .about{padding:90px 0 60px; position:relative;}
   .about-grid{display:grid; grid-template-columns:1fr 1fr; gap:50px; align-items:center;}
@@ -454,6 +463,7 @@
     <p style="margin-top:26px;">Music is not entertainment.<br>Music is <em style="color:var(--peacock);">belonging.</em></p>
     <p>People don't remember songs.<br>They remember how they <em style="color:var(--marigold);">felt.</em></p>
     <p class="payoff">Together, Out Loud exists to create those feelings.</p>
+    <a class="btn-primary" href="/lead-form.html" style="margin-top:34px; display:inline-block;">Let's Create Something Beautiful Together →</a>
   </div>
 </section>
 
@@ -462,6 +472,7 @@
     <div class="section-head">
       <span class="tag">WHAT WE DO</span>
       <h2>Eight formats.<br>One loud band.</h2>
+      <p style="color:var(--muted); font-size:15px; margin-top:14px; max-width:480px;">Not performances you watch. Experiences you become part of — pick the one that fits your moment.</p>
     </div>
     <div class="tix-grid">
       <div class="tix">
@@ -528,6 +539,10 @@
         <p style="color:var(--muted); font-size:14px; margin:0;">Musical Pheras pairs naturally with Bhajan Jamming for a fully live wedding day — ask us for the combo.</p>
       </div>
     </div>
+    <div class="inline-cta">
+      <p>Eight ways to make a room sing. One of them is yours.</p>
+      <a class="btn-primary" href="/lead-form.html">Book an Experience →</a>
+    </div>
   </div>
 </section>
 
@@ -546,6 +561,10 @@
       <span class="chip" style="border-color:var(--marigold);">Spiritual Gatherings</span>
       <span class="chip" style="border-color:var(--terracotta);">Temple Events</span>
       <span class="chip" style="border-color:var(--peacock);">Private Celebrations</span>
+    </div>
+    <div class="inline-cta">
+      <p>Not on this list yet? That's exactly why we travel.</p>
+      <a class="btn-primary" href="/lead-form.html">Bring Together, Out Loud to Your City →</a>
     </div>
   </div>
 </section>
@@ -573,6 +592,10 @@
     <p class="stats-note">Pulled live from our booking calendar.</p>
     <div id="upcomingEventsList">
       <p style="color:var(--muted); margin-top:16px;">Loading…</p>
+    </div>
+    <div class="inline-cta">
+      <p>Your date could be next on this list.</p>
+      <a class="btn-primary" href="/lead-form.html">Plan Your Event →</a>
     </div>
   </div>
 </section>
