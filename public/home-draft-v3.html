@@ -181,6 +181,21 @@
   }
   .contact-btn:hover{transform:translateY(-2px); border-color:var(--terracotta);}
 
+  /* upcoming events */
+  .upcoming{padding:80px 0; background:var(--paper); border-top:1px solid var(--hairline); border-bottom:1px solid var(--hairline);}
+  .event-row{
+    display:flex; align-items:center; justify-content:space-between; gap:16px; padding:18px 22px;
+    background:var(--cream); border:1px solid var(--hairline); border-radius:14px; margin-top:14px;
+  }
+  .event-row .date-badge{
+    font-family:'Space Grotesk'; font-weight:700; font-size:14px; color:var(--cream);
+    background:var(--terracotta); border-radius:10px; padding:8px 14px; text-align:center; flex-shrink:0; min-width:64px;
+  }
+  .event-row .date-badge .day{font-size:20px; display:block;}
+  .event-row .meta{flex:1;}
+  .event-row .meta .pkg{font-family:'Space Grotesk'; font-weight:700; font-size:15px; color:var(--ink);}
+  .event-row .meta .loc{color:var(--muted); font-size:13px; margin-top:2px;}
+
   /* about */
   .about{padding:90px 0 60px; position:relative;}
   .about-grid{display:grid; grid-template-columns:1fr 1fr; gap:50px; align-items:center;}
@@ -434,12 +449,23 @@
     <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">Numbers we're proud of.</h2>
     <p class="stats-note">Pulled live from your Instagram — real numbers, not placeholders.</p>
     <div class="stats-grid">
-      <div class="stat"><div class="num" style="color:var(--terracotta);">10,500+</div><div class="lbl">Instagram Family</div></div>
-      <div class="stat"><div class="num" style="color:var(--peacock);">5,37,000+</div><div class="lbl">Likes On Our Reels</div></div>
-      <div class="stat"><div class="num" style="color:var(--gulal);">12+</div><div class="lbl">Cities Across India</div></div>
+      <div class="stat"><div class="num" style="color:var(--terracotta);" data-count="10500" data-suffix="+">0</div><div class="lbl">Instagram Family</div></div>
+      <div class="stat"><div class="num" style="color:var(--peacock);" data-count="537000" data-suffix="+" data-indian="1">0</div><div class="lbl">Likes On Our Reels</div></div>
+      <div class="stat"><div class="num" style="color:var(--gulal);" data-count="12" data-suffix="+">0</div><div class="lbl">Cities Across India</div></div>
       <div class="stat"><div class="num" style="color:var(--marigold); font-size:clamp(22px,3.2vw,34px);">Europe &amp; Thailand</div><div class="lbl">International Shows, and counting</div></div>
-      <div class="stat"><div class="num" style="color:var(--terracotta);">100%</div><div class="lbl">Live Music, No Backing Tracks</div></div>
-      <div class="stat"><div class="num" style="color:var(--peacock);">268+</div><div class="lbl">Reels &amp; Moments Shared</div></div>
+      <div class="stat"><div class="num" style="color:var(--terracotta);" data-count="100" data-suffix="%">0</div><div class="lbl">Live Music, No Backing Tracks</div></div>
+      <div class="stat"><div class="num" style="color:var(--peacock);" data-count="268" data-suffix="+">0</div><div class="lbl">Reels &amp; Moments Shared</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="upcoming reveal">
+  <div class="wrap">
+    <span class="tag">WHAT'S NEXT</span>
+    <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">Upcoming events.</h2>
+    <p class="stats-note">Pulled live from our booking calendar.</p>
+    <div id="upcomingEventsList">
+      <p style="color:var(--muted); margin-top:16px;">Loading…</p>
     </div>
   </div>
 </section>
@@ -561,6 +587,74 @@
   } else {
     revealEls.forEach((el) => el.classList.add('in'));
   }
+
+  // Animated counters for "Numbers That Matter" — count up once each stat
+  // scrolls into view, formatted in Indian digit grouping where flagged.
+  function formatCount(n, indian) {
+    n = Math.round(n);
+    if (!indian) return n.toLocaleString('en-US');
+    let s = String(n);
+    if (s.length <= 3) return s;
+    let last3 = s.slice(-3);
+    let rest = s.slice(0, -3);
+    rest = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',');
+    return rest + ',' + last3;
+  }
+  const counters = document.querySelectorAll('.num[data-count]');
+  if ('IntersectionObserver' in window && counters.length) {
+    const counterObs = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        const el = entry.target;
+        counterObs.unobserve(el);
+        const target = Number(el.dataset.count);
+        const suffix = el.dataset.suffix || '';
+        const indian = el.dataset.indian === '1';
+        const duration = 1400;
+        const start = performance.now();
+        function tick(now) {
+          const progress = Math.min((now - start) / duration, 1);
+          const eased = 1 - Math.pow(1 - progress, 3);
+          el.textContent = formatCount(target * eased, indian) + suffix;
+          if (progress < 1) requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+      });
+    }, { threshold: 0.4 });
+    counters.forEach((el) => counterObs.observe(el));
+  } else {
+    counters.forEach((el) => {
+      el.textContent = formatCount(Number(el.dataset.count), el.dataset.indian === '1') + (el.dataset.suffix || '');
+    });
+  }
+
+  // Upcoming events — pulled live from the booking calendar.
+  fetch('/api/public/upcoming-events').then((r) => r.json()).then((events) => {
+    const list = document.getElementById('upcomingEventsList');
+    if (!list) return;
+    if (!events.length) {
+      list.innerHTML = '<p style="color:var(--muted); margin-top:16px;">Nothing on the calendar just yet — check back soon, or be the first to book a slot.</p>';
+      return;
+    }
+    list.innerHTML = events.map((ev) => {
+      const d = new Date(ev.date + 'T00:00:00');
+      const day = d.toLocaleDateString('en-US', { day: 'numeric' });
+      const mon = d.toLocaleDateString('en-US', { month: 'short' });
+      const full = d.toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' });
+      return `
+        <div class="event-row">
+          <div class="date-badge"><span class="day">${day}</span>${mon}</div>
+          <div class="meta">
+            <div class="pkg">${ev.packageName}${ev.occasion ? ' — ' + ev.occasion : ''}</div>
+            <div class="loc">${full}${ev.city ? ' · ' + ev.city : ''}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }).catch(() => {
+    const list = document.getElementById('upcomingEventsList');
+    if (list) list.innerHTML = '<p style="color:var(--muted); margin-top:16px;">Couldn\'t load events right now — check our Instagram for the latest.</p>';
+  });
 </script>
 
 <script async src="//www.instagram.com/embed.js"></script>

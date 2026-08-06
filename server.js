@@ -512,6 +512,23 @@ app.post("/api/leads", async (req, res) => {
   sendNewLeadEmail(created).catch((err) => console.error("New-lead email failed (not fatal):", err.message));
 });
 
+// Public — deliberately no requireAuth: this powers the "Upcoming Events"
+// section on the marketing site, so anonymous visitors need to read it.
+// Deliberately excludes the client's name — only city/date/occasion/package,
+// so no one's private event details get published without their consent.
+app.get("/api/public/upcoming-events", async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const { rows } = await pool.query(`
+    SELECT date, city, event_type, occasion FROM leads
+    WHERE stage = 'Confirmed' AND date >= $1
+    ORDER BY date ASC LIMIT 8
+  `, [today]);
+  res.json(rows.map((r) => ({
+    date: r.date, city: r.city, occasion: r.occasion,
+    packageName: packageName(r.event_type),
+  })));
+});
+
 // Combo booking: one client confirming multiple formats/dates under a single
 // combined price (e.g. Bhajan Jamming on the 20th + Musical Pheras on the
 // 21st, priced as one package). Creates one lead per format/date, linked via
