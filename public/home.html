@@ -139,7 +139,7 @@
   }
   nav.scrolled{background:rgba(254,246,237,0.55); backdrop-filter:blur(8px); box-shadow:0 1px 0 var(--hairline);}
   .brand{display:flex; align-items:center; gap:10px;}
-  .brand img{width:32px; height:32px; border-radius:50%; object-fit:cover;}
+  .brand img{width:52px; height:52px; object-fit:contain;}
   .brand span{font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:15.5px;}
   .nav-cta{
     background:var(--terracotta); color:var(--cream); padding:11px 22px; border-radius:999px;
@@ -160,7 +160,7 @@
   /* marquee */
   .marquee{
     position:relative; overflow:hidden; white-space:nowrap; background:var(--paper);
-    padding:12px 0; margin-top:70px; border-top:2px solid var(--ink); border-bottom:2px solid var(--ink);
+    padding:12px 0; margin-top:96px; border-top:2px solid var(--ink); border-bottom:2px solid var(--ink);
   }
   .marquee-track{display:inline-block; animation:scroll 24s linear infinite;}
   .marquee span.word{
@@ -200,14 +200,6 @@
     position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center;
     font-family:'JetBrains Mono'; font-size:11px; color:var(--muted); letter-spacing:0.06em; white-space:nowrap;
   }
-  .badge-pass{
-    position:absolute; top:16px; right:16px; width:118px; height:146px; background:var(--paper);
-    border:2px dashed var(--peacock); border-radius:14px; transform:rotate(8deg);
-    display:none; align-items:center; justify-content:center; padding:14px; text-align:center;
-    box-shadow:0 10px 24px rgba(43,36,32,0.08); z-index:2;
-  }
-  .badge-pass .hole{width:14px; height:14px; border-radius:50%; background:var(--cream); border:1.5px solid var(--hairline); position:absolute; top:9px; left:50%; transform:translateX(-50%);}
-  .badge-pass .txt{font-family:'JetBrains Mono',monospace; font-size:9.5px; color:var(--peacock); letter-spacing:0.07em; line-height:1.7; font-weight:700;}
 
   .eq{display:flex; align-items:flex-end; gap:6px; height:48px;}
   .eq span{width:6px; border-radius:3px; animation:eqbounce 1.3s ease-in-out infinite; transform-origin:bottom;}
@@ -382,7 +374,7 @@
   .cta-band .eq span{background:rgba(254,246,237,0.7);}
 
   footer{padding:50px 26px 36px; text-align:center;}
-  footer img{width:36px; height:36px; border-radius:50%; margin-bottom:10px; object-fit:cover;}
+  footer img{width:64px; height:64px; margin-bottom:10px; object-fit:contain;}
   footer .foot-name{font-family:'Space Grotesk'; font-weight:700; font-size:16px;}
   footer .foot-tag{color:var(--muted); font-size:12.5px; margin-top:6px; font-weight:500;}
   footer .foot-email{margin-top:14px; font-size:13px;}
@@ -392,7 +384,6 @@
   .reveal{opacity:0; transform:translateY(16px); transition:opacity .6s ease, transform .6s ease;}
   .reveal.in{opacity:1; transform:translateY(0);}
 
-  @media (min-width:900px){ .badge-pass{display:flex;} }
   @media (max-width:1040px){
     .nav-links{display:none;}
   }
@@ -447,10 +438,6 @@
       </div>
       <div class="photo-slot">
         <div class="photo-slot-label">📷 Your photo goes here</div>
-        <div class="badge-pass">
-          <div class="hole"></div>
-          <div class="txt">ALL ACCESS<br>———<br>TOGETHER<br>OUT LOUD<br>———<br>LIVE BAND</div>
-        </div>
         <div class="sticker-stack">
           <div class="sticker s1">GUITAR ✓</div>
           <div class="sticker s2">TABLA ✓</div>
