@@ -409,8 +409,11 @@
   <div class="nav-links">
     <a href="#about">About Us</a>
     <a href="#experiences">What We Do</a>
-    <a href="#upcoming">Upcoming Events</a>
     <a href="#journey">Our Journey</a>
+    <a href="#upcoming">Upcoming Events</a>
+    <a href="#testimonialsSection" id="navTestimonialsLink" style="display:none;">Testimonials</a>
+    <a href="#gallerySection">Gallery</a>
+    <a href="#pressSection" id="navPressLink" style="display:none;">Press</a>
     <a href="#faq">FAQ</a>
     <a href="#contact">Contact Us</a>
   </div>
@@ -826,6 +829,7 @@
   fetch('/api/public/site-content/testimonials').then((r) => r.json()).then((items) => {
     if (!Array.isArray(items) || !items.length) return;
     document.getElementById('testimonialsSection').classList.remove('hidden');
+    document.getElementById('navTestimonialsLink').style.display = '';
     const isInstagram = (url) => /instagram\.com\/(reel|p|tv)\//.test(url || '');
     document.getElementById('testimonialsGrid').innerHTML = items.map((t) => `
       <div class="testimonial-card">
@@ -889,6 +893,7 @@
   fetch('/api/public/site-content/press').then((r) => r.json()).then((items) => {
     if (!Array.isArray(items) || !items.length) return;
     document.getElementById('pressSection').classList.remove('hidden');
+    document.getElementById('navPressLink').style.display = '';
     document.getElementById('pressGrid').innerHTML = items.map((p) => `
       <div class="press-row">
         <div><div class="outlet">${escapeHtml(p.outlet)}</div><div class="quote">${escapeHtml(p.quote)}</div></div>
