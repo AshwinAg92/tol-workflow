@@ -217,6 +217,30 @@ async function setup() {
     );
   `);
 
+  // Content management for the public marketing site — lets the admin edit
+  // FAQs, testimonials, press mentions, public team bios, cities performed,
+  // service blurbs, hero banners, and stat overrides without touching code.
+  // JSONB keeps each block's shape flexible without a table-per-content-type.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS site_content (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL,
+      updated_at TEXT
+    );
+  `);
+  // Gallery images live in Postgres (bytea) for the same reason documents do —
+  // Railway's container disk is wiped on every redeploy.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS site_gallery_images (
+      id TEXT PRIMARY KEY,
+      caption TEXT,
+      mime_type TEXT,
+      file_data BYTEA,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      uploaded_at TEXT NOT NULL
+    );
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS temp_artists (
       id TEXT PRIMARY KEY,

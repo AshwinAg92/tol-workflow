@@ -34,11 +34,12 @@ const NAV = [
   { id: "calendar", label: "Calendar" },
   { id: "team", label: "Team" },
   { id: "accounts", label: "Accounts" },
+  { id: "website", label: "Website" },
   { id: "settings", label: "Settings" },
 ];
-// "settings" is admin-only (handled directly in renderNav) and isn't something a manager
-// can be granted piecemeal, so it's excluded from the staff permission checklist.
-const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "dashboard" && n.id !== "settings");
+// "settings" and "website" are admin-only (handled directly in renderNav) and aren't
+// something a manager can be granted piecemeal, so they're excluded from the staff permission checklist.
+const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "dashboard" && n.id !== "settings" && n.id !== "website");
 
 // Fills a {placeholder} template with values — any placeholder with no matching value
 // is left as an empty string rather than showing the raw {token} in the sent message.
@@ -501,7 +502,7 @@ function renderNav() {
   nav.innerHTML = "";
   const perms = CURRENT_USER?.accessLevel === "staff" ? CURRENT_USER.permissions : null;
   let visibleNav = NAV.filter((n) => {
-    if (n.id === "settings") return CURRENT_USER?.accessLevel === "admin";
+    if (n.id === "settings" || n.id === "website") return CURRENT_USER?.accessLevel === "admin";
     return n.id === "dashboard" || !Array.isArray(perms) || perms.includes(n.id);
   });
   if (CURRENT_USER?.isPerformer && CURRENT_USER.accessLevel !== "performer") {
@@ -3538,6 +3539,278 @@ const TEMPLATE_META = {
 
 const QUOTE_TEMPLATE_PLACEHOLDERS = ["firstName", "formatUpper", "location", "date", "guests", "duration", "setPieces", "formatType", "amountLine", "sessionConditions"];
 
+// ---------- Website content management (CMS for the marketing site) ----------
+async function renderWebsiteContent(main) {
+  const [content, gallery] = await Promise.all([
+    api("/api/site-content"),
+    api("/api/gallery"),
+  ]);
+
+  main.innerHTML = `
+    <div class="view-head">
+      <div><h2>Website</h2><p class="muted">Edit what shows on togetheroutloud.in — no code needed. Changes save per section below.</p></div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="section-label">Stats override</div>
+      <p class="muted small" style="margin-top:-4px;">Leave a field blank to keep showing the live number pulled from Instagram.</p>
+      <div class="row-2" style="margin-top:10px;">
+        <div><label>Instagram followers</label><input id="statFollowers" placeholder="e.g. 12000" value="${content.stats_override.followers || ""}" /></div>
+        <div><label>Likes on reels</label><input id="statLikes" placeholder="e.g. 600000" value="${content.stats_override.likes || ""}" /></div>
+      </div>
+      <div class="row-2" style="margin-top:10px;">
+        <div><label>Cities across India</label><input id="statCities" placeholder="e.g. 15" value="${content.stats_override.cities || ""}" /></div>
+        <div><label>International shows</label><input id="statIntl" placeholder="e.g. Europe & Thailand" value="${content.stats_override.international || ""}" /></div>
+      </div>
+      <button class="btn-primary" id="saveStatsBtn" style="margin-top:12px;">Save stats override</button>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="section-label">Cities performed</div>
+      <div id="citiesList"></div>
+      <div class="row-2" style="margin-top:10px;">
+        <input id="newCityInput" placeholder="Add a city…" />
+        <button class="btn-ghost" id="addCityBtn">+ Add city</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="section-label">FAQs</div>
+      <div id="faqsList"></div>
+      <button class="btn-ghost full" id="addFaqBtn" style="margin-top:10px;">+ Add FAQ</button>
+      <button class="btn-primary" id="saveFaqsBtn" style="margin-top:10px;">Save FAQs</button>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="section-label">Testimonials</div>
+      <div id="testimonialsList"></div>
+      <button class="btn-ghost full" id="addTestimonialBtn" style="margin-top:10px;">+ Add testimonial</button>
+      <button class="btn-primary" id="saveTestimonialsBtn" style="margin-top:10px;">Save testimonials</button>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="section-label">Press mentions</div>
+      <div id="pressList"></div>
+      <button class="btn-ghost full" id="addPressBtn" style="margin-top:10px;">+ Add press mention</button>
+      <button class="btn-primary" id="savePressBtn" style="margin-top:10px;">Save press mentions</button>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="section-label">Team (public bios)</div>
+      <p class="muted small" style="margin-top:-4px;">Separate from your internal roster — only who you want shown publicly.</p>
+      <div id="teamList"></div>
+      <button class="btn-ghost full" id="addTeamBtn" style="margin-top:10px;">+ Add team member</button>
+      <button class="btn-primary" id="saveTeamBtn" style="margin-top:10px;">Save team</button>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="section-label">Services (what we do)</div>
+      <p class="muted small" style="margin-top:-4px;">Overrides the blurb shown for a format on the homepage — leave title blank to skip.</p>
+      <div id="servicesList"></div>
+      <button class="btn-ghost full" id="addServiceBtn" style="margin-top:10px;">+ Add service override</button>
+      <button class="btn-primary" id="saveServicesBtn" style="margin-top:10px;">Save services</button>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="section-label">Hero banners</div>
+      <p class="muted small" style="margin-top:-4px;">Headline/subhead + an image or video URL for a rotating hero, once you have footage.</p>
+      <div id="heroList"></div>
+      <button class="btn-ghost full" id="addHeroBtn" style="margin-top:10px;">+ Add hero banner</button>
+      <button class="btn-primary" id="saveHeroBtn" style="margin-top:10px;">Save hero banners</button>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="section-label">Gallery</div>
+      <div id="galleryGrid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:10px; margin-bottom:14px;"></div>
+      <div class="row-2">
+        <input type="file" id="galleryFile" accept="image/*" />
+        <input id="galleryCaption" placeholder="Caption (optional)" />
+      </div>
+      <button class="btn-primary" id="uploadGalleryBtn" style="margin-top:10px;">Upload image</button>
+    </div>
+  `;
+
+  // ---- Stats override ----
+  main.querySelector("#saveStatsBtn").addEventListener("click", async () => {
+    const value = {
+      followers: main.querySelector("#statFollowers").value.trim() || null,
+      likes: main.querySelector("#statLikes").value.trim() || null,
+      cities: main.querySelector("#statCities").value.trim() || null,
+      international: main.querySelector("#statIntl").value.trim() || null,
+    };
+    await api("/api/site-content/stats_override", { method: "PUT", body: JSON.stringify({ value }) });
+    alert("Saved.");
+  });
+
+  // ---- Cities ----
+  let cities = Array.isArray(content.cities) ? [...content.cities] : [];
+  function renderCities() {
+    const list = main.querySelector("#citiesList");
+    list.innerHTML = cities.length
+      ? cities.map((c, i) => `<span class="chip" style="margin:0 6px 6px 0; display:inline-flex; align-items:center; gap:6px;">${c} <button data-remove-city="${i}" style="border:none; background:none; cursor:pointer; color:var(--muted);">✕</button></span>`).join("")
+      : `<p class="muted small">No cities added yet.</p>`;
+    list.querySelectorAll("[data-remove-city]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        cities.splice(Number(btn.dataset.removeCity), 1);
+        await api("/api/site-content/cities", { method: "PUT", body: JSON.stringify({ value: cities }) });
+        renderCities();
+      });
+    });
+  }
+  renderCities();
+  main.querySelector("#addCityBtn").addEventListener("click", async () => {
+    const input = main.querySelector("#newCityInput");
+    const val = input.value.trim();
+    if (!val) return;
+    cities.push(val);
+    await api("/api/site-content/cities", { method: "PUT", body: JSON.stringify({ value: cities }) });
+    input.value = "";
+    renderCities();
+  });
+
+  // ---- Generic repeatable-row list editor for FAQs / Testimonials / Press / Team / Hero ----
+  function setupListEditor({ items, containerId, addBtnId, saveBtnId, contentKey, fields, rowHtml }) {
+    let rows = Array.isArray(items) ? items.map((it) => ({ ...it })) : [];
+    function render() {
+      const container = main.querySelector(`#${containerId}`);
+      container.innerHTML = rows.length
+        ? rows.map((row, i) => rowHtml(row, i)).join("")
+        : `<p class="muted small">Nothing added yet.</p>`;
+      container.querySelectorAll("[data-remove-row]").forEach((btn) => {
+        btn.addEventListener("click", () => { rows.splice(Number(btn.dataset.removeRow), 1); render(); });
+      });
+      container.querySelectorAll("[data-field]").forEach((input) => {
+        input.addEventListener("input", () => {
+          rows[Number(input.dataset.rowIndex)][input.dataset.field] = input.value;
+        });
+      });
+    }
+    render();
+    main.querySelector(`#${addBtnId}`).addEventListener("click", () => {
+      const blank = {};
+      fields.forEach((f) => (blank[f] = ""));
+      rows.push(blank);
+      render();
+    });
+    main.querySelector(`#${saveBtnId}`).addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        await api(`/api/site-content/${contentKey}`, { method: "PUT", body: JSON.stringify({ value: rows }) });
+        alert("Saved.");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
+  setupListEditor({
+    items: content.faqs, containerId: "faqsList", addBtnId: "addFaqBtn", saveBtnId: "saveFaqsBtn",
+    contentKey: "faqs", fields: ["q", "a"],
+    rowHtml: (row, i) => `
+      <div class="dash-list-item" style="margin-bottom:8px;">
+        <input data-row-index="${i}" data-field="q" placeholder="Question" value="${row.q || ""}" style="margin-bottom:6px;" />
+        <textarea data-row-index="${i}" data-field="a" placeholder="Answer" rows="2">${row.a || ""}</textarea>
+        <button class="icon-btn" data-remove-row="${i}" style="margin-top:6px;">✕ Remove</button>
+      </div>
+    `,
+  });
+
+  setupListEditor({
+    items: content.testimonials, containerId: "testimonialsList", addBtnId: "addTestimonialBtn", saveBtnId: "saveTestimonialsBtn",
+    contentKey: "testimonials", fields: ["name", "quote", "videoUrl"],
+    rowHtml: (row, i) => `
+      <div class="dash-list-item" style="margin-bottom:8px;">
+        <input data-row-index="${i}" data-field="name" placeholder="Client name" value="${row.name || ""}" style="margin-bottom:6px;" />
+        <textarea data-row-index="${i}" data-field="quote" placeholder="What they said" rows="2" style="margin-bottom:6px;">${row.quote || ""}</textarea>
+        <input data-row-index="${i}" data-field="videoUrl" placeholder="Video URL (optional)" value="${row.videoUrl || ""}" />
+        <button class="icon-btn" data-remove-row="${i}" style="margin-top:6px;">✕ Remove</button>
+      </div>
+    `,
+  });
+
+  setupListEditor({
+    items: content.press, containerId: "pressList", addBtnId: "addPressBtn", saveBtnId: "savePressBtn",
+    contentKey: "press", fields: ["outlet", "quote", "link"],
+    rowHtml: (row, i) => `
+      <div class="dash-list-item" style="margin-bottom:8px;">
+        <input data-row-index="${i}" data-field="outlet" placeholder="Outlet name" value="${row.outlet || ""}" style="margin-bottom:6px;" />
+        <input data-row-index="${i}" data-field="quote" placeholder="Headline / quote" value="${row.quote || ""}" style="margin-bottom:6px;" />
+        <input data-row-index="${i}" data-field="link" placeholder="Link" value="${row.link || ""}" />
+        <button class="icon-btn" data-remove-row="${i}" style="margin-top:6px;">✕ Remove</button>
+      </div>
+    `,
+  });
+
+  setupListEditor({
+    items: content.team, containerId: "teamList", addBtnId: "addTeamBtn", saveBtnId: "saveTeamBtn",
+    contentKey: "team", fields: ["name", "role"],
+    rowHtml: (row, i) => `
+      <div class="dash-list-item" style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
+        <input data-row-index="${i}" data-field="name" placeholder="Name" value="${row.name || ""}" style="flex:1;" />
+        <input data-row-index="${i}" data-field="role" placeholder="Role" value="${row.role || ""}" style="flex:1;" />
+        <button class="icon-btn" data-remove-row="${i}">✕</button>
+      </div>
+    `,
+  });
+
+  setupListEditor({
+    items: Array.isArray(content.services) ? content.services : [], containerId: "servicesList", addBtnId: "addServiceBtn", saveBtnId: "saveServicesBtn",
+    contentKey: "services", fields: ["title", "blurb"],
+    rowHtml: (row, i) => `
+      <div class="dash-list-item" style="margin-bottom:8px;">
+        <input data-row-index="${i}" data-field="title" placeholder="Format title (e.g. Bhajan Jamming)" value="${row.title || ""}" style="margin-bottom:6px;" />
+        <textarea data-row-index="${i}" data-field="blurb" placeholder="Description" rows="2">${row.blurb || ""}</textarea>
+        <button class="icon-btn" data-remove-row="${i}" style="margin-top:6px;">✕ Remove</button>
+      </div>
+    `,
+  });
+
+  setupListEditor({
+    items: content.hero_banners, containerId: "heroList", addBtnId: "addHeroBtn", saveBtnId: "saveHeroBtn",
+    contentKey: "hero_banners", fields: ["headline", "subhead", "imageUrl", "videoUrl"],
+    rowHtml: (row, i) => `
+      <div class="dash-list-item" style="margin-bottom:8px;">
+        <input data-row-index="${i}" data-field="headline" placeholder="Headline" value="${row.headline || ""}" style="margin-bottom:6px;" />
+        <input data-row-index="${i}" data-field="subhead" placeholder="Subhead" value="${row.subhead || ""}" style="margin-bottom:6px;" />
+        <input data-row-index="${i}" data-field="imageUrl" placeholder="Image URL (optional)" value="${row.imageUrl || ""}" style="margin-bottom:6px;" />
+        <input data-row-index="${i}" data-field="videoUrl" placeholder="Video URL (optional)" value="${row.videoUrl || ""}" />
+        <button class="icon-btn" data-remove-row="${i}" style="margin-top:6px;">✕ Remove</button>
+      </div>
+    `,
+  });
+
+  // ---- Gallery ----
+  function renderGallery() {
+    const grid = main.querySelector("#galleryGrid");
+    grid.innerHTML = gallery.length
+      ? gallery.map((g) => `
+        <div style="position:relative;">
+          <img src="${g.url}" alt="${g.caption || ""}" style="width:100%; height:100px; object-fit:cover; border-radius:8px;" />
+          <button class="icon-btn" data-delete-gallery="${g.id}" style="position:absolute; top:4px; right:4px; background:rgba(255,255,255,0.9); border-radius:50%;">✕</button>
+        </div>
+      `).join("")
+      : `<p class="muted small">No images uploaded yet.</p>`;
+    grid.querySelectorAll("[data-delete-gallery]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this image?")) return;
+        await api(`/api/gallery/${btn.dataset.deleteGallery}`, { method: "DELETE" });
+        renderWebsiteContent(main);
+      });
+    });
+  }
+  renderGallery();
+  main.querySelector("#uploadGalleryBtn").addEventListener("click", async () => {
+    const fileInput = main.querySelector("#galleryFile");
+    if (!fileInput.files[0]) return alert("Choose an image first.");
+    const formData = new FormData();
+    formData.append("file", fileInput.files[0]);
+    formData.append("caption", main.querySelector("#galleryCaption").value.trim());
+    await fetch("/api/gallery", { method: "POST", body: formData });
+    renderWebsiteContent(main);
+  });
+}
+
 async function renderSettings(main) {
   main.innerHTML = `
     <div class="view-head"><div><h2>Settings</h2><p class="muted">Customize wording and options yourself — no code changes needed. Tap a section to expand it.</p></div></div>
@@ -3757,6 +4030,7 @@ function renderMain() {
   else if (currentTab === "accounts") renderAccounts(main);
   else if (currentTab === "myevents") renderMyEvents(main);
   else if (currentTab === "settings") renderSettings(main);
+  else if (currentTab === "website") renderWebsiteContent(main);
 }
 
 // ---------- Auth ----------

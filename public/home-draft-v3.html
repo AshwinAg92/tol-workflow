@@ -287,6 +287,21 @@
   .event-row .meta .pkg{font-family:'Space Grotesk'; font-weight:700; font-size:15px; color:var(--ink);}
   .event-row .meta .loc{color:var(--muted); font-size:13px; margin-top:2px;}
 
+  /* dynamic CMS-driven sections */
+  .dyn-section{padding:70px 0;}
+  .dyn-section.hidden{display:none;}
+  .testimonial-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:20px; margin-top:30px;}
+  .testimonial-card{background:var(--paper); border:1px solid var(--hairline); border-radius:14px; padding:22px;}
+  .testimonial-card .quote{font-family:'Fraunces'; font-style:italic; font-size:16px; color:var(--ink); line-height:1.4;}
+  .testimonial-card .name{margin-top:12px; font-family:'Space Grotesk'; font-weight:700; font-size:13px; color:var(--terracotta);}
+  .press-row{display:flex; justify-content:space-between; align-items:center; gap:14px; padding:14px 0; border-bottom:1px solid var(--hairline);}
+  .press-row:last-child{border-bottom:none;}
+  .press-row .outlet{font-family:'Space Grotesk'; font-weight:700; font-size:14px;}
+  .press-row .quote{color:var(--muted); font-size:13.5px; margin-top:2px;}
+  .gallery-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:14px; margin-top:30px;}
+  .gallery-grid img{width:100%; border-radius:12px; display:block; object-fit:cover;}
+  .cities-chip-row{display:flex; flex-wrap:wrap; gap:10px; margin-top:20px;}
+
   /* about */
   .about{padding:90px 0 60px; position:relative;}
   .about-grid{display:grid; grid-template-columns:1fr 1fr; gap:50px; align-items:center;}
@@ -581,6 +596,38 @@
   </div>
 </section>
 
+<section class="dyn-section hidden reveal" id="testimonialsSection">
+  <div class="wrap">
+    <span class="tag">WHAT PEOPLE SAY</span>
+    <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">Told in their words.</h2>
+    <div class="testimonial-grid" id="testimonialsGrid"></div>
+  </div>
+</section>
+
+<section class="dyn-section hidden reveal" id="gallerySection">
+  <div class="wrap">
+    <span class="tag">GALLERY</span>
+    <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">Moments, captured.</h2>
+    <div class="gallery-grid" id="galleryGrid"></div>
+  </div>
+</section>
+
+<section class="dyn-section hidden reveal" id="citiesSection" style="background:var(--paper); border-top:1px solid var(--hairline); border-bottom:1px solid var(--hairline);">
+  <div class="wrap">
+    <span class="tag">CITIES WE'VE PLAYED</span>
+    <h2 style="margin-top:14px; font-size:clamp(26px,3.6vw,36px);">Across India, and beyond.</h2>
+    <div class="cities-chip-row" id="citiesGrid"></div>
+  </div>
+</section>
+
+<section class="dyn-section hidden reveal" id="pressSection">
+  <div class="wrap">
+    <span class="tag">IN THE PRESS</span>
+    <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">As seen in.</h2>
+    <div id="pressGrid" style="margin-top:24px;"></div>
+  </div>
+</section>
+
 <section class="faq reveal">
   <div class="wrap">
     <span class="tag">FAQS</span>
@@ -747,6 +794,46 @@
     const list = document.getElementById('upcomingEventsList');
     if (list) list.innerHTML = '<p style="color:var(--muted); margin-top:16px;">Couldn\'t load events right now — check our Instagram for the latest.</p>';
   });
+
+  // CMS-driven sections — each stays hidden until content exists, so nothing
+  // shows an empty/broken-looking section before it's been filled in.
+  function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+  fetch('/api/public/site-content/testimonials').then((r) => r.json()).then((items) => {
+    if (!Array.isArray(items) || !items.length) return;
+    document.getElementById('testimonialsSection').classList.remove('hidden');
+    document.getElementById('testimonialsGrid').innerHTML = items.map((t) => `
+      <div class="testimonial-card">
+        ${t.videoUrl ? `<a href="${escapeHtml(t.videoUrl)}" target="_blank" rel="noopener noreferrer" class="btn-text" style="margin-bottom:12px; display:inline-block;">▶ Watch</a>` : ''}
+        <div class="quote">"${escapeHtml(t.quote)}"</div>
+        <div class="name">— ${escapeHtml(t.name)}</div>
+      </div>
+    `).join('');
+  }).catch(() => {});
+
+  fetch('/api/public/gallery').then((r) => r.json()).then((items) => {
+    if (!Array.isArray(items) || !items.length) return;
+    document.getElementById('gallerySection').classList.remove('hidden');
+    document.getElementById('galleryGrid').innerHTML = items.map((g) => `<img src="${g.url}" alt="${escapeHtml(g.caption || 'Together, Out Loud')}" loading="lazy" />`).join('');
+  }).catch(() => {});
+
+  fetch('/api/public/site-content/cities').then((r) => r.json()).then((items) => {
+    if (!Array.isArray(items) || !items.length) return;
+    document.getElementById('citiesSection').classList.remove('hidden');
+    const colors = ['var(--terracotta)', 'var(--peacock)', 'var(--gulal)', 'var(--marigold)'];
+    document.getElementById('citiesGrid').innerHTML = items.map((c, i) => `<span class="chip" style="border-color:${colors[i % colors.length]};">${escapeHtml(c)}</span>`).join('');
+  }).catch(() => {});
+
+  fetch('/api/public/site-content/press').then((r) => r.json()).then((items) => {
+    if (!Array.isArray(items) || !items.length) return;
+    document.getElementById('pressSection').classList.remove('hidden');
+    document.getElementById('pressGrid').innerHTML = items.map((p) => `
+      <div class="press-row">
+        <div><div class="outlet">${escapeHtml(p.outlet)}</div><div class="quote">${escapeHtml(p.quote)}</div></div>
+        ${p.link ? `<a class="btn-text" href="${escapeHtml(p.link)}" target="_blank" rel="noopener noreferrer">Read →</a>` : ''}
+      </div>
+    `).join('');
+  }).catch(() => {});
 </script>
 
 <script async src="//www.instagram.com/embed.js"></script>

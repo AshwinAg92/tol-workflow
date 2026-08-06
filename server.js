@@ -529,6 +529,85 @@ app.get("/api/public/upcoming-events", async (req, res) => {
   })));
 });
 
+// ---------- Website content management (CMS for the public marketing site) ----------
+const SITE_CONTENT_KEYS = ["faqs", "testimonials", "press", "team", "cities", "services", "hero_banners", "stats_override"];
+const SITE_CONTENT_DEFAULTS = {
+  faqs: [], testimonials: [], press: [], team: [], cities: [], services: [], hero_banners: [], stats_override: {},
+};
+
+// Public — powers the marketing site. Anonymous visitors read this.
+app.get("/api/public/site-content/:key", async (req, res) => {
+  const { key } = req.params;
+  if (!SITE_CONTENT_KEYS.includes(key)) return res.status(404).json({ error: "Unknown content key" });
+  const row = (await pool.query("SELECT value FROM site_content WHERE key = $1", [key])).rows[0];
+  res.json(row ? row.value : SITE_CONTENT_DEFAULTS[key]);
+});
+
+// Admin — loads every block at once for the "Website" tab.
+app.get("/api/site-content", requireAuth, requireAdmin, async (req, res) => {
+  const rows = (await pool.query("SELECT key, value FROM site_content")).rows;
+  const byKey = {};
+  rows.forEach((r) => (byKey[r.key] = r.value));
+  const result = {};
+  SITE_CONTENT_KEYS.forEach((k) => (result[k] = byKey[k] !== undefined ? byKey[k] : SITE_CONTENT_DEFAULTS[k]));
+  res.json(result);
+});
+
+app.put("/api/site-content/:key", requireAuth, requireAdmin, async (req, res) => {
+  const { key } = req.params;
+  if (!SITE_CONTENT_KEYS.includes(key)) return res.status(404).json({ error: "Unknown content key" });
+  const { value } = req.body;
+  await pool.query(`
+    INSERT INTO site_content (key, value, updated_at) VALUES ($1, $2, $3)
+    ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = $3
+  `, [key, JSON.stringify(value), new Date().toISOString()]);
+  logActivity(req, `Updated website content: ${key}`, null);
+  res.json({ ok: true });
+});
+
+// ---------- Website gallery (images stored in Postgres — see documents note on why) ----------
+app.get("/api/public/gallery", async (req, res) => {
+  const { rows } = await pool.query("SELECT id, caption, sort_order FROM site_gallery_images ORDER BY sort_order ASC, uploaded_at ASC");
+  res.json(rows.map((r) => ({ id: r.id, caption: r.caption, url: `/api/public/gallery/${r.id}/file` })));
+});
+
+app.get("/api/public/gallery/:id/file", async (req, res) => {
+  const row = (await pool.query("SELECT mime_type, file_data FROM site_gallery_images WHERE id = $1", [req.params.id])).rows[0];
+  if (!row || !row.file_data) return res.status(404).send("Not found");
+  res.setHeader("Content-Type", row.mime_type || "image/jpeg");
+  res.send(row.file_data);
+});
+
+app.get("/api/gallery", requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await pool.query("SELECT id, caption, sort_order, uploaded_at FROM site_gallery_images ORDER BY sort_order ASC, uploaded_at ASC");
+  res.json(rows.map((r) => ({ ...r, url: `/api/public/gallery/${r.id}/file` })));
+});
+
+app.post("/api/gallery", requireAuth, requireAdmin, upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+  const id = uuid();
+  const maxOrder = (await pool.query("SELECT COALESCE(MAX(sort_order), 0) AS m FROM site_gallery_images")).rows[0].m;
+  await pool.query(`
+    INSERT INTO site_gallery_images (id, caption, mime_type, file_data, sort_order, uploaded_at)
+    VALUES ($1, $2, $3, $4, $5, $6)
+  `, [id, req.body.caption || null, req.file.mimetype, req.file.buffer, Number(maxOrder) + 1, new Date().toISOString()]);
+  res.status(201).json({ id, url: `/api/public/gallery/${id}/file` });
+  logActivity(req, `Added gallery image${req.body.caption ? `: ${req.body.caption}` : ""}`, null);
+});
+
+app.patch("/api/gallery/:id", requireAuth, requireAdmin, async (req, res) => {
+  const { caption, sortOrder } = req.body;
+  await pool.query(`
+    UPDATE site_gallery_images SET caption = COALESCE($1, caption), sort_order = COALESCE($2, sort_order) WHERE id = $3
+  `, [caption ?? null, sortOrder ?? null, req.params.id]);
+  res.json({ ok: true });
+});
+
+app.delete("/api/gallery/:id", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM site_gallery_images WHERE id = $1", [req.params.id]);
+  res.status(204).end();
+});
+
 // Combo booking: one client confirming multiple formats/dates under a single
 // combined price (e.g. Bhajan Jamming on the 20th + Musical Pheras on the
 // 21st, priced as one package). Creates one lead per format/date, linked via
