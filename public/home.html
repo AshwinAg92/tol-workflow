@@ -378,6 +378,7 @@
   .tix .stub{border-top:1px dashed var(--hairline); margin-top:16px; padding-top:11px; font-family:'JetBrains Mono'; font-size:10px; letter-spacing:0.08em; font-weight:700;}
   .tix .suited{margin-top:12px; display:flex; flex-wrap:wrap; gap:6px;}
   .tix .suited span{font-size:11px; font-family:'JetBrains Mono'; padding:3px 9px; border-radius:999px; background:var(--paper); border:1px solid var(--hairline); color:var(--muted);}
+  .tix-arrow{display:none;}
 
   .tribute{
     margin-top:26px; padding:24px 26px; border-radius:16px; background:transparent;
@@ -438,7 +439,11 @@
   @media (max-width:760px){
     .about-grid{grid-template-columns:1fr;}
     .hero-about{grid-template-columns:1fr; gap:24px; margin-top:36px;}
-    .tix-grid{grid-template-columns:1fr;}
+    .tix-grid{display:flex; overflow-x:auto; gap:16px; padding-bottom:12px; scroll-snap-type:x proximity; -webkit-overflow-scrolling:touch;}
+    .tix-grid::-webkit-scrollbar{height:8px;}
+    .tix-grid::-webkit-scrollbar-thumb{background:var(--hairline); border-radius:4px;}
+    .tix{scroll-snap-align:start; flex-shrink:0; width:82vw; max-width:320px;}
+    .tix-arrow{display:flex;}
     .photo-slot{margin-top:16px; max-height:360px;}
     .sticker-stack{height:220px;}
     .stats-grid{grid-template-columns:repeat(2,1fr); gap:20px;}
@@ -545,7 +550,8 @@
       <h2>Eight formats.<br>One loud band.</h2>
       <p style="color:var(--muted); font-size:15px; margin-top:14px; max-width:480px;">Not performances you watch. Experiences you become part of — pick the one that fits your moment.</p>
     </div>
-    <div class="tix-grid">
+    <div class="scroll-row-wrap">
+      <div class="tix-grid" id="tixGrid">
       <div class="tix">
         <div class="topbar" style="background:var(--peacock);"></div>
         <div class="num">SET 01</div>
@@ -609,6 +615,9 @@
         <span class="tag" style="margin-bottom:10px;">PLANNING A WEDDING?</span>
         <p style="color:var(--muted); font-size:14px; margin:0;">Musical Pheras pairs naturally with Bhajan Jamming for a fully live wedding day — ask us for the combo.</p>
       </div>
+      </div>
+      <button class="scroll-arrow prev tix-arrow" id="tixPrev" aria-label="Scroll left">←</button>
+      <button class="scroll-arrow next tix-arrow" id="tixNext" aria-label="Scroll right">→</button>
     </div>
     <div class="inline-cta">
       <p>Eight ways to make a room sing. One of them is yours.</p>
@@ -845,6 +854,7 @@
   }
   wireScrollArrows('reelTrack', 'reelPrev', 'reelNext');
   wireScrollArrows('testimonialsGrid', 'testimonialPrev', 'testimonialNext');
+  wireScrollArrows('tixGrid', 'tixPrev', 'tixNext');
 
   // Smooth-scroll to anchors while accounting for the fixed nav (and the
   // draft banner, when present) so section headings don't end up hidden
