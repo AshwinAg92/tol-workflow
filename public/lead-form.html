@@ -151,6 +151,9 @@
         <div class="q" id="altDateRow" style="display:none;">
           <label class="qlabel">Alternative date <span class="opt">(if flexible)</span></label>
           <input id="altDate" type="date" />
+          <div id="altDateWarning" style="display:none; margin-top:8px; padding:10px; background:#FFF4E5; border-radius:6px; font-size:13px; color:#8A5A1F;">
+            That alternative date is also already confirmed with us — please try another one.
+          </div>
         </div>
 
         <div class="q">
@@ -204,15 +207,12 @@
     const howHeardSelect = document.getElementById("howHeard");
 
     let primaryDateBooked = false;
+    let altDateProvidedAndFree = false;
     const submitBtn = document.getElementById("submitBtn");
     function updateSubmitState() {
-      if (primaryDateBooked) {
-        submitBtn.disabled = true;
-        submitBtn.textContent = "Please choose an available date";
-      } else {
-        submitBtn.disabled = false;
-        submitBtn.textContent = "Send enquiry";
-      }
+      const blocked = primaryDateBooked && !altDateProvidedAndFree;
+      submitBtn.disabled = blocked;
+      submitBtn.textContent = blocked ? "Please choose an available date" : "Send enquiry";
     }
     document.getElementById("date").addEventListener("change", async (e) => {
       const dateWarning = document.getElementById("dateWarning");
@@ -234,6 +234,24 @@
         // If the check fails, just let them submit normally — the server still
         // enforces the real block either way, this is only for instant feedback.
         primaryDateBooked = false;
+      }
+      updateSubmitState();
+    });
+    document.getElementById("altDate").addEventListener("change", async (e) => {
+      const altWarning = document.getElementById("altDateWarning");
+      if (!e.target.value) {
+        altDateProvidedAndFree = false;
+        altWarning.style.display = "none";
+        updateSubmitState();
+        return;
+      }
+      try {
+        const res = await fetch(`/api/availability?date=${e.target.value}`);
+        const data = await res.json();
+        altDateProvidedAndFree = !data.booked;
+        altWarning.style.display = data.booked ? "block" : "none";
+      } catch {
+        altDateProvidedAndFree = true;
       }
       updateSubmitState();
     });

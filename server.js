@@ -462,16 +462,24 @@ app.post("/api/leads", async (req, res) => {
   if (!name || !eventType || !date) {
     return res.status(400).json({ error: "name, eventType, and date are required" });
   }
-  // Don't accept a new enquiry for a date we're already Confirmed for — this
-  // is a hard block, not just a warning, so a client can't submit a request
-  // for a date that's already unavailable.
+  // Don't accept a new enquiry for a date we're already Confirmed for — unless
+  // they've also given a valid (not-also-booked) alternative date, matching the
+  // flexibility the form itself offers. Blocking outright even when a good
+  // alternative was given would make that field pointless.
   const dateTaken = (await pool.query(
     "SELECT 1 FROM leads WHERE stage = 'Confirmed' AND date = $1 LIMIT 1", [date]
   )).rows[0];
   if (dateTaken) {
-    return res.status(409).json({
-      error: "We're already booked for that date. Please choose a different date, or enter an alternate date below and we'll reach out to discuss options.",
-    });
+    const altTaken = altDate ? (await pool.query(
+      "SELECT 1 FROM leads WHERE stage = 'Confirmed' AND date = $1 LIMIT 1", [altDate]
+    )).rows[0] : null;
+    if (!altDate || altTaken) {
+      return res.status(409).json({
+        error: altDate
+          ? "We're already booked for both that date and the alternative you gave. Please try a different date."
+          : "We're already booked for that date. Please choose a different date, or enter an alternate date below.",
+      });
+    }
   }
   const id = uuid();
   await pool.query(`
