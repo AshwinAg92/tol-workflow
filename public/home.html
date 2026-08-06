@@ -653,12 +653,12 @@
   <div class="wrap">
     <span class="tag">FEATURED MOMENTS</span>
     <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">Numbers we're proud of.</h2>
-    <p class="stats-note">Pulled live from your Instagram — real numbers, not placeholders.</p>
+    <p class="stats-note">Real numbers from Instagram — updated periodically, not live.</p>
     <div class="stats-grid">
-      <div class="stat"><div class="num" style="color:var(--terracotta);" data-count="10500" data-suffix="+">0</div><div class="lbl">Instagram Family</div></div>
-      <div class="stat"><div class="num" style="color:var(--peacock);" data-count="537000" data-suffix="+" data-indian="1">0</div><div class="lbl">Likes On Our Reels</div></div>
-      <div class="stat"><div class="num" style="color:var(--gulal);" data-count="12" data-suffix="+">0</div><div class="lbl">Cities Across India</div></div>
-      <div class="stat"><div class="num" style="color:var(--marigold); font-size:clamp(22px,3.2vw,34px);">Europe &amp; Thailand</div><div class="lbl">International Shows, and counting</div></div>
+      <div class="stat"><div class="num" id="statFollowersNum" style="color:var(--terracotta);" data-count="10500" data-suffix="+">0</div><div class="lbl">Instagram Family</div></div>
+      <div class="stat"><div class="num" id="statLikesNum" style="color:var(--peacock);" data-count="537000" data-suffix="+" data-indian="1">0</div><div class="lbl">Likes On Our Reels</div></div>
+      <div class="stat"><div class="num" id="statCitiesNum" style="color:var(--gulal);" data-count="12" data-suffix="+">0</div><div class="lbl">Cities Across India</div></div>
+      <div class="stat"><div class="num" id="statIntlNum" style="color:var(--marigold); font-size:clamp(22px,3.2vw,34px);">Europe &amp; Thailand</div><div class="lbl">International Shows, and counting</div></div>
       <div class="stat"><div class="num" style="color:var(--terracotta);" data-count="100" data-suffix="%">0</div><div class="lbl">Live Music, No Backing Tracks</div></div>
       <div class="stat"><div class="num" style="color:var(--peacock);" data-count="268" data-suffix="+">0</div><div class="lbl">Reels &amp; Moments Shared</div></div>
     </div>
@@ -892,33 +892,45 @@
     rest = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',');
     return rest + ',' + last3;
   }
-  const counters = document.querySelectorAll('.num[data-count]');
-  if ('IntersectionObserver' in window && counters.length) {
-    const counterObs = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (!entry.isIntersecting) return;
-        const el = entry.target;
-        counterObs.unobserve(el);
-        const target = Number(el.dataset.count);
-        const suffix = el.dataset.suffix || '';
-        const indian = el.dataset.indian === '1';
-        const duration = 1400;
-        const start = performance.now();
-        function tick(now) {
-          const progress = Math.min((now - start) / duration, 1);
-          const eased = 1 - Math.pow(1 - progress, 3);
-          el.textContent = formatCount(target * eased, indian) + suffix;
-          if (progress < 1) requestAnimationFrame(tick);
-        }
-        requestAnimationFrame(tick);
+
+  // Apply any manual overrides from the Website tab (CRM) before the counters
+  // start animating, so an admin-entered number takes priority over the
+  // hardcoded snapshot baked into this page.
+  function setupCounters() {
+    const counters = document.querySelectorAll('.num[data-count]');
+    if ('IntersectionObserver' in window && counters.length) {
+      const counterObs = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          const el = entry.target;
+          counterObs.unobserve(el);
+          const target = Number(el.dataset.count);
+          const suffix = el.dataset.suffix || '';
+          const indian = el.dataset.indian === '1';
+          const duration = 1400;
+          const start = performance.now();
+          function tick(now) {
+            const progress = Math.min((now - start) / duration, 1);
+            const eased = 1 - Math.pow(1 - progress, 3);
+            el.textContent = formatCount(target * eased, indian) + suffix;
+            if (progress < 1) requestAnimationFrame(tick);
+          }
+          requestAnimationFrame(tick);
+        });
+      }, { threshold: 0.4 });
+      counters.forEach((el) => counterObs.observe(el));
+    } else {
+      counters.forEach((el) => {
+        el.textContent = formatCount(Number(el.dataset.count), el.dataset.indian === '1') + (el.dataset.suffix || '');
       });
-    }, { threshold: 0.4 });
-    counters.forEach((el) => counterObs.observe(el));
-  } else {
-    counters.forEach((el) => {
-      el.textContent = formatCount(Number(el.dataset.count), el.dataset.indian === '1') + (el.dataset.suffix || '');
-    });
+    }
   }
+  fetch('/api/public/site-content/stats_override').then((r) => r.json()).then((ov) => {
+    if (ov && ov.followers) document.getElementById('statFollowersNum').dataset.count = String(ov.followers).replace(/\D/g, '');
+    if (ov && ov.likes) document.getElementById('statLikesNum').dataset.count = String(ov.likes).replace(/\D/g, '');
+    if (ov && ov.cities) document.getElementById('statCitiesNum').dataset.count = String(ov.cities).replace(/\D/g, '');
+    if (ov && ov.international) document.getElementById('statIntlNum').textContent = ov.international;
+  }).catch(() => {}).finally(setupCounters);
 
   // Upcoming events — pulled live from the booking calendar.
   fetch('/api/public/upcoming-events').then((r) => r.json()).then((events) => {
