@@ -139,7 +139,7 @@
   }
   nav.scrolled{background:rgba(254,246,237,0.92); backdrop-filter:blur(8px); box-shadow:0 1px 0 var(--hairline);}
   .brand{display:flex; align-items:center; gap:10px;}
-  .brand img{width:32px; height:32px; border-radius:50%;}
+  .brand img{width:32px; height:32px; border-radius:50%; object-fit:cover;}
   .brand span{font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:15.5px;}
   .nav-cta{
     background:var(--terracotta); color:var(--cream); padding:11px 22px; border-radius:999px;
@@ -374,7 +374,7 @@
   .cta-band .eq span{background:rgba(254,246,237,0.7);}
 
   footer{padding:50px 26px 36px; text-align:center;}
-  footer img{width:36px; border-radius:50%; margin-bottom:10px;}
+  footer img{width:36px; height:36px; border-radius:50%; margin-bottom:10px; object-fit:cover;}
   footer .foot-name{font-family:'Space Grotesk'; font-weight:700; font-size:16px;}
   footer .foot-tag{color:var(--muted); font-size:12.5px; margin-top:6px; font-weight:500;}
   footer .foot-email{margin-top:14px; font-size:13px;}
@@ -825,13 +825,32 @@
   fetch('/api/public/site-content/testimonials').then((r) => r.json()).then((items) => {
     if (!Array.isArray(items) || !items.length) return;
     document.getElementById('testimonialsSection').classList.remove('hidden');
+    const isInstagram = (url) => /instagram\.com\/(reel|p|tv)\//.test(url || '');
     document.getElementById('testimonialsGrid').innerHTML = items.map((t) => `
       <div class="testimonial-card">
-        ${t.videoUrl ? `<a href="${escapeHtml(t.videoUrl)}" target="_blank" rel="noopener noreferrer" class="btn-text" style="margin-bottom:12px; display:inline-block;">▶ Watch</a>` : ''}
+        ${t.videoUrl && isInstagram(t.videoUrl) ? `<blockquote class="instagram-media" data-instgrm-permalink="${escapeHtml(t.videoUrl)}" data-instgrm-version="14" style="margin:0 0 14px !important;"></blockquote>` : ''}
+        ${t.videoUrl && !isInstagram(t.videoUrl) ? `<a href="${escapeHtml(t.videoUrl)}" target="_blank" rel="noopener noreferrer" class="btn-text" style="margin-bottom:12px; display:inline-block;">▶ Watch</a>` : ''}
         <div class="quote">"${escapeHtml(t.quote)}"</div>
         <div class="name">— ${escapeHtml(t.name)}</div>
       </div>
     `).join('');
+    // Instagram's embed.js only auto-processes blockquotes present at page
+    // load — anything added afterward (like these, fetched dynamically) needs
+    // this explicit call to actually turn into the rich video embed.
+    if (window.instgrm && window.instgrm.Embeds) {
+      window.instgrm.Embeds.process();
+    } else {
+      let tries = 0;
+      const waitForInstgrm = setInterval(() => {
+        tries++;
+        if (window.instgrm && window.instgrm.Embeds) {
+          window.instgrm.Embeds.process();
+          clearInterval(waitForInstgrm);
+        } else if (tries > 20) {
+          clearInterval(waitForInstgrm);
+        }
+      }, 250);
+    }
   }).catch(() => {});
 
   fetch('/api/public/gallery').then((r) => r.json()).then((items) => {
