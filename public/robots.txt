@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Allow: /lead-form.html
+Disallow: /login
+Disallow: /api/
+
+Sitemap: https://www.togetheroutloud.in/sitemap.xml
