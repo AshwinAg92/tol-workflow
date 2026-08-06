@@ -1,7 +1,7 @@
 {
   "name": "Together, Out Loud — Workflow",
   "short_name": "TOL Workflow",
-  "start_url": "/",
+  "start_url": "/login",
   "display": "standalone",
   "background_color": "#F1ECE3",
   "theme_color": "#FAFAF8",
