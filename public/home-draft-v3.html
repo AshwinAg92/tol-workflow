@@ -111,6 +111,17 @@
   @keyframes eqbounce{0%,100%{transform:scaleY(0.35);} 50%{transform:scaleY(1);}}
   @media (prefers-reduced-motion:reduce){ .eq span, .marquee-track{animation:none;} }
 
+  /* philosophy */
+  .philosophy{padding:110px 26px; text-align:center;}
+  .philosophy-inner{max-width:680px; margin:0 auto;}
+  .philosophy p{
+    font-family:'Fraunces',serif; font-weight:500; font-size:clamp(22px,3.6vw,34px); line-height:1.3;
+    margin:0 0 14px; color:var(--ink);
+  }
+  .philosophy p.payoff{
+    font-style:italic; font-weight:600; color:var(--terracotta); margin-top:28px;
+  }
+
   /* about */
   .about{padding:90px 0 60px; position:relative;}
   .about-grid{display:grid; grid-template-columns:1fr 1fr; gap:50px; align-items:center;}
@@ -228,6 +239,15 @@
     <span class="word" style="color:var(--terracotta);">BHAJAN JAMMING</span><span class="dot">✦</span><span class="word" style="color:var(--peacock);">MUSICAL PHERAS</span><span class="dot">✦</span><span class="word" style="color:var(--gulal);">BOLLYWOOD JAMMING</span><span class="dot">✦</span><span class="word" style="color:var(--marigold);">DEVOTIONAL SATSANG</span><span class="dot">✦</span><span class="word" style="color:var(--terracotta);">BHAJAN CLUBBING</span><span class="dot">✦</span>
   </div>
 </div>
+
+<section class="philosophy reveal">
+  <div class="philosophy-inner">
+    <span class="tag">OUR PHILOSOPHY</span>
+    <p style="margin-top:26px;">Music is not entertainment.<br>Music is <em style="color:var(--peacock);">belonging.</em></p>
+    <p>People don't remember songs.<br>They remember how they <em style="color:var(--marigold);">felt.</em></p>
+    <p class="payoff">Together, Out Loud exists to create those feelings.</p>
+  </div>
+</section>
 
 <section class="about reveal">
   <div class="wrap about-grid">
