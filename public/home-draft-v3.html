@@ -127,6 +127,59 @@
     font-style:italic; font-weight:600; color:var(--terracotta); margin-top:28px;
   }
 
+  /* stats */
+  .stats{padding:90px 0; background:var(--paper); border-top:1px solid var(--hairline); border-bottom:1px solid var(--hairline);}
+  .stats-note{
+    font-family:'JetBrains Mono'; font-size:11px; color:var(--muted); margin-top:8px; letter-spacing:0.03em;
+  }
+  .stats-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:28px; margin-top:40px;}
+  .stat{text-align:center;}
+  .stat .num{font-family:'Space Grotesk'; font-weight:700; font-size:clamp(28px,4.4vw,44px);}
+  .stat .lbl{color:var(--muted); font-size:13px; margin-top:6px; font-weight:500;}
+
+  /* reels */
+  .reels{padding:90px 0; overflow:hidden;}
+  .reel-track{display:flex; gap:18px; margin-top:36px; animation:reelscroll 32s linear infinite;}
+  .reels:hover .reel-track{animation-play-state:paused;}
+  .reel-frame{
+    flex-shrink:0; width:190px; height:340px; border-radius:18px; background:var(--panel-reel, #F3E4D2);
+    border:2px dashed var(--hairline); display:flex; align-items:center; justify-content:center;
+    font-family:'JetBrains Mono'; font-size:11px; color:var(--muted); text-align:center; padding:16px;
+  }
+  @keyframes reelscroll{ from{transform:translateX(0);} to{transform:translateX(-50%);} }
+  @media (prefers-reduced-motion:reduce){ .reel-track{animation:none; overflow-x:auto;} }
+
+  /* instagram feed */
+  .igfeed{padding:70px 0;}
+  .igfeed-box{
+    margin-top:32px; border:2px dashed var(--hairline); border-radius:16px; padding:40px 26px; text-align:center;
+    background:var(--paper);
+  }
+  .igfeed-box p{color:var(--muted); font-size:14px; max-width:440px; margin:10px auto 0;}
+
+  /* FAQ */
+  .faq{padding:90px 0; background:var(--paper); border-top:1px solid var(--hairline); border-bottom:1px solid var(--hairline);}
+  .faq-list{margin-top:36px; max-width:760px;}
+  .faq-item{border-bottom:1px solid var(--hairline); padding:18px 0;}
+  .faq-item summary{
+    font-family:'Space Grotesk'; font-weight:700; font-size:16px; cursor:pointer; list-style:none;
+    display:flex; justify-content:space-between; align-items:center; gap:12px;
+  }
+  .faq-item summary::-webkit-details-marker{display:none;}
+  .faq-item summary::after{content:"+"; font-size:22px; color:var(--terracotta); flex-shrink:0; transition:transform .2s;}
+  .faq-item[open] summary::after{content:"–";}
+  .faq-item p{color:var(--muted); font-size:14.5px; margin-top:12px; font-weight:500; max-width:640px;}
+
+  /* contact */
+  .contact{padding:80px 0; text-align:center;}
+  .contact-actions{display:flex; justify-content:center; gap:14px; margin-top:30px; flex-wrap:wrap;}
+  .contact-btn{
+    display:flex; align-items:center; gap:8px; padding:13px 22px; border-radius:999px; font-family:'Space Grotesk';
+    font-weight:700; font-size:14px; border:2px solid var(--hairline); background:var(--paper); color:var(--ink);
+    transition:transform .2s, border-color .2s;
+  }
+  .contact-btn:hover{transform:translateY(-2px); border-color:var(--terracotta);}
+
   /* about */
   .about{padding:90px 0 60px; position:relative;}
   .about-grid{display:grid; grid-template-columns:1fr 1fr; gap:50px; align-items:center;}
@@ -365,6 +418,101 @@
   </div>
 </section>
 
+<section class="stats reveal">
+  <div class="wrap">
+    <span class="tag">FEATURED MOMENTS</span>
+    <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">Numbers we're proud of.</h2>
+    <p class="stats-note">⚠️ Placeholder figures — replace with your real numbers before this goes live.</p>
+    <div class="stats-grid">
+      <div class="stat"><div class="num" style="color:var(--terracotta);">300+</div><div class="lbl">Events</div></div>
+      <div class="stat"><div class="num" style="color:var(--peacock);">2,00,000+</div><div class="lbl">People Connected</div></div>
+      <div class="stat"><div class="num" style="color:var(--gulal);">Multiple</div><div class="lbl">Cities Across India</div></div>
+      <div class="stat"><div class="num" style="color:var(--marigold);">Growing</div><div class="lbl">International Presence</div></div>
+      <div class="stat"><div class="num" style="color:var(--terracotta);">100%</div><div class="lbl">Live Music</div></div>
+      <div class="stat"><div class="num" style="color:var(--peacock);">Countless</div><div class="lbl">Memories Created</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="reels reveal">
+  <div class="wrap">
+    <span class="tag">EVENT REEL</span>
+    <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">See us live.</h2>
+    <p class="stats-note">⚠️ Placeholder frames — send your Instagram Reel links and these become real embeds.</p>
+    <div class="reel-track">
+      <div class="reel-frame">Reel 1<br>— your link here —</div>
+      <div class="reel-frame">Reel 2<br>— your link here —</div>
+      <div class="reel-frame">Reel 3<br>— your link here —</div>
+      <div class="reel-frame">Reel 4<br>— your link here —</div>
+      <div class="reel-frame">Reel 1<br>— your link here —</div>
+      <div class="reel-frame">Reel 2<br>— your link here —</div>
+      <div class="reel-frame">Reel 3<br>— your link here —</div>
+      <div class="reel-frame">Reel 4<br>— your link here —</div>
+    </div>
+  </div>
+</section>
+
+<section class="igfeed reveal">
+  <div class="wrap">
+    <span class="tag">INSTAGRAM</span>
+    <h2 style="margin-top:14px; font-size:clamp(26px,3.6vw,36px);">Follow along.</h2>
+    <div class="igfeed-box">
+      <div style="font-family:'Space Grotesk'; font-weight:700; font-size:15px;">📸 Live feed pending setup</div>
+      <p>A live-updating Instagram feed needs a small embed tool connected to your account (free options like SnapWidget or Elfsight work well). Let me know which one you'd like and I'll wire it in — for now, here's a direct link:</p>
+      <a class="contact-btn" href="https://www.instagram.com/togetheroutloudclub" target="_blank" style="margin-top:16px; display:inline-flex;">📷 @togetheroutloudclub</a>
+    </div>
+  </div>
+</section>
+
+<section class="faq reveal">
+  <div class="wrap">
+    <span class="tag">FAQS</span>
+    <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">Questions, answered.</h2>
+    <div class="faq-list">
+      <details class="faq-item">
+        <summary>How is Together, Out Loud different from a live band?</summary>
+        <p>We're not a covers band playing at your event — we build the experience around the audience. Every set is designed for people to sing, participate and connect with each other, not just listen.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Can you perform internationally?</summary>
+        <p>Yes — we're based in India and travel for events, including internationally. Reach out with your location and dates and we'll work out the logistics together.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Do you travel?</summary>
+        <p>Yes. We've performed across multiple cities in India and travel for events outside our base city too. Travel and accommodation are billed at actuals.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Can we customize songs?</summary>
+        <p>Absolutely — for Musical Pheras especially, we can write and perform a custom song for the couple. Other formats can also be tailored to specific songs or themes on request.</p>
+      </details>
+      <details class="faq-item">
+        <summary>How many artists perform?</summary>
+        <p>Typically 4 to 6 live musicians, depending on the format and package you choose. We'll confirm the exact lineup with you during planning.</p>
+      </details>
+      <details class="faq-item">
+        <summary>What technical setup is required?</summary>
+        <p>We bring our own instruments. Sound, lighting and stage setup can be arranged as add-ons, or we can work with your venue's existing setup — we'll sort out the details when you enquire.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Can we book private events?</summary>
+        <p>Yes — Private Celebrations is one of our formats, built for birthdays, anniversaries, housewarmings and other intimate family events.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section class="contact reveal">
+  <div class="wrap">
+    <span class="tag">GET IN TOUCH</span>
+    <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">Let's talk about your event.</h2>
+    <div class="contact-actions">
+      <a class="contact-btn" href="https://wa.me/918250200518" target="_blank">💬 WhatsApp</a>
+      <a class="contact-btn" href="https://www.instagram.com/togetheroutloudclub" target="_blank">📷 Instagram</a>
+      <a class="contact-btn" href="mailto:togetheroutloudclub@gmail.com">✉️ Email</a>
+    </div>
+  </div>
+</section>
+
 <section class="cta-band reveal">
   <span class="tag" style="border-color:var(--cream); color:var(--cream);">READY WHEN YOU ARE</span>
   <h2 style="margin-top:18px;">Let's make some noise.</h2>
@@ -378,7 +526,11 @@
   <img src="/logo.png" alt="" />
   <div class="foot-name">TOGETHER, OUT LOUD</div>
   <div class="foot-tag">BHAJAN JAMMING · MUSICAL PHERAS · DEVOTIONAL SATSANG · BOLLYWOOD JAMMING</div>
-  <div class="foot-email">Write to us at <a href="mailto:togetheroutloudclub@gmail.com">togetheroutloudclub@gmail.com</a></div>
+  <div class="foot-email">
+    <a href="https://wa.me/918250200518" target="_blank">WhatsApp</a> ·
+    <a href="https://www.instagram.com/togetheroutloudclub" target="_blank">Instagram</a> ·
+    <a href="mailto:togetheroutloudclub@gmail.com">togetheroutloudclub@gmail.com</a>
+  </div>
   <div class="foot-copy">© <span id="yr"></span> Together, Out Loud. All rights reserved.</div>
 </footer>
 
