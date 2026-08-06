@@ -82,6 +82,11 @@
   .hero h1 .c3{color:var(--gulal);}
   .hero p.lede{font-size:clamp(16px,2vw,19px); color:var(--muted); max-width:520px; margin-top:24px; font-weight:500;}
   .hero-actions{display:flex; align-items:center; gap:20px; margin-top:34px; flex-wrap:wrap;}
+  .hero-about{margin-top:56px; display:grid; grid-template-columns:1.1fr 0.9fr; gap:40px; align-items:center;}
+  .hero-about h2{font-size:clamp(24px,3.4vw,34px); line-height:1.1;}
+  .hero-about p{color:var(--muted); font-size:15px; max-width:480px; margin-top:14px; font-weight:500;}
+  .hero-about .about-byline{margin-top:16px; font-family:'Space Grotesk'; font-weight:700; font-size:13px; color:var(--terracotta);}
+  .hero-about .mission-line{margin-top:10px; font-family:'Space Grotesk'; font-weight:700; font-size:13.5px; color:var(--ink);}
   .btn-primary{
     background:var(--terracotta); color:var(--cream); padding:16px 30px; border-radius:999px;
     font-family:'Space Grotesk'; font-weight:700; font-size:15px; display:inline-block;
@@ -198,6 +203,7 @@
   @media (min-width:900px){ .badge-pass{display:flex;} }
   @media (max-width:760px){
     .about-grid{grid-template-columns:1fr;}
+    .hero-about{grid-template-columns:1fr; gap:24px; margin-top:36px;}
     .tix-grid{grid-template-columns:1fr;}
     .sticker-stack{height:220px; margin-top:16px;}
   }
@@ -223,7 +229,6 @@
     <span class="confetti" style="width:12px; height:12px; background:var(--gulal); top:180px; left:88%;"></span>
     <span class="tag">LIVE · LOUD · TOGETHER</span>
     <h1 style="margin-top:18px;">We play <span class="c1">bhajans,</span><br>we play <span class="c2">pheras,</span><br>we play it <em class="c3">out loud.</em></h1>
-    <p class="lede">A live band for weddings, satsangs and celebrations that'd rather feel a room sing than hit play on a Spotify list. Bhajan Jamming, Musical Pheras, Bollywood sets — all live, all us.</p>
     <div class="hero-actions">
       <a class="btn-primary" href="/lead-form.html">Enquire Now →</a>
       <a class="btn-text" href="#experiences">See the sets ↓</a>
@@ -231,6 +236,22 @@
     <div class="badge-pass">
       <div class="hole"></div>
       <div class="txt">ALL ACCESS<br>———<br>TOGETHER<br>OUT LOUD<br>———<br>LIVE BAND</div>
+    </div>
+
+    <div class="hero-about">
+      <div>
+        <span class="tag">WHO WE ARE</span>
+        <h2 style="margin-top:16px;">We don't perform <em>for</em> you.<br>We perform <em style="color:var(--gulal);">with</em> you.</h2>
+        <p>Together, Out Loud is a spiritual musical experience founded by husband-wife duo Prakriti Modi (a full-time Chartered Accountant) and Ashwin Agarwal (an entrepreneur). Instead of playing to a crowd, we play with one — turning a room of strangers into people who sing, laugh, dance and connect, together. No egos, no outsiders, no toxicity. Just music, and everyone in it.</p>
+        <div class="about-byline">— PRAKRITI &amp; ASHWIN, FOUNDERS</div>
+        <p class="mission-line">Our mission: building communities through music.</p>
+      </div>
+      <div class="sticker-stack">
+        <div class="sticker s1">HARMONIUM ✓</div>
+        <div class="sticker s2">TABLA ✓</div>
+        <div class="sticker s4">FULL BAND</div>
+        <div class="sticker s3">COMMUNITY ✓</div>
+      </div>
     </div>
   </div>
 </header>
@@ -248,24 +269,6 @@
     <p style="margin-top:26px;">Music is not entertainment.<br>Music is <em style="color:var(--peacock);">belonging.</em></p>
     <p>People don't remember songs.<br>They remember how they <em style="color:var(--marigold);">felt.</em></p>
     <p class="payoff">Together, Out Loud exists to create those feelings.</p>
-  </div>
-</section>
-
-<section class="about reveal">
-  <div class="wrap about-grid">
-    <div>
-      <span class="tag">WHO WE ARE</span>
-      <h2 style="margin-top:16px;">We don't perform <em>for</em> you.<br>We perform <em style="color:var(--gulal);">with</em> you.</h2>
-      <p>Together, Out Loud is a spiritual musical experience founded by husband-wife duo Prakriti Modi (a full-time Chartered Accountant) and Ashwin Agarwal (an entrepreneur). Instead of playing to a crowd, we play with one — turning a room of strangers into people who sing, laugh, dance and connect, together. No egos, no outsiders, no toxicity. Just music, and everyone in it.</p>
-      <div class="about-byline">— PRAKRITI &amp; ASHWIN, FOUNDERS</div>
-      <p style="margin-top:14px; font-family:'Space Grotesk'; font-weight:700; font-size:14px; color:var(--ink);">Our mission: building communities through music.</p>
-    </div>
-    <div class="sticker-stack">
-      <div class="sticker s1">HARMONIUM ✓</div>
-      <div class="sticker s2">TABLA ✓</div>
-      <div class="sticker s4">FULL BAND</div>
-      <div class="sticker s3">COMMUNITY ✓</div>
-    </div>
   </div>
 </section>
 
