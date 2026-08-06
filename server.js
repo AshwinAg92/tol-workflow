@@ -181,28 +181,7 @@ app.get("/login", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 app.get("/", (req, res) => {
-  res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="icon" href="/logo.png" />
-  <title>Together, Out Loud</title>
-  <style>
-    body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:#FEF6ED; font-family:-apple-system, sans-serif; text-align:center; padding:24px; box-sizing:border-box; }
-    img { width:72px; margin-bottom:16px; }
-    h1 { color:#C1602B; font-size:22px; margin:0 0 8px; }
-    p { color:#8A8578; margin:0; }
-  </style>
-</head>
-<body>
-  <div>
-    <img src="/logo.png" alt="Together, Out Loud" />
-    <h1>Together, Out Loud</h1>
-    <p>Our website is on its way — check back soon.</p>
-  </div>
-</body>
-</html>`);
+  res.sendFile(path.join(__dirname, "public", "home.html"));
 });
 
 const packageName = (id) => PACKAGES.find((p) => p.id === id)?.name || id;
