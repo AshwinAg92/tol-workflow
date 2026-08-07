@@ -325,7 +325,7 @@
   }
   .press-clip img{width:100%; height:230px; object-fit:cover; display:block;}
   .gallery-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:14px; margin-top:30px;}
-  .gallery-item{position:relative; border-radius:12px; overflow:hidden;}
+  .gallery-item{position:relative; border-radius:12px; overflow:hidden; display:block;}
   .gallery-grid img{width:100%; height:180px; border-radius:12px; display:block; object-fit:cover;}
   .gallery-caption{
     position:absolute; left:0; right:0; bottom:0; padding:16px 10px 8px;
@@ -1030,40 +1030,25 @@
     }
   }).catch(() => {});
 
-  // Seed set of real crowd photos (from actual events), shown alongside
-  // anything uploaded later via the Website tab's Gallery uploader.
-  const GALLERY_SEED = [
-    { url: '/gallery-seed/crowd-01.jpg', caption: 'Full room, full voice' },
-    { url: '/gallery-seed/crowd-02.jpg', caption: 'Diwali jamming under the lights' },
-    { url: '/gallery-seed/crowd-03.jpg', caption: 'A private celebration, live' },
-    { url: '/gallery-seed/crowd-04.jpg', caption: 'Strangers who became a choir' },
-    { url: '/gallery-seed/crowd-05.jpg', caption: 'Every hand up, every voice in' },
-    { url: '/gallery-seed/crowd-06.jpg', caption: 'A college jam session' },
-    { url: '/gallery-seed/crowd-07.jpg', caption: 'Backstage, before the next set' },
-    { url: '/gallery-seed/crowd-08.jpg', caption: 'A family satsang evening' },
-    { url: '/gallery-seed/crowd-09.jpg', caption: 'Prakriti and Ashwin, mid-set' },
-  ];
-
+  // Gallery images live entirely in the database now (manageable from the
+  // Website tab), including the original launch batch — no hardcoded seed
+  // here anymore. Wrapped in a link so each photo opens full-size, same as
+  // the press clippings.
   function renderGalleryItems(items) {
     return items.map((g) => `
-      <div class="gallery-item">
+      <a class="gallery-item" href="${g.url}" target="_blank" rel="noopener noreferrer">
         <img src="${g.url}" alt="${escapeHtml(g.caption || 'Together, Out Loud')}" loading="lazy" />
         ${g.caption ? `<div class="gallery-caption">${escapeHtml(g.caption)}</div>` : ''}
-      </div>
+      </a>
     `).join('');
   }
 
   fetch('/api/public/gallery').then((r) => r.json()).then((items) => {
-    const uploaded = Array.isArray(items) ? items : [];
-    const all = [...GALLERY_SEED, ...uploaded];
+    const all = Array.isArray(items) ? items : [];
     if (!all.length) return;
     document.getElementById('gallerySection').classList.remove('hidden');
     document.getElementById('galleryGrid').innerHTML = renderGalleryItems(all);
-  }).catch(() => {
-    // Even if the CMS gallery fetch fails, still show the seed photos.
-    document.getElementById('gallerySection').classList.remove('hidden');
-    document.getElementById('galleryGrid').innerHTML = renderGalleryItems(GALLERY_SEED);
-  });
+  }).catch(() => {});
 
   fetch('/api/public/site-content/cities').then((r) => r.json()).then((items) => {
     if (!Array.isArray(items) || !items.length) return;
@@ -1072,16 +1057,11 @@
     document.getElementById('citiesGrid').innerHTML = items.map((c, i) => `<span class="chip" style="border-color:${colors[i % colors.length]};">${escapeHtml(c)}</span>`).join('');
   }).catch(() => {});
 
-  const PRESS_IMAGES_SEED = [
-    { url: '/press-seed/press-01.jpg', caption: 'Marwari Mahila Sammelan, Golaghat — bhajan jamming coverage' },
-    { url: '/press-seed/press-02.jpg', caption: 'Hi-Life Society — "Soulful Ram Ras Bhajan Jamming in Bangkok"' },
-  ];
-
   Promise.all([
     fetch('/api/public/site-content/press').then((r) => r.json()).catch(() => []),
     fetch('/api/public/press-images').then((r) => r.json()).catch(() => []),
   ]).then(([textItems, uploadedImages]) => {
-    const images = [...PRESS_IMAGES_SEED, ...(Array.isArray(uploadedImages) ? uploadedImages : [])];
+    const images = Array.isArray(uploadedImages) ? uploadedImages : [];
     const hasText = Array.isArray(textItems) && textItems.length;
     const hasImages = images.length > 0;
     if (!hasText && !hasImages) return;

@@ -1,6 +1,8 @@
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const { v4: uuid } = require("uuid");
+const fs = require("fs");
+const path = require("path");
 const { TEAM, PACKAGES, PRICING } = require("./config");
 
 // Real managed Postgres (Railway's own database service) instead of a SQLite
@@ -245,6 +247,35 @@ async function setup() {
   // Press clippings strip — same reliable Postgres-bytea storage, just tagged
   // by where it's meant to show up.
   await pool.query(`ALTER TABLE site_gallery_images ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'gallery'`);
+
+  // One-time migration: the first batch of gallery/press photos was shipped as
+  // static files baked into the homepage's code (before the CRM upload feature
+  // existed), so they never showed up as manageable rows here. Move them into
+  // the database now, with no caption (only Ashwin's own captions should show,
+  // not any text written for them during development), so they're editable
+  // and deletable from the Website tab like everything uploaded since.
+  const seedMigrationDone = (await pool.query("SELECT 1 FROM site_content WHERE key = 'seed_images_migrated'")).rows[0];
+  if (!seedMigrationDone) {
+    const seedFiles = [
+      ...["crowd-01", "crowd-02", "crowd-03", "crowd-04", "crowd-05", "crowd-06", "crowd-07", "crowd-08", "crowd-09"]
+        .map((name) => ({ file: path.join(__dirname, "public", "gallery-seed", `${name}.jpg`), category: "gallery" })),
+      ...["press-01", "press-02"]
+        .map((name) => ({ file: path.join(__dirname, "public", "press-seed", `${name}.jpg`), category: "press" })),
+    ];
+    for (let i = 0; i < seedFiles.length; i++) {
+      const { file, category } = seedFiles[i];
+      if (!fs.existsSync(file)) continue;
+      const buffer = fs.readFileSync(file);
+      await pool.query(`
+        INSERT INTO site_gallery_images (id, caption, mime_type, file_data, sort_order, uploaded_at, category)
+        VALUES ($1, NULL, 'image/jpeg', $2, $3, $4, $5)
+      `, [uuid(), buffer, i, new Date().toISOString(), category]);
+    }
+    await pool.query(`
+      INSERT INTO site_content (key, value, updated_at) VALUES ('seed_images_migrated', 'true', $1)
+      ON CONFLICT (key) DO NOTHING
+    `, [new Date().toISOString()]);
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS temp_artists (

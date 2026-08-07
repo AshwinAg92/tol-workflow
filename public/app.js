@@ -3617,7 +3617,7 @@ async function renderWebsiteContent(main) {
       <p class="muted small" style="margin-top:-4px;">Photos of newspaper/magazine coverage, screenshots of features, etc. — shown as a scrollable strip above your press mentions.</p>
       <div id="pressImagesGrid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:10px; margin:14px 0;"></div>
       <div class="row-2">
-        <input type="file" id="pressImageFile" accept="image/*" />
+        <input type="file" id="pressImageFile" accept="image/*" multiple />
         <input id="pressImageCaption" placeholder="Caption (e.g. outlet name, headline)" />
       </div>
       <button class="btn-primary" id="uploadPressImageBtn" style="margin-top:10px;">Upload clipping</button>
@@ -3651,7 +3651,7 @@ async function renderWebsiteContent(main) {
       <div class="section-label">Gallery</div>
       <div id="galleryGrid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:10px; margin-bottom:14px;"></div>
       <div class="row-2">
-        <input type="file" id="galleryFile" accept="image/*" />
+        <input type="file" id="galleryFile" accept="image/*" multiple />
         <input id="galleryCaption" placeholder="Caption (optional)" />
       </div>
       <button class="btn-primary" id="uploadGalleryBtn" style="margin-top:10px;">Upload image</button>
@@ -3830,10 +3830,21 @@ async function renderWebsiteContent(main) {
       ? gallery.map((g) => `
         <div style="position:relative;">
           <img src="${g.url}" alt="${g.caption || ""}" style="width:100%; height:100px; object-fit:cover; border-radius:8px;" />
-          <button class="icon-btn" data-delete-gallery="${g.id}" style="position:absolute; top:4px; right:4px; background:rgba(255,255,255,0.9); border-radius:50%;">✕</button>
+          <div style="position:absolute; top:4px; right:4px; display:flex; gap:4px;">
+            <button class="icon-btn" data-edit-gallery="${g.id}" data-caption="${(g.caption || "").replace(/"/g, "&quot;")}" style="background:rgba(255,255,255,0.9); border-radius:50%;">✎</button>
+            <button class="icon-btn" data-delete-gallery="${g.id}" style="background:rgba(255,255,255,0.9); border-radius:50%;">✕</button>
+          </div>
         </div>
       `).join("")
       : `<p class="muted small">No images uploaded yet.</p>`;
+    grid.querySelectorAll("[data-edit-gallery]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const newCaption = prompt("Caption for this image:", btn.dataset.caption || "");
+        if (newCaption === null) return;
+        await api(`/api/gallery/${btn.dataset.editGallery}`, { method: "PATCH", body: JSON.stringify({ caption: newCaption }) });
+        renderWebsiteContent(main);
+      });
+    });
     grid.querySelectorAll("[data-delete-gallery]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         if (!confirm("Delete this image?")) return;
@@ -3843,13 +3854,23 @@ async function renderWebsiteContent(main) {
     });
   }
   renderGallery();
-  main.querySelector("#uploadGalleryBtn").addEventListener("click", async () => {
+  main.querySelector("#uploadGalleryBtn").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
     const fileInput = main.querySelector("#galleryFile");
-    if (!fileInput.files[0]) return alert("Choose an image first.");
-    const formData = new FormData();
-    formData.append("file", fileInput.files[0]);
-    formData.append("caption", main.querySelector("#galleryCaption").value.trim());
-    await fetch("/api/gallery", { method: "POST", body: formData });
+    if (!fileInput.files.length) return alert("Choose at least one image first.");
+    const caption = main.querySelector("#galleryCaption").value.trim();
+    btn.disabled = true;
+    btn.textContent = `Uploading 0/${fileInput.files.length}…`;
+    for (let i = 0; i < fileInput.files.length; i++) {
+      const formData = new FormData();
+      formData.append("file", fileInput.files[i]);
+      // A caption only makes sense per-image when uploading several at once —
+      // apply it just to the first file so multiple photos don't all get an
+      // identical label; the rest can be captioned individually afterward.
+      formData.append("caption", i === 0 ? caption : "");
+      await fetch("/api/gallery", { method: "POST", body: formData });
+      btn.textContent = `Uploading ${i + 1}/${fileInput.files.length}…`;
+    }
     renderWebsiteContent(main);
   });
 
@@ -3860,10 +3881,21 @@ async function renderWebsiteContent(main) {
       ? pressImages.map((g) => `
         <div style="position:relative;">
           <img src="${g.url}" alt="${g.caption || ""}" style="width:100%; height:100px; object-fit:cover; border-radius:8px;" />
-          <button class="icon-btn" data-delete-press-image="${g.id}" style="position:absolute; top:4px; right:4px; background:rgba(255,255,255,0.9); border-radius:50%;">✕</button>
+          <div style="position:absolute; top:4px; right:4px; display:flex; gap:4px;">
+            <button class="icon-btn" data-edit-press-image="${g.id}" data-caption="${(g.caption || "").replace(/"/g, "&quot;")}" style="background:rgba(255,255,255,0.9); border-radius:50%;">✎</button>
+            <button class="icon-btn" data-delete-press-image="${g.id}" style="background:rgba(255,255,255,0.9); border-radius:50%;">✕</button>
+          </div>
         </div>
       `).join("")
       : `<p class="muted small">No clippings uploaded yet.</p>`;
+    grid.querySelectorAll("[data-edit-press-image]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const newCaption = prompt("Caption for this clipping:", btn.dataset.caption || "");
+        if (newCaption === null) return;
+        await api(`/api/gallery/${btn.dataset.editPressImage}`, { method: "PATCH", body: JSON.stringify({ caption: newCaption }) });
+        renderWebsiteContent(main);
+      });
+    });
     grid.querySelectorAll("[data-delete-press-image]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         if (!confirm("Delete this clipping?")) return;
@@ -3873,14 +3905,21 @@ async function renderWebsiteContent(main) {
     });
   }
   renderPressImages();
-  main.querySelector("#uploadPressImageBtn").addEventListener("click", async () => {
+  main.querySelector("#uploadPressImageBtn").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
     const fileInput = main.querySelector("#pressImageFile");
-    if (!fileInput.files[0]) return alert("Choose an image first.");
-    const formData = new FormData();
-    formData.append("file", fileInput.files[0]);
-    formData.append("caption", main.querySelector("#pressImageCaption").value.trim());
-    formData.append("category", "press");
-    await fetch("/api/gallery", { method: "POST", body: formData });
+    if (!fileInput.files.length) return alert("Choose at least one image first.");
+    const caption = main.querySelector("#pressImageCaption").value.trim();
+    btn.disabled = true;
+    btn.textContent = `Uploading 0/${fileInput.files.length}…`;
+    for (let i = 0; i < fileInput.files.length; i++) {
+      const formData = new FormData();
+      formData.append("file", fileInput.files[i]);
+      formData.append("caption", i === 0 ? caption : "");
+      formData.append("category", "press");
+      await fetch("/api/gallery", { method: "POST", body: formData });
+      btn.textContent = `Uploading ${i + 1}/${fileInput.files.length}…`;
+    }
     renderWebsiteContent(main);
   });
 }
