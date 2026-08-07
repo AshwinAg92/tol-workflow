@@ -2738,6 +2738,18 @@ async function renderDashboard(main) {
       </div>
       <textarea id="stickyNoteInput" rows="3" placeholder="Jot something down for yourself…" style="width:100%; padding:8px 10px; border:1px solid #E0CE8A; border-radius:6px; font-family:inherit; font-size:13px; background:#FFFDF6; resize:vertical;">${stickyNote.content || ""}</textarea>
     </div>
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-label" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <span>💬 Quick share for WhatsApp</span>
+        <span class="muted small" id="quickShareCopiedNote" style="font-weight:400; display:none; color:#5C8A6B;">Copied ✓</span>
+      </div>
+      <p class="muted small" style="margin-top:-2px;">Paste this when someone messages you directly — one message with both links.</p>
+      <textarea id="quickShareText" rows="4" style="width:100%; padding:8px 10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:13px; resize:vertical;">Hi! Thanks for reaching out to Together, Out Loud 🎶
+
+Check us out here: https://www.togetheroutloud.in
+Share your event details here and we'll get back to you fast: https://www.togetheroutloud.in/lead-form.html</textarea>
+      <button class="btn-ghost" id="quickShareCopyBtn" style="margin-top:8px;">Copy message</button>
+    </div>
     ${!canCoordinate ? `
       <div class="card" style="margin-bottom:16px;">
         <div class="section-label">✉️ Message admin</div>
@@ -2866,6 +2878,23 @@ async function renderDashboard(main) {
     });
     noteInput.addEventListener("blur", () => {
       if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null; saveNote(); }
+    });
+  }
+  {
+    const copyBtn = main.querySelector("#quickShareCopyBtn");
+    const copiedNote = main.querySelector("#quickShareCopiedNote");
+    copyBtn.addEventListener("click", async () => {
+      const text = main.querySelector("#quickShareText").value;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // Clipboard API can be blocked in some contexts — fall back to a manual select.
+        const ta = main.querySelector("#quickShareText");
+        ta.focus();
+        ta.select();
+      }
+      copiedNote.style.display = "inline";
+      setTimeout(() => { copiedNote.style.display = "none"; }, 1500);
     });
   }
   main.querySelectorAll("[data-resolve-cancel]").forEach((btn) => {
