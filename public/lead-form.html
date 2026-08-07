@@ -321,6 +321,12 @@
       occasionSelect.innerHTML = cfg.occasions.map(o => `<option value="${o}">${o}</option>`).join("");
       guestRangeSelect.innerHTML = cfg.guestRanges.map(g => `<option value="${g}">${g}</option>`).join("");
       howHeardSelect.innerHTML = cfg.howHeard.map(h => `<option value="${h}">${h}</option>`).join("");
+      // Lets the homepage's Format Finder link straight here with the
+      // recommended experience already selected, e.g. ?experience=jam
+      const preselect = new URLSearchParams(window.location.search).get("experience");
+      if (preselect && cfg.experiences.some(e => e.id === preselect)) {
+        experienceSelect.value = preselect;
+      }
     });
 
     document.getElementById("leadForm").addEventListener("submit", async (e) => {
