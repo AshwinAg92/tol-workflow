@@ -577,9 +577,9 @@ app.get("/api/public/upcoming-events", async (req, res) => {
 });
 
 // ---------- Website content management (CMS for the public marketing site) ----------
-const SITE_CONTENT_KEYS = ["faqs", "testimonials", "press", "team", "cities", "services", "hero_banners", "stats_override"];
+const SITE_CONTENT_KEYS = ["faqs", "testimonials", "press", "team", "cities", "countries", "services", "hero_banners", "stats_override"];
 const SITE_CONTENT_DEFAULTS = {
-  faqs: [], testimonials: [], press: [], team: [], cities: [], services: [], hero_banners: [], stats_override: {},
+  faqs: [], testimonials: [], press: [], team: [], cities: [], countries: [], services: [], hero_banners: [], stats_override: {},
 };
 
 // Public — powers the marketing site. Anonymous visitors read this.

@@ -831,7 +831,7 @@
   <div class="wrap">
     <span class="tag">CITIES WE'VE PLAYED</span>
     <h2 style="margin-top:14px; font-size:clamp(26px,3.6vw,36px);">Across India, and beyond.</h2>
-    <div class="india-map-wrap">
+    <div class="india-map-wrap" id="indiaMapWrap" style="display:none;">
       <svg id="indiaMap" viewBox="-15 -15 430 505" xmlns="http://www.w3.org/2000/svg">
         <path d="M122,9 L81,34 L95,69 L136,86 L163,120 L271,154 L285,137 L373,146 L393,171 L339,206 L332,240 L278,249 L255,274 L194,326 L167,394 L153,446 L122,473 L109,446 L81,360 L68,291 L65,257 L7,223 L41,197 L27,137 L88,69 Z" fill="var(--cream)" stroke="var(--hairline)" stroke-width="3" stroke-linejoin="round" />
         <g id="indiaMapDots"></g>
@@ -839,6 +839,10 @@
       <div id="indiaMapTooltip" class="india-map-tooltip"></div>
     </div>
     <div class="cities-chip-row" id="citiesGrid" style="margin-top:18px;"></div>
+    <div id="countriesRow" style="display:none; margin-top:22px;">
+      <div class="finder-step-label" style="margin-bottom:10px;">INTERNATIONAL</div>
+      <div class="cities-chip-row" id="countriesGrid"></div>
+    </div>
     <div class="inline-cta">
       <p>Not on this list yet? That's exactly why we travel.</p>
       <a class="btn-primary" href="/lead-form.html">Bring Together, Out Loud to Your City →</a>
@@ -1290,6 +1294,7 @@
   fetch('/api/public/site-content/cities').then((r) => r.json()).then((items) => {
     if (!Array.isArray(items) || !items.length) return;
     document.getElementById('citiesSection').classList.remove('hidden');
+    document.getElementById('indiaMapWrap').style.display = 'block';
     const colors = ['var(--terracotta)', 'var(--peacock)', 'var(--gulal)', 'var(--marigold)'];
     const dotsGroup = document.getElementById('indiaMapDots');
     const tooltip = document.getElementById('indiaMapTooltip');
@@ -1321,6 +1326,14 @@
       dotsGroup.appendChild(circle);
     });
     document.getElementById('citiesGrid').innerHTML = unmapped.map((c, i) => `<span class="chip" style="border-color:${colors[i % colors.length]};">${escapeHtml(c)}</span>`).join('');
+  }).catch(() => {});
+
+  fetch('/api/public/site-content/countries').then((r) => r.json()).then((items) => {
+    if (!Array.isArray(items) || !items.length) return;
+    document.getElementById('citiesSection').classList.remove('hidden');
+    document.getElementById('countriesRow').style.display = 'block';
+    const colors = ['var(--terracotta)', 'var(--peacock)', 'var(--gulal)', 'var(--marigold)'];
+    document.getElementById('countriesGrid').innerHTML = items.map((c, i) => `<span class="chip" style="border-color:${colors[i % colors.length]};">🌍 ${escapeHtml(c)}</span>`).join('');
   }).catch(() => {});
 
   Promise.all([

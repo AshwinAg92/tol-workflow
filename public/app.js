@@ -3592,6 +3592,16 @@ async function renderWebsiteContent(main) {
     </div>
 
     <div class="card" style="margin-bottom:20px;">
+      <div class="section-label">Countries performed</div>
+      <p class="muted small" style="margin-top:-4px;">Shown as its own row below the India map, for international shows.</p>
+      <div id="countriesList"></div>
+      <div class="row-2" style="margin-top:10px;">
+        <input id="newCountryInput" placeholder="Add a country…" />
+        <button class="btn-ghost" id="addCountryBtn">+ Add country</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
       <div class="section-label">FAQs</div>
       <div id="faqsList"></div>
       <button class="btn-ghost full" id="addFaqBtn" style="margin-top:10px;">+ Add FAQ</button>
@@ -3707,6 +3717,41 @@ async function renderWebsiteContent(main) {
       alert(`Couldn't save: ${err.message}`);
     }
     renderCities();
+  });
+
+  // ---- Countries ----
+  let countries = Array.isArray(content.countries) ? [...content.countries] : [];
+  function renderCountries() {
+    const list = main.querySelector("#countriesList");
+    list.innerHTML = countries.length
+      ? countries.map((c, i) => `<span class="chip" style="margin:0 6px 6px 0; display:inline-flex; align-items:center; gap:6px;">${c} <button data-remove-country="${i}" style="border:none; background:none; cursor:pointer; color:var(--muted);">✕</button></span>`).join("")
+      : `<p class="muted small">No countries added yet.</p>`;
+    list.querySelectorAll("[data-remove-country]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        countries.splice(Number(btn.dataset.removeCountry), 1);
+        try {
+          await api("/api/site-content/countries", { method: "PUT", body: JSON.stringify({ value: countries }) });
+        } catch (err) {
+          alert(`Couldn't save: ${err.message}`);
+        }
+        renderCountries();
+      });
+    });
+  }
+  renderCountries();
+  main.querySelector("#addCountryBtn").addEventListener("click", async () => {
+    const input = main.querySelector("#newCountryInput");
+    const val = input.value.trim();
+    if (!val) return;
+    countries.push(val);
+    try {
+      await api("/api/site-content/countries", { method: "PUT", body: JSON.stringify({ value: countries }) });
+      input.value = "";
+    } catch (err) {
+      countries.pop();
+      alert(`Couldn't save: ${err.message}`);
+    }
+    renderCountries();
   });
 
   // ---- Generic repeatable-row list editor for FAQs / Testimonials / Press / Team / Hero ----
