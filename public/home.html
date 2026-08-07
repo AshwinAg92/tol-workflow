@@ -325,11 +325,18 @@
   }
   .press-clip img{width:100%; height:230px; object-fit:cover; display:block;}
   .gallery-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:14px; margin-top:30px;}
+  .gallery-item{position:relative; border-radius:12px; overflow:hidden;}
   .gallery-grid img{width:100%; height:180px; border-radius:12px; display:block; object-fit:cover;}
+  .gallery-caption{
+    position:absolute; left:0; right:0; bottom:0; padding:16px 10px 8px;
+    background:linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0));
+    color:#fff; font-size:12px; font-weight:600; line-height:1.3;
+  }
   .cities-chip-row{display:flex; flex-wrap:wrap; gap:10px; margin-top:20px;}
   @media (max-width:760px){
     .gallery-grid{grid-template-columns:repeat(3,1fr); gap:8px;}
     .gallery-grid img{height:110px; border-radius:8px;}
+    .gallery-caption{font-size:10px; padding:10px 6px 5px;}
     .testimonial-card{width:250px; padding:18px;}
   }
   @media (max-width:480px){
@@ -1037,16 +1044,25 @@
     { url: '/gallery-seed/crowd-09.jpg', caption: 'Prakriti and Ashwin, mid-set' },
   ];
 
+  function renderGalleryItems(items) {
+    return items.map((g) => `
+      <div class="gallery-item">
+        <img src="${g.url}" alt="${escapeHtml(g.caption || 'Together, Out Loud')}" loading="lazy" />
+        ${g.caption ? `<div class="gallery-caption">${escapeHtml(g.caption)}</div>` : ''}
+      </div>
+    `).join('');
+  }
+
   fetch('/api/public/gallery').then((r) => r.json()).then((items) => {
     const uploaded = Array.isArray(items) ? items : [];
     const all = [...GALLERY_SEED, ...uploaded];
     if (!all.length) return;
     document.getElementById('gallerySection').classList.remove('hidden');
-    document.getElementById('galleryGrid').innerHTML = all.map((g) => `<img src="${g.url}" alt="${escapeHtml(g.caption || 'Together, Out Loud')}" loading="lazy" />`).join('');
+    document.getElementById('galleryGrid').innerHTML = renderGalleryItems(all);
   }).catch(() => {
     // Even if the CMS gallery fetch fails, still show the seed photos.
     document.getElementById('gallerySection').classList.remove('hidden');
-    document.getElementById('galleryGrid').innerHTML = GALLERY_SEED.map((g) => `<img src="${g.url}" alt="${escapeHtml(g.caption)}" loading="lazy" />`).join('');
+    document.getElementById('galleryGrid').innerHTML = renderGalleryItems(GALLERY_SEED);
   });
 
   fetch('/api/public/site-content/cities').then((r) => r.json()).then((items) => {
