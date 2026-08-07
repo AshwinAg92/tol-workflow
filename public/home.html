@@ -765,6 +765,29 @@
   </div>
 </section>
 
+<section class="dyn-section hidden reveal" id="citiesSection" style="background:var(--paper); border-top:1px solid var(--hairline); border-bottom:1px solid var(--hairline);">
+  <div class="wrap">
+    <span class="tag">CITIES WE'VE PLAYED</span>
+    <h2 style="margin-top:14px; font-size:clamp(26px,3.6vw,36px);">Across India, and beyond.</h2>
+    <div class="india-map-wrap" id="indiaMapWrap" style="display:none;">
+      <svg id="indiaMap" viewBox="-15 -15 430 505" xmlns="http://www.w3.org/2000/svg">
+        <path d="M122,9 L81,34 L95,69 L136,86 L163,120 L271,154 L285,137 L373,146 L393,171 L339,206 L332,240 L278,249 L255,274 L194,326 L167,394 L153,446 L122,473 L109,446 L81,360 L68,291 L65,257 L7,223 L41,197 L27,137 L88,69 Z" fill="var(--cream)" stroke="var(--hairline)" stroke-width="3" stroke-linejoin="round" />
+        <g id="indiaMapDots"></g>
+      </svg>
+      <div id="indiaMapTooltip" class="india-map-tooltip"></div>
+    </div>
+    <div class="cities-chip-row" id="citiesGrid" style="margin-top:18px;"></div>
+    <div id="countriesRow" style="display:none; margin-top:22px;">
+      <div class="finder-step-label" style="margin-bottom:10px;">INTERNATIONAL</div>
+      <div class="cities-chip-row" id="countriesGrid"></div>
+    </div>
+    <div class="inline-cta">
+      <p>Not on this list yet? That's exactly why we travel.</p>
+      <a class="btn-primary" href="/lead-form.html">Bring Together, Out Loud to Your City →</a>
+    </div>
+  </div>
+</section>
+
 <section class="upcoming reveal" id="upcoming">
   <div class="wrap">
     <span class="tag">WHAT'S NEXT</span>
@@ -824,29 +847,6 @@
     <span class="tag">GALLERY</span>
     <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">Moments, captured.</h2>
     <div class="gallery-grid" id="galleryGrid"></div>
-  </div>
-</section>
-
-<section class="dyn-section hidden reveal" id="citiesSection" style="background:var(--paper); border-top:1px solid var(--hairline); border-bottom:1px solid var(--hairline);">
-  <div class="wrap">
-    <span class="tag">CITIES WE'VE PLAYED</span>
-    <h2 style="margin-top:14px; font-size:clamp(26px,3.6vw,36px);">Across India, and beyond.</h2>
-    <div class="india-map-wrap" id="indiaMapWrap" style="display:none;">
-      <svg id="indiaMap" viewBox="-15 -15 430 505" xmlns="http://www.w3.org/2000/svg">
-        <path d="M122,9 L81,34 L95,69 L136,86 L163,120 L271,154 L285,137 L373,146 L393,171 L339,206 L332,240 L278,249 L255,274 L194,326 L167,394 L153,446 L122,473 L109,446 L81,360 L68,291 L65,257 L7,223 L41,197 L27,137 L88,69 Z" fill="var(--cream)" stroke="var(--hairline)" stroke-width="3" stroke-linejoin="round" />
-        <g id="indiaMapDots"></g>
-      </svg>
-      <div id="indiaMapTooltip" class="india-map-tooltip"></div>
-    </div>
-    <div class="cities-chip-row" id="citiesGrid" style="margin-top:18px;"></div>
-    <div id="countriesRow" style="display:none; margin-top:22px;">
-      <div class="finder-step-label" style="margin-bottom:10px;">INTERNATIONAL</div>
-      <div class="cities-chip-row" id="countriesGrid"></div>
-    </div>
-    <div class="inline-cta">
-      <p>Not on this list yet? That's exactly why we travel.</p>
-      <a class="btn-primary" href="/lead-form.html">Bring Together, Out Loud to Your City →</a>
-    </div>
   </div>
 </section>
 
@@ -1040,10 +1040,12 @@
   // on the lead form, never a marketing-only name with nothing behind it).
   const FINDER_RESULTS = {
     pheras: { name: 'Musical Pheras', blurb: "A premium wedding experience — live music woven right into your pheras, with a custom song for the two of you." },
+    jam_pheras_both: { name: 'Musical Pheras + Bhajan Jamming (Combo)', blurb: "For a fully live wedding day — music through the pheras, then a full bhajan jamming session for the wider celebration." },
     shraddhanjali: { name: 'Shraddhanjali Satsang', blurb: 'A gentle, respectful evening of devotional bhajans, to honour a loved one\u2019s memory.' },
     jam: { name: 'Bhajan Jamming', blurb: 'Interactive devotional music — everyone sings, nobody just watches.' },
     club: { name: 'Bhajan Clubbing', blurb: 'The same devotional core, dance-floor tempo — high energy from the first song.' },
     bollywood: { name: 'Bollywood Jamming', blurb: 'A live band playing the Bollywood hits everyone actually wants to hear.' },
+    satsang: { name: 'Devotional Satsang', blurb: 'A soulful, meditative evening of bhajans — calming, unhurried, built for reflection.' },
   };
   const finderCard = document.getElementById('finderCard');
   function renderFinderStep1() {
@@ -1054,18 +1056,36 @@
         <button class="finder-option" data-occasion="wedding">💍 A wedding</button>
         <button class="finder-option" data-occasion="devotional">🙏 Devotional gathering / satsang</button>
         <button class="finder-option" data-occasion="party">🎉 Party or celebration</button>
+        <button class="finder-option" data-occasion="wellness">🧘 Wellness / retreat</button>
+        <button class="finder-option" data-occasion="corporate">🏢 Corporate / college event</button>
         <button class="finder-option" data-occasion="memorial">🕊️ Memorial or tribute</button>
       </div>
     `;
     finderCard.querySelectorAll('[data-occasion]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const occ = btn.dataset.occasion;
-        if (occ === 'wedding') return renderFinderResult('pheras');
+        if (occ === 'wedding') return renderFinderStep2Wedding();
         if (occ === 'memorial') return renderFinderResult('shraddhanjali');
         if (occ === 'devotional') return renderFinderStep2Devotional();
         if (occ === 'party') return renderFinderStep2Party();
+        if (occ === 'wellness') return renderFinderResult('satsang');
+        if (occ === 'corporate') return renderFinderResult('bollywood');
       });
     });
+  }
+  function renderFinderStep2Wedding() {
+    finderCard.innerHTML = `
+      <div class="finder-step-label">STEP 2 OF 2</div>
+      <div class="finder-question">Just the pheras, or the whole wedding day?</div>
+      <div class="finder-options">
+        <button class="finder-option" data-wedding="pheras-only">💍 Just the pheras ceremony</button>
+        <button class="finder-option" data-wedding="full-day">🎉 Pheras + a full celebration after</button>
+      </div>
+      <span class="finder-back" id="finderBack">← Back</span>
+    `;
+    finderCard.querySelector('[data-wedding="pheras-only"]').addEventListener('click', () => renderFinderResult('pheras'));
+    finderCard.querySelector('[data-wedding="full-day"]').addEventListener('click', () => renderFinderResult('jam_pheras_both'));
+    finderCard.querySelector('#finderBack').addEventListener('click', renderFinderStep1);
   }
   function renderFinderStep2Devotional() {
     finderCard.innerHTML = `
@@ -1073,11 +1093,13 @@
       <div class="finder-question">What's the vibe you're going for?</div>
       <div class="finder-options">
         <button class="finder-option" data-vibe="traditional">🪔 Traditional &amp; meditative</button>
+        <button class="finder-option" data-vibe="calm">🕉️ Calm &amp; reflective satsang</button>
         <button class="finder-option" data-vibe="energetic">⚡ High-energy &amp; danceable</button>
       </div>
       <span class="finder-back" id="finderBack">← Back</span>
     `;
     finderCard.querySelector('[data-vibe="traditional"]').addEventListener('click', () => renderFinderResult('jam'));
+    finderCard.querySelector('[data-vibe="calm"]').addEventListener('click', () => renderFinderResult('satsang'));
     finderCard.querySelector('[data-vibe="energetic"]').addEventListener('click', () => renderFinderResult('club'));
     finderCard.querySelector('#finderBack').addEventListener('click', renderFinderStep1);
   }
