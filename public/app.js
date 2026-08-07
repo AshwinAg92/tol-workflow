@@ -3830,9 +3830,9 @@ async function renderWebsiteContent(main) {
       ? gallery.map((g) => `
         <div style="position:relative;">
           <img src="${g.url}" alt="${g.caption || ""}" style="width:100%; height:100px; object-fit:cover; border-radius:8px;" />
-          <div style="position:absolute; top:4px; right:4px; display:flex; gap:4px;">
-            <button class="icon-btn" data-edit-gallery="${g.id}" data-caption="${(g.caption || "").replace(/"/g, "&quot;")}" style="background:rgba(255,255,255,0.9); border-radius:50%;">✎</button>
-            <button class="icon-btn" data-delete-gallery="${g.id}" style="background:rgba(255,255,255,0.9); border-radius:50%;">✕</button>
+          <div style="position:absolute; top:4px; right:4px; display:flex; gap:3px;">
+            <button data-edit-gallery="${g.id}" data-caption="${(g.caption || "").replace(/"/g, "&quot;")}" style="width:24px; height:24px; padding:0; border:none; border-radius:50%; background:rgba(255,255,255,0.95); cursor:pointer; font-size:12px; line-height:1; display:flex; align-items:center; justify-content:center;">✎</button>
+            <button data-delete-gallery="${g.id}" style="width:24px; height:24px; padding:0; border:none; border-radius:50%; background:rgba(255,255,255,0.95); cursor:pointer; font-size:12px; line-height:1; display:flex; align-items:center; justify-content:center;">✕</button>
           </div>
         </div>
       `).join("")
@@ -3881,9 +3881,9 @@ async function renderWebsiteContent(main) {
       ? pressImages.map((g) => `
         <div style="position:relative;">
           <img src="${g.url}" alt="${g.caption || ""}" style="width:100%; height:100px; object-fit:cover; border-radius:8px;" />
-          <div style="position:absolute; top:4px; right:4px; display:flex; gap:4px;">
-            <button class="icon-btn" data-edit-press-image="${g.id}" data-caption="${(g.caption || "").replace(/"/g, "&quot;")}" style="background:rgba(255,255,255,0.9); border-radius:50%;">✎</button>
-            <button class="icon-btn" data-delete-press-image="${g.id}" style="background:rgba(255,255,255,0.9); border-radius:50%;">✕</button>
+          <div style="position:absolute; top:4px; right:4px; display:flex; gap:3px;">
+            <button data-edit-press-image="${g.id}" data-caption="${(g.caption || "").replace(/"/g, "&quot;")}" style="width:24px; height:24px; padding:0; border:none; border-radius:50%; background:rgba(255,255,255,0.95); cursor:pointer; font-size:12px; line-height:1; display:flex; align-items:center; justify-content:center;">✎</button>
+            <button data-delete-press-image="${g.id}" style="width:24px; height:24px; padding:0; border:none; border-radius:50%; background:rgba(255,255,255,0.95); cursor:pointer; font-size:12px; line-height:1; display:flex; align-items:center; justify-content:center;">✕</button>
           </div>
         </div>
       `).join("")
