@@ -673,6 +673,7 @@
     <div id="upcomingEventsList">
       <p style="color:var(--muted); margin-top:16px;">Loading…</p>
     </div>
+    <p id="upcomingCountNote" style="display:none; margin-top:14px; font-family:'JetBrains Mono'; font-size:12px; color:var(--terracotta); font-weight:700;"></p>
     <div class="inline-cta">
       <p>Your date could be next on this list.</p>
       <a class="btn-primary" href="/lead-form.html">Plan Your Event →</a>
@@ -946,9 +947,12 @@
   }).finally(setupCounters);
 
   // Upcoming events — pulled live from the booking calendar.
-  fetch('/api/public/upcoming-events').then((r) => r.json()).then((events) => {
+  fetch('/api/public/upcoming-events').then((r) => r.json()).then((data) => {
     const list = document.getElementById('upcomingEventsList');
+    const countNote = document.getElementById('upcomingCountNote');
     if (!list) return;
+    const events = data.events || [];
+    const totalCount = data.totalCount || 0;
     if (!events.length) {
       list.innerHTML = '<p style="color:var(--muted); margin-top:16px;">Nothing on the calendar just yet — check back soon, or be the first to book a slot.</p>';
       return;
@@ -968,6 +972,10 @@
         </div>
       `;
     }).join('');
+    if (countNote && totalCount > events.length) {
+      countNote.textContent = `+ ${totalCount - events.length} more confirmed events already on the calendar`;
+      countNote.style.display = 'block';
+    }
   }).catch(() => {
     const list = document.getElementById('upcomingEventsList');
     if (list) list.innerHTML = '<p style="color:var(--muted); margin-top:16px;">Couldn\'t load events right now — check our Instagram for the latest.</p>';
