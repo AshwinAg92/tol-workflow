@@ -514,6 +514,45 @@ app.post("/api/leads", async (req, res) => {
 // section on the marketing site, so anonymous visitors need to read it.
 // Deliberately excludes the client's name — only city/date/occasion/package,
 // so no one's private event details get published without their consent.
+// ---------- Live Instagram stats (Windsor.ai) — cached, not fetched per-visitor ----------
+// Only followers/likes/reel-count are auto-computed here; cities/international
+// stay as manual CMS overrides since those need human judgment, not just
+// arithmetic on the API response.
+let instagramStatsCache = { data: null, fetchedAt: 0 };
+const INSTAGRAM_STATS_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+async function fetchLiveInstagramStats() {
+  const apiKey = process.env.WINDSOR_API_KEY;
+  if (!apiKey) return null;
+  const url = `https://connectors.windsor.ai/instagram_public?api_key=${apiKey}&fields=media_like_count,profile_followers_count,profile_media_count&date_preset=last_2years&_renderer=json`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Windsor.ai returned ${resp.status}`);
+  const json = await resp.json();
+  const rows = Array.isArray(json) ? json : (json.data || []);
+  if (!rows.length) return null;
+  const totalLikes = rows.reduce((sum, r) => sum + (Number(r.media_like_count) || 0), 0);
+  const followers = Number(rows[0].profile_followers_count) || null;
+  const mediaCount = Number(rows[0].profile_media_count) || null;
+  return { followers, totalLikes, mediaCount };
+}
+
+app.get("/api/public/live-instagram-stats", async (req, res) => {
+  const isFresh = instagramStatsCache.data && (Date.now() - instagramStatsCache.fetchedAt) < INSTAGRAM_STATS_TTL_MS;
+  if (isFresh) return res.json(instagramStatsCache.data);
+  try {
+    const stats = await fetchLiveInstagramStats();
+    if (stats) {
+      instagramStatsCache = { data: stats, fetchedAt: Date.now() };
+      return res.json(stats);
+    }
+    return res.json(instagramStatsCache.data || {});
+  } catch (err) {
+    console.error("Live Instagram stats fetch failed:", err.message);
+    // Serve the last good cache (even if stale) rather than nothing.
+    return res.json(instagramStatsCache.data || {});
+  }
+});
+
 app.get("/api/public/upcoming-events", async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const { rows } = await pool.query(`

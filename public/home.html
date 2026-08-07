@@ -653,14 +653,14 @@
   <div class="wrap">
     <span class="tag">FEATURED MOMENTS</span>
     <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">Numbers we're proud of.</h2>
-    <p class="stats-note">Real numbers from Instagram — updated periodically, not live.</p>
+    <p class="stats-note">Live from Instagram — auto-refreshes every few hours.</p>
     <div class="stats-grid">
       <div class="stat"><div class="num" id="statFollowersNum" style="color:var(--terracotta);" data-count="10500" data-suffix="+">0</div><div class="lbl">Instagram Family</div></div>
       <div class="stat"><div class="num" id="statLikesNum" style="color:var(--peacock);" data-count="537000" data-suffix="+" data-indian="1">0</div><div class="lbl">Likes On Our Reels</div></div>
       <div class="stat"><div class="num" id="statCitiesNum" style="color:var(--gulal);" data-count="12" data-suffix="+">0</div><div class="lbl">Cities Across India</div></div>
       <div class="stat"><div class="num" id="statIntlNum" style="color:var(--marigold); font-size:clamp(22px,3.2vw,34px);">Europe &amp; Thailand</div><div class="lbl">International Shows, and counting</div></div>
       <div class="stat"><div class="num" style="color:var(--terracotta);" data-count="100" data-suffix="%">0</div><div class="lbl">Live Music, No Backing Tracks</div></div>
-      <div class="stat"><div class="num" style="color:var(--peacock);" data-count="268" data-suffix="+">0</div><div class="lbl">Reels &amp; Moments Shared</div></div>
+      <div class="stat"><div class="num" id="statReelsNum" style="color:var(--peacock);" data-count="268" data-suffix="+">0</div><div class="lbl">Reels &amp; Moments Shared</div></div>
     </div>
   </div>
 </section>
@@ -925,12 +925,21 @@
       });
     }
   }
-  fetch('/api/public/site-content/stats_override').then((r) => r.json()).then((ov) => {
+  Promise.all([
+    fetch('/api/public/live-instagram-stats').then((r) => r.json()).catch(() => ({})),
+    fetch('/api/public/site-content/stats_override').then((r) => r.json()).catch(() => ({})),
+  ]).then(([live, ov]) => {
+    // Live API data applies first (auto-refreshes every few hours server-side);
+    // a manual override in the Website tab always wins over it if set, since
+    // that's a deliberate admin choice.
+    if (live && live.followers) document.getElementById('statFollowersNum').dataset.count = String(live.followers);
+    if (live && live.totalLikes) document.getElementById('statLikesNum').dataset.count = String(live.totalLikes);
+    if (live && live.mediaCount) document.getElementById('statReelsNum') && (document.getElementById('statReelsNum').dataset.count = String(live.mediaCount));
     if (ov && ov.followers) document.getElementById('statFollowersNum').dataset.count = String(ov.followers).replace(/\D/g, '');
     if (ov && ov.likes) document.getElementById('statLikesNum').dataset.count = String(ov.likes).replace(/\D/g, '');
     if (ov && ov.cities) document.getElementById('statCitiesNum').dataset.count = String(ov.cities).replace(/\D/g, '');
     if (ov && ov.international) document.getElementById('statIntlNum').textContent = ov.international;
-  }).catch(() => {}).finally(setupCounters);
+  }).finally(setupCounters);
 
   // Upcoming events — pulled live from the booking calendar.
   fetch('/api/public/upcoming-events').then((r) => r.json()).then((events) => {
