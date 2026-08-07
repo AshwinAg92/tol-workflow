@@ -2003,12 +2003,13 @@ async function openLeadPaymentsModal(leadId) {
 async function openAssignTeamModal(leadId) {
   const lead = LEADS.find((l) => l.id === leadId);
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
-  const [assignments, tempArtists, leadExpenses, myReimbursements, allDocuments] = await Promise.all([
+  const [assignments, tempArtists, leadExpenses, myReimbursements, allDocuments, myOwnFee] = await Promise.all([
     api(`/api/leads/${leadId}/assignments`),
     api(`/api/leads/${leadId}/temp-artists`),
     isAdmin ? api(`/api/expenses?leadId=${leadId}`) : Promise.resolve([]),
     api(`/api/my/reimbursements`).catch(() => []),
     api(`/api/documents`).catch(() => []),
+    !isAdmin ? api(`/api/my/artist-fee?leadId=${leadId}`).catch(() => null) : Promise.resolve(null),
   ]);
   const leadDocuments = allDocuments.filter((d) => d.lead_id === leadId);
   const generalDocuments = allDocuments.filter((d) => !d.lead_id);
@@ -2019,9 +2020,14 @@ async function openAssignTeamModal(leadId) {
   assignments.forEach((a) => (byTeamId[a.team_id] = a));
   // One artist-fee expense per team member per event is the normal case (the
   // Accounts tab creates entries this way too) — first match is used both to
-  // prefill and to know whether to PATCH vs POST on save.
+  // prefill and to know whether to PATCH vs POST on save. For a non-admin,
+  // this only ever contains their own fee (if any), scoped server-side —
+  // never anyone else's.
   const feeExpenseByTeamId = {};
   leadExpenses.forEach((e) => { if (e.team_id && !feeExpenseByTeamId[e.team_id]) feeExpenseByTeamId[e.team_id] = e; });
+  if (!isAdmin && myOwnFee && CURRENT_USER?.teamId) {
+    feeExpenseByTeamId[CURRENT_USER.teamId] = myOwnFee;
+  }
 
   const statusLabel = { pending: "Pending response", accepted: "Accepted", declined: "Declined" };
   const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C" };
@@ -2060,7 +2066,9 @@ async function openAssignTeamModal(leadId) {
                     ${a && a.status === "accepted" && waDigits ? `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" target="_blank" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>` : ""}
                   </span>
                 </label>
-                ${isAdmin ? `<input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : ""}" style="width:100px; flex-shrink:0;" />` : ""}
+                ${isAdmin
+                  ? `<input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : ""}" style="width:100px; flex-shrink:0;" />`
+                  : (CURRENT_USER?.teamId === m.id && existingFee ? `<span class="muted small" style="flex-shrink:0; white-space:nowrap;">Your fee: ${inr(existingFee.amount)}</span>` : "")}
               </div>
             `;
           }).join("")}
@@ -2077,8 +2085,15 @@ async function openAssignTeamModal(leadId) {
               <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
                 <div>
                   <div>${t.name}${t.description ? ` <span class="muted small">— ${t.description}</span>` : ""}</div>
-                  <div class="muted small">${t.phone ? `${t.phone}` : ""}${hasAccountsAccess() ? `${t.phone ? " · " : ""}${t.fee_amount != null ? `Fee ${inr(t.fee_amount)}${t.fee_paid ? " · Paid" : " · Pending"}` : "No fee recorded"}` : ""}</div>
+                  <div class="muted small">${t.phone ? `${t.phone}` : ""}${isAdmin ? `${t.phone ? " · " : ""}${t.fee_amount != null ? `Fee ${inr(t.fee_amount)}${t.fee_paid ? " · Paid" : " · Pending"}` : "No fee recorded"}` : ""}</div>
                   ${waDigits ? `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" target="_blank" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>` : ""}
+                  ${isAdmin ? `
+                    <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
+                      <input type="number" class="ta-fee-input" data-ta-id="${t.id}" placeholder="Fee ₹" value="${t.fee_amount != null ? t.fee_amount : ""}" style="width:100px; font-size:12.5px; padding:4px 6px;" />
+                      <button class="btn-ghost ta-save-fee-btn" data-ta-id="${t.id}" style="font-size:12px; padding:4px 8px;">Save fee</button>
+                      <button class="btn-ghost ta-edit-details-btn" data-ta-id="${t.id}" data-name="${(t.name || "").replace(/"/g, "&quot;")}" data-phone="${(t.phone || "").replace(/"/g, "&quot;")}" data-description="${(t.description || "").replace(/"/g, "&quot;")}" style="font-size:12px; padding:4px 8px;">✎ Edit details</button>
+                    </div>
+                  ` : ""}
                 </div>
                 <button class="icon-btn" data-remove-temp-artist="${t.id}">✕</button>
               </div>
@@ -2091,10 +2106,10 @@ async function openAssignTeamModal(leadId) {
           </div>
           <div class="row-2" style="margin-top:8px;">
             <input id="taDescription" placeholder="Description (e.g. session tabla player)" />
-            ${hasAccountsAccess() ? `<input id="taFee" type="number" placeholder="Fee ₹ (optional)" />` : ""}
+            ${isAdmin ? `<input id="taFee" type="number" placeholder="Fee ₹ (optional)" />` : ""}
           </div>
           <button class="btn-ghost full" id="addTempArtistBtn" style="margin-top:8px;">+ Add temporary artist</button>
-          <p class="muted small" style="margin-top:4px;">Tip: hitting the overall Save button below also adds this if you've filled it in.${hasAccountsAccess() ? " Any fee entered here counts toward this event's expenses/profit automatically — no need to add it again under Accounts." : ""}</p>
+          <p class="muted small" style="margin-top:4px;">Tip: hitting the overall Save button below also adds this if you've filled it in.${isAdmin ? " Any fee entered here counts toward this event's expenses/profit automatically — no need to add it again under Accounts." : ""}</p>
 
           <div class="section-label" style="margin-top:16px;">Artist reimbursements</div>
           ${leadReimbursements.length > 0 ? `
@@ -2285,6 +2300,37 @@ async function openAssignTeamModal(leadId) {
     btn.addEventListener("click", async () => {
       await api(`/api/temp-artists/${btn.dataset.removeTempArtist}`, { method: "DELETE" });
       openAssignTeamModal(leadId);
+    });
+  });
+  root.querySelectorAll(".ta-save-fee-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.taId;
+      const input = root.querySelector(`.ta-fee-input[data-ta-id="${id}"]`);
+      try {
+        await api(`/api/temp-artists/${id}`, { method: "PATCH", body: JSON.stringify({ feeAmount: input.value.trim() || null }) });
+        openAssignTeamModal(leadId);
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  });
+  root.querySelectorAll(".ta-edit-details-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const newName = prompt("Name:", btn.dataset.name || "");
+      if (newName === null) return;
+      const newPhone = prompt("Phone:", btn.dataset.phone || "");
+      if (newPhone === null) return;
+      const newDescription = prompt("Description:", btn.dataset.description || "");
+      if (newDescription === null) return;
+      try {
+        await api(`/api/temp-artists/${btn.dataset.taId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ name: newName.trim(), phone: newPhone.trim(), description: newDescription.trim() }),
+        });
+        openAssignTeamModal(leadId);
+      } catch (err) {
+        alert(err.message);
+      }
     });
   });
 

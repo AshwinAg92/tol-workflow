@@ -221,7 +221,7 @@ app.get("/api/auth/me", async (req, res) => {
   }
   let permissions = null;
   try { permissions = user.permissions ? JSON.parse(user.permissions) : null; } catch { permissions = null; }
-  res.json({ id: user.id, username: user.username, accessLevel: user.access_level, name, permissions, isPerformer: !!user.is_performer });
+  res.json({ id: user.id, username: user.username, accessLevel: user.access_level, name, permissions, isPerformer: !!user.is_performer, teamId: user.team_id || null });
 });
 
 // ---------- User accounts (admin only) — add teammates with their own login ----------
@@ -1015,10 +1015,14 @@ app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_t
   if (!lead) return res.status(404).json({ error: "Lead not found" });
   const { name, description, phone, feeAmount } = req.body;
   if (!name) return res.status(400).json({ error: "Name is required" });
+  const isAdmin = req.user.access_level === "admin";
+  if (!isAdmin && feeAmount !== undefined && feeAmount !== null && feeAmount !== "") {
+    return res.status(403).json({ error: "Only an admin can set artist fees" });
+  }
   const id = uuid();
   const now = new Date().toISOString();
   let expenseId = null;
-  if (feeAmount !== undefined && feeAmount !== null && feeAmount !== "") {
+  if (isAdmin && feeAmount !== undefined && feeAmount !== null && feeAmount !== "") {
     if (isNaN(Number(feeAmount)) || Number(feeAmount) < 0) return res.status(400).json({ error: "Enter a valid fee amount" });
     expenseId = uuid();
     await pool.query(`
@@ -1039,29 +1043,41 @@ app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_t
   logActivity(req, `Temporary artist added to ${lead.name}: ${name}${description ? ` (${description})` : ""}${expenseId ? ` — fee ₹${Number(feeAmount).toLocaleString("en-IN")}` : ""}`, lead.id);
 });
 
+// Fee changes are admin-only (financial data); name/phone/description can be
+// fixed by any manager with assign_team, since that's just correcting who
+// they wrote down, not touching money.
 app.patch("/api/temp-artists/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const artist = (await pool.query("SELECT * FROM temp_artists WHERE id = $1", [req.params.id])).rows[0];
   if (!artist) return res.status(404).json({ error: "Not found" });
-  const { feeAmount } = req.body;
-  if (feeAmount !== undefined && feeAmount !== null && feeAmount !== "" && (isNaN(Number(feeAmount)) || Number(feeAmount) < 0)) {
-    return res.status(400).json({ error: "Enter a valid fee amount" });
-  }
-  const hasFee = feeAmount !== undefined && feeAmount !== null && feeAmount !== "";
-  if (artist.expense_id) {
-    // Already has a linked expense — update its amount, or drop it if the fee was cleared.
-    if (hasFee) {
-      await pool.query("UPDATE expenses SET amount = $1 WHERE id = $2", [Number(feeAmount), artist.expense_id]);
-    } else {
-      await pool.query("DELETE FROM expenses WHERE id = $1", [artist.expense_id]);
-      await pool.query("UPDATE temp_artists SET expense_id = NULL WHERE id = $1", [artist.id]);
+  const { feeAmount, name, phone, description } = req.body;
+  const isAdmin = req.user.access_level === "admin";
+  if (feeAmount !== undefined) {
+    if (!isAdmin) return res.status(403).json({ error: "Only an admin can set or change artist fees" });
+    if (feeAmount !== null && feeAmount !== "" && (isNaN(Number(feeAmount)) || Number(feeAmount) < 0)) {
+      return res.status(400).json({ error: "Enter a valid fee amount" });
     }
-  } else if (hasFee) {
-    const expenseId = uuid();
+    const hasFee = feeAmount !== null && feeAmount !== "";
+    if (artist.expense_id) {
+      // Already has a linked expense — update its amount, or drop it if the fee was cleared.
+      if (hasFee) {
+        await pool.query("UPDATE expenses SET amount = $1 WHERE id = $2", [Number(feeAmount), artist.expense_id]);
+      } else {
+        await pool.query("DELETE FROM expenses WHERE id = $1", [artist.expense_id]);
+        await pool.query("UPDATE temp_artists SET expense_id = NULL WHERE id = $1", [artist.id]);
+      }
+    } else if (hasFee) {
+      const expenseId = uuid();
+      await pool.query(`
+        INSERT INTO expenses (id, lead_id, head, amount, paid, created_at)
+        VALUES ($1, $2, $3, $4, 0, $5)
+      `, [expenseId, artist.lead_id, `Artist fee — ${artist.name} (guest artist)`, Number(feeAmount), new Date().toISOString()]);
+      await pool.query("UPDATE temp_artists SET expense_id = $1 WHERE id = $2", [expenseId, artist.id]);
+    }
+  }
+  if (name !== undefined || phone !== undefined || description !== undefined) {
     await pool.query(`
-      INSERT INTO expenses (id, lead_id, head, amount, paid, created_at)
-      VALUES ($1, $2, $3, $4, 0, $5)
-    `, [expenseId, artist.lead_id, `Artist fee — ${artist.name} (guest artist)`, Number(feeAmount), new Date().toISOString()]);
-    await pool.query("UPDATE temp_artists SET expense_id = $1 WHERE id = $2", [expenseId, artist.id]);
+      UPDATE temp_artists SET name = COALESCE($1, name), phone = COALESCE($2, phone), description = COALESCE($3, description) WHERE id = $4
+    `, [name ?? null, phone ?? null, description ?? null, artist.id]);
   }
   const { rows } = await pool.query(`
     SELECT temp_artists.*, expenses.amount AS fee_amount, expenses.paid AS fee_paid,
@@ -1582,6 +1598,19 @@ app.get("/api/expenses", requireAuth, requireSection("accounts"), async (req, re
     ? await pool.query("SELECT * FROM expenses WHERE lead_id = $1 AND approved = 1 ORDER BY created_at DESC", [leadId])
     : await pool.query("SELECT * FROM expenses WHERE approved = 1 ORDER BY created_at DESC");
   res.json(rows);
+});
+
+// A manager who's also a performer can see their own fee for an event — never
+// anyone else's, and never through the general Accounts data. Deliberately
+// separate from /api/expenses so this doesn't require "accounts" access.
+app.get("/api/my/artist-fee", requireAuth, async (req, res) => {
+  const { leadId } = req.query;
+  if (!req.user.team_id || !leadId) return res.json(null);
+  const row = (await pool.query(
+    "SELECT amount, paid FROM expenses WHERE lead_id = $1 AND team_id = $2 AND head LIKE 'Artist fee — %' AND approved = 1 LIMIT 1",
+    [leadId, req.user.team_id]
+  )).rows[0];
+  res.json(row || null);
 });
 
 app.post("/api/expenses", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
