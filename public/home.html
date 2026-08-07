@@ -1280,9 +1280,12 @@
   }).catch(() => {});
 
   // Approximate India-relative positions (derived from real lat/long, mapped
-  // onto the simplified outline above) — only cities in this list get a dot;
-  // anything else still shows as a text chip below so nothing's silently lost.
-  const CITY_COORDS = {
+  // Cities are now geocoded server-side (via OpenStreetMap) when added in the
+  // CRM, so each one carries real lat/lng — converted here to map coordinates
+  // using the same projection used to build the outline above. Legacy plain-
+  // string entries (added before geocoding existed) fall back to a small
+  // known-city table, then to a plain text chip if truly unrecognized.
+  const LEGACY_CITY_COORDS = {
     'guwahati': [322, 169], 'siliguri': [277, 159], 'shillong': [324, 179],
     'jorhat': [356, 159], 'nagaon': [335, 166], 'dibrugarh': [365, 146],
     'tinsukia': [371, 146], 'sivasagar': [361, 155], 'barpeta': [312, 166],
@@ -1291,6 +1294,11 @@
     'pushkar': [89, 163], 'vrindavan': [132, 144], 'lucknow': [176, 157],
     'indore': [107, 228], 'begusarai': [246, 181], 'jaigaon': [277, 155],
   };
+  function latLngToMapXY(lat, lng) {
+    const x = (lng - 68) / (97.5 - 68) * 400;
+    const y = (36 - lat) / (36 - 8) * 480;
+    return [x, y];
+  }
   fetch('/api/public/site-content/cities').then((r) => r.json()).then((items) => {
     if (!Array.isArray(items) || !items.length) return;
     document.getElementById('citiesSection').classList.remove('hidden');
@@ -1301,9 +1309,15 @@
     const mapWrap = document.querySelector('.india-map-wrap');
     const unmapped = [];
     dotsGroup.innerHTML = '';
-    items.forEach((c, i) => {
-      const coords = CITY_COORDS[c.trim().toLowerCase()];
-      if (!coords) { unmapped.push(c); return; }
+    items.forEach((item, i) => {
+      const name = typeof item === 'string' ? item : item.name;
+      let coords = null;
+      if (typeof item === 'object' && item.lat != null && item.lng != null) {
+        coords = latLngToMapXY(item.lat, item.lng);
+      } else {
+        coords = LEGACY_CITY_COORDS[name.trim().toLowerCase()] || null;
+      }
+      if (!coords) { unmapped.push(name); return; }
       const color = colors[i % colors.length];
       const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       circle.setAttribute('cx', coords[0]);
@@ -1317,7 +1331,7 @@
         const rect = mapWrap.getBoundingClientRect();
         const svgRect = document.getElementById('indiaMap').getBoundingClientRect();
         const scale = svgRect.width / 400;
-        tooltip.textContent = c;
+        tooltip.textContent = name;
         tooltip.style.left = (svgRect.left - rect.left + coords[0] * scale) + 'px';
         tooltip.style.top = (svgRect.top - rect.top + coords[1] * scale) + 'px';
         tooltip.style.display = 'block';

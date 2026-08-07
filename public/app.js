@@ -3685,11 +3685,25 @@ async function renderWebsiteContent(main) {
   });
 
   // ---- Cities ----
+  // Each entry is either a plain string (legacy, pre-geocoding) or an object
+  // { name, lat, lng } once geocoded — the map on the public site only plots
+  // entries that have real coordinates.
   let cities = Array.isArray(content.cities) ? [...content.cities] : [];
+  const cityName = (c) => (typeof c === "string" ? c : c.name);
+  const cityHasCoords = (c) => typeof c === "object" && c.lat != null;
+
+  async function geocodeCity(name) {
+    try {
+      const result = await api(`/api/geocode-city?name=${encodeURIComponent(name + ", India")}`);
+      if (result.found) return { name, lat: result.lat, lng: result.lng };
+    } catch {}
+    return { name, lat: null, lng: null };
+  }
+
   function renderCities() {
     const list = main.querySelector("#citiesList");
     list.innerHTML = cities.length
-      ? cities.map((c, i) => `<span class="chip" style="margin:0 6px 6px 0; display:inline-flex; align-items:center; gap:6px;">${c} <button data-remove-city="${i}" style="border:none; background:none; cursor:pointer; color:var(--muted);">✕</button></span>`).join("")
+      ? cities.map((c, i) => `<span class="chip" style="margin:0 6px 6px 0; display:inline-flex; align-items:center; gap:6px;">${cityHasCoords(c) ? "📍" : "⏳"} ${cityName(c)} <button data-remove-city="${i}" style="border:none; background:none; cursor:pointer; color:var(--muted);">✕</button></span>`).join("")
       : `<p class="muted small">No cities added yet.</p>`;
     list.querySelectorAll("[data-remove-city]").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -3704,18 +3718,43 @@ async function renderWebsiteContent(main) {
     });
   }
   renderCities();
+
+  // Self-heal: any city added before geocoding existed is still a plain
+  // string. Look those up in the background and upgrade them automatically,
+  // so nothing needs to be manually deleted and re-added.
+  (async () => {
+    let changed = false;
+    for (let i = 0; i < cities.length; i++) {
+      if (typeof cities[i] === "string") {
+        cities[i] = await geocodeCity(cities[i]);
+        changed = true;
+      }
+    }
+    if (changed) {
+      await api("/api/site-content/cities", { method: "PUT", body: JSON.stringify({ value: cities }) }).catch(() => {});
+      renderCities();
+    }
+  })();
+
   main.querySelector("#addCityBtn").addEventListener("click", async () => {
     const input = main.querySelector("#newCityInput");
     const val = input.value.trim();
     if (!val) return;
-    cities.push(val);
+    const btn = main.querySelector("#addCityBtn");
+    btn.disabled = true;
+    btn.textContent = "Locating…";
+    const entry = await geocodeCity(val);
+    cities.push(entry);
     try {
       await api("/api/site-content/cities", { method: "PUT", body: JSON.stringify({ value: cities }) });
       input.value = "";
+      if (entry.lat == null) alert(`Added "${val}", but couldn't find its exact location — it'll show as a plain label instead of a map pin. Double-check the spelling if that seems wrong.`);
     } catch (err) {
       cities.pop();
       alert(`Couldn't save: ${err.message}`);
     }
+    btn.disabled = false;
+    btn.textContent = "+ Add city";
     renderCities();
   });
 

@@ -600,6 +600,25 @@ app.get("/api/site-content", requireAuth, requireAdmin, async (req, res) => {
   res.json(result);
 });
 
+// Real geocoding via OpenStreetMap's free Nominatim service — so any city
+// name an admin types gets its actual coordinates looked up automatically,
+// instead of relying on a hand-maintained list of known cities.
+app.get("/api/geocode-city", requireAuth, requireAdmin, async (req, res) => {
+  const { name } = req.query;
+  if (!name) return res.status(400).json({ error: "name is required" });
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(name)}&format=json&limit=1`;
+    const resp = await fetch(url, { headers: { "User-Agent": "TogetherOutLoudWebsite/1.0 (togetheroutloudclub@gmail.com)" } });
+    if (!resp.ok) throw new Error(`Nominatim returned ${resp.status}`);
+    const results = await resp.json();
+    if (!results.length) return res.json({ found: false });
+    res.json({ found: true, lat: Number(results[0].lat), lng: Number(results[0].lon), displayName: results[0].display_name });
+  } catch (err) {
+    console.error("Geocoding failed for", name, ":", err.message);
+    res.json({ found: false });
+  }
+});
+
 app.put("/api/site-content/:key", requireAuth, requireAdmin, async (req, res) => {
   const { key } = req.params;
   if (!SITE_CONTENT_KEYS.includes(key)) return res.status(404).json({ error: "Unknown content key" });
