@@ -277,6 +277,20 @@ async function setup() {
     `, [new Date().toISOString()]);
   }
 
+  // Clean up orphaned artist-fee expenses — a bug meant that unassigning an
+  // artist from an event deleted their assignment but left their fee record
+  // behind, so it kept quietly showing up in Accounts for someone no longer
+  // actually booked on that event. Safe to run on every boot: it only ever
+  // removes fee rows whose matching assignment genuinely no longer exists.
+  await pool.query(`
+    DELETE FROM expenses
+    WHERE head LIKE 'Artist fee — %' AND team_id IS NOT NULL AND lead_id IS NOT NULL AND paid = 0
+      AND NOT EXISTS (
+        SELECT 1 FROM event_assignments
+        WHERE event_assignments.lead_id = expenses.lead_id AND event_assignments.team_id = expenses.team_id
+      )
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS temp_artists (
       id TEXT PRIMARY KEY,

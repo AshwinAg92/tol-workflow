@@ -2342,6 +2342,12 @@ async function openAssignTeamModal(leadId) {
       }
       for (const teamId of unchecked) {
         if (byTeamId[teamId]) await api(`/api/assignments/${byTeamId[teamId].id}`, { method: "DELETE" });
+        // Removing someone from the event should also clear out any fee already
+        // recorded for them here — otherwise it becomes an orphaned charge that
+        // silently keeps showing up in Accounts for someone no longer booked.
+        if (isAdmin && feeExpenseByTeamId[teamId]) {
+          await api(`/api/expenses/${feeExpenseByTeamId[teamId].id}`, { method: "DELETE" });
+        }
       }
       if (isAdmin) {
         for (const input of root.querySelectorAll(".member-fee-input")) {
