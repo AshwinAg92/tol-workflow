@@ -3557,9 +3557,10 @@ const QUOTE_TEMPLATE_PLACEHOLDERS = ["firstName", "formatUpper", "location", "da
 
 // ---------- Website content management (CMS for the marketing site) ----------
 async function renderWebsiteContent(main) {
-  const [content, gallery] = await Promise.all([
+  const [content, gallery, pressImages] = await Promise.all([
     api("/api/site-content"),
-    api("/api/gallery"),
+    api("/api/gallery?category=gallery"),
+    api("/api/gallery?category=press"),
   ]);
 
   main.innerHTML = `
@@ -3609,6 +3610,17 @@ async function renderWebsiteContent(main) {
       <div id="pressList"></div>
       <button class="btn-ghost full" id="addPressBtn" style="margin-top:10px;">+ Add press mention</button>
       <button class="btn-primary" id="savePressBtn" style="margin-top:10px;">Save press mentions</button>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="section-label">Press clippings (images)</div>
+      <p class="muted small" style="margin-top:-4px;">Photos of newspaper/magazine coverage, screenshots of features, etc. — shown as a scrollable strip above your press mentions.</p>
+      <div id="pressImagesGrid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:10px; margin:14px 0;"></div>
+      <div class="row-2">
+        <input type="file" id="pressImageFile" accept="image/*" />
+        <input id="pressImageCaption" placeholder="Caption (e.g. outlet name, headline)" />
+      </div>
+      <button class="btn-primary" id="uploadPressImageBtn" style="margin-top:10px;">Upload clipping</button>
     </div>
 
     <div class="card" style="margin-bottom:20px;">
@@ -3837,6 +3849,37 @@ async function renderWebsiteContent(main) {
     const formData = new FormData();
     formData.append("file", fileInput.files[0]);
     formData.append("caption", main.querySelector("#galleryCaption").value.trim());
+    await fetch("/api/gallery", { method: "POST", body: formData });
+    renderWebsiteContent(main);
+  });
+
+  // ---- Press images ----
+  function renderPressImages() {
+    const grid = main.querySelector("#pressImagesGrid");
+    grid.innerHTML = pressImages.length
+      ? pressImages.map((g) => `
+        <div style="position:relative;">
+          <img src="${g.url}" alt="${g.caption || ""}" style="width:100%; height:100px; object-fit:cover; border-radius:8px;" />
+          <button class="icon-btn" data-delete-press-image="${g.id}" style="position:absolute; top:4px; right:4px; background:rgba(255,255,255,0.9); border-radius:50%;">✕</button>
+        </div>
+      `).join("")
+      : `<p class="muted small">No clippings uploaded yet.</p>`;
+    grid.querySelectorAll("[data-delete-press-image]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this clipping?")) return;
+        await api(`/api/gallery/${btn.dataset.deletePressImage}`, { method: "DELETE" });
+        renderWebsiteContent(main);
+      });
+    });
+  }
+  renderPressImages();
+  main.querySelector("#uploadPressImageBtn").addEventListener("click", async () => {
+    const fileInput = main.querySelector("#pressImageFile");
+    if (!fileInput.files[0]) return alert("Choose an image first.");
+    const formData = new FormData();
+    formData.append("file", fileInput.files[0]);
+    formData.append("caption", main.querySelector("#pressImageCaption").value.trim());
+    formData.append("category", "press");
     await fetch("/api/gallery", { method: "POST", body: formData });
     renderWebsiteContent(main);
   });

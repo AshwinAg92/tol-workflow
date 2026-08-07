@@ -241,6 +241,10 @@ async function setup() {
       uploaded_at TEXT NOT NULL
     );
   `);
+  // 'category' lets one image store serve both the public Gallery and the
+  // Press clippings strip — same reliable Postgres-bytea storage, just tagged
+  // by where it's meant to show up.
+  await pool.query(`ALTER TABLE site_gallery_images ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'gallery'`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS temp_artists (

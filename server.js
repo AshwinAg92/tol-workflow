@@ -607,7 +607,14 @@ app.put("/api/site-content/:key", requireAuth, requireAdmin, async (req, res) =>
 
 // ---------- Website gallery (images stored in Postgres — see documents note on why) ----------
 app.get("/api/public/gallery", async (req, res) => {
-  const { rows } = await pool.query("SELECT id, caption, sort_order FROM site_gallery_images ORDER BY sort_order ASC, uploaded_at ASC");
+  const { rows } = await pool.query("SELECT id, caption, sort_order FROM site_gallery_images WHERE category = 'gallery' ORDER BY sort_order ASC, uploaded_at ASC");
+  res.json(rows.map((r) => ({ id: r.id, caption: r.caption, url: `/api/public/gallery/${r.id}/file` })));
+});
+
+// Press clippings — same storage, different category, so they show in the
+// Press section's image strip instead of the general Gallery.
+app.get("/api/public/press-images", async (req, res) => {
+  const { rows } = await pool.query("SELECT id, caption, sort_order FROM site_gallery_images WHERE category = 'press' ORDER BY sort_order ASC, uploaded_at ASC");
   res.json(rows.map((r) => ({ id: r.id, caption: r.caption, url: `/api/public/gallery/${r.id}/file` })));
 });
 
@@ -619,20 +626,24 @@ app.get("/api/public/gallery/:id/file", async (req, res) => {
 });
 
 app.get("/api/gallery", requireAuth, requireAdmin, async (req, res) => {
-  const { rows } = await pool.query("SELECT id, caption, sort_order, uploaded_at FROM site_gallery_images ORDER BY sort_order ASC, uploaded_at ASC");
+  const { category } = req.query;
+  const { rows } = category
+    ? await pool.query("SELECT id, caption, sort_order, uploaded_at, category FROM site_gallery_images WHERE category = $1 ORDER BY sort_order ASC, uploaded_at ASC", [category])
+    : await pool.query("SELECT id, caption, sort_order, uploaded_at, category FROM site_gallery_images ORDER BY sort_order ASC, uploaded_at ASC");
   res.json(rows.map((r) => ({ ...r, url: `/api/public/gallery/${r.id}/file` })));
 });
 
 app.post("/api/gallery", requireAuth, requireAdmin, upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+  const category = req.body.category === "press" ? "press" : "gallery";
   const id = uuid();
-  const maxOrder = (await pool.query("SELECT COALESCE(MAX(sort_order), 0) AS m FROM site_gallery_images")).rows[0].m;
+  const maxOrder = (await pool.query("SELECT COALESCE(MAX(sort_order), 0) AS m FROM site_gallery_images WHERE category = $1", [category])).rows[0].m;
   await pool.query(`
-    INSERT INTO site_gallery_images (id, caption, mime_type, file_data, sort_order, uploaded_at)
-    VALUES ($1, $2, $3, $4, $5, $6)
-  `, [id, req.body.caption || null, req.file.mimetype, req.file.buffer, Number(maxOrder) + 1, new Date().toISOString()]);
+    INSERT INTO site_gallery_images (id, caption, mime_type, file_data, sort_order, uploaded_at, category)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+  `, [id, req.body.caption || null, req.file.mimetype, req.file.buffer, Number(maxOrder) + 1, new Date().toISOString(), category]);
   res.status(201).json({ id, url: `/api/public/gallery/${id}/file` });
-  logActivity(req, `Added gallery image${req.body.caption ? `: ${req.body.caption}` : ""}`, null);
+  logActivity(req, `Added ${category === "press" ? "press image" : "gallery image"}${req.body.caption ? `: ${req.body.caption}` : ""}`, null);
 });
 
 app.patch("/api/gallery/:id", requireAuth, requireAdmin, async (req, res) => {

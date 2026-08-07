@@ -318,6 +318,12 @@
   .press-row:last-child{border-bottom:none;}
   .press-row .outlet{font-family:'Space Grotesk'; font-weight:700; font-size:14px;}
   .press-row .quote{color:var(--muted); font-size:13.5px; margin-top:2px;}
+  .press-clip{
+    flex-shrink:0; width:180px; scroll-snap-align:start; border-radius:12px; overflow:hidden;
+    border:1px solid var(--hairline); background:var(--paper); box-shadow:0 4px 14px rgba(43,36,32,0.08);
+    display:block;
+  }
+  .press-clip img{width:100%; height:230px; object-fit:cover; display:block;}
   .gallery-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:14px; margin-top:30px;}
   .gallery-grid img{width:100%; height:180px; border-radius:12px; display:block; object-fit:cover;}
   .cities-chip-row{display:flex; flex-wrap:wrap; gap:10px; margin-top:20px;}
@@ -742,6 +748,11 @@
   <div class="wrap">
     <span class="tag">IN THE PRESS</span>
     <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">As seen in.</h2>
+    <div class="scroll-row-wrap" id="pressClipsWrap" style="display:none;">
+      <div class="reel-track" id="pressClipsTrack"></div>
+      <button class="scroll-arrow prev" id="pressClipsPrev" aria-label="Scroll left">←</button>
+      <button class="scroll-arrow next" id="pressClipsNext" aria-label="Scroll right">→</button>
+    </div>
     <div id="pressGrid" style="margin-top:24px;"></div>
   </div>
 </section>
@@ -1045,18 +1056,42 @@
     document.getElementById('citiesGrid').innerHTML = items.map((c, i) => `<span class="chip" style="border-color:${colors[i % colors.length]};">${escapeHtml(c)}</span>`).join('');
   }).catch(() => {});
 
-  fetch('/api/public/site-content/press').then((r) => r.json()).then((items) => {
-    if (!Array.isArray(items) || !items.length) return;
+  const PRESS_IMAGES_SEED = [
+    { url: '/press-seed/press-01.jpg', caption: 'Marwari Mahila Sammelan, Golaghat — bhajan jamming coverage' },
+    { url: '/press-seed/press-02.jpg', caption: 'Hi-Life Society — "Soulful Ram Ras Bhajan Jamming in Bangkok"' },
+  ];
+
+  Promise.all([
+    fetch('/api/public/site-content/press').then((r) => r.json()).catch(() => []),
+    fetch('/api/public/press-images').then((r) => r.json()).catch(() => []),
+  ]).then(([textItems, uploadedImages]) => {
+    const images = [...PRESS_IMAGES_SEED, ...(Array.isArray(uploadedImages) ? uploadedImages : [])];
+    const hasText = Array.isArray(textItems) && textItems.length;
+    const hasImages = images.length > 0;
+    if (!hasText && !hasImages) return;
     document.getElementById('pressSection').classList.remove('hidden');
     document.getElementById('navPressLink').style.display = '';
     document.getElementById('mobileNavPressLink').style.display = '';
-    document.getElementById('pressGrid').innerHTML = items.map((p) => `
-      <div class="press-row">
-        <div><div class="outlet">${escapeHtml(p.outlet)}</div><div class="quote">${escapeHtml(p.quote)}</div></div>
-        ${p.link ? `<a class="btn-text" href="${escapeHtml(p.link)}" target="_blank" rel="noopener noreferrer">Read →</a>` : ''}
-      </div>
-    `).join('');
-  }).catch(() => {});
+
+    if (hasImages) {
+      document.getElementById('pressClipsWrap').style.display = 'block';
+      document.getElementById('pressClipsTrack').innerHTML = images.map((img) => `
+        <a class="press-clip" href="${img.url}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(img.caption || 'Press clipping')}">
+          <img src="${img.url}" alt="${escapeHtml(img.caption || 'Press clipping')}" loading="lazy" />
+        </a>
+      `).join('');
+      wireScrollArrows('pressClipsTrack', 'pressClipsPrev', 'pressClipsNext');
+    }
+
+    if (hasText) {
+      document.getElementById('pressGrid').innerHTML = textItems.map((p) => `
+        <div class="press-row">
+          <div><div class="outlet">${escapeHtml(p.outlet)}</div><div class="quote">${escapeHtml(p.quote)}</div></div>
+          ${p.link ? `<a class="btn-text" href="${escapeHtml(p.link)}" target="_blank" rel="noopener noreferrer">Read →</a>` : ''}
+        </div>
+      `).join('');
+    }
+  });
 </script>
 
 <script async src="//www.instagram.com/embed.js"></script>
