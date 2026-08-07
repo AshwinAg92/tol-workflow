@@ -456,6 +456,20 @@
     font-size:18px; cursor:pointer; z-index:1;
   }
   .lightbox-close:hover{background:rgba(255,255,255,0.25);}
+  .lightbox-nav{
+    position:absolute; top:50%; transform:translateY(-50%); width:48px; height:48px; border-radius:50%;
+    background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.3); color:#fff;
+    font-size:20px; cursor:pointer; z-index:1; display:flex; align-items:center; justify-content:center;
+  }
+  .lightbox-nav:hover{background:rgba(255,255,255,0.25);}
+  .lightbox-nav.prev{left:16px;}
+  .lightbox-nav.next{right:16px;}
+  .lightbox-nav.hidden-nav{display:none;}
+  @media (max-width:600px){
+    .lightbox-nav{width:40px; height:40px; font-size:17px;}
+    .lightbox-nav.prev{left:8px;}
+    .lightbox-nav.next{right:8px;}
+  }
 
   @media (max-width:1040px){
     .nav-links{display:none;}
@@ -526,7 +540,9 @@
 
 <div class="lightbox" id="lightbox">
   <button class="lightbox-close" id="lightboxClose" aria-label="Close">✕</button>
+  <button class="lightbox-nav prev" id="lightboxPrev" aria-label="Previous image">←</button>
   <img id="lightboxImg" src="" alt="" />
+  <button class="lightbox-nav next" id="lightboxNext" aria-label="Next image">→</button>
 </div>
 
 <header class="hero" id="top">
@@ -882,27 +898,56 @@
   // phone's photo gallery) instead of navigating away or risking an
   // accidental download from opening the raw image in a new tab. Uses event
   // delegation since these images are inserted dynamically after fetching.
+  // Prev/next moves through every other image in the same group (Gallery or
+  // Press) without closing, like swiping through a phone's photo viewer.
   const lightbox = document.getElementById('lightbox');
   const lightboxImg = document.getElementById('lightboxImg');
-  function openLightbox(src, alt) {
-    lightboxImg.src = src;
-    lightboxImg.alt = alt || '';
+  const lightboxPrev = document.getElementById('lightboxPrev');
+  const lightboxNext = document.getElementById('lightboxNext');
+  let lightboxGroup = [];
+  let lightboxIndex = 0;
+  function showLightboxIndex(i) {
+    if (!lightboxGroup.length) return;
+    lightboxIndex = (i + lightboxGroup.length) % lightboxGroup.length;
+    const item = lightboxGroup[lightboxIndex];
+    lightboxImg.src = item.src;
+    lightboxImg.alt = item.alt || '';
+    const multiple = lightboxGroup.length > 1;
+    lightboxPrev.classList.toggle('hidden-nav', !multiple);
+    lightboxNext.classList.toggle('hidden-nav', !multiple);
+  }
+  function openLightbox(triggerEl) {
+    const group = triggerEl.closest('.reel-track, .gallery-grid') || triggerEl.parentElement;
+    const triggers = Array.from(group.querySelectorAll('.lightbox-trigger'));
+    lightboxGroup = triggers.map((t) => {
+      const img = t.querySelector('img');
+      return { src: t.getAttribute('href'), alt: img ? img.alt : '' };
+    });
+    lightboxIndex = triggers.indexOf(triggerEl);
     lightbox.classList.add('open');
+    showLightboxIndex(lightboxIndex);
   }
   function closeLightbox() {
     lightbox.classList.remove('open');
     lightboxImg.src = '';
+    lightboxGroup = [];
   }
   document.addEventListener('click', (e) => {
     const trigger = e.target.closest('.lightbox-trigger');
     if (!trigger) return;
     e.preventDefault();
-    const img = trigger.querySelector('img');
-    openLightbox(trigger.getAttribute('href'), img ? img.alt : '');
+    openLightbox(trigger);
   });
   document.getElementById('lightboxClose').addEventListener('click', closeLightbox);
+  lightboxPrev.addEventListener('click', (e) => { e.stopPropagation(); showLightboxIndex(lightboxIndex - 1); });
+  lightboxNext.addEventListener('click', (e) => { e.stopPropagation(); showLightboxIndex(lightboxIndex + 1); });
   lightbox.addEventListener('click', (e) => { if (e.target === lightbox) closeLightbox(); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLightbox(); });
+  document.addEventListener('keydown', (e) => {
+    if (!lightbox.classList.contains('open')) return;
+    if (e.key === 'Escape') closeLightbox();
+    if (e.key === 'ArrowLeft') showLightboxIndex(lightboxIndex - 1);
+    if (e.key === 'ArrowRight') showLightboxIndex(lightboxIndex + 1);
+  });
 
   // Scroll-row arrow controls — used for both the reels row and testimonials.
   function wireScrollArrows(trackId, prevId, nextId) {
