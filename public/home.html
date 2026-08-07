@@ -288,18 +288,18 @@
 
   /* upcoming events */
   .upcoming{padding:80px 0; background:var(--paper); border-top:1px solid var(--hairline); border-bottom:1px solid var(--hairline);}
-  .event-row{
-    display:flex; align-items:center; justify-content:space-between; gap:16px; padding:18px 22px;
-    background:var(--cream); border:1px solid var(--hairline); border-radius:14px; margin-top:14px;
+  .event-card{
+    display:flex; flex-direction:column; align-items:center; text-align:center; gap:8px; padding:16px 14px;
+    background:var(--cream); border:1px solid var(--hairline); border-radius:14px;
+    flex-shrink:0; width:130px; scroll-snap-align:start;
   }
-  .event-row .date-badge{
-    font-family:'Space Grotesk'; font-weight:700; font-size:14px; color:var(--cream);
-    background:var(--terracotta); border-radius:10px; padding:8px 14px; text-align:center; flex-shrink:0; min-width:64px;
+  .event-card .date-badge{
+    font-family:'Space Grotesk'; font-weight:700; font-size:13px; color:var(--cream);
+    background:var(--terracotta); border-radius:10px; padding:6px 12px; text-align:center; min-width:56px;
   }
-  .event-row .date-badge .day{font-size:20px; display:block;}
-  .event-row .meta{flex:1;}
-  .event-row .meta .pkg{font-family:'Space Grotesk'; font-weight:700; font-size:15px; color:var(--ink);}
-  .event-row .meta .loc{color:var(--muted); font-size:13px; margin-top:2px;}
+  .event-card .date-badge .day{font-size:18px; display:block;}
+  .event-card .pkg{font-family:'Space Grotesk'; font-weight:700; font-size:13px; color:var(--ink); line-height:1.25;}
+  .event-card .loc{color:var(--muted); font-size:12px;}
 
   /* dynamic CMS-driven sections */
   .dyn-section{padding:70px 0;}
@@ -449,7 +449,6 @@
     .stats-grid{grid-template-columns:repeat(2,1fr); gap:20px;}
     .hero{padding:60px 20px 40px;}
     .marquee span.word{font-size:12.5px; padding:0 16px;}
-    .event-row{flex-wrap:wrap;}
   }
   @media (max-width:480px){
     .brand span{font-size:13px;}
@@ -670,10 +669,13 @@
     <span class="tag">WHAT'S NEXT</span>
     <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">Upcoming events.</h2>
     <p class="stats-note">Pulled live from our booking calendar.</p>
-    <div id="upcomingEventsList">
-      <p style="color:var(--muted); margin-top:16px;">Loading…</p>
+    <div class="scroll-row-wrap">
+      <div id="upcomingEventsList" class="reel-track">
+        <p style="color:var(--muted); margin-top:16px;">Loading…</p>
+      </div>
+      <button class="scroll-arrow prev" id="eventsPrev" aria-label="Scroll left">←</button>
+      <button class="scroll-arrow next" id="eventsNext" aria-label="Scroll right">→</button>
     </div>
-    <p id="upcomingCountNote" style="display:none; margin-top:14px; font-family:'JetBrains Mono'; font-size:12px; color:var(--terracotta); font-weight:700;"></p>
     <div class="inline-cta">
       <p>Your date could be next on this list.</p>
       <a class="btn-primary" href="/lead-form.html">Plan Your Event →</a>
@@ -949,10 +951,8 @@
   // Upcoming events — pulled live from the booking calendar.
   fetch('/api/public/upcoming-events').then((r) => r.json()).then((data) => {
     const list = document.getElementById('upcomingEventsList');
-    const countNote = document.getElementById('upcomingCountNote');
     if (!list) return;
     const events = data.events || [];
-    const totalCount = data.totalCount || 0;
     if (!events.length) {
       list.innerHTML = '<p style="color:var(--muted); margin-top:16px;">Nothing on the calendar just yet — check back soon, or be the first to book a slot.</p>';
       return;
@@ -961,21 +961,15 @@
       const d = new Date(ev.date + 'T00:00:00');
       const day = d.toLocaleDateString('en-US', { day: 'numeric' });
       const mon = d.toLocaleDateString('en-US', { month: 'short' });
-      const full = d.toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' });
       return `
-        <div class="event-row">
+        <div class="event-card">
           <div class="date-badge"><span class="day">${day}</span>${mon}</div>
-          <div class="meta">
-            <div class="pkg">${ev.packageName}${ev.occasion ? ' — ' + ev.occasion : ''}</div>
-            <div class="loc">${full}${ev.city ? ' · ' + ev.city : ''}</div>
-          </div>
+          <div class="pkg">${ev.packageName}</div>
+          <div class="loc">${ev.city || ''}</div>
         </div>
       `;
     }).join('');
-    if (countNote && totalCount > events.length) {
-      countNote.textContent = `+ ${totalCount - events.length} more confirmed events already on the calendar`;
-      countNote.style.display = 'block';
-    }
+    wireScrollArrows('upcomingEventsList', 'eventsPrev', 'eventsNext');
   }).catch(() => {
     const list = document.getElementById('upcomingEventsList');
     if (list) list.innerHTML = '<p style="color:var(--muted); margin-top:16px;">Couldn\'t load events right now — check our Instagram for the latest.</p>';

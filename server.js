@@ -558,17 +558,14 @@ app.get("/api/public/upcoming-events", async (req, res) => {
   const { rows } = await pool.query(`
     SELECT date, city, event_type, occasion FROM leads
     WHERE stage = 'Confirmed' AND date >= $1
-    ORDER BY date ASC LIMIT 3
-  `, [today]);
-  const { rows: countRows } = await pool.query(`
-    SELECT COUNT(*) AS c FROM leads WHERE stage = 'Confirmed' AND date >= $1
+    ORDER BY date ASC LIMIT 30
   `, [today]);
   res.json({
     events: rows.map((r) => ({
       date: r.date, city: r.city, occasion: r.occasion,
       packageName: packageName(r.event_type),
     })),
-    totalCount: Number(countRows[0].c),
+    totalCount: rows.length,
   });
 });
 
