@@ -679,7 +679,15 @@ async function renderLeadsLog(main, skipRefresh) {
           <div class="muted small" style="margin-top:8px;">${packageName(l.event_type)} · ${l.city || "—"} · <span class="mono">${fmtDate(l.date)}</span></div>
           <div class="muted small">Submitted ${fmtDateTime(l.created_at)}</div>
           ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}${l.last_quoted_at ? ` <span class="muted">— sent ${fmtDate(l.last_quoted_at.slice(0, 10))}</span>` : ""}</div>` : ""}
-          ${l.notes ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#F5F0E4; border-radius:4px;">📝 ${l.notes}</div>` : ""}
+          ${hasLeadsAccess() && l.stage !== "Completed" ? `
+            <div class="lead-sticky-note" style="margin-top:8px; background:#FBF3D9; border:1px solid #E8D488; border-radius:6px; padding:6px 8px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
+                <span class="muted small">📌 Sticky note</span>
+                <span class="muted small lead-note-status" data-lead-id="${l.id}" style="font-weight:400;"></span>
+              </div>
+              <textarea class="lead-note-input" data-lead-id="${l.id}" rows="2" placeholder="Quick note for this lead…" style="width:100%; padding:6px 8px; border:1px solid #E0CE8A; border-radius:5px; font-family:inherit; font-size:13px; background:#FFFDF6; resize:vertical;">${l.notes || ""}</textarea>
+            </div>
+          ` : (l.notes ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#F5F0E4; border-radius:4px;">📝 ${l.notes}</div>` : "")}
           ${l.stage === "Cancelled" && l.cancellation_reason ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#FBEAE7; border-radius:4px; color:#A64B3C;">❌ Cancelled: ${l.cancellation_reason}</div>` : ""}
           ${isConfirmedOrDone ? `
             <div class="lead-card-financials">
@@ -729,6 +737,35 @@ async function renderLeadsLog(main, skipRefresh) {
       const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
       if (digitsOnly) window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
     });
+  });
+
+  main.querySelectorAll(".lead-note-input").forEach((textarea) => {
+    const leadId = textarea.dataset.leadId;
+    const status = main.querySelector(`.lead-note-status[data-lead-id="${leadId}"]`);
+    let saveTimeout = null;
+    const saveNote = async () => {
+      if (status) status.textContent = "Saving…";
+      try {
+        await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ notes: textarea.value.trim() || null }) });
+        const lead = LEADS.find((l) => l.id === leadId);
+        if (lead) lead.notes = textarea.value.trim() || null;
+        if (status) {
+          status.textContent = "Saved ✓";
+          setTimeout(() => { if (status.textContent === "Saved ✓") status.textContent = ""; }, 1500);
+        }
+      } catch (err) {
+        if (status) status.textContent = "Couldn't save";
+      }
+    };
+    textarea.addEventListener("input", () => {
+      if (status) status.textContent = "";
+      if (saveTimeout) clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(saveNote, 800);
+    });
+    textarea.addEventListener("blur", () => {
+      if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null; saveNote(); }
+    });
+    textarea.addEventListener("click", (e) => e.stopPropagation());
   });
 
   main.querySelectorAll(".assign-team-btn").forEach((btn) => {
@@ -3533,8 +3570,7 @@ function openEditLeadModal(leadId) {
           </div>
           ${(lead.stage === "Confirmed" || lead.stage === "Completed") ? `<label>Final confirmed amount (₹)</label><input id="mFinalAmount" type="number" value="${lead.final_amount || ""}" placeholder="e.g. 150000" />` : ""}
           ${lead.combo_group_id ? `<p class="muted small">This event is part of a combo booking. Editing the format/date here only changes this one event — the shared client details are separate per event.</p>` : ""}
-          <label>Internal notes <span class="muted small">(not shown to the client — shows on the Leads card, e.g. "follow up after 10 Aug")</span></label>
-          <textarea id="mNotes" rows="3" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:14px;">${lead.notes || ""}</textarea>
+          <p class="muted small">📌 Use the sticky note on the lead card to jot quick notes — no need to open Edit for that.</p>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Save changes</button></div>
       </div>
@@ -3563,7 +3599,6 @@ function openEditLeadModal(leadId) {
           quoteAmount: root.querySelector("#mQuoteAmount").value ? Number(root.querySelector("#mQuoteAmount").value) : null,
           guestRange: root.querySelector("#mGuests").value || null,
           occasion: root.querySelector("#mOccasion").value || null,
-          notes: root.querySelector("#mNotes").value.trim() || null,
           ...(root.querySelector("#mFinalAmount") ? { finalAmount: root.querySelector("#mFinalAmount").value ? Number(root.querySelector("#mFinalAmount").value) : null } : {}),
         }),
       });
