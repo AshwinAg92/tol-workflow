@@ -2942,6 +2942,9 @@ async function renderDashboard(main) {
           <div class="dash-list-item dash-list-item-click" data-lead-id="${l.id}">
             <div>${l.name} <span class="muted">— ${packageName(l.event_type)}</span></div>
             <div class="muted">${fmtDate(l.date)} · ${l.city || ""}</div>
+            <div class="small" style="color:${!l.last_followup_at || daysSince(l.last_followup_at) >= 3 ? "#B6752C" : "#5C7A5A"};">
+              ${!l.last_followup_at ? "⏳ Not yet followed up" : `${daysSince(l.last_followup_at) >= 3 ? "⏳" : "✓"} Last followed up ${timeAgo(l.last_followup_at)}${daysSince(l.last_followup_at) >= 3 ? " — overdue" : ""}`}
+            </div>
           </div>
         `).join("")}
       </div>

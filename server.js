@@ -1926,7 +1926,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
   const [upcomingRes, upcomingCountRes, followUpsRes, accountsRes, paymentsRes, tasksRes, newLeadsRes, tentativeRes, interestedRes] = await Promise.all([
     pool.query(`SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1 ORDER BY date ASC LIMIT 5`, [today]),
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1`, [today]),
-    pool.query(`SELECT * FROM leads WHERE stage = 'Follow-up' ORDER BY created_at DESC`),
+    pool.query(`SELECT * FROM leads WHERE stage = 'Follow-up' ORDER BY last_followup_at ASC NULLS FIRST, created_at ASC`),
     pool.query(`SELECT id, final_amount, quote_amount FROM leads WHERE stage IN ('Confirmed', 'Completed')`),
     pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments`),
     pool.query(`SELECT * FROM tasks WHERE done = 0 AND (due_date <= $1 OR due_date IS NULL) ORDER BY due_date ASC LIMIT 8`, [weekAhead]),
