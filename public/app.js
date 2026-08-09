@@ -9,6 +9,7 @@ let currentTab = "dashboard";
 let leadsFilter = "all";
 let leadsStageFilter = "all";
 let leadsSearch = "";
+let leadsCityFilter = "";
 let leadsDateFilter = "";
 let quotationLeadId = null;
 let calYear = new Date().getFullYear(), calMonth = new Date().getMonth() + 1; // defaults to the real current month
@@ -598,11 +599,13 @@ async function renderLeadsLog(main, skipRefresh) {
     await refreshLeads();
   }
 
-  const filtered = (leadsFilter === "all" ? LEADS : LEADS.filter((l) => l.event_type === leadsFilter))
+  const baseFiltered = LEADS
     .filter((l) => leadsStageFilter === "all" || l.stage === leadsStageFilter)
     .filter((l) => !leadsSearch || l.name.toLowerCase().includes(leadsSearch.toLowerCase()))
+    .filter((l) => !leadsCityFilter || (l.city || "").toLowerCase().includes(leadsCityFilter.toLowerCase()))
     .filter((l) => !leadsDateFilter || l.date === leadsDateFilter);
-  const countFor = (id) => LEADS.filter((l) => l.event_type === id).length;
+  const filtered = leadsFilter === "all" ? baseFiltered : baseFiltered.filter((l) => l.event_type === leadsFilter);
+  const countFor = (id) => baseFiltered.filter((l) => l.event_type === id).length;
   const shareLink = `${window.location.origin}/lead-form.html`;
 
   main.innerHTML = `
@@ -626,12 +629,13 @@ async function renderLeadsLog(main, skipRefresh) {
     <div class="card" style="margin-bottom:14px;">
       <div class="upload-form" style="margin-bottom:0;">
         <input id="leadsSearchInput" placeholder="Search by name…" value="${leadsSearch}" style="flex:1; min-width:160px;" />
+        <input id="leadsCityInput" placeholder="Search by city…" value="${leadsCityFilter}" style="flex:1; min-width:160px;" />
         <input id="leadsDateInput" type="date" value="${leadsDateFilter}" />
         <select id="leadsStageSelect">
           <option value="all">All stages</option>
           ${CONFIG.stages.map((s) => `<option value="${s}" ${leadsStageFilter === s ? "selected" : ""}>${s}</option>`).join("")}
         </select>
-        ${(leadsSearch || leadsDateFilter || leadsStageFilter !== "all") ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
+        ${(leadsSearch || leadsCityFilter || leadsDateFilter || leadsStageFilter !== "all") ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
       </div>
     </div>
 
@@ -649,13 +653,23 @@ async function renderLeadsLog(main, skipRefresh) {
       newInput.setSelectionRange(cursorPos, cursorPos);
     }
   });
+  main.querySelector("#leadsCityInput").addEventListener("input", (e) => {
+    const cursorPos = e.target.selectionStart;
+    leadsCityFilter = e.target.value;
+    renderLeadsLog(main, true);
+    const newInput = document.querySelector("#leadsCityInput");
+    if (newInput) {
+      newInput.focus();
+      newInput.setSelectionRange(cursorPos, cursorPos);
+    }
+  });
   main.querySelector("#leadsDateInput").addEventListener("change", (e) => { leadsDateFilter = e.target.value; renderLeadsLog(main, true); });
   main.querySelector("#leadsStageSelect").addEventListener("change", (e) => { leadsStageFilter = e.target.value; renderLeadsLog(main, true); });
   const clearAllBtn = main.querySelector("#clearAllFilters");
-  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsDateFilter = ""; leadsStageFilter = "all"; renderLeadsLog(main, true); });
+  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsCityFilter = ""; leadsDateFilter = ""; leadsStageFilter = "all"; renderLeadsLog(main, true); });
 
   const filterRow = main.querySelector("#filterRow");
-  const allChip = el(`<button class="filter-chip${leadsFilter === "all" ? " filter-chip-active" : ""}">All <span class="mono">${LEADS.length}</span></button>`);
+  const allChip = el(`<button class="filter-chip${leadsFilter === "all" ? " filter-chip-active" : ""}">All <span class="mono">${baseFiltered.length}</span></button>`);
   allChip.addEventListener("click", () => { leadsFilter = "all"; renderLeadsLog(main, true); });
   filterRow.appendChild(allChip);
 
@@ -1279,6 +1293,7 @@ function wireCalendarGrid(container) {
       if (hasLeadsAccess()) {
         leadsSearch = lead.name;
         leadsStageFilter = "all";
+        leadsCityFilter = "";
         leadsDateFilter = "";
         currentTab = "leads";
         renderNav();
@@ -1327,6 +1342,7 @@ async function renderCalendar(main) {
       if (hasLeadsAccess()) {
         leadsSearch = l.name;
         leadsStageFilter = "all";
+        leadsCityFilter = "";
         leadsDateFilter = "";
         currentTab = "leads";
         renderNav();
