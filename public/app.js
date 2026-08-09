@@ -111,6 +111,25 @@ function permissionsChecklistHtml(idPrefix, currentPermissions) {
 // ---------- Helpers ----------
 const inr = (n) => (n == null ? "—" : "₹" + Number(n).toLocaleString("en-IN"));
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—";
+
+// Relative "time ago" for the lead follow-up tracker — e.g. "2h ago", "3d ago".
+function timeAgo(isoString) {
+  if (!isoString) return null;
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
+}
+function daysSince(isoString) {
+  if (!isoString) return Infinity;
+  return Math.floor((Date.now() - new Date(isoString).getTime()) / 86400000);
+}
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtTime = (d) => d ? new Date(d).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—";
 // Formats a plain "HH:MM" string (from an <input type="time">, not a full date) into 12-hour display.
@@ -679,6 +698,19 @@ async function renderLeadsLog(main, skipRefresh) {
           <div class="muted small" style="margin-top:8px;">${packageName(l.event_type)} · ${l.city || "—"} · <span class="mono">${fmtDate(l.date)}</span></div>
           <div class="muted small">Submitted ${fmtDateTime(l.created_at)}</div>
           ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}${l.last_quoted_at ? ` <span class="muted">— sent ${fmtDate(l.last_quoted_at.slice(0, 10))}</span>` : ""}</div>` : ""}
+          ${hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) ? (() => {
+            const days = daysSince(l.last_followup_at);
+            const overdue = days >= 3;
+            const label = !l.last_followup_at
+              ? "Not yet followed up"
+              : `Last followed up ${timeAgo(l.last_followup_at)}${overdue ? " — overdue" : ""}`;
+            const color = !l.last_followup_at || overdue ? "#B6752C" : "#5C7A5A";
+            const icon = !l.last_followup_at || overdue ? "⏳" : "✓";
+            return `<div class="small" style="margin-top:6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <span style="color:${color};">${icon} ${label}</span>
+              <a href="#" class="mark-followup-link" data-lead-id="${l.id}" style="font-size:12px; color:#8A5FA8; text-decoration:underline;">mark followed up now</a>
+            </div>`;
+          })() : ""}
           ${hasLeadsAccess() && l.stage !== "Completed" ? `
             <div class="lead-sticky-note" style="margin-top:8px; background:#FBF3D9; border:1px solid #E8D488; border-radius:6px; padding:6px 8px;">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
@@ -724,7 +756,7 @@ async function renderLeadsLog(main, skipRefresh) {
   });
 
   main.querySelectorAll(".followup-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
       const firstName = (lead.name || "").split(" ")[0] || "there";
       const key = lead.stage === "Tentative" ? "tentative_followup" : "followup";
@@ -736,6 +768,26 @@ async function renderLeadsLog(main, skipRefresh) {
       });
       const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
       if (digitsOnly) window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
+      try {
+        const updated = await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ logFollowup: true }) });
+        lead.last_followup_at = updated.last_followup_at;
+        renderLeadsLog(main, true);
+      } catch (err) { /* WhatsApp already opened; tracker just won't update this once */ }
+    });
+  });
+
+  main.querySelectorAll(".mark-followup-link").forEach((link) => {
+    link.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const lead = LEADS.find((l) => l.id === link.dataset.leadId);
+      if (!lead) return;
+      try {
+        const updated = await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ logFollowup: true }) });
+        lead.last_followup_at = updated.last_followup_at;
+        renderLeadsLog(main, true);
+      } catch (err) {
+        alert("Couldn't save — check your connection and try again.");
+      }
     });
   });
 

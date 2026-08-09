@@ -789,6 +789,13 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
       updates.push(`${f} = $${values.length}`);
     }
   });
+  // logFollowup is a trigger, not a raw field — the timestamp is always set
+  // server-side (never trust a client-supplied clock) so "last followed up"
+  // stays accurate regardless of who's clicking it or from where.
+  if (hasLeads && req.body.logFollowup === true) {
+    values.push(new Date().toISOString());
+    updates.push(`last_followup_at = $${values.length}`);
+  }
   if (updates.length === 0) return res.status(400).json({ error: "Nothing to update" });
 
   values.push(req.params.id);
