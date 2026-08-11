@@ -1501,7 +1501,12 @@ async function renderTeam(main) {
 }
 
 // Shows every event a given team member is booked to perform at, upcoming only.
+// If the viewer can assign artists, they can also record the artist's
+// accept/decline on their behalf here (many artists don't use their own
+// login) — changes are staged locally and only sent on "Save changes" so a
+// stray tap doesn't silently commit a status change.
 async function openTeamMemberEventsModal(member) {
+  const canEdit = canAssignTeam();
   const root = document.getElementById("modalRoot");
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
@@ -1533,21 +1538,69 @@ async function openTeamMemberEventsModal(member) {
   const today = new Date().toISOString().slice(0, 10);
   const upcoming = events.filter((e) => e.date >= today);
 
+  // Pending edits, keyed by assignment id — nothing is sent until Save.
+  const pendingChanges = {};
+
   const rowHtml = (e) => `
-    <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
+    <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
       <div>
         <div>${e.lead_name} <span class="muted small">— ${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""}</span></div>
         <div class="muted small">${fmtDate(e.date)}${e.city ? ` · ${e.city}` : ""}${e.event_time ? ` · Event ${fmtTimeHM(e.event_time)}` : ""}${e.soundcheck_time ? ` · SC ${fmtTimeHM(e.soundcheck_time)}` : ""}</div>
         ${e.venue ? `<div class="muted small">📍 ${e.venue}</div>` : ""}
         ${e.fee_amount !== undefined ? `<div class="muted small mono">Fee: ${e.fee_amount ? inr(e.fee_amount) : "—"}${e.fee_amount ? (e.paid ? " · Paid" : " · Pending") : ""}</div>` : ""}
       </div>
-      <span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status] || e.status}</span>
+      ${canEdit && e.status !== "cancel_requested" ? `
+        <select class="assignment-response-select" data-assignment-id="${e.id}" style="flex-shrink:0; font-size:13px; padding:5px 8px;">
+          <option value="pending" ${e.status === "pending" ? "selected" : ""}>Awaiting response</option>
+          <option value="accepted" ${e.status === "accepted" ? "selected" : ""}>Accepted</option>
+          <option value="declined" ${e.status === "declined" ? "selected" : ""}>Declined</option>
+        </select>
+      ` : `<span class="tag" style="color:${statusColor[e.status]}; flex-shrink:0;">${statusLabel[e.status] || e.status}</span>`}
     </div>
   `;
 
   body.innerHTML = upcoming.length === 0
     ? `<p class="muted small">No upcoming events for ${member.name}.</p>`
     : upcoming.map(rowHtml).join("");
+
+  if (canEdit && upcoming.length > 0) {
+    body.querySelectorAll(".assignment-response-select").forEach((select) => {
+      select.dataset.originalValue = select.value;
+      select.addEventListener("change", () => {
+        const id = select.dataset.assignmentId;
+        if (select.value === select.dataset.originalValue) {
+          delete pendingChanges[id];
+        } else {
+          pendingChanges[id] = select.value;
+        }
+        saveBtn.disabled = Object.keys(pendingChanges).length === 0;
+      });
+    });
+
+    const foot = root.querySelector(".modal-foot");
+    foot.innerHTML = `<button class="btn-ghost" id="cancelModal">Close</button><button class="btn-primary" id="saveResponsesBtn" disabled>Save changes</button>`;
+    root.querySelector("#cancelModal").addEventListener("click", close);
+    const saveBtn = root.querySelector("#saveResponsesBtn");
+    saveBtn.addEventListener("click", async () => {
+      const ids = Object.keys(pendingChanges);
+      if (ids.length === 0) return;
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving…";
+      try {
+        await Promise.all(ids.map((id) =>
+          api(`/api/assignments/${id}/mark-response`, { method: "PATCH", body: JSON.stringify({ status: pendingChanges[id] }) })
+        ));
+        await refreshLeads();
+        TEAM = await api("/api/team");
+        close();
+        renderMain();
+      } catch (err) {
+        alert(err.message);
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save changes";
+      }
+    });
+  }
 }
 
 
