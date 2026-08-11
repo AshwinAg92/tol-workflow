@@ -941,7 +941,7 @@ async function renderLeadsLog(main, skipRefresh) {
 // editable draft in the exact wording he uses, tweaks anything he wants,
 // then sends via WhatsApp/email. No code change ever needed to adjust
 // wording, amount, or format — the textarea is the source of truth.
-function buildQuoteText({ eventType, format, location, date, guests, duration, setPieces, formatType, charges, firstName }) {
+function buildQuoteText({ eventType, format, location, date, occasion, guests, duration, setPieces, formatType, charges, firstName }) {
   const amountLine = charges ? `₹${Number(charges).toLocaleString("en-IN")}/-` : "________";
   const isPheras = (format || "").trim().toLowerCase() === "musical pheras";
   const sessionConditions = isPheras
@@ -955,7 +955,7 @@ Hi {firstName}! Thank you for considering us for your event — here are the det
 
 📍 *Location:* {location}
 📅 *Date:* {date}
-👥 *Guests:* {guests}
+${occasion ? "🎉 *Occasion:* {occasion}\n" : ""}👥 *Guests:* {guests}
 ${isPheras ? "" : "⏱️ *Duration:* {duration}\n"}
 *PERFORMANCE DETAILS*
 🎸 Pcs (No. of Musicians): {setPieces}
@@ -986,6 +986,7 @@ Warmly,
     formatUpper: (format || "").toUpperCase(),
     location: location || "",
     date: date || "",
+    occasion: occasion || "",
     guests: guests || "",
     duration: duration || "75-90 Minutes",
     setPieces: setPieces || "",
@@ -1018,6 +1019,8 @@ async function renderQuotation(main) {
           <div><label>Location</label><input id="qLocation" placeholder="e.g. Siliguri" /></div>
           <div><label>Date</label><input id="qDate" placeholder="e.g. 14th September 2026" /></div>
         </div>
+        <label>Occasion</label>
+        <input id="qOccasion" placeholder="e.g. Wedding" />
         <div class="row-2">
           <div><label>No. of guests</label><input id="qGuests" placeholder="e.g. 80-100" /></div>
           <div id="qDurationWrap"><label>Duration</label><input id="qDuration" value="75-90 Minutes" /></div>
@@ -1101,6 +1104,7 @@ async function renderQuotation(main) {
     if (!lead) return;
     main.querySelector("#qLocation").value = lead.city || "";
     main.querySelector("#qDate").value = fmtDate(lead.date);
+    main.querySelector("#qOccasion").value = lead.occasion || "";
     main.querySelector("#qGuests").value = lead.guest_range || "";
     main.querySelector("#qSubject").value = `Quotation for ${packageName(lead.event_type)} — Together, Out Loud`;
     main.querySelector("#qSet").value = "";
@@ -1145,6 +1149,7 @@ async function renderQuotation(main) {
       format: lead ? packageName(lead.event_type) : "",
       location: main.querySelector("#qLocation").value,
       date: main.querySelector("#qDate").value,
+      occasion: main.querySelector("#qOccasion").value,
       guests: main.querySelector("#qGuests").value,
       duration: isPheras ? "" : main.querySelector("#qDuration").value,
       setPieces: main.querySelector("#qSet").value,
@@ -3790,7 +3795,7 @@ const TEMPLATE_META = {
   },
 };
 
-const QUOTE_TEMPLATE_PLACEHOLDERS = ["firstName", "formatUpper", "location", "date", "guests", "duration", "setPieces", "formatType", "amountLine", "sessionConditions"];
+const QUOTE_TEMPLATE_PLACEHOLDERS = ["firstName", "formatUpper", "location", "date", "occasion", "guests", "duration", "setPieces", "formatType", "amountLine", "sessionConditions"];
 
 // ---------- Website content management (CMS for the marketing site) ----------
 async function renderWebsiteContent(main) {

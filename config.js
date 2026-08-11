@@ -48,7 +48,7 @@ const OCCASIONS = [
   "Corporate Event", "Spiritual Gathering / Satsang", "Temple Event", "Private Celebration", "Other",
 ];
 
-const GUEST_RANGES = ["Under 200", "200–500", "500–1000", "1000+"];
+const GUEST_RANGES = ["Upto 100", "100–300", "300–500", "500–1000", "More than 1000"];
 
 const HOW_HEARD = [
   "Instagram", "Facebook", "YouTube", "Google", "Linktree", "Friend/Family", "Previous Event", "Wedding Planner", "Other",
