@@ -1553,7 +1553,7 @@ async function openTeamMemberEventsModal(member) {
       ${e.venue ? `<div class="muted small">📍 ${e.venue}</div>` : ""}
       ${e.fee_amount !== undefined ? `<div class="muted small mono">Fee: ${e.fee_amount ? inr(e.fee_amount) : "—"}${e.fee_amount ? (e.paid ? " · Paid" : " · Pending") : ""}</div>` : ""}
       ${canEdit && e.status !== "cancel_requested" ? `
-        <select class="assignment-response-select" data-assignment-id="${e.id}" style="width:100%; margin-top:10px; font-size:16px; padding:9px 10px;">
+        <select class="assignment-response-select" data-assignment-id="${e.id}" style="width:auto; display:inline-block; margin-top:8px; font-size:16px; padding:7px 30px 7px 10px;">
           <option value="pending" ${e.status === "pending" ? "selected" : ""}>Awaiting response</option>
           <option value="accepted" ${e.status === "accepted" ? "selected" : ""}>Accepted</option>
           <option value="declined" ${e.status === "declined" ? "selected" : ""}>Declined</option>
