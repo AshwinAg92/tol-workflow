@@ -731,7 +731,7 @@ async function renderLeadsLog(main, skipRefresh) {
                 <span class="muted small">📌 Sticky note</span>
                 <span class="muted small lead-note-status" data-lead-id="${l.id}" style="font-weight:400;"></span>
               </div>
-              <textarea class="lead-note-input" data-lead-id="${l.id}" rows="2" placeholder="Quick note for this lead…" style="width:100%; padding:6px 8px; border:1px solid #E0CE8A; border-radius:5px; font-family:inherit; font-size:13px; background:#FFFDF6; resize:vertical;">${l.notes || ""}</textarea>
+              <textarea class="lead-note-input" data-lead-id="${l.id}" rows="2" placeholder="Quick note for this lead…" style="width:100%; padding:6px 8px; border:1px solid #E0CE8A; border-radius:5px; font-family:inherit; font-size:16px; background:#FFFDF6; resize:vertical;">${l.notes || ""}</textarea>
             </div>
           ` : (l.notes ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#F5F0E4; border-radius:4px;">📝 ${l.notes}</div>` : "")}
           ${l.stage === "Cancelled" && l.cancellation_reason ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#FBEAE7; border-radius:4px; color:#A64B3C;">❌ Cancelled: ${l.cancellation_reason}</div>` : ""}
@@ -1376,7 +1376,7 @@ async function renderTeam(main) {
     ${isAdmin ? `
       <div class="section-label">Broadcast to team</div>
       <div class="card" style="margin-bottom:20px;">
-        <textarea id="announceText" rows="2" placeholder="e.g. Reminder: team meeting tomorrow at 6pm" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:13px;"></textarea>
+        <textarea id="announceText" rows="2" placeholder="e.g. Reminder: team meeting tomorrow at 6pm" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;"></textarea>
         <button class="btn-primary" id="sendAnnounceBtn" style="margin-top:8px;">📢 Send to everyone</button>
         <div id="announceList" style="margin-top:12px;"></div>
       </div>
@@ -1541,27 +1541,56 @@ async function openTeamMemberEventsModal(member) {
   // Pending edits, keyed by assignment id — nothing is sent until Save.
   const pendingChanges = {};
 
+  // Each event is a stacked block (info on top, status control full-width
+  // below) rather than a side-by-side row — a squeezed inline dropdown is
+  // what was forcing the row wider than the screen on mobile. Font sizes
+  // here are kept at 16px+ on the select specifically, since iOS Safari
+  // auto-zooms the whole page on focus for any form control under 16px.
   const rowHtml = (e) => `
-    <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
-      <div>
-        <div>${e.lead_name} <span class="muted small">— ${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""}</span></div>
-        <div class="muted small">${fmtDate(e.date)}${e.city ? ` · ${e.city}` : ""}${e.event_time ? ` · Event ${fmtTimeHM(e.event_time)}` : ""}${e.soundcheck_time ? ` · SC ${fmtTimeHM(e.soundcheck_time)}` : ""}</div>
-        ${e.venue ? `<div class="muted small">📍 ${e.venue}</div>` : ""}
-        ${e.fee_amount !== undefined ? `<div class="muted small mono">Fee: ${e.fee_amount ? inr(e.fee_amount) : "—"}${e.fee_amount ? (e.paid ? " · Paid" : " · Pending") : ""}</div>` : ""}
-      </div>
+    <div class="dash-list-item" style="padding-bottom:14px; margin-bottom:14px; border-bottom:1px solid #EAE3D4;">
+      <div style="font-size:14.5px;">${e.lead_name} <span class="muted small">— ${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""}</span></div>
+      <div class="muted small" style="margin-top:2px;">${fmtDate(e.date)}${e.city ? ` · ${e.city}` : ""}${e.event_time ? ` · Event ${fmtTimeHM(e.event_time)}` : ""}${e.soundcheck_time ? ` · SC ${fmtTimeHM(e.soundcheck_time)}` : ""}</div>
+      ${e.venue ? `<div class="muted small">📍 ${e.venue}</div>` : ""}
+      ${e.fee_amount !== undefined ? `<div class="muted small mono">Fee: ${e.fee_amount ? inr(e.fee_amount) : "—"}${e.fee_amount ? (e.paid ? " · Paid" : " · Pending") : ""}</div>` : ""}
       ${canEdit && e.status !== "cancel_requested" ? `
-        <select class="assignment-response-select" data-assignment-id="${e.id}" style="flex-shrink:0; font-size:13px; padding:5px 8px;">
+        <select class="assignment-response-select" data-assignment-id="${e.id}" style="width:100%; margin-top:10px; font-size:16px; padding:9px 10px;">
           <option value="pending" ${e.status === "pending" ? "selected" : ""}>Awaiting response</option>
           <option value="accepted" ${e.status === "accepted" ? "selected" : ""}>Accepted</option>
           <option value="declined" ${e.status === "declined" ? "selected" : ""}>Declined</option>
         </select>
-      ` : `<span class="tag" style="color:${statusColor[e.status]}; flex-shrink:0;">${statusLabel[e.status] || e.status}</span>`}
+      ` : `<div style="margin-top:8px;"><span class="tag" style="color:${statusColor[e.status]}; font-size:13px;">${statusLabel[e.status] || e.status}</span></div>`}
     </div>
   `;
 
   body.innerHTML = upcoming.length === 0
     ? `<p class="muted small">No upcoming events for ${member.name}.</p>`
     : upcoming.map(rowHtml).join("");
+
+  // WhatsApp button is available whenever there's a phone number and at
+  // least one upcoming event — for both admin and manager, not just
+  // whoever can edit responses, so anyone coordinating with the artist can
+  // fire off the current schedule without retyping it.
+  const buildWhatsAppMessage = () => {
+    const lines = upcoming.map((e, i) =>
+      `${i + 1}. ${e.lead_name} — ${packageName(e.event_type)}${e.city ? ` · ${e.city}` : ""} · ${fmtDate(e.date)}`
+    );
+    return `Hi ${member.name}, here are your upcoming events with Together, Out Loud:\n\n${lines.join("\n")}\n\nPlease confirm your availability for each. Thanks!`;
+  };
+
+  const foot = root.querySelector(".modal-foot");
+  const showWhatsApp = !!member.phone && upcoming.length > 0;
+  foot.innerHTML = `
+    ${showWhatsApp ? `<button class="btn-ghost" id="whatsappEventsBtn" style="margin-right:auto;">📤 WhatsApp list</button>` : ""}
+    <button class="btn-ghost" id="cancelModal">Close</button>
+    ${canEdit && upcoming.length > 0 ? `<button class="btn-primary" id="saveResponsesBtn" disabled>Save changes</button>` : ""}
+  `;
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  if (showWhatsApp) {
+    root.querySelector("#whatsappEventsBtn").addEventListener("click", () => {
+      const digits = (member.phone || "").replace(/\D/g, "");
+      window.open(`https://wa.me/${digits}?text=${encodeURIComponent(buildWhatsAppMessage())}`, "_blank");
+    });
+  }
 
   if (canEdit && upcoming.length > 0) {
     body.querySelectorAll(".assignment-response-select").forEach((select) => {
@@ -1577,9 +1606,6 @@ async function openTeamMemberEventsModal(member) {
       });
     });
 
-    const foot = root.querySelector(".modal-foot");
-    foot.innerHTML = `<button class="btn-ghost" id="cancelModal">Close</button><button class="btn-primary" id="saveResponsesBtn" disabled>Save changes</button>`;
-    root.querySelector("#cancelModal").addEventListener("click", close);
     const saveBtn = root.querySelector("#saveResponsesBtn");
     saveBtn.addEventListener("click", async () => {
       const ids = Object.keys(pendingChanges);
@@ -2894,13 +2920,13 @@ async function renderDashboard(main) {
         <span>📌 Sticky note</span>
         <span class="muted small" id="stickyNoteStatus" style="font-weight:400;"></span>
       </div>
-      <textarea id="stickyNoteInput" rows="3" placeholder="Jot something down for yourself…" style="width:100%; padding:8px 10px; border:1px solid #E0CE8A; border-radius:6px; font-family:inherit; font-size:13px; background:#FFFDF6; resize:vertical;">${stickyNote.content || ""}</textarea>
+      <textarea id="stickyNoteInput" rows="3" placeholder="Jot something down for yourself…" style="width:100%; padding:8px 10px; border:1px solid #E0CE8A; border-radius:6px; font-family:inherit; font-size:16px; background:#FFFDF6; resize:vertical;">${stickyNote.content || ""}</textarea>
     </div>
     ${!canCoordinate ? `
       <div class="card" style="margin-bottom:16px;">
         <div class="section-label">✉️ Message admin</div>
         <p class="muted small" style="margin-top:-4px;">Not about a specific event? Send a quick note here instead.</p>
-        <textarea id="generalMsgInput" rows="2" placeholder="e.g. Running late today, can we talk about next month's schedule..." style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:14px;"></textarea>
+        <textarea id="generalMsgInput" rows="2" placeholder="e.g. Running late today, can we talk about next month's schedule..." style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;"></textarea>
         <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
           <button class="btn-primary" id="sendGeneralMsgBtn">Send</button>
           <span class="muted small" id="generalMsgSentNote" style="display:none; color:#5C8A6B;">Sent ✓</span>
@@ -3263,7 +3289,7 @@ async function renderDocuments(main) {
         <div class="muted mono">${fmtDate(d.uploaded_at.slice(0, 10))}</div>
         ${lead && waPhone ? `<a class="btn-ghost" href="https://wa.me/${waPhone}?text=${waText}" target="_blank" style="font-size:12px; padding:4px 8px;">Send to client</a>` : ""}
         ${showPicker && clientsWithPhone.length > 0 ? `
-          <select class="doc-send-select" data-doc-id="${d.id}" style="font-size:12px; max-width:140px;">
+          <select class="doc-send-select" data-doc-id="${d.id}" style="font-size:16px; max-width:170px;">
             <option value="">Send to…</option>
             ${clientsWithPhone.map((l) => `<option value="${l.id}">${l.name}</option>`).join("")}
           </select>
@@ -3472,7 +3498,7 @@ function openConfirmationMessageModal(lead) {
       <div class="modal-card">
         <div class="modal-head"><h3>Send confirmation to ${lead.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
         <div class="modal-body">
-          <textarea id="ceMessage" rows="8" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:13px;">${message}</textarea>
+          <textarea id="ceMessage" rows="8" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${message}</textarea>
         </div>
         <div class="modal-foot">
           ${waLink ? `<button class="btn-ghost" id="waBtn">💬 WhatsApp</button>` : `<span class="muted small">No phone on file</span>`}
@@ -4264,7 +4290,7 @@ async function renderSettings(main) {
       <summary style="cursor:pointer; font-weight:600;">${meta.label}</summary>
       <p class="muted small" style="margin-top:8px;">${meta.description}</p>
       <p class="muted small">Placeholders you can use: ${meta.placeholders.map((p) => `<code>{${p}}</code>`).join(", ")}</p>
-      <textarea id="tpl-${key}" rows="4" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:13px;">${MESSAGE_TEMPLATES[key] || meta.default}</textarea>
+      <textarea id="tpl-${key}" rows="4" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${MESSAGE_TEMPLATES[key] || meta.default}</textarea>
       <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
         <button class="btn-primary" data-save-template="${key}">Save</button>
         <button class="btn-ghost" data-reset-template="${key}">Reset to default</button>
@@ -4722,7 +4748,7 @@ async function renderPerformerApp() {
     <div class="card" style="margin-bottom:20px;">
       <div class="section-label">✉️ Message admin</div>
       <p class="muted small" style="margin-top:-4px;">Not about a specific event? Send a quick note here instead.</p>
-      <textarea id="generalMsgInput" rows="2" placeholder="e.g. Running late today, can we talk about next month's schedule..." style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:14px;"></textarea>
+      <textarea id="generalMsgInput" rows="2" placeholder="e.g. Running late today, can we talk about next month's schedule..." style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;"></textarea>
       <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
         <button class="btn-primary" id="sendGeneralMsgBtn">Send</button>
         <span class="muted small" id="generalMsgSentNote" style="display:none; color:#5C8A6B;">Sent ✓</span>

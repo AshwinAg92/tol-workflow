@@ -59,7 +59,7 @@ nav { display:flex; flex-direction:column; gap:2px; }
 
 .card { background:#FBF9F5; border-radius:10px; padding:18px; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
 .card label { display:block; font-size:12px; color:#8A8578; margin-bottom:4px; margin-top:10px; }
-.card select, .card input, .card textarea { width:100%; padding:8px 10px; border:1px solid #DDD5C4; border-radius:6px; font-size:13px; font-family:inherit; background:#fff; }
+.card select, .card input, .card textarea { width:100%; padding:8px 10px; border:1px solid #DDD5C4; border-radius:6px; font-size:16px; font-family:inherit; background:#fff; }
 .row-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 
 .section-label { font-size:11.5px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:#8A8578; margin:16px 0 8px; display:flex; align-items:center; gap:6px; }
@@ -84,7 +84,7 @@ nav { display:flex; flex-direction:column; gap:2px; }
 .modal-body .check-row { display:flex; margin:0; padding:6px 0; }
 .modal-body input, .modal-body select, .modal-body textarea {
   display:block; width:100%; padding:9px 10px; border:1px solid #DDD5C4; border-radius:6px;
-  font-size:13px; font-family:inherit; background:#fff; box-sizing:border-box;
+  font-size:16px; font-family:inherit; background:#fff; box-sizing:border-box;
 }
 .password-field { position:relative; }
 .password-field input { padding-right:36px; }
@@ -92,7 +92,7 @@ nav { display:flex; flex-direction:column; gap:2px; }
   position:absolute; right:8px; top:50%; transform:translateY(-50%);
   background:none; border:none; cursor:pointer; font-size:13px; color:#8A8578; padding:2px 4px;
 }
-.modal-foot { display:flex; justify-content:flex-end; gap:10px; padding:14px 18px; border-top:1px solid #EAE3D4; }
+.modal-foot { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:10px; row-gap:10px; padding:14px 18px; border-top:1px solid #EAE3D4; }
 
 .cal-month { font-family:'Fraunces',serif; font-size:16px; margin-bottom:12px; }
 .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
