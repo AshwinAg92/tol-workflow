@@ -97,6 +97,14 @@
     }
     .foot-note { text-align:center; font-size:12px; color:#B29578; margin-top:18px; }
   </style>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-2RBT3KFN0J"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-2RBT3KFN0J');
+  </script>
 </head>
 <body>
   <div class="wrap">
@@ -370,6 +378,7 @@
         if (!res.ok) throw new Error((await res.json()).error || "Something went wrong");
         document.getElementById("leadForm").style.display = "none";
         document.getElementById("doneMsg").style.display = "block";
+        if (typeof gtag === "function") gtag("event", "generate_lead", { event_category: "enquiry_form" });
       } catch (err) {
         errorMsg.textContent = err.message;
         errorMsg.style.display = "block";
