@@ -147,6 +147,11 @@
     transition:transform .2s, background .2s;
   }
   .nav-cta:hover{background:var(--ember); transform:rotate(0.5deg) scale(1.03);}
+  .nav-login-link{
+    font-family:'Space Grotesk'; font-weight:600; font-size:13px; color:var(--muted);
+    padding-bottom:3px; border-bottom:2px solid transparent; transition:border-color .2s, color .2s;
+  }
+  .nav-login-link:hover{color:var(--terracotta); border-color:var(--terracotta);}
   .nav-links{display:flex; align-items:center; gap:18px; flex-wrap:nowrap;}
   .nav-links a{
     font-family:'Space Grotesk'; font-weight:600; font-size:13.5px; color:var(--ink);
@@ -514,6 +519,7 @@
 
   @media (max-width:1040px){
     .nav-links{display:none;}
+    .nav-login-link{display:none;}
     .mobile-menu-btn{display:block;}
     .mobile-menu-panel{display:flex;}
   }
@@ -562,6 +568,7 @@
     <a href="#contact">Contact Us</a>
   </div>
   <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Open menu" aria-expanded="false">☰</button>
+  <a href="/login" class="nav-login-link" title="Team Login">Login</a>
   <a class="nav-cta" href="/lead-form.html">Enquire Now</a>
 </nav>
 
@@ -576,7 +583,8 @@
   <a href="#pressSection" id="mobileNavPressLink" style="display:none;">Press</a>
   <a href="#faq">FAQ</a>
   <a href="#contact">Contact Us</a>
-  <a class="btn-primary" href="/lead-form.html" style="margin-top:8px; text-align:center;">Enquire Now →</a>
+  <a href="/login" style="margin-top:8px; text-align:center; color:var(--muted); font-weight:600; font-size:13px;">Team Login</a>
+  <a class="btn-primary" href="/lead-form.html" style="margin-top:4px; text-align:center;">Enquire Now →</a>
 </div>
 
 <div class="mobile-menu-overlay" id="mobileMenuOverlay"></div>
@@ -932,7 +940,7 @@
     <a href="https://www.youtube.com/@togetheroutloud" target="_blank" rel="noopener noreferrer">YouTube</a> ·
     <a href="mailto:togetheroutloudclub@gmail.com">togetheroutloudclub@gmail.com</a>
   </div>
-  <div class="foot-copy">© <span id="yr"></span> Together, Out Loud. All rights reserved. · <a href="/login" style="color:inherit; opacity:0.7;">Team Login</a></div>
+  <div class="foot-copy">© <span id="yr"></span> Together, Out Loud. All rights reserved.</div>
 </footer>
 
 <script>
