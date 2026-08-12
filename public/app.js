@@ -30,14 +30,31 @@ const NAV = [
   { id: "dashboard", label: "Dashboard" },
   { id: "leads", label: "Leads" },
   { id: "quotation", label: "Quotation" },
-  { id: "tasks", label: "Tasks & Chats" },
-  { id: "documents", label: "Documents" },
-  { id: "calendar", label: "Calendar" },
-  { id: "team", label: "Team" },
   { id: "accounts", label: "Accounts" },
+  { id: "tasks", label: "Tasks & Chats" },
+  { id: "calendar", label: "Calendar" },
+  { id: "documents", label: "Documents" },
+  { id: "team", label: "Team" },
   { id: "website", label: "Website" },
   { id: "settings", label: "Settings" },
 ];
+// Purely visual grouping for the sidebar — a small uppercase label is shown
+// once before the first item of each group so the nav reads as a few
+// clusters (Overview / Pipeline / Operations / Admin) instead of one flat
+// list of ten equally-weighted items.
+const NAV_GROUPS = {
+  dashboard: "Overview",
+  leads: "Pipeline",
+  quotation: "Pipeline",
+  accounts: "Pipeline",
+  myevents: "Pipeline",
+  tasks: "Operations",
+  calendar: "Operations",
+  documents: "Operations",
+  team: "Operations",
+  website: "Admin",
+  settings: "Admin",
+};
 // "settings" and "website" are admin-only (handled directly in renderNav) and aren't
 // something a manager can be granted piecemeal, so they're excluded from the staff permission checklist.
 const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "dashboard" && n.id !== "settings" && n.id !== "website");
@@ -529,7 +546,13 @@ function renderNav() {
     visibleNav = [visibleNav[0], { id: "myevents", label: "My Events" }, ...visibleNav.slice(1)];
   }
   if (!visibleNav.some((n) => n.id === currentTab)) currentTab = "dashboard";
+  let lastGroup = null;
   visibleNav.forEach(({ id, label }) => {
+    const group = NAV_GROUPS[id];
+    if (group && group !== lastGroup) {
+      nav.appendChild(el(`<div class="nav-group-label">${group}</div>`));
+      lastGroup = group;
+    }
     const btn = el(`<button class="nav-item${currentTab === id ? " nav-item-active" : ""}">${label}</button>`);
     btn.addEventListener("click", () => {
       currentTab = id;
@@ -545,6 +568,91 @@ function renderNav() {
   `;
   const logoutLink = document.getElementById("logoutLink");
   if (logoutLink) logoutLink.addEventListener("click", (e) => { e.preventDefault(); handleLogout(); });
+}
+
+// ---------- Global search (sidebar) ----------
+// Searches across leads (by name/city/phone) and team members (by name) in
+// memory — both are already loaded at login — and jumps straight to the
+// right place on click, so finding something doesn't require first guessing
+// which tab it lives in.
+function initGlobalSearch() {
+  const input = document.getElementById("globalSearchInput");
+  const results = document.getElementById("globalSearchResults");
+  if (!input || !results) return;
+
+  const close = () => { results.style.display = "none"; results.innerHTML = ""; };
+
+  input.addEventListener("input", () => {
+    const q = input.value.trim().toLowerCase();
+    if (q.length < 2) return close();
+
+    const leadMatches = LEADS.filter((l) =>
+      (l.name || "").toLowerCase().includes(q) ||
+      (l.city || "").toLowerCase().includes(q) ||
+      (l.phone || "").includes(q)
+    ).slice(0, 6);
+    const teamMatches = TEAM.filter((m) => (m.name || "").toLowerCase().includes(q)).slice(0, 5);
+
+    if (leadMatches.length === 0 && teamMatches.length === 0) {
+      results.innerHTML = `<div class="global-search-empty">No matches for "${input.value.trim()}"</div>`;
+      results.style.display = "block";
+      return;
+    }
+
+    results.innerHTML = `
+      ${leadMatches.length > 0 ? `
+        <div class="global-search-group-label">Leads</div>
+        ${leadMatches.map((l) => `
+          <button class="global-search-result" data-goto-lead="${l.id}">
+            <span>${l.name}</span>
+            <span class="muted small">${l.city || ""}${l.date ? ` · ${fmtDate(l.date)}` : ""}</span>
+          </button>
+        `).join("")}
+      ` : ""}
+      ${teamMatches.length > 0 ? `
+        <div class="global-search-group-label">Team</div>
+        ${teamMatches.map((m) => `
+          <button class="global-search-result" data-goto-team="${m.id}">
+            <span>${m.name}</span>
+            <span class="muted small">${m.role || ""}</span>
+          </button>
+        `).join("")}
+      ` : ""}
+    `;
+    results.style.display = "block";
+
+    results.querySelectorAll("[data-goto-lead]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const lead = LEADS.find((l) => l.id === btn.dataset.gotoLead);
+        if (!lead || !hasLeadsAccess()) { close(); return; }
+        leadsSearch = lead.name;
+        leadsCityFilter = "";
+        leadsStageFilter = "all";
+        leadsDateFilter = "";
+        currentTab = "leads";
+        input.value = "";
+        close();
+        renderNav();
+        renderMain();
+        closeMobileSidebar();
+      });
+    });
+    results.querySelectorAll("[data-goto-team]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const member = TEAM.find((m) => m.id === btn.dataset.gotoTeam);
+        if (!member) { close(); return; }
+        input.value = "";
+        close();
+        closeMobileSidebar();
+        openTeamMemberEventsModal(member);
+      });
+    });
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".global-search-wrap")) close();
+  });
+  input.addEventListener("focus", () => { if (input.value.trim().length >= 2) input.dispatchEvent(new Event("input")); });
 }
 
 // ---------- Mobile sidebar toggle ----------
@@ -5103,4 +5211,5 @@ if ("serviceWorker" in navigator) {
   renderMain();
   initMobileNav();
   initLogoNav();
+  initGlobalSearch();
 })();
