@@ -4669,6 +4669,9 @@ function performerCalendarMarkup(events) {
   `;
 }
 
+let performerTab = "home";
+let performerData = null;
+
 async function renderPerformerApp() {
   const app = document.querySelector(".tol-app");
   app.innerHTML = `
@@ -4681,6 +4684,7 @@ async function renderPerformerApp() {
         </div>
         <a href="#" id="performerLogout" style="margin-left:auto; color:#C1602B;">Log out</a>
       </div>
+      <div class="performer-tabs" id="performerTabs"></div>
       <div class="performer-body" id="performerBody">
         <p class="muted">Loading your events…</p>
       </div>
@@ -4689,10 +4693,50 @@ async function renderPerformerApp() {
   document.getElementById("performerLogout").addEventListener("click", (e) => { e.preventDefault(); handleLogout(); });
 
   CONFIG = await api("/api/config");
+  await refreshPerformerData();
+  renderPerformerTabBar();
+  renderPerformerTabContent();
+}
+
+async function refreshPerformerData() {
   const [events, tasks, announcements, notifications] = await Promise.all([
     api("/api/my/events"), api("/api/my/tasks"), api("/api/announcements"), api("/api/my/notifications"),
   ]);
+  performerData = { events, tasks, announcements, notifications };
+}
+
+function renderPerformerTabBar() {
+  const tabsEl = document.getElementById("performerTabs");
+  if (!tabsEl || !performerData) return;
+  const { events, tasks, notifications, announcements } = performerData;
+  const activeEvents = events.filter((e) => e.stage !== "Cancelled");
+  const pendingCount = activeEvents.filter((e) => e.status === "pending").length;
+  const openTasksCount = tasks.filter((t) => !t.done).length;
+  const unreadCount = notifications.length + announcements.length;
+  const tabs = [
+    { id: "home", label: "Home" },
+    { id: "events", label: "Events", badge: pendingCount },
+    { id: "tasks", label: "Tasks", badge: openTasksCount },
+    { id: "messages", label: "Messages", badge: unreadCount },
+  ];
+  tabsEl.innerHTML = tabs.map((t) => `
+    <button class="performer-tab${performerTab === t.id ? " active" : ""}" data-performer-tab="${t.id}">
+      ${t.label}${t.badge > 0 ? `<span class="tab-dot"></span>` : ""}
+    </button>
+  `).join("");
+  tabsEl.querySelectorAll("[data-performer-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      performerTab = btn.dataset.performerTab;
+      renderPerformerTabBar();
+      renderPerformerTabContent();
+    });
+  });
+}
+
+function renderPerformerTabContent() {
   const body = document.getElementById("performerBody");
+  if (!body || !performerData) return;
+  const { events, tasks, announcements, notifications } = performerData;
 
   const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined", cancel_requested: "Cancellation requested" };
   const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C", cancel_requested: "#B6752C" };
@@ -4715,185 +4759,227 @@ async function renderPerformerApp() {
     const d = new Date(e.date + "T00:00:00");
     return d >= today && d <= weekAhead;
   });
+  const pendingEvents = upcomingEvents.filter((e) => e.status === "pending");
 
-  body.innerHTML = `
-    ${soonEvents.length > 0 ? `
-      <div class="section-label">⏰ Coming up this week</div>
-      <div class="card reminder-flash" style="margin-bottom:20px;">
-        ${soonEvents.map((e) => `
-          <div class="dash-list-item">
-            <div><strong>${e.lead_name}</strong> — ${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""}</div>
-            <div class="muted small">${fmtDate(e.date)}${e.city ? ` · ${e.city}` : ""}</div>
-          </div>
-        `).join("")}
+  const eventCardHtml = (e) => `
+    <div class="card performer-event-card">
+      <div class="performer-event-head">
+        <div>
+          <div class="team-name">${e.lead_name}</div>
+          <div class="muted small">${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""} · ${fmtDate(e.date)} · ${e.city || ""}</div>
+        </div>
+        ${e.stage === "Cancelled"
+          ? `<span class="tag" style="color:#A64B3C; font-weight:700;">⚠ CANCELLED</span>`
+          : `<span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status]}</span>`}
       </div>
-    ` : ""}
-    ${notifications.length > 0 ? `
-      <div class="section-label">🔔 Updates for you</div>
-      <div class="card" id="perfNotifCard" style="margin-bottom:20px; border-color:#C1602B;">
-        ${notifications.map((n) => `
-          <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
-            <div><div>${n.message}</div><div class="muted small">${fmtDateTime(n.created_at)}</div></div>
-            <button class="icon-btn" data-dismiss-notif="${n.id}">✕</button>
-          </div>
-        `).join("")}
+      ${e.stage === "Cancelled" ? `<p class="muted small" style="color:#A64B3C; margin-top:4px;">This event has been cancelled by the team — no action needed.</p>` : `
+      ${e.event_time || e.soundcheck_time ? `
+      <div class="performer-event-row">
+        <span class="muted small">Timing:</span>
+        <span>${e.soundcheck_time ? `Sound check ${fmtTimeHM(e.soundcheck_time)}` : ""}${e.soundcheck_time && e.event_time ? " · " : ""}${e.event_time ? `Event ${fmtTimeHM(e.event_time)}` : ""}</span>
       </div>
-    ` : ""}
-    ${announcements.length > 0 ? `
-      <div class="section-label">📢 Announcements</div>
-      <div class="card" style="margin-bottom:20px; border-color:#C1602B;">
-        ${announcements.map((a) => `
-          <div class="dash-list-item">
-            <div>${a.message}</div>
-            <div class="muted small">${a.created_by} · ${fmtDateTime(a.created_at)}</div>
-          </div>
-        `).join("")}
+      ` : ""}
+      ${e.venue ? `
+      <div class="performer-event-row">
+        <span class="muted small">Venue:</span>
+        <span>${e.venue}</span>
       </div>
-    ` : ""}
-    <div class="card" style="margin-bottom:20px;">
-      <div class="section-label">✉️ Message admin</div>
-      <p class="muted small" style="margin-top:-4px;">Not about a specific event? Send a quick note here instead.</p>
-      <textarea id="generalMsgInput" rows="2" placeholder="e.g. Running late today, can we talk about next month's schedule..." style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;"></textarea>
-      <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
-        <button class="btn-primary" id="sendGeneralMsgBtn">Send</button>
-        <span class="muted small" id="generalMsgSentNote" style="display:none; color:#5C8A6B;">Sent ✓</span>
+      ` : ""}
+      <div class="performer-event-row">
+        <span class="muted small">Payment:</span>
+        <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
+        ${e.paid && e.payment_date ? `<span class="muted small">on ${fmtDate(e.payment_date)}${e.payment_mode ? ` via ${e.payment_mode}` : ""}</span>` : ""}
       </div>
-    </div>
-    <div class="section-label">Calendar</div>
-    <div class="card" id="perfCalCard" style="margin-bottom:20px;">${performerCalendarMarkup(activeEvents)}</div>
-
-    <div class="section-label">Your events</div>
-    ${upcomingEvents.length === 0 ? `<p class="muted small" style="margin-bottom:20px;">No upcoming events assigned to you.</p>` : upcomingEvents.map((e) => `
-      <div class="card performer-event-card">
-        <div class="performer-event-head">
-          <div>
-            <div class="team-name">${e.lead_name}</div>
-            <div class="muted small">${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""} · ${fmtDate(e.date)} · ${e.city || ""}</div>
-          </div>
-          ${e.stage === "Cancelled"
-            ? `<span class="tag" style="color:#A64B3C; font-weight:700;">⚠ CANCELLED</span>`
-            : `<span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status]}</span>`}
+      ${e.status === "cancel_requested" ? `
+        <p class="muted small" style="margin-top:8px;">Waiting on admin to review your cancellation request.</p>
+      ` : `
+        <div style="margin-top:10px;">
+          <label class="muted small">Your response</label>
+          <select class="respond-select" data-respond-select="${e.id}">
+            <option value="pending" ${e.status === "pending" ? "selected" : ""}>Pending — not responded yet</option>
+            <option value="accepted" ${e.status === "accepted" ? "selected" : ""}>Accept</option>
+            <option value="declined" ${e.status === "declined" ? "selected" : ""}>Decline</option>
+          </select>
         </div>
-        ${e.stage === "Cancelled" ? `<p class="muted small" style="color:#A64B3C; margin-top:4px;">This event has been cancelled by the team — no action needed.</p>` : `
-        ${e.event_time || e.soundcheck_time ? `
-        <div class="performer-event-row">
-          <span class="muted small">Timing:</span>
-          <span>${e.soundcheck_time ? `Sound check ${fmtTimeHM(e.soundcheck_time)}` : ""}${e.soundcheck_time && e.event_time ? " · " : ""}${e.event_time ? `Event ${fmtTimeHM(e.event_time)}` : ""}</span>
-        </div>
-        ` : ""}
-        ${e.venue ? `
-        <div class="performer-event-row">
-          <span class="muted small">Venue:</span>
-          <span>${e.venue}</span>
-        </div>
-        ` : ""}
-        <div class="performer-event-row">
-          <span class="muted small">Payment:</span>
-          <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
-          ${e.paid && e.payment_date ? `<span class="muted small">on ${fmtDate(e.payment_date)}${e.payment_mode ? ` via ${e.payment_mode}` : ""}</span>` : ""}
-        </div>
-        ${e.status === "cancel_requested" ? `
-          <p class="muted small" style="margin-top:8px;">Waiting on admin to review your cancellation request.</p>
-        ` : `
-          <div style="margin-top:10px;">
-            <label class="muted small">Your response</label>
-            <select class="respond-select" data-respond-select="${e.id}">
-              <option value="pending" ${e.status === "pending" ? "selected" : ""}>Pending — not responded yet</option>
-              <option value="accepted" ${e.status === "accepted" ? "selected" : ""}>Accept</option>
-              <option value="declined" ${e.status === "declined" ? "selected" : ""}>Decline</option>
-            </select>
-          </div>
-        `}
-        ${e.status === "accepted" ? `
-          <button class="btn-ghost full" data-request-cancel="${e.id}" style="margin-top:8px; color:#A64B3C;">Request to cancel</button>
-        ` : ""}
-        <button class="btn-ghost full" data-chat-lead="${e.lead_id}" data-chat-name="${e.lead_name}" style="margin-top:10px;">💬 Event chat</button>
-        `}
-      </div>
-    `).join("")}
-
-    ${recentPastEvents.length > 0 ? `
-      <div class="section-label" style="margin-top:20px;">Recently completed — pay status</div>
-      ${recentPastEvents.map((e) => `
-        <div class="card performer-event-card" style="margin-bottom:10px;">
-          <div class="performer-event-head">
-            <div>
-              <div class="team-name">${e.lead_name}</div>
-              <div class="muted small">${packageName(e.event_type)} · ${fmtDate(e.date)}</div>
-            </div>
-            <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
-          </div>
-          <div class="performer-event-row">
-            <span class="muted small">Artist fee:</span>
-            <span class="mono">${e.fee_amount ? inr(e.fee_amount) : "—"}</span>
-          </div>
-          ${e.paid && e.payment_date ? `<div class="muted small">Paid on ${fmtDate(e.payment_date)}${e.payment_mode ? ` via ${e.payment_mode}` : ""}</div>` : ""}
-        </div>
-      `).join("")}
-    ` : ""}
-
-    <div class="section-label" style="margin-top:20px;">Your tasks</div>
-    <div class="card" id="perfTasksCard" style="margin-bottom:20px;">
-      ${tasks.length === 0 ? `<p class="muted small">No tasks assigned to you.</p>` : tasks.map((t) => `
-        <div class="task-row${t.done ? " done" : ""}">
-          <input type="checkbox" data-task-id="${t.id}" ${t.done ? "checked" : ""} />
-          <div class="task-title">${t.title}</div>
-          <div class="task-meta">${t.due_date ? fmtDate(t.due_date) : "No due date"}</div>
-        </div>
-      `).join("")}
-    </div>
-
-    <div class="section-label">Payment summary</div>
-    <div class="dash-stats" style="grid-template-columns:1fr 1fr;">
-      <div class="card dash-stat"><div class="muted">Paid</div><div class="mono big" style="color:#5C8A6B">${paidCount}</div></div>
-      <div class="card dash-stat"><div class="muted">Unpaid</div><div class="mono big" style="color:#A64B3C">${unpaidCount}</div></div>
+      `}
+      ${e.status === "accepted" ? `
+        <button class="btn-ghost full" data-request-cancel="${e.id}" style="margin-top:8px; color:#A64B3C;">Request to cancel</button>
+      ` : ""}
+      <button class="btn-ghost full" data-chat-lead="${e.lead_id}" data-chat-name="${e.lead_name}" style="margin-top:10px;">💬 Event chat</button>
+      `}
     </div>
   `;
 
-  wireCalendarGridPerformer(document.getElementById("perfCalCard"), activeEvents);
-
-  body.querySelectorAll("[data-dismiss-notif]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      await api(`/api/my/notifications/${btn.dataset.dismissNotif}`, { method: "DELETE" });
-      btn.closest(".dash-list-item").remove();
-      if (!document.querySelector("#perfNotifCard .dash-list-item")) {
-        document.querySelector("#perfNotifCard")?.previousElementSibling?.remove();
-        document.querySelector("#perfNotifCard")?.remove();
-      }
-    });
-  });
-
-  const perfGeneralMsgBtn = body.querySelector("#sendGeneralMsgBtn");
-  if (perfGeneralMsgBtn) {
-    perfGeneralMsgBtn.addEventListener("click", async () => {
-      const input = body.querySelector("#generalMsgInput");
-      const msgBody = input.value.trim();
-      if (!msgBody) return;
-      perfGeneralMsgBtn.disabled = true;
-      try {
-        await api("/api/messages/general", { method: "POST", body: JSON.stringify({ body: msgBody }) });
-        input.value = "";
-        const note = body.querySelector("#generalMsgSentNote");
-        note.style.display = "inline";
-        setTimeout(() => { note.style.display = "none"; }, 2000);
-      } catch (err) {
-        alert(err.message);
-      } finally {
-        perfGeneralMsgBtn.disabled = false;
-      }
+  if (performerTab === "home") {
+    body.innerHTML = `
+      ${pendingEvents.length > 0 ? `
+        <div class="card" style="margin-bottom:20px; border-color:#C1602B; background:#FBF3D9;">
+          <strong>${pendingEvents.length} event${pendingEvents.length > 1 ? "s" : ""} waiting on your response.</strong>
+          <button class="btn-ghost" style="margin-top:8px;" data-goto-tab="events">Review now →</button>
+        </div>
+      ` : ""}
+      ${soonEvents.length > 0 ? `
+        <div class="section-label">⏰ Coming up this week</div>
+        <div class="card reminder-flash" style="margin-bottom:20px;">
+          ${soonEvents.map((e) => `
+            <div class="dash-list-item">
+              <div><strong>${e.lead_name}</strong> — ${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""}</div>
+              <div class="muted small">${fmtDate(e.date)}${e.city ? ` · ${e.city}` : ""}</div>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
+      <div class="section-label">Payment summary</div>
+      <div class="dash-stats" style="grid-template-columns:1fr 1fr; margin-bottom:20px;">
+        <div class="card dash-stat"><div class="muted">Paid</div><div class="mono big" style="color:#5C8A6B">${paidCount}</div></div>
+        <div class="card dash-stat"><div class="muted">Unpaid</div><div class="mono big" style="color:#A64B3C">${unpaidCount}</div></div>
+      </div>
+      <div class="section-label">Calendar</div>
+      <div class="card" id="perfCalCard" style="margin-bottom:20px;">${performerCalendarMarkup(activeEvents)}</div>
+    `;
+    wireCalendarGridPerformer(document.getElementById("perfCalCard"), activeEvents);
+    body.querySelectorAll("[data-goto-tab]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        performerTab = btn.dataset.gotoTab;
+        renderPerformerTabBar();
+        renderPerformerTabContent();
+      });
     });
   }
 
+  else if (performerTab === "events") {
+    body.innerHTML = `
+      <div class="section-label">Your events</div>
+      ${upcomingEvents.length === 0 ? `<p class="muted small" style="margin-bottom:20px;">No upcoming events assigned to you.</p>` : upcomingEvents.map(eventCardHtml).join("")}
+      ${recentPastEvents.length > 0 ? `
+        <div class="section-label" style="margin-top:20px;">Recently completed — pay status</div>
+        ${recentPastEvents.map((e) => `
+          <div class="card performer-event-card" style="margin-bottom:10px;">
+            <div class="performer-event-head">
+              <div>
+                <div class="team-name">${e.lead_name}</div>
+                <div class="muted small">${packageName(e.event_type)} · ${fmtDate(e.date)}</div>
+              </div>
+              <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
+            </div>
+            <div class="performer-event-row">
+              <span class="muted small">Artist fee:</span>
+              <span class="mono">${e.fee_amount ? inr(e.fee_amount) : "—"}</span>
+            </div>
+            ${e.paid && e.payment_date ? `<div class="muted small">Paid on ${fmtDate(e.payment_date)}${e.payment_mode ? ` via ${e.payment_mode}` : ""}</div>` : ""}
+          </div>
+        `).join("")}
+      ` : ""}
+    `;
+    wirePerformerEventActions(body);
+  }
+
+  else if (performerTab === "tasks") {
+    body.innerHTML = `
+      <div class="section-label">Your tasks</div>
+      <div class="card" id="perfTasksCard">
+        ${tasks.length === 0 ? `<p class="muted small">No tasks assigned to you.</p>` : tasks.map((t) => `
+          <div class="task-row${t.done ? " done" : ""}">
+            <input type="checkbox" data-task-id="${t.id}" ${t.done ? "checked" : ""} />
+            <div class="task-title">${t.title}</div>
+            <div class="task-meta">${t.due_date ? fmtDate(t.due_date) : "No due date"}</div>
+          </div>
+        `).join("")}
+      </div>
+    `;
+    body.querySelectorAll("[data-task-id]").forEach((cb) => {
+      cb.addEventListener("change", async () => {
+        await api(`/api/tasks/${cb.dataset.taskId}`, { method: "PATCH", body: JSON.stringify({ done: cb.checked }) });
+        await refreshPerformerData();
+        renderPerformerTabBar();
+        renderPerformerTabContent();
+      });
+    });
+  }
+
+  else if (performerTab === "messages") {
+    body.innerHTML = `
+      ${notifications.length > 0 ? `
+        <div class="section-label">🔔 Updates for you</div>
+        <div class="card" id="perfNotifCard" style="margin-bottom:20px; border-color:#C1602B;">
+          ${notifications.map((n) => `
+            <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
+              <div><div>${n.message}</div><div class="muted small">${fmtDateTime(n.created_at)}</div></div>
+              <button class="icon-btn" data-dismiss-notif="${n.id}">✕</button>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
+      ${announcements.length > 0 ? `
+        <div class="section-label">📢 Announcements</div>
+        <div class="card" style="margin-bottom:20px; border-color:#C1602B;">
+          ${announcements.map((a) => `
+            <div class="dash-list-item">
+              <div>${a.message}</div>
+              <div class="muted small">${a.created_by} · ${fmtDateTime(a.created_at)}</div>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
+      ${notifications.length === 0 && announcements.length === 0 ? `<p class="muted small" style="margin-bottom:20px;">Nothing new from the team right now.</p>` : ""}
+      <div class="card" style="margin-bottom:20px;">
+        <div class="section-label">✉️ Message admin</div>
+        <p class="muted small" style="margin-top:-4px;">Not about a specific event? Send a quick note here instead.</p>
+        <textarea id="generalMsgInput" rows="2" placeholder="e.g. Running late today, can we talk about next month's schedule..." style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;"></textarea>
+        <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+          <button class="btn-primary" id="sendGeneralMsgBtn">Send</button>
+          <span class="muted small" id="generalMsgSentNote" style="display:none; color:#5C8A6B;">Sent ✓</span>
+        </div>
+      </div>
+    `;
+
+    body.querySelectorAll("[data-dismiss-notif]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await api(`/api/my/notifications/${btn.dataset.dismissNotif}`, { method: "DELETE" });
+        performerData.notifications = performerData.notifications.filter((n) => n.id !== btn.dataset.dismissNotif);
+        renderPerformerTabBar();
+        renderPerformerTabContent();
+      });
+    });
+
+    const perfGeneralMsgBtn = body.querySelector("#sendGeneralMsgBtn");
+    if (perfGeneralMsgBtn) {
+      perfGeneralMsgBtn.addEventListener("click", async () => {
+        const input = body.querySelector("#generalMsgInput");
+        const msgBody = input.value.trim();
+        if (!msgBody) return;
+        perfGeneralMsgBtn.disabled = true;
+        try {
+          await api("/api/messages/general", { method: "POST", body: JSON.stringify({ body: msgBody }) });
+          input.value = "";
+          const note = body.querySelector("#generalMsgSentNote");
+          note.style.display = "inline";
+          setTimeout(() => { note.style.display = "none"; }, 2000);
+        } catch (err) {
+          alert(err.message);
+        } finally {
+          perfGeneralMsgBtn.disabled = false;
+        }
+      });
+    }
+  }
+}
+
+function wirePerformerEventActions(body) {
   body.querySelectorAll("[data-respond-select]").forEach((sel) => {
     sel.addEventListener("change", async () => {
       const value = sel.value;
-      if (value === "pending") { renderPerformerApp(); return; } // no valid way back to pending, just refresh
+      if (value === "pending") { await refreshPerformerData(); renderPerformerTabBar(); renderPerformerTabContent(); return; } // no valid way back to pending, just refresh
       try {
         await api(`/api/my/assignments/${sel.dataset.respondSelect}/respond`, { method: "POST", body: JSON.stringify({ status: value }) });
-        renderPerformerApp();
+        await refreshPerformerData();
+        renderPerformerTabBar();
+        renderPerformerTabContent();
       } catch (err) {
         alert(err.message);
-        renderPerformerApp();
+        await refreshPerformerData();
+        renderPerformerTabBar();
+        renderPerformerTabContent();
       }
     });
   });
@@ -4904,7 +4990,9 @@ async function renderPerformerApp() {
       if (!reason.trim()) return alert("A reason is required.");
       try {
         await api(`/api/my/assignments/${btn.dataset.requestCancel}/request-cancel`, { method: "POST", body: JSON.stringify({ reason }) });
-        renderPerformerApp();
+        await refreshPerformerData();
+        renderPerformerTabBar();
+        renderPerformerTabContent();
       } catch (err) {
         alert(err.message);
       }
@@ -4912,12 +5000,6 @@ async function renderPerformerApp() {
   });
   body.querySelectorAll("[data-chat-lead]").forEach((btn) => {
     btn.addEventListener("click", () => openEventChat(btn.dataset.chatLead, btn.dataset.chatName));
-  });
-  body.querySelectorAll("[data-task-id]").forEach((cb) => {
-    cb.addEventListener("change", async () => {
-      await api(`/api/tasks/${cb.dataset.taskId}`, { method: "PATCH", body: JSON.stringify({ done: cb.checked }) });
-      renderPerformerApp();
-    });
   });
 }
 
