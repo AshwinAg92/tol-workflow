@@ -14,6 +14,7 @@ let leadsDateFilter = "";
 let leadsSortBy = "date";
 let leadsSelected = new Set();
 let quotationLeadId = null;
+let reopenQuoteDraft = null; // one-shot: set when reopening a past quote from history for editing
 let calYear = new Date().getFullYear(), calMonth = new Date().getMonth() + 1; // defaults to the real current month
 
 const STAGE_COLOR = {
@@ -737,6 +738,105 @@ function renderLeadsBulkBar(main) {
   });
 }
 
+// A single consolidated view of everything about one lead — contact info,
+// what they told us on the enquiry form, quotes sent, and financials if
+// booked — instead of having to piece it together from the Edit modal,
+// Quotation tab, and sticky note separately.
+async function openLeadDetailModal(lead) {
+  const root = document.getElementById("modalRoot");
+  const isConfirmedOrDone = lead.stage === "Confirmed" || lead.stage === "Completed";
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h3>${lead.name}</h3>
+          <button class="icon-btn" id="closeModal">✕</button>
+        </div>
+        <div class="modal-body">
+          <span class="tag" style="color:${STAGE_COLOR[lead.stage]};">${lead.stage}</span>
+          <div class="lead-detail-section">
+            <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Contact</div>
+            ${lead.phone ? `<div>📞 ${lead.phone}</div>` : ""}
+            ${lead.whatsapp_number && lead.whatsapp_number !== lead.phone ? `<div>💬 WhatsApp: ${lead.whatsapp_number}</div>` : ""}
+            ${lead.email ? `<div>✉️ ${lead.email}</div>` : ""}
+            <div class="muted small" style="margin-top:4px;">${packageName(lead.event_type)} · ${lead.city || "—"} · ${fmtDate(lead.date)}</div>
+          </div>
+          <div class="lead-detail-section">
+            <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">From their enquiry</div>
+            ${[
+              lead.occasion ? ["Occasion", lead.occasion] : null,
+              lead.guest_range ? ["Guests", lead.guest_range] : null,
+              lead.budget ? ["Budget mentioned", inr(lead.budget)] : null,
+              lead.alt_date ? ["Alternate date", fmtDate(lead.alt_date)] : null,
+              lead.how_heard ? ["Heard about us via", lead.how_heard] : null,
+              lead.details ? ["Message", lead.details] : null,
+            ].filter(Boolean).map(([label, value]) => `<div style="margin-bottom:3px;"><span class="muted small">${label}:</span> ${value}</div>`).join("") || `<p class="muted small">Nothing else submitted.</p>`}
+          </div>
+          ${lead.notes ? `<div class="lead-detail-section"><div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Sticky note</div><div style="padding:8px 10px; background:#FBF3D9; border-radius:6px;">📌 ${lead.notes}</div></div>` : ""}
+          <div class="lead-detail-section">
+            <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Quotes sent</div>
+            <div id="leadDetailQuotes"><p class="muted small">Loading…</p></div>
+          </div>
+          ${isConfirmedOrDone ? `
+            <div class="lead-detail-section">
+              <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Financials</div>
+              <div>Final: <span class="mono">${lead.final_amount || lead.quote_amount ? inr(lead.final_amount || lead.quote_amount) : "—"}</span></div>
+              <div>Received: <span class="mono">${inr(lead.received || 0)}</span></div>
+            </div>
+          ` : ""}
+        </div>
+        <div class="modal-foot">
+          <button class="btn-ghost" id="cancelModal">Close</button>
+          ${hasLeadsAccess() && lead.stage !== "Completed" ? `<button class="btn-ghost" id="detailEditBtn">✎ Edit</button>` : ""}
+          ${["New", "Follow-up", "Interested", "Tentative"].includes(lead.stage) ? `<button class="btn-primary" id="detailQuoteBtn">Quote</button>` : ""}
+        </div>
+      </div>
+    </div>
+  `;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  const editBtn = root.querySelector("#detailEditBtn");
+  if (editBtn) editBtn.addEventListener("click", () => { close(); openEditLeadModal(lead.id); });
+  const quoteBtn = root.querySelector("#detailQuoteBtn");
+  if (quoteBtn) quoteBtn.addEventListener("click", () => {
+    close();
+    quotationLeadId = lead.id;
+    currentTab = "quotation";
+    renderNav();
+    renderMain();
+  });
+
+  try {
+    const allQuotes = await api("/api/quotes");
+    const quotesForLead = allQuotes.filter((q) => q.lead_id === lead.id);
+    const container = root.querySelector("#leadDetailQuotes");
+    if (!container) return; // modal closed while loading
+    const statusColor = { sent: "#B6752C", accepted: "#5C8A6B", rejected: "#A64B3C" };
+    container.innerHTML = quotesForLead.length === 0
+      ? `<p class="muted small">No quotes sent yet.</p>`
+      : quotesForLead.map((q) => `
+        <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+          <div>
+            <div class="mono">${q.amount ? inr(q.amount) : "—"}</div>
+            <div class="muted small">${fmtDateTime(q.created_at)} · <span style="color:${statusColor[q.status || "sent"]};">${(q.status || "sent")}</span></div>
+          </div>
+          <button class="btn-ghost view-lead-quote-btn" data-quote-id="${q.id}">View</button>
+        </div>
+      `).join("");
+    container.querySelectorAll(".view-lead-quote-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const q = quotesForLead.find((x) => x.id === btn.dataset.quoteId);
+        if (q) openQuoteViewModal(q);
+      });
+    });
+  } catch (err) {
+    const container = root.querySelector("#leadDetailQuotes");
+    if (container) container.innerHTML = `<p class="muted small">Couldn't load quotes.</p>`;
+  }
+}
+
 async function renderLeadsLog(main, skipRefresh) {
   // LEADS is only otherwise updated after specific actions (adding/editing/
   // deleting a lead, etc.) -- if a new query comes in from the public form
@@ -870,7 +970,7 @@ async function renderLeadsLog(main, skipRefresh) {
               <div>
                 <div class="lead-name">${l.name}</div>
                 <div class="muted small">${l.phone || ""}</div>
-                ${l.combo_group_id ? `<div class="muted small" style="color:#8A5FA8;">🔗 Combo with ${comboSiblings.map((s) => `${packageName(s.event_type)} (${fmtDate(s.date)})`).join(", ")}</div>` : ""}
+                ${l.combo_group_id ? `<div class="muted small" style="color:#8A5FA8;" title="Linked bookings share one client — pricing and payments live on the primary event.">🔗 Combo with ${comboSiblings.map((s) => `${packageName(s.event_type)} (${fmtDate(s.date)})`).join(", ")}</div>` : ""}
                 ${l.occasion && isConfirmedOrDone ? `<div class="muted small">${l.occasion}</div>` : ""}
                 ${l.alt_date ? `<div class="muted small" style="color:#B6752C;">Alt date: ${fmtDate(l.alt_date)}</div>` : ""}
               </div>
@@ -892,13 +992,13 @@ async function renderLeadsLog(main, skipRefresh) {
             const icon = !l.last_followup_at || overdue ? "⏳" : "✓";
             return `<div class="small" style="margin-top:6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
               <span style="color:${color};">${icon} ${label}</span>
-              <a href="#" class="mark-followup-link" data-lead-id="${l.id}" style="font-size:12px; color:#8A5FA8; text-decoration:underline;">mark followed up now</a>
+              <a href="#" class="mark-followup-link" data-lead-id="${l.id}" style="font-size:12px; color:#8A5FA8; text-decoration:underline;" title="Use this if you contacted them by phone or in person instead of the WhatsApp button.">mark followed up now</a>
             </div>`;
           })() : ""}
           ${hasLeadsAccess() && l.stage !== "Completed" ? `
             <div class="lead-sticky-note" style="margin-top:8px; background:#FBF3D9; border:1px solid #E8D488; border-radius:6px; padding:6px 8px;">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
-                <span class="muted small">📌 Sticky note</span>
+                <span class="muted small" title="Only visible to your team, never to the client.">📌 Sticky note</span>
                 <span class="muted small lead-note-status" data-lead-id="${l.id}" style="font-weight:400;"></span>
               </div>
               <textarea class="lead-note-input" data-lead-id="${l.id}" rows="2" placeholder="Quick note for this lead…" style="width:100%; padding:6px 8px; border:1px solid #E0CE8A; border-radius:5px; font-family:inherit; font-size:16px; background:#FFFDF6; resize:vertical;">${l.notes || ""}</textarea>
@@ -915,6 +1015,7 @@ async function renderLeadsLog(main, skipRefresh) {
             ${l.venue ? `<div class="muted small">📍 ${l.venue}</div>` : ""}
           ` : ""}
           <div class="lead-card-actions">
+            <button class="btn-ghost lead-detail-btn" data-lead-id="${l.id}">📋 Details</button>
             ${l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
             ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
             ${isConfirmedOrDone && hasAccountsAccess() ? `<button class="btn-ghost payments-btn" data-lead-id="${l.id}">💰 Payments</button>` : ""}
@@ -937,6 +1038,13 @@ async function renderLeadsLog(main, skipRefresh) {
       if (cb.checked) leadsSelected.add(cb.dataset.leadId);
       else leadsSelected.delete(cb.dataset.leadId);
       renderLeadsBulkBar(main);
+    });
+  });
+
+  main.querySelectorAll(".lead-detail-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
+      if (lead) openLeadDetailModal(lead);
     });
   });
 
@@ -1177,6 +1285,52 @@ Warmly,
   });
 }
 
+// Shown from Quote history's "View" button — a readable modal instead of a
+// bare native alert(), with the actual actions someone would want: resend
+// via WhatsApp/email, copy the text, or reopen it in the builder to tweak
+// and send again without retyping everything from scratch.
+function openQuoteViewModal(q) {
+  const root = document.getElementById("modalRoot");
+  const digits = (q.lead_phone || "").replace(/\D/g, "");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>Quote for ${q.lead_name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-body">
+          <p class="muted small">Sent ${fmtDateTime(q.created_at)}${q.amount ? ` · ${inr(q.amount)}` : ""}</p>
+          <textarea readonly rows="14" style="width:100%; font-family:'JetBrains Mono',monospace; font-size:12.5px; padding:10px; border:1px solid #DDD5C4; border-radius:6px; background:#FAFAF8;">${q.body}</textarea>
+        </div>
+        <div class="modal-foot">
+          <button class="btn-ghost" id="cancelModal">Close</button>
+          <button class="btn-ghost" id="copyQuoteBtn">Copy text</button>
+          ${digits ? `<button class="btn-ghost" id="resendWaBtn">💬 Resend via WhatsApp</button>` : ""}
+          <button class="btn-primary" id="reopenQuoteBtn">Reopen for editing</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#copyQuoteBtn").addEventListener("click", () => {
+    navigator.clipboard.writeText(q.body);
+    const btn = root.querySelector("#copyQuoteBtn");
+    btn.textContent = "Copied ✓";
+    setTimeout(() => { if (btn) btn.textContent = "Copy text"; }, 1500);
+  });
+  const waBtn = root.querySelector("#resendWaBtn");
+  if (waBtn) waBtn.addEventListener("click", () => window.open(`https://wa.me/${digits}?text=${encodeURIComponent(q.body)}`, "_blank"));
+  root.querySelector("#reopenQuoteBtn").addEventListener("click", () => {
+    quotationLeadId = q.lead_id;
+    reopenQuoteDraft = q.body;
+    currentTab = "quotation";
+    close();
+    renderNav();
+    renderMain();
+  });
+}
+
 async function renderQuotation(main) {
   main.innerHTML = `<div class="view-head"><div><h2>Quotation</h2></div></div><p class="muted">Loading…</p>`;
   await refreshLeads();
@@ -1233,6 +1387,8 @@ async function renderQuotation(main) {
     <div class="table" id="quoteHistoryTable"><div class="board-empty">Loading…</div></div>
   `;
 
+  const quoteStatusColor = { sent: "#B6752C", accepted: "#5C8A6B", rejected: "#A64B3C" };
+
   api("/api/quotes").then((history) => {
     const historyTable = main.querySelector("#quoteHistoryTable");
     if (!historyTable) return;
@@ -1241,14 +1397,19 @@ async function renderQuotation(main) {
       return;
     }
     historyTable.innerHTML = `
-      <div class="table-head" style="grid-template-columns:1.6fr 1fr 1fr 1fr;">
-        <span>Sent to</span><span>Amount</span><span>Date sent</span><span></span>
+      <div class="table-head" style="grid-template-columns:1.4fr 0.9fr 1fr 1fr 0.8fr;">
+        <span>Sent to</span><span>Amount</span><span>Date sent</span><span>Status</span><span></span>
       </div>
       ${history.map((q) => `
-        <div class="table-row" style="grid-template-columns:1.6fr 1fr 1fr 1fr;">
+        <div class="table-row" style="grid-template-columns:1.4fr 0.9fr 1fr 1fr 0.8fr;">
           <span>${q.lead_name}</span>
           <span class="mono">${q.amount ? inr(q.amount) : "—"}</span>
           <span class="muted small">${fmtDateTime(q.created_at)}</span>
+          <select class="quote-status-select" data-quote-id="${q.id}" style="color:${quoteStatusColor[q.status || "sent"]}; width:auto; font-size:12.5px; padding:4px 6px;">
+            <option value="sent" ${(q.status || "sent") === "sent" ? "selected" : ""}>Sent</option>
+            <option value="accepted" ${q.status === "accepted" ? "selected" : ""}>Accepted</option>
+            <option value="rejected" ${q.status === "rejected" ? "selected" : ""}>Rejected</option>
+          </select>
           <span><button class="btn-ghost view-quote-btn" data-quote-id="${q.id}">View</button></span>
         </div>
       `).join("")}
@@ -1256,7 +1417,17 @@ async function renderQuotation(main) {
     historyTable.querySelectorAll(".view-quote-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         const q = history.find((h) => h.id === btn.dataset.quoteId);
-        alert(q.body);
+        openQuoteViewModal(q);
+      });
+    });
+    historyTable.querySelectorAll(".quote-status-select").forEach((sel) => {
+      sel.addEventListener("change", async () => {
+        try {
+          await api(`/api/quotes/${sel.dataset.quoteId}`, { method: "PATCH", body: JSON.stringify({ status: sel.value }) });
+          sel.style.color = quoteStatusColor[sel.value];
+        } catch (err) {
+          alert(err.message);
+        }
       });
     });
   });
@@ -1344,6 +1515,10 @@ async function renderQuotation(main) {
   main.querySelector("#generateBtn").addEventListener("click", generateDraft);
   prefillFromLead();
   generateDraft();
+  if (reopenQuoteDraft) {
+    main.querySelector("#qBody").value = reopenQuoteDraft;
+    reopenQuoteDraft = null;
+  }
 
   function validateQuoteFields() {
     const lead = LEADS.find((l) => l.id === leadSelect.value);
@@ -3223,7 +3398,7 @@ async function renderDashboard(main) {
       const max = Math.max(1, ...counts);
       return `
       <div class="card" style="margin-bottom:16px;">
-        <div class="section-label">Pipeline</div>
+        <div class="section-label" title="How many active leads sit in each stage right now.">Pipeline</div>
         <div class="funnel-row">
           ${funnelStages.map((s, i) => `
             <div class="funnel-bar-col">
@@ -4570,6 +4745,13 @@ async function renderSettings(main) {
       </select>
       <div id="quoteTemplateEditor" style="margin-top:12px;"></div>
     </details>
+
+    <details class="card" style="margin-bottom:16px;">
+      <summary style="cursor:pointer; font-weight:600;">Activity history (audit log)</summary>
+      <p class="muted small" style="margin-top:8px;">Every stage change, payment, quote, and assignment across the whole CRM — read-only, last 300 entries. This is separate from the Dashboard's "Today's activity," which is just a clearable daily to-do list.</p>
+      <input type="text" id="auditSearchInput" placeholder="Search by keyword or name…" style="margin-bottom:10px;" />
+      <div id="auditLogRows"><p class="muted small">Loading…</p></div>
+    </details>
   `;
 
   const container = main.querySelector("#templateCards");
@@ -4731,6 +4913,38 @@ async function renderSettings(main) {
   }
   quoteSelect.addEventListener("change", renderQuoteEditor);
   renderQuoteEditor();
+
+  // Audit log — fetched once, then filtered client-side as the admin types,
+  // same pattern as the Leads search box.
+  api("/api/activity/history").then((entries) => {
+    const rowsEl = main.querySelector("#auditLogRows");
+    if (!rowsEl) return;
+    const renderAuditRows = (list) => {
+      rowsEl.innerHTML = list.length === 0
+        ? `<p class="muted small">No activity recorded yet.</p>`
+        : list.map((a) => `
+          <div class="dash-list-item" style="display:flex; gap:10px; justify-content:space-between; align-items:flex-start;">
+            <div style="display:flex; gap:10px;">
+              <span class="muted small mono" style="flex-shrink:0;">${fmtDateTime(a.created_at)}</span>
+              <span>${a.message}${a.actor && a.actor !== "System" ? ` <span class="muted small">— ${a.actor}</span>` : ""}</span>
+            </div>
+          </div>
+        `).join("");
+    };
+    renderAuditRows(entries);
+    const searchInput = main.querySelector("#auditSearchInput");
+    if (searchInput) {
+      searchInput.addEventListener("input", () => {
+        const q = searchInput.value.trim().toLowerCase();
+        renderAuditRows(!q ? entries : entries.filter((a) =>
+          (a.message || "").toLowerCase().includes(q) || (a.actor || "").toLowerCase().includes(q)
+        ));
+      });
+    }
+  }).catch(() => {
+    const rowsEl = main.querySelector("#auditLogRows");
+    if (rowsEl) rowsEl.innerHTML = `<p class="muted small">Couldn't load activity history.</p>`;
+  });
 }
 
 // ---------- Main dispatch ----------

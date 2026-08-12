@@ -920,6 +920,16 @@ app.get("/api/quotes", requireAuth, async (req, res) => {
   res.json(rows);
 });
 
+// Tracks a quote through to accepted/rejected instead of leaving it as just
+// "sent" forever — purely informational, doesn't touch the lead's stage.
+app.patch("/api/quotes/:id", requireAuth, async (req, res) => {
+  const { status } = req.body;
+  if (!["sent", "accepted", "rejected"].includes(status)) return res.status(400).json({ error: "Invalid status" });
+  const { rows } = await pool.query("UPDATE quotes SET status = $1 WHERE id = $2 RETURNING *", [status, req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: "Quote not found" });
+  res.json(rows[0]);
+});
+
 // ---------- Event assignments (staffing a Confirmed event) ----------
 // Admin picks which team members are performing; each gets a pending
 // invitation they accept/decline from their own simplified view.
@@ -1889,6 +1899,14 @@ app.get("/api/activity", requireAuth, requireAdmin, async (req, res) => {
     "SELECT * FROM activity_log WHERE created_at >= $1 ORDER BY created_at ASC",
     [startOfToday.toISOString()]
   );
+  res.json(rows);
+});
+
+// Full, read-only activity history (no delete) — a genuine audit trail as
+// opposed to the dashboard's "Today's activity" widget, which is meant to be
+// clearable like a to-do list. Capped at 300 rows, newest first.
+app.get("/api/activity/history", requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT 300");
   res.json(rows);
 });
 

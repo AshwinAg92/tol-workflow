@@ -183,6 +183,7 @@ select.stage-select { width:auto; padding:4px 6px; font-size:12px; border-radius
   padding-bottom:14px; margin-bottom:14px; border-bottom:1px solid #EAE3D4;
 }
 .artist-stats-row .mono { font-size:18px; font-weight:600; }
+.lead-detail-section { padding-top:4px; }
 .dash-stat .big { font-size:26px; margin-top:4px; }
 .dash-stat-click {
   text-align:left; border:none; cursor:pointer; font-family:inherit;
