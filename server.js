@@ -1923,7 +1923,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const weekAhead = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
-  const [upcomingRes, upcomingCountRes, followUpsRes, accountsRes, paymentsRes, tasksRes, newLeadsRes, tentativeRes, interestedRes] = await Promise.all([
+  const [upcomingRes, upcomingCountRes, followUpsRes, accountsRes, paymentsRes, tasksRes, newLeadsRes, tentativeRes, interestedRes, stageCountsRes] = await Promise.all([
     pool.query(`SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1 ORDER BY date ASC LIMIT 5`, [today]),
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1`, [today]),
     pool.query(`SELECT * FROM leads WHERE stage = 'Follow-up' ORDER BY last_followup_at ASC NULLS FIRST, created_at ASC`),
@@ -1933,10 +1933,15 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage = 'New'`),
     pool.query(`SELECT * FROM leads WHERE stage = 'Tentative' ORDER BY date ASC`),
     pool.query(`SELECT * FROM leads WHERE stage = 'Interested' ORDER BY date ASC`),
+    // Powers the pipeline funnel on the dashboard — one query, grouped, rather
+    // than five separate COUNT(*) calls for each stage.
+    pool.query(`SELECT stage, COUNT(*) AS c FROM leads WHERE stage != 'Cancelled' GROUP BY stage`),
   ]);
 
   const totalQuoted = accountsRes.rows.reduce((s, l) => s + (l.final_amount || l.quote_amount || 0), 0);
   const totalReceived = Number(paymentsRes.rows[0].total);
+  const stageCounts = {};
+  stageCountsRes.rows.forEach((r) => { stageCounts[r.stage] = Number(r.c); });
 
   res.json({
     upcomingEvents: upcomingRes.rows,
@@ -1947,6 +1952,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
     tentativeBookings: tentativeRes.rows,
     interestedLeads: interestedRes.rows,
     outstanding: totalQuoted - totalReceived,
+    stageCounts,
   });
 });
 
@@ -2086,6 +2092,14 @@ app.post("/api/admin/backup/email", requireAuth, requireAdmin, async (req, res) 
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Anything unmatched by an API route or a static file gets a branded 404
+// instead of Express's bare "Cannot GET /..." — API paths still get JSON so
+// client-side error handling isn't affected.
+app.use((req, res) => {
+  if (req.path.startsWith("/api/")) return res.status(404).json({ error: "Not found" });
+  res.status(404).sendFile(path.join(__dirname, "public", "404.html"));
 });
 
 const PORT = process.env.PORT || 3300;

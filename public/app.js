@@ -11,6 +11,8 @@ let leadsStageFilter = "all";
 let leadsSearch = "";
 let leadsCityFilter = "";
 let leadsDateFilter = "";
+let leadsSortBy = "date";
+let leadsSelected = new Set();
 let quotationLeadId = null;
 let calYear = new Date().getFullYear(), calMonth = new Date().getMonth() + 1; // defaults to the real current month
 
@@ -694,6 +696,47 @@ function goToLeads(stage) {
 }
 
 // ---------- Leads log ----------
+// Shows the small bulk-action bar above the Leads list once at least one
+// lead is checked, offering a one-click "mark all as followed up" instead of
+// clicking the same link on every card individually.
+function renderLeadsBulkBar(main) {
+  const bar = main.querySelector("#leadsBulkBar");
+  if (!bar) return;
+  if (leadsSelected.size === 0) {
+    bar.innerHTML = "";
+    return;
+  }
+  bar.innerHTML = `
+    <div class="card" style="margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#F5F0E4;">
+      <span>${leadsSelected.size} selected</span>
+      <div style="display:flex; gap:8px;">
+        <button class="btn-ghost" id="bulkClearBtn">Clear</button>
+        <button class="btn-primary" id="bulkFollowupBtn">Mark ${leadsSelected.size} as followed up</button>
+      </div>
+    </div>
+  `;
+  bar.querySelector("#bulkClearBtn").addEventListener("click", () => {
+    leadsSelected.clear();
+    renderLeadsLog(main, true);
+  });
+  bar.querySelector("#bulkFollowupBtn").addEventListener("click", async () => {
+    const btn = bar.querySelector("#bulkFollowupBtn");
+    btn.disabled = true;
+    btn.textContent = "Saving…";
+    const ids = Array.from(leadsSelected);
+    try {
+      await Promise.all(ids.map((id) => api(`/api/leads/${id}`, { method: "PATCH", body: JSON.stringify({ logFollowup: true }) })));
+      await refreshLeads();
+      leadsSelected.clear();
+      renderLeadsLog(main, true);
+    } catch (err) {
+      alert(err.message);
+      btn.disabled = false;
+      btn.textContent = `Mark ${leadsSelected.size} as followed up`;
+    }
+  });
+}
+
 async function renderLeadsLog(main, skipRefresh) {
   // LEADS is only otherwise updated after specific actions (adding/editing/
   // deleting a lead, etc.) -- if a new query comes in from the public form
@@ -743,11 +786,17 @@ async function renderLeadsLog(main, skipRefresh) {
           <option value="all">All stages</option>
           ${CONFIG.stages.map((s) => `<option value="${s}" ${leadsStageFilter === s ? "selected" : ""}>${s}</option>`).join("")}
         </select>
+        <select id="leadsSortSelect">
+          <option value="date" ${leadsSortBy === "date" ? "selected" : ""}>Sort: Event date (soonest)</option>
+          <option value="followup" ${leadsSortBy === "followup" ? "selected" : ""}>Sort: Longest without follow-up</option>
+          <option value="newest" ${leadsSortBy === "newest" ? "selected" : ""}>Sort: Newest submitted</option>
+        </select>
         ${(leadsSearch || leadsCityFilter || leadsDateFilter || leadsStageFilter !== "all") ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
       </div>
     </div>
 
     <div class="filter-row" id="filterRow"></div>
+    <div id="leadsBulkBar"></div>
     <div id="leadsRows"></div>
   `;
 
@@ -773,6 +822,7 @@ async function renderLeadsLog(main, skipRefresh) {
   });
   main.querySelector("#leadsDateInput").addEventListener("change", (e) => { leadsDateFilter = e.target.value; renderLeadsLog(main, true); });
   main.querySelector("#leadsStageSelect").addEventListener("change", (e) => { leadsStageFilter = e.target.value; renderLeadsLog(main, true); });
+  main.querySelector("#leadsSortSelect").addEventListener("change", (e) => { leadsSortBy = e.target.value; renderLeadsLog(main, true); });
   const clearAllBtn = main.querySelector("#clearAllFilters");
   if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsCityFilter = ""; leadsDateFilter = ""; leadsStageFilter = "all"; renderLeadsLog(main, true); });
 
@@ -787,8 +837,16 @@ async function renderLeadsLog(main, skipRefresh) {
     filterRow.appendChild(chip);
   });
 
+  if (!skipRefresh) leadsSelected.clear();
   const rows = main.querySelector("#leadsRows");
   const sorted = filtered.slice().sort((a, b) => {
+    if (leadsSortBy === "followup") {
+      // Never-contacted leads first, then longest-since-last-followup first.
+      const aTime = a.last_followup_at ? new Date(a.last_followup_at).getTime() : -Infinity;
+      const bTime = b.last_followup_at ? new Date(b.last_followup_at).getTime() : -Infinity;
+      return aTime - bTime;
+    }
+    if (leadsSortBy === "newest") return new Date(b.created_at) - new Date(a.created_at);
     if (leadsStageFilter === "Follow-up") return new Date(b.created_at) - new Date(a.created_at);
     return new Date(a.date) - new Date(b.date);
   });
@@ -803,15 +861,19 @@ async function renderLeadsLog(main, skipRefresh) {
       const isConfirmedOrDone = l.stage === "Confirmed" || l.stage === "Completed";
       const displayReceived = comboPrimary ? comboPrimary.received : l.received;
       const balance = (displayFinal || displayQuote || 0) - (displayReceived || 0);
+      const canBulkSelect = hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage);
       const card = el(`
         <div class="card lead-card" style="margin-bottom:12px;">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
-            <div>
-              <div class="lead-name">${l.name}</div>
-              <div class="muted small">${l.phone || ""}</div>
-              ${l.combo_group_id ? `<div class="muted small" style="color:#8A5FA8;">🔗 Combo with ${comboSiblings.map((s) => `${packageName(s.event_type)} (${fmtDate(s.date)})`).join(", ")}</div>` : ""}
-              ${l.occasion && isConfirmedOrDone ? `<div class="muted small">${l.occasion}</div>` : ""}
-              ${l.alt_date ? `<div class="muted small" style="color:#B6752C;">Alt date: ${fmtDate(l.alt_date)}</div>` : ""}
+            <div style="display:flex; gap:10px; align-items:flex-start;">
+              ${canBulkSelect ? `<input type="checkbox" class="lead-bulk-checkbox" data-lead-id="${l.id}" ${leadsSelected.has(l.id) ? "checked" : ""} style="margin-top:4px; width:18px; height:18px; flex-shrink:0;" />` : ""}
+              <div>
+                <div class="lead-name">${l.name}</div>
+                <div class="muted small">${l.phone || ""}</div>
+                ${l.combo_group_id ? `<div class="muted small" style="color:#8A5FA8;">🔗 Combo with ${comboSiblings.map((s) => `${packageName(s.event_type)} (${fmtDate(s.date)})`).join(", ")}</div>` : ""}
+                ${l.occasion && isConfirmedOrDone ? `<div class="muted small">${l.occasion}</div>` : ""}
+                ${l.alt_date ? `<div class="muted small" style="color:#B6752C;">Alt date: ${fmtDate(l.alt_date)}</div>` : ""}
+              </div>
             </div>
             <select class="stage-select" data-lead-id="${l.id}" style="color:${STAGE_COLOR[l.stage]}; flex-shrink:0; width:auto;">
               ${CONFIG.stages.filter((s) => s !== "Completed" || s === l.stage).map((s) => `<option value="${s}" ${s === l.stage ? "selected" : ""}>${s}</option>`).join("")}
@@ -867,6 +929,16 @@ async function renderLeadsLog(main, skipRefresh) {
       rows.appendChild(card);
     });
   }
+
+  renderLeadsBulkBar(main);
+  main.querySelectorAll(".lead-bulk-checkbox").forEach((cb) => {
+    cb.addEventListener("click", (e) => e.stopPropagation());
+    cb.addEventListener("change", () => {
+      if (cb.checked) leadsSelected.add(cb.dataset.leadId);
+      else leadsSelected.delete(cb.dataset.leadId);
+      renderLeadsBulkBar(main);
+    });
+  });
 
   main.querySelectorAll(".quote-lead-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -1651,6 +1723,21 @@ async function openTeamMemberEventsModal(member) {
   const today = new Date().toISOString().slice(0, 10);
   const upcoming = events.filter((e) => e.date >= today);
 
+  // A quick track record — total booked, completed, and cancelled — helps
+  // whoever's assigning artists judge reliability at a glance instead of
+  // scrolling through every past event.
+  const completedCount = events.filter((e) => e.date < today && e.status === "accepted").length;
+  const declinedCount = events.filter((e) => e.status === "declined").length;
+  const cancelledCount = events.filter((e) => e.status === "cancel_requested").length;
+  const statsHtml = events.length > 0 ? `
+    <div class="artist-stats-row">
+      <div><div class="mono">${completedCount}</div><div class="muted small">Completed</div></div>
+      <div><div class="mono">${upcoming.filter((e) => e.status === "accepted").length}</div><div class="muted small">Upcoming</div></div>
+      <div><div class="mono" style="color:${declinedCount > 0 ? "#A64B3C" : "inherit"};">${declinedCount}</div><div class="muted small">Declined</div></div>
+      <div><div class="mono" style="color:${cancelledCount > 0 ? "#A64B3C" : "inherit"};">${cancelledCount}</div><div class="muted small">Cancel requests</div></div>
+    </div>
+  ` : "";
+
   // Pending edits, keyed by assignment id — nothing is sent until Save.
   const pendingChanges = {};
 
@@ -1675,9 +1762,9 @@ async function openTeamMemberEventsModal(member) {
     </div>
   `;
 
-  body.innerHTML = upcoming.length === 0
+  body.innerHTML = statsHtml + (upcoming.length === 0
     ? `<p class="muted small">No upcoming events for ${member.name}.</p>`
-    : upcoming.map(rowHtml).join("");
+    : upcoming.map(rowHtml).join(""));
 
   // WhatsApp button is available whenever there's a phone number and at
   // least one upcoming event — for both admin and manager, not just
@@ -2751,6 +2838,47 @@ async function renderAccounts(main) {
       <div class="card summary-card"><div class="muted">Total profit</div><div class="mono big" style="color:${totals.profit >= 0 ? "#5C8A6B" : "#A64B3C"}">${inr(totals.profit)}</div></div>
     </div>
 
+    ${(() => {
+      // Last 6 calendar months, booked value vs received, by event date —
+      // gives a shape-of-the-business glance instead of only cumulative totals.
+      const months = [];
+      const now = new Date();
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        months.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: d.toLocaleDateString("en-IN", { month: "short" }) });
+      }
+      const byMonth = {};
+      months.forEach((m) => (byMonth[m.key] = { booked: 0, received: 0 }));
+      sortedBookings.forEach((b) => {
+        if (!b.date) return;
+        const key = b.date.slice(0, 7);
+        if (!byMonth[key]) return;
+        const revenue = b.is_combo_primary === false ? 0 : (b.final_amount || b.quote_amount || 0);
+        byMonth[key].booked += revenue;
+        byMonth[key].received += b.received || 0;
+      });
+      const max = Math.max(1, ...months.map((m) => Math.max(byMonth[m.key].booked, byMonth[m.key].received)));
+      return `
+      <div class="card" style="margin-bottom:20px;">
+        <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
+          <span>Revenue — last 6 months</span>
+          <span class="muted small"><span style="color:#C1602B;">■</span> Booked &nbsp; <span style="color:#5C8A6B;">■</span> Received</span>
+        </div>
+        <div class="revenue-chart-row">
+          ${months.map((m) => `
+            <div class="revenue-chart-col">
+              <div class="revenue-chart-bars">
+                <div class="revenue-bar" style="height:${byMonth[m.key].booked === 0 ? 2 : Math.max(6, (byMonth[m.key].booked / max) * 100)}%; background:#C1602B;" title="Booked: ${inr(byMonth[m.key].booked)}"></div>
+                <div class="revenue-bar" style="height:${byMonth[m.key].received === 0 ? 2 : Math.max(6, (byMonth[m.key].received / max) * 100)}%; background:#5C8A6B;" title="Received: ${inr(byMonth[m.key].received)}"></div>
+              </div>
+              <div class="muted small funnel-label">${m.label}</div>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+      `;
+    })()}
+
     <div class="section-label">Events — tap one to add a payment or view its ledger</div>
     <input type="text" id="acctSearch" placeholder="🔍 Search events by name…" style="margin-bottom:10px;" />
     <div id="acctCards" style="margin-bottom:24px;"></div>
@@ -3089,6 +3217,53 @@ async function renderDashboard(main) {
       ` : ""}
       <button class="card dash-stat dash-stat-click" id="statUpcoming"><div class="muted">Upcoming events</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${data.upcomingEventsCount}</div></button>
     </div>
+    ${hasLeadsAccess() && data.stageCounts ? (() => {
+      const funnelStages = ["New", "Follow-up", "Interested", "Tentative", "Confirmed", "Completed"];
+      const counts = funnelStages.map((s) => data.stageCounts[s] || 0);
+      const max = Math.max(1, ...counts);
+      return `
+      <div class="card" style="margin-bottom:16px;">
+        <div class="section-label">Pipeline</div>
+        <div class="funnel-row">
+          ${funnelStages.map((s, i) => `
+            <div class="funnel-bar-col">
+              <div class="funnel-bar-track"><div class="funnel-bar-fill" style="height:${counts[i] === 0 ? 3 : Math.max(6, (counts[i] / max) * 100)}%; background:${STAGE_COLOR[s]};"></div></div>
+              <div class="mono funnel-count">${counts[i]}</div>
+              <div class="muted small funnel-label">${s}</div>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+      `;
+    })() : ""}
+    ${(() => {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const eventsToday = data.upcomingEvents.filter((l) => l.date === todayStr);
+      const followUpsOverdue = (data.pendingFollowUps || []).filter((l) => !l.last_followup_at || daysSince(l.last_followup_at) >= 3);
+      if (eventsToday.length === 0 && followUpsOverdue.length === 0) return "";
+      return `
+      <div class="card" style="margin-bottom:16px; border-color:#C1602B;">
+        <div class="section-label">📅 Today</div>
+        ${eventsToday.length > 0 ? `
+          <div class="muted small" style="font-weight:600; margin-bottom:4px;">Events today</div>
+          ${eventsToday.map((l) => `
+            <div class="dash-list-item dash-list-item-click" data-lead-id="${l.id}">
+              <div>${l.name} — ${packageName(l.event_type)}</div>
+              <div class="muted">${l.city || ""}</div>
+            </div>
+          `).join("")}
+        ` : ""}
+        ${followUpsOverdue.length > 0 && hasLeadsAccess() ? `
+          <div class="muted small" style="font-weight:600; margin:${eventsToday.length > 0 ? "10px" : "0"} 0 4px;">Follow-ups overdue (${followUpsOverdue.length})</div>
+          ${followUpsOverdue.slice(0, 5).map((l) => `
+            <div class="dash-list-item dash-list-item-click" data-lead-id="${l.id}">
+              <div>${l.name} <span class="muted">— ${packageName(l.event_type)}</span></div>
+            </div>
+          `).join("")}
+        ` : ""}
+      </div>
+      `;
+    })()}
     <div class="card" id="dashCalCard" style="margin-bottom:16px;">
       <div class="section-label">Calendar</div>
       ${calendarGridMarkup()}

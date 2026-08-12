@@ -168,6 +168,21 @@ select.stage-select { width:auto; padding:4px 6px; font-size:12px; border-radius
 
 .dash-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
 .dash-stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:14px; margin-bottom:20px; }
+.funnel-row { display:flex; align-items:flex-end; gap:10px; padding-top:8px; }
+.funnel-bar-col { flex:1; display:flex; flex-direction:column; align-items:center; }
+.funnel-bar-track { width:100%; max-width:40px; height:110px; display:flex; align-items:flex-end; background:#F5F0E4; border-radius:4px; overflow:hidden; }
+.funnel-bar-fill { width:100%; border-radius:4px 4px 0 0; transition:height 0.3s ease; }
+.funnel-count { font-size:13px; margin-top:6px; }
+.funnel-label { font-size:10.5px; text-align:center; margin-top:2px; }
+.revenue-chart-row { display:flex; align-items:flex-end; gap:10px; padding-top:8px; }
+.revenue-chart-col { flex:1; display:flex; flex-direction:column; align-items:center; }
+.revenue-chart-bars { width:100%; max-width:56px; height:120px; display:flex; align-items:flex-end; gap:4px; }
+.revenue-bar { flex:1; border-radius:3px 3px 0 0; transition:height 0.3s ease; }
+.artist-stats-row {
+  display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; text-align:center;
+  padding-bottom:14px; margin-bottom:14px; border-bottom:1px solid #EAE3D4;
+}
+.artist-stats-row .mono { font-size:18px; font-weight:600; }
 .dash-stat .big { font-size:26px; margin-top:4px; }
 .dash-stat-click {
   text-align:left; border:none; cursor:pointer; font-family:inherit;

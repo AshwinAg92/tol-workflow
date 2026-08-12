@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, follow" />
+<title>Page not found — Together, Out Loud</title>
+<link rel="icon" href="/logo.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --cream:#FEF6ED; --terracotta:#C1602B; --ember:#C7401E; --ink:#2B2620; --muted:#8A8578;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background:var(--cream); color:var(--ink); font-family:'Inter',sans-serif; text-align:center; padding:24px;
+  }
+  .wrap { max-width:480px; }
+  img { width:120px; height:auto; margin-bottom:20px; }
+  h1 { font-family:'Space Grotesk',sans-serif; font-size:clamp(48px,10vw,72px); margin:0; color:var(--terracotta); }
+  p { font-size:16px; color:var(--muted); margin:14px 0 28px; line-height:1.5; }
+  a.btn {
+    display:inline-block; background:var(--terracotta); color:#fff; padding:12px 26px; border-radius:999px;
+    font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:14px; text-decoration:none;
+    transition:background 0.2s;
+  }
+  a.btn:hover { background:var(--ember); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <img src="/logo.png" alt="Together, Out Loud" />
+    <h1>404</h1>
+    <p>This page took a wrong turn somewhere on the way to the venue. Let's get you back to the music.</p>
+    <a class="btn" href="/">← Back to home</a>
+  </div>
+</body>
+</html>
