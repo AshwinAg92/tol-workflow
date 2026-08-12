@@ -17,6 +17,12 @@ let quotationLeadId = null;
 let reopenQuoteDraft = null; // one-shot: set when reopening a past quote from history for editing
 let calYear = new Date().getFullYear(), calMonth = new Date().getMonth() + 1; // defaults to the real current month
 
+// Small inline SVG icons (currentColor stroke, 16px) replacing emoji on the
+// icon-only ".icon-btn" controls (close/edit/remove) — crisp and consistent
+// across OS/browser instead of relying on how each platform renders emoji.
+const ICON_X = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 5L19 19M19 5L5 19"/></svg>`;
+const ICON_EDIT = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
+
 const STAGE_COLOR = {
   New: "#8A8578",
   Quoted: "#C1602B",
@@ -750,7 +756,7 @@ async function openLeadDetailModal(lead) {
       <div class="modal-card">
         <div class="modal-head">
           <h3>${lead.name}</h3>
-          <button class="icon-btn" id="closeModal">✕</button>
+          <button class="icon-btn" id="closeModal">${ICON_X}</button>
         </div>
         <div class="modal-body">
           <span class="tag" style="color:${STAGE_COLOR[lead.stage]};">${lead.stage}</span>
@@ -1295,7 +1301,7 @@ function openQuoteViewModal(q) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
-        <div class="modal-head"><h3>Quote for ${q.lead_name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-head"><h3>Quote for ${q.lead_name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <p class="muted small">Sent ${fmtDateTime(q.created_at)}${q.amount ? ` · ${inr(q.amount)}` : ""}</p>
           <textarea readonly rows="14" style="width:100%; font-family:'JetBrains Mono',monospace; font-size:12.5px; padding:10px; border:1px solid #DDD5C4; border-radius:6px; background:#FAFAF8;">${q.body}</textarea>
@@ -1756,7 +1762,7 @@ async function renderTeam(main) {
       el2.innerHTML = list.length === 0 ? "" : list.map((a) => `
         <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
           <div><div>${a.message}</div><div class="muted small">${a.created_by} · ${fmtDateTime(a.created_at)}</div></div>
-          <button class="icon-btn" data-delete-announce="${a.id}">✕</button>
+          <button class="icon-btn" data-delete-announce="${a.id}">${ICON_X}</button>
         </div>
       `).join("");
       el2.querySelectorAll("[data-delete-announce]").forEach((btn) => {
@@ -1780,7 +1786,7 @@ async function renderTeam(main) {
   TEAM.forEach((m) => {
     const card = el(`
       <div class="card team-card" style="cursor:pointer;">
-        ${canManage ? `<button class="icon-btn" data-edit-member="${m.id}" style="float:right;">✎</button>` : ""}
+        ${canManage ? `<button class="icon-btn" data-edit-member="${m.id}" style="float:right;">${ICON_EDIT}</button>` : ""}
         <div class="team-avatar">${m.name[0]}</div>
         <div class="team-name">${m.name}</div>
         <div class="muted">${m.role || ""}${m.specialty ? ` · ${m.specialty}` : ""}</div>
@@ -1820,8 +1826,8 @@ async function renderTeam(main) {
           <span class="muted">${u.team_role || "—"}</span>
           <span class="tag">${u.access_level}</span>
           <span>
-            <button class="icon-btn" data-edit-user="${u.id}">✎</button>
-            ${u.id === CURRENT_USER.id ? "" : `<button class="icon-btn" data-delete-user="${u.id}">✕</button>`}
+            <button class="icon-btn" data-edit-user="${u.id}">${ICON_EDIT}</button>
+            ${u.id === CURRENT_USER.id ? "" : `<button class="icon-btn" data-delete-user="${u.id}">${ICON_X}</button>`}
           </span>
         </div>
       `));
@@ -1871,7 +1877,7 @@ async function openTeamMemberEventsModal(member) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
-        <div class="modal-head"><h3>Events for ${member.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-head"><h3>Events for ${member.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body"><p class="muted small">Loading…</p></div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
       </div>
@@ -2021,7 +2027,7 @@ function openAddMemberModal(onCreated) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
-        <div class="modal-head"><h3>Add team member</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-head"><h3>Add team member</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <label>Name</label>
           <input id="nmName" placeholder="e.g. Karan Mehta" />
@@ -2120,7 +2126,7 @@ function openAddLoginForMemberModal(member) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
-        <div class="modal-head"><h3>Add login for ${member.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-head"><h3>Add login for ${member.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <div class="row-2">
             <div><label>Username</label><input id="alUsername" placeholder="e.g. ${member.name.split(" ")[0].toLowerCase()}" /></div>
@@ -2182,7 +2188,7 @@ function openEditMemberModal(member, linkedUser) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
-        <div class="modal-head"><h3>Edit ${member.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-head"><h3>Edit ${member.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <label>Name</label>
           <input id="emName" value="${member.name}" />
@@ -2320,7 +2326,7 @@ function openEditLoginModal(user) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
-        <div class="modal-head"><h3>Edit login — ${user.username}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-head"><h3>Edit login — ${user.username}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <label>Username</label>
           <input id="elUsername" value="${user.username}" />
@@ -2401,7 +2407,7 @@ async function openLeadPaymentsModal(leadId) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
-        <div class="modal-head"><h3>Payments — ${lead.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-head"><h3>Payments — ${lead.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body"><p class="muted small">Loading…</p></div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
       </div>
@@ -2443,7 +2449,7 @@ async function openLeadPaymentsModal(leadId) {
               <div class="mono">${inr(p.amount)}</div>
               <div class="muted small">${fmtDate(p.payment_date)}${p.payment_mode ? ` · ${p.payment_mode}` : ""}</div>
             </div>
-            <button class="icon-btn" data-delete-payment="${p.id}">✕</button>
+            <button class="icon-btn" data-delete-payment="${p.id}">${ICON_X}</button>
           </div>
         `).join("")}
       </div>
@@ -2595,7 +2601,7 @@ async function openAssignTeamModal(leadId) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card" style="width:680px; max-width:96vw;">
-        <div class="modal-head"><h3>Team for ${lead.name}${lead.occasion ? ` <span class="muted" style="font-weight:400; font-size:14px;">— ${lead.occasion}</span>` : ""}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-head"><h3>Team for ${lead.name}${lead.occasion ? ` <span class="muted" style="font-weight:400; font-size:14px;">— ${lead.occasion}</span>` : ""}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <div class="section-label">Event day details</div>
           <div class="row-2" style="margin-bottom:8px;">
@@ -2654,7 +2660,7 @@ async function openAssignTeamModal(leadId) {
                     </div>
                   ` : ""}
                 </div>
-                <button class="icon-btn" data-remove-temp-artist="${t.id}">✕</button>
+                <button class="icon-btn" data-remove-temp-artist="${t.id}">${ICON_X}</button>
               </div>
             `;
             }).join("")}
@@ -2710,7 +2716,7 @@ async function openAssignTeamModal(leadId) {
                   </div>
                   <div style="display:flex; gap:4px; flex-shrink:0;">
                     ${waClientPhone ? `<a class="btn-ghost" href="https://wa.me/${waClientPhone}?text=${waText}" target="_blank" style="font-size:12px; padding:3px 8px;">Send to client</a>` : ""}
-                    <button class="icon-btn" data-delete-event-doc="${d.id}">✕</button>
+                    <button class="icon-btn" data-delete-event-doc="${d.id}">${ICON_X}</button>
                   </div>
                 </div>
               `;
@@ -3183,7 +3189,7 @@ async function renderAccounts(main) {
             </select>
             <label class="muted small" style="display:flex; align-items:center; gap:4px; white-space:nowrap;"><input type="checkbox" class="exp-paid" data-exp-id="${e.id}" ${e.paid ? "checked" : ""} /> Paid</label>
             <button class="btn-ghost exp-save-btn" data-exp-id="${e.id}" style="padding:5px 10px; font-size:12.5px;">Done</button>
-            <button class="icon-btn" data-delete-exp="${e.id}">✕</button>
+            <button class="icon-btn" data-delete-exp="${e.id}">${ICON_X}</button>
           </div>
         </div>
       `));
@@ -3236,7 +3242,7 @@ async function renderAccounts(main) {
               <option value="UPI">UPI</option>
             </select>
             <button class="btn-ghost reimb-approve-btn" data-reimb-id="${r.id}" style="padding:5px 10px; font-size:12.5px;">Approve</button>
-            <button class="icon-btn" data-reject-reimb="${r.id}">✕</button>
+            <button class="icon-btn" data-reject-reimb="${r.id}">${ICON_X}</button>
           </div>
         </div>
       `));
@@ -3366,7 +3372,7 @@ async function renderDashboard(main) {
                 <button class="btn-primary" data-resolve-cancel="${n.assignment_id}" data-approve="true" style="padding:5px 10px; font-size:12px;">Approve</button>
                 <button class="btn-ghost" data-resolve-cancel="${n.assignment_id}" data-approve="false" style="padding:5px 10px; font-size:12px;">Reject</button>
               ` : ""}
-              <button class="icon-btn" data-dismiss-admin-notif="${n.id}">✕</button>
+              <button class="icon-btn" data-dismiss-admin-notif="${n.id}">${ICON_X}</button>
             </div>
           </div>
         `).join("")}
@@ -3457,7 +3463,7 @@ async function renderDashboard(main) {
                 <span class="muted small mono" style="flex-shrink:0; width:52px;">${fmtTime(a.created_at)}</span>
                 <span>${a.message}${a.actor && a.actor !== "System" ? ` <span class="muted small">— ${a.actor}</span>` : ""}</span>
               </div>
-              <button class="icon-btn" data-dismiss-activity="${a.id}" title="Remove this entry">✕</button>
+              <button class="icon-btn" data-dismiss-activity="${a.id}" title="Remove this entry">${ICON_X}</button>
             </div>
           `).join("")}
         </div>
@@ -3671,7 +3677,7 @@ async function renderTasks(main) {
         <div class="task-title">${t.title}${lead ? ` <span class="muted">— ${lead.name}</span>` : ""}</div>
         <div class="task-meta${overdue ? " task-overdue" : ""}">${t.due_date ? fmtDate(t.due_date) : "No due date"}</div>
         <div class="task-meta">${assignee ? assignee.name : "Unassigned"}</div>
-        <button class="icon-btn" data-delete-task="${t.id}">✕</button>
+        <button class="icon-btn" data-delete-task="${t.id}">${ICON_X}</button>
       </div>
     `));
   });
@@ -3757,7 +3763,7 @@ async function renderDocuments(main) {
             ${clientsWithPhone.map((l) => `<option value="${l.id}">${l.name}</option>`).join("")}
           </select>
         ` : ""}
-        <button class="icon-btn" data-delete-doc="${d.id}">✕</button>
+        <button class="icon-btn" data-delete-doc="${d.id}">${ICON_X}</button>
       </div>
     `;
   }
@@ -3853,7 +3859,7 @@ function openConfirmEventModal(lead) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
-        <div class="modal-head"><h3>Confirm ${lead.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-head"><h3>Confirm ${lead.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <p class="muted small">This moves the lead to Confirmed and records the final closed rate.</p>
           ${conflict ? `
@@ -3959,7 +3965,7 @@ function openConfirmationMessageModal(lead) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
-        <div class="modal-head"><h3>Send confirmation to ${lead.name}</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-head"><h3>Send confirmation to ${lead.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <textarea id="ceMessage" rows="8" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${message}</textarea>
         </div>
@@ -3986,7 +3992,7 @@ function openNewLeadModal() {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
-        <div class="modal-head"><h3>New lead</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-head"><h3>New lead</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <label>Name / organisation</label>
           <input id="mName" placeholder="e.g. Priya & Raj Sharma" />
@@ -4159,7 +4165,7 @@ function openEditLeadModal(leadId) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
-        <div class="modal-head"><h3>Edit lead</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-head"><h3>Edit lead</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <label>Name / organisation</label>
           <input id="mName" value="${lead.name || ""}" />
@@ -4538,7 +4544,7 @@ async function renderWebsiteContent(main) {
       <div class="dash-list-item" style="margin-bottom:8px;">
         <input data-row-index="${i}" data-field="q" placeholder="Question" value="${row.q || ""}" style="margin-bottom:6px;" />
         <textarea data-row-index="${i}" data-field="a" placeholder="Answer" rows="2">${row.a || ""}</textarea>
-        <button class="icon-btn" data-remove-row="${i}" style="margin-top:6px;">✕ Remove</button>
+        <button class="icon-btn" data-remove-row="${i}" style="margin-top:6px;">${ICON_X} Remove</button>
       </div>
     `,
   });
@@ -4551,7 +4557,7 @@ async function renderWebsiteContent(main) {
         <input data-row-index="${i}" data-field="name" placeholder="Client name" value="${row.name || ""}" style="margin-bottom:6px;" />
         <textarea data-row-index="${i}" data-field="quote" placeholder="What they said" rows="2" style="margin-bottom:6px;">${row.quote || ""}</textarea>
         <input data-row-index="${i}" data-field="videoUrl" placeholder="Video URL (optional)" value="${row.videoUrl || ""}" />
-        <button class="icon-btn" data-remove-row="${i}" style="margin-top:6px;">✕ Remove</button>
+        <button class="icon-btn" data-remove-row="${i}" style="margin-top:6px;">${ICON_X} Remove</button>
       </div>
     `,
   });
@@ -4564,7 +4570,7 @@ async function renderWebsiteContent(main) {
         <input data-row-index="${i}" data-field="outlet" placeholder="Outlet name" value="${row.outlet || ""}" style="margin-bottom:6px;" />
         <input data-row-index="${i}" data-field="quote" placeholder="Headline / quote" value="${row.quote || ""}" style="margin-bottom:6px;" />
         <input data-row-index="${i}" data-field="link" placeholder="Link" value="${row.link || ""}" />
-        <button class="icon-btn" data-remove-row="${i}" style="margin-top:6px;">✕ Remove</button>
+        <button class="icon-btn" data-remove-row="${i}" style="margin-top:6px;">${ICON_X} Remove</button>
       </div>
     `,
   });
@@ -4576,7 +4582,7 @@ async function renderWebsiteContent(main) {
       <div class="dash-list-item" style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
         <input data-row-index="${i}" data-field="name" placeholder="Name" value="${row.name || ""}" style="flex:1;" />
         <input data-row-index="${i}" data-field="role" placeholder="Role" value="${row.role || ""}" style="flex:1;" />
-        <button class="icon-btn" data-remove-row="${i}">✕</button>
+        <button class="icon-btn" data-remove-row="${i}">${ICON_X}</button>
       </div>
     `,
   });
@@ -4588,7 +4594,7 @@ async function renderWebsiteContent(main) {
       <div class="dash-list-item" style="margin-bottom:8px;">
         <input data-row-index="${i}" data-field="title" placeholder="Format title (e.g. Bhajan Jamming)" value="${row.title || ""}" style="margin-bottom:6px;" />
         <textarea data-row-index="${i}" data-field="blurb" placeholder="Description" rows="2">${row.blurb || ""}</textarea>
-        <button class="icon-btn" data-remove-row="${i}" style="margin-top:6px;">✕ Remove</button>
+        <button class="icon-btn" data-remove-row="${i}" style="margin-top:6px;">${ICON_X} Remove</button>
       </div>
     `,
   });
@@ -4602,7 +4608,7 @@ async function renderWebsiteContent(main) {
         <input data-row-index="${i}" data-field="subhead" placeholder="Subhead" value="${row.subhead || ""}" style="margin-bottom:6px;" />
         <input data-row-index="${i}" data-field="imageUrl" placeholder="Image URL (optional)" value="${row.imageUrl || ""}" style="margin-bottom:6px;" />
         <input data-row-index="${i}" data-field="videoUrl" placeholder="Video URL (optional)" value="${row.videoUrl || ""}" />
-        <button class="icon-btn" data-remove-row="${i}" style="margin-top:6px;">✕ Remove</button>
+        <button class="icon-btn" data-remove-row="${i}" style="margin-top:6px;">${ICON_X} Remove</button>
       </div>
     `,
   });
@@ -5402,7 +5408,7 @@ function renderPerformerTabContent() {
           ${notifications.map((n) => `
             <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
               <div><div>${n.message}</div><div class="muted small">${fmtDateTime(n.created_at)}</div></div>
-              <button class="icon-btn" data-dismiss-notif="${n.id}">✕</button>
+              <button class="icon-btn" data-dismiss-notif="${n.id}">${ICON_X}</button>
             </div>
           `).join("")}
         </div>
@@ -5521,7 +5527,7 @@ async function openEventChat(leadId, leadName) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
-        <div class="modal-head"><h3>${leadName} — chat</h3><button class="icon-btn" id="closeModal">✕</button></div>
+        <div class="modal-head"><h3>${leadName} — chat</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <div id="chatMessages" class="chat-messages"></div>
           <div style="display:flex; gap:8px; margin-top:10px;">
