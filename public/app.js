@@ -3325,12 +3325,13 @@ async function renderAccounts(main) {
 async function renderDashboard(main) {
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
   const canCoordinate = isAdmin || canAssignTeam();
-  const [data, announcements, teamNotifs, activity, stickyNote] = await Promise.all([
+  const [data, announcements, teamNotifs, activity, stickyNote, websiteTraffic] = await Promise.all([
     api("/api/dashboard"),
     api("/api/announcements"),
     canCoordinate ? api("/api/admin/notifications") : Promise.resolve([]),
     isAdmin ? api("/api/activity") : Promise.resolve([]),
     api("/api/my/sticky-note").catch(() => ({ content: "" })),
+    isAdmin ? api("/api/website-traffic").catch(() => null) : Promise.resolve(null),
   ]);
   main.innerHTML = `
     <div class="view-head">
@@ -3445,6 +3446,50 @@ async function renderDashboard(main) {
       </div>
       `;
     })()}
+    ${isAdmin ? (() => {
+      const hasTraffic = websiteTraffic && websiteTraffic.byDay && websiteTraffic.byDay.length > 0;
+      if (!hasTraffic) {
+        return `
+        <div class="card" style="margin-bottom:16px;">
+          <div class="section-label">🌐 Website traffic (last 30 days)</div>
+          <p class="muted small">No data yet — Google Analytics was just connected and can take a few hours to start reporting. Check back soon, or view <a href="https://analytics.google.com" target="_blank">Google Analytics</a> directly for real-time numbers.</p>
+        </div>
+        `;
+      }
+      const maxSessions = Math.max(1, ...websiteTraffic.byDay.map((d) => d.sessions));
+      const channelColors = { "Direct": "#C1602B", "Organic Search": "#5C8A6B", "Organic Social": "#9B6EA8", "Paid Social": "#4A8FA6", "Referral": "#B6752C", "Email": "#8A5FA8" };
+      return `
+      <div class="card" style="margin-bottom:16px;">
+        <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
+          <span>🌐 Website traffic (last 30 days)</span>
+          <a href="https://analytics.google.com" target="_blank" class="muted small">Open Google Analytics ↗</a>
+        </div>
+        <div class="dash-stats" style="grid-template-columns:repeat(3, 1fr); margin-bottom:16px;">
+          <div class="card dash-stat"><div class="muted">Sessions</div><div class="mono big">${websiteTraffic.totalSessions.toLocaleString("en-IN")}</div></div>
+          <div class="card dash-stat"><div class="muted">Visitors</div><div class="mono big">${websiteTraffic.totalUsers.toLocaleString("en-IN")}</div></div>
+          <div class="card dash-stat"><div class="muted">Page views</div><div class="mono big">${websiteTraffic.totalPageViews.toLocaleString("en-IN")}</div></div>
+        </div>
+        <div class="revenue-chart-row" style="align-items:flex-end;">
+          ${websiteTraffic.byDay.map((d) => `
+            <div class="revenue-chart-col" title="${fmtDate(d.date.slice(0,4) + '-' + d.date.slice(4,6) + '-' + d.date.slice(6,8))}: ${d.sessions} sessions">
+              <div class="revenue-chart-bars" style="max-width:10px;">
+                <div class="revenue-bar" style="height:${d.sessions === 0 ? 2 : Math.max(4, (d.sessions / maxSessions) * 100)}%; background:#C1602B;"></div>
+              </div>
+            </div>
+          `).join("")}
+        </div>
+        ${websiteTraffic.byChannel.length > 0 ? `
+          <div class="muted small" style="font-weight:600; margin:14px 0 6px;">Where visitors came from</div>
+          ${websiteTraffic.byChannel.slice(0, 6).map((c) => `
+            <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
+              <span><span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:${channelColors[c.channel] || "#8A8578"}; margin-right:6px;"></span>${c.channel}</span>
+              <span class="mono">${c.sessions.toLocaleString("en-IN")}</span>
+            </div>
+          `).join("")}
+        ` : ""}
+      </div>
+      `;
+    })() : ""}
     <div class="card" id="dashCalCard" style="margin-bottom:16px;">
       <div class="section-label">Calendar</div>
       ${calendarGridMarkup()}

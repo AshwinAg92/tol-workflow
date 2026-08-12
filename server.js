@@ -560,6 +560,58 @@ app.get("/api/public/live-instagram-stats", async (req, res) => {
   }
 });
 
+// ---------- Website traffic (Google Analytics 4, via Windsor.ai) ----------
+// Internal-only (unlike Instagram stats above, which feed the public site) —
+// this powers a Dashboard card so Ashwin/Prakriti can see visits and traffic
+// sources without leaving the CRM to check analytics.google.com. Cached for
+// an hour since GA4 itself only settles data every few hours anyway.
+let websiteTrafficCache = { data: null, fetchedAt: 0 };
+const WEBSITE_TRAFFIC_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+async function fetchWebsiteTraffic() {
+  const apiKey = process.env.WINDSOR_API_KEY;
+  if (!apiKey) return null;
+  const [byDayResp, byChannelResp] = await Promise.all([
+    fetch(`https://connectors.windsor.ai/googleanalytics4?api_key=${apiKey}&fields=date,sessions,active_users,screen_page_views&date_preset=last_30d&_renderer=json`),
+    fetch(`https://connectors.windsor.ai/googleanalytics4?api_key=${apiKey}&fields=session_default_channel_group,sessions&date_preset=last_30d&_renderer=json`),
+  ]);
+  if (!byDayResp.ok) throw new Error(`Windsor.ai returned ${byDayResp.status}`);
+  if (!byChannelResp.ok) throw new Error(`Windsor.ai returned ${byChannelResp.status}`);
+  const byDayJson = await byDayResp.json();
+  const byChannelJson = await byChannelResp.json();
+  const byDay = (Array.isArray(byDayJson) ? byDayJson : (byDayJson.data || []))
+    .map((r) => ({
+      date: r.date,
+      sessions: Number(r.sessions) || 0,
+      activeUsers: Number(r.active_users) || 0,
+      pageViews: Number(r.screen_page_views) || 0,
+    }))
+    .sort((a, b) => (a.date > b.date ? 1 : -1));
+  const byChannel = (Array.isArray(byChannelJson) ? byChannelJson : (byChannelJson.data || []))
+    .map((r) => ({ channel: r.session_default_channel_group || "Unassigned", sessions: Number(r.sessions) || 0 }))
+    .sort((a, b) => b.sessions - a.sessions);
+  const totalSessions = byDay.reduce((s, d) => s + d.sessions, 0);
+  const totalUsers = byDay.reduce((s, d) => s + d.activeUsers, 0);
+  const totalPageViews = byDay.reduce((s, d) => s + d.pageViews, 0);
+  return { byDay, byChannel, totalSessions, totalUsers, totalPageViews };
+}
+
+app.get("/api/website-traffic", requireAuth, requireAdmin, async (req, res) => {
+  const isFresh = websiteTrafficCache.data && (Date.now() - websiteTrafficCache.fetchedAt) < WEBSITE_TRAFFIC_TTL_MS;
+  if (isFresh) return res.json(websiteTrafficCache.data);
+  try {
+    const traffic = await fetchWebsiteTraffic();
+    if (traffic) {
+      websiteTrafficCache = { data: traffic, fetchedAt: Date.now() };
+      return res.json(traffic);
+    }
+    return res.json(websiteTrafficCache.data || { byDay: [], byChannel: [], totalSessions: 0, totalUsers: 0, totalPageViews: 0 });
+  } catch (err) {
+    console.error("Website traffic fetch failed:", err.message);
+    return res.json(websiteTrafficCache.data || { byDay: [], byChannel: [], totalSessions: 0, totalUsers: 0, totalPageViews: 0 });
+  }
+});
+
 app.get("/api/public/upcoming-events", async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const { rows } = await pool.query(`
