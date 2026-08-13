@@ -3810,9 +3810,10 @@ async function renderDocuments(main) {
           <option value="Contract"></option>
           <option value="Invoice"></option>
         </datalist>
-        <input type="file" id="docFile" />
+        <input type="file" id="docFile" multiple />
         <button class="btn-primary" id="uploadBtn">Upload</button>
       </div>
+      <p class="muted small" style="margin-top:8px;">Tip: you can select several files at once (same label/event applies to all of them).</p>
       ${eventLeads.length === 0 ? `<p class="muted small" style="margin-top:8px;">No confirmed events yet — once a lead's stage is "Confirmed" or "Completed" it'll show up here to attach files to.</p>` : ""}
     </div>
     <div id="docGroups"></div>
@@ -3907,18 +3908,27 @@ async function renderDocuments(main) {
 
   main.querySelector("#uploadBtn").addEventListener("click", async () => {
     const fileInput = main.querySelector("#docFile");
-    if (!fileInput.files[0]) return alert("Choose a file first.");
-    const formData = new FormData();
-    formData.append("file", fileInput.files[0]);
-    formData.append("leadId", main.querySelector("#docLead").value || "");
-    formData.append("notes", main.querySelector("#docLabel").value || "");
+    const files = Array.from(fileInput.files || []);
+    if (files.length === 0) return alert("Choose at least one file first.");
+    const leadId = main.querySelector("#docLead").value || "";
+    const notes = main.querySelector("#docLabel").value || "";
     const btn = main.querySelector("#uploadBtn");
     btn.disabled = true;
-    btn.textContent = "Uploading…";
     try {
-      await fetch("/api/documents", { method: "POST", body: formData });
+      // Uploaded one at a time (not in parallel) so a slow connection doesn't
+      // choke on several large PDFs at once, and so progress text is accurate.
+      for (let i = 0; i < files.length; i++) {
+        btn.textContent = files.length > 1 ? `Uploading ${i + 1} of ${files.length}…` : "Uploading…";
+        const formData = new FormData();
+        formData.append("file", files[i]);
+        formData.append("leadId", leadId);
+        formData.append("notes", notes);
+        const resp = await fetch("/api/documents", { method: "POST", body: formData });
+        if (!resp.ok) throw new Error(`Failed to upload "${files[i].name}"`);
+      }
       renderMain();
-    } finally {
+    } catch (err) {
+      alert(err.message);
       btn.disabled = false;
       btn.textContent = "Upload";
     }
