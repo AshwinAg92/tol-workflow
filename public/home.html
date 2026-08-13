@@ -148,10 +148,10 @@
   }
   .nav-cta:hover{background:var(--ember); transform:rotate(0.5deg) scale(1.03);}
   .nav-login-link{
-    font-family:'Space Grotesk'; font-weight:600; font-size:13px; color:var(--muted);
+    font-family:'Space Grotesk'; font-weight:600; font-size:13px; color:var(--muted) !important;
     padding-bottom:3px; border-bottom:2px solid transparent; transition:border-color .2s, color .2s;
   }
-  .nav-login-link:hover{color:var(--terracotta); border-color:var(--terracotta);}
+  .nav-login-link:hover{color:var(--terracotta) !important; border-color:var(--terracotta);}
   .nav-links{display:flex; align-items:center; gap:18px; flex-wrap:nowrap;}
   .nav-links a{
     font-family:'Space Grotesk'; font-weight:600; font-size:13.5px; color:var(--ink);
@@ -517,9 +517,8 @@
   .finder-result h3{font-family:'Space Grotesk'; font-weight:700; font-size:24px; margin-bottom:10px;}
   .finder-result p{color:var(--muted); font-size:14.5px; max-width:460px; margin:0 auto 22px;}
 
-  @media (max-width:1040px){
+  @media (max-width:1140px){
     .nav-links{display:none;}
-    .nav-login-link{display:none;}
     .mobile-menu-btn{display:block;}
     .mobile-menu-panel{display:flex;}
   }
@@ -574,9 +573,9 @@
     <a href="#pressSection" id="navPressLink" style="display:none;">Press</a>
     <a href="#faq">FAQ</a>
     <a href="#contact">Contact Us</a>
+    <a href="/login" class="nav-login-link" title="Team Login">Login</a>
   </div>
   <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Open menu" aria-expanded="false">☰</button>
-  <a href="/login" class="nav-login-link" title="Team Login">Login</a>
   <a class="nav-cta" href="/lead-form.html">Enquire Now</a>
 </nav>
 
