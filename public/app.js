@@ -3061,7 +3061,19 @@ async function renderAccounts(main) {
     })()}
 
     <div class="section-label">Events — tap one to add a payment or view its ledger</div>
-    <input type="text" id="acctSearch" placeholder="🔍 Search events by name…" style="margin-bottom:10px;" />
+    <div class="card" style="margin-bottom:10px;">
+      <div class="upload-form" style="margin-bottom:0;">
+        <input type="text" id="acctSearch" placeholder="🔍 Search by name or phone…" style="flex:1; min-width:180px;" />
+        <input type="text" id="acctCityFilter" placeholder="City…" style="flex:1; min-width:140px;" />
+        <input type="date" id="acctDateFilter" />
+        <select id="acctStageFilter">
+          <option value="all">All events</option>
+          <option value="Confirmed">Upcoming</option>
+          <option value="Completed">Completed</option>
+        </select>
+        <button class="btn-ghost" id="acctClearFilters">Clear filters</button>
+      </div>
+    </div>
     <div id="acctCards" style="margin-bottom:24px;"></div>
 
     <div class="section-label">Add an expense or artist fee</div>
@@ -3127,11 +3139,17 @@ async function renderAccounts(main) {
 
   // ---- Events: searchable, tap-to-manage cards ----
   const acctCards = main.querySelector("#acctCards");
-  function renderAcctCards(filterText) {
-    const q = (filterText || "").trim().toLowerCase();
-    const filtered = q ? sortedBookings.filter((l) => l.name.toLowerCase().includes(q)) : sortedBookings;
+  const acctFilters = { search: "", city: "", date: "", stage: "all" };
+  function renderAcctCards() {
+    const q = acctFilters.search.trim().toLowerCase();
+    const cityQ = acctFilters.city.trim().toLowerCase();
+    const filtered = sortedBookings
+      .filter((l) => !q || l.name.toLowerCase().includes(q) || (l.phone || "").includes(q))
+      .filter((l) => !cityQ || (l.city || "").toLowerCase().includes(cityQ))
+      .filter((l) => !acctFilters.date || l.date === acctFilters.date)
+      .filter((l) => acctFilters.stage === "all" || l.stage === acctFilters.stage);
     if (filtered.length === 0) {
-      acctCards.innerHTML = `<div class="board-empty">${sortedBookings.length === 0 ? "No confirmed or completed bookings yet" : "No events match that search"}</div>`;
+      acctCards.innerHTML = `<div class="board-empty">${sortedBookings.length === 0 ? "No confirmed or completed bookings yet" : "No events match those filters"}</div>`;
       return;
     }
     acctCards.innerHTML = "";
@@ -3143,7 +3161,7 @@ async function renderAccounts(main) {
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
             <div>
               <div class="lead-name">${l.name}${l.comboEvents && l.comboEvents.length > 1 ? ` <span class="muted small" style="color:#8A5FA8;">🔗 ${l.comboEvents.length} events</span>` : ""}</div>
-              <div class="muted small">${fmtDate(l.date)}${l.city ? ` · ${l.city}` : ""}</div>
+              <div class="muted small">${fmtDate(l.date)}${l.city ? ` · ${l.city}` : ""}${l.phone ? ` · ${l.phone}` : ""}</div>
             </div>
             <span class="tag" style="color:${STAGE_COLOR[l.stage]}; flex-shrink:0;">${l.stage}</span>
           </div>
@@ -3159,8 +3177,19 @@ async function renderAccounts(main) {
       acctCards.appendChild(card);
     });
   }
-  renderAcctCards("");
-  main.querySelector("#acctSearch").addEventListener("input", (e) => renderAcctCards(e.target.value));
+  renderAcctCards();
+  main.querySelector("#acctSearch").addEventListener("input", (e) => { acctFilters.search = e.target.value; renderAcctCards(); });
+  main.querySelector("#acctCityFilter").addEventListener("input", (e) => { acctFilters.city = e.target.value; renderAcctCards(); });
+  main.querySelector("#acctDateFilter").addEventListener("change", (e) => { acctFilters.date = e.target.value; renderAcctCards(); });
+  main.querySelector("#acctStageFilter").addEventListener("change", (e) => { acctFilters.stage = e.target.value; renderAcctCards(); });
+  main.querySelector("#acctClearFilters").addEventListener("click", () => {
+    acctFilters.search = ""; acctFilters.city = ""; acctFilters.date = ""; acctFilters.stage = "all";
+    main.querySelector("#acctSearch").value = "";
+    main.querySelector("#acctCityFilter").value = "";
+    main.querySelector("#acctDateFilter").value = "";
+    main.querySelector("#acctStageFilter").value = "all";
+    renderAcctCards();
+  });
 
   // ---- Pending expenses: compact tap-friendly rows ----
   function renderExpenseRows() {
