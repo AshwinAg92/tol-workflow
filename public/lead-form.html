@@ -211,6 +211,12 @@
   </div>
 
   <script>
+    const dateInput = document.getElementById("date");
+    const altDateInput = document.getElementById("altDate");
+    const todayStr = new Date().toISOString().slice(0, 10);
+    dateInput.min = todayStr;
+    altDateInput.min = todayStr;
+
     const experienceSelect = document.getElementById("experience");
     const occasionSelect = document.getElementById("occasion");
     const guestRangeSelect = document.getElementById("guestRange");
@@ -234,6 +240,15 @@
         updateSubmitState();
         return;
       }
+      if (e.target.value < todayStr) {
+        dateWarning.textContent = "That date has already passed. Please choose today's date or a future date.";
+        dateWarning.style.display = "block";
+        altDateRow.style.display = "none";
+        primaryDateBooked = true; // reuse the same "blocked" state to disable submit
+        updateSubmitState();
+        return;
+      }
+      dateWarning.textContent = "That date already has a confirmed event with us, so we can't accept a new booking for it. Enter an alternative date below if you're flexible — otherwise, please choose a different date to submit.";
       try {
         const res = await fetch(`/api/availability?date=${e.target.value}`);
         const data = await res.json();

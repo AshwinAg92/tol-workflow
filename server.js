@@ -469,6 +469,16 @@ app.post("/api/leads", async (req, res) => {
   if (!name || !eventType || !date) {
     return res.status(400).json({ error: "name, eventType, and date are required" });
   }
+  // Reject any enquiry for a date that's already passed — a past date can't
+  // be booked, and letting it through just clutters the pipeline. Uses the
+  // same UTC-date convention as the rest of the app for consistency.
+  const today = new Date().toISOString().slice(0, 10);
+  if (date < today) {
+    return res.status(400).json({ error: "That event date has already passed. Please choose today's date or a future date." });
+  }
+  if (altDate && altDate < today) {
+    return res.status(400).json({ error: "The alternative date has already passed. Please choose today's date or a future date." });
+  }
   // Don't accept a new enquiry for a date we're already Confirmed for — unless
   // they've also given a valid (not-also-booked) alternative date, matching the
   // flexibility the form itself offers. Blocking outright even when a good
