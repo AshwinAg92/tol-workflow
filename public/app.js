@@ -5685,7 +5685,33 @@ if ("serviceWorker" in navigator) {
   }
   const brandTag = document.getElementById("brandTag");
   if (brandTag) brandTag.textContent = CURRENT_USER.name || CURRENT_USER.username;
-  await loadAll();
+  const slowLoadTimer = setTimeout(() => {
+    const main = document.getElementById("main");
+    const p = main?.querySelector("p.muted");
+    if (p) p.textContent = "Still loading… this is taking longer than usual, hang tight.";
+  }, 6000);
+  try {
+    await loadAll();
+  } catch (err) {
+    clearTimeout(slowLoadTimer);
+    // If any of the startup data calls fail (slow/dropped connection, brief
+    // server hiccup, etc.) we must not leave the user staring at a frozen
+    // "Loading workflow…" forever with no way out — show a clear message
+    // and a one-tap retry instead.
+    const main = document.getElementById("main");
+    if (main) {
+      main.innerHTML = `
+        <div class="board-empty" style="padding:40px 20px; text-align:center;">
+          <p style="margin-bottom:14px;">Couldn't load your data — this is usually just a slow or dropped connection.</p>
+          <button class="btn-primary" id="retryLoadBtn">Try again</button>
+        </div>
+      `;
+      const retryBtn = document.getElementById("retryLoadBtn");
+      if (retryBtn) retryBtn.addEventListener("click", () => window.location.reload());
+    }
+    return;
+  }
+  clearTimeout(slowLoadTimer);
   renderNav();
   renderMain();
   initMobileNav();
