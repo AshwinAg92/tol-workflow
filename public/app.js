@@ -989,13 +989,17 @@ async function renderLeadsLog(main, skipRefresh) {
           <div class="muted small">Submitted ${fmtDateTime(l.created_at)}</div>
           ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}${l.last_quoted_at ? ` <span class="muted">— sent ${fmtDate(l.last_quoted_at.slice(0, 10))}</span>` : ""}</div>` : ""}
           ${hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) ? (() => {
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const isSnoozed = !!l.snooze_until && l.snooze_until > todayStr;
             const days = daysSince(l.last_followup_at);
-            const overdue = days >= 3;
-            const label = !l.last_followup_at
+            const overdue = !isSnoozed && days >= 3;
+            const label = isSnoozed
+              ? `Snoozed until ${fmtDate(l.snooze_until)}`
+              : !l.last_followup_at
               ? "Not yet followed up"
               : `Last followed up ${timeAgo(l.last_followup_at)}${overdue ? " — overdue" : ""}`;
-            const color = !l.last_followup_at || overdue ? "#B6752C" : "#5C7A5A";
-            const icon = !l.last_followup_at || overdue ? "⏳" : "✓";
+            const color = isSnoozed ? "#5C7A5A" : !l.last_followup_at || overdue ? "#B6752C" : "#5C7A5A";
+            const icon = isSnoozed ? "💤" : !l.last_followup_at || overdue ? "⏳" : "✓";
             // The 3-follow-up auto-close only ever applies at New/Follow-up —
             // once a lead progresses further it's clearly engaged, so no
             // countdown applies (and none should be shown) past that point.
@@ -1007,7 +1011,16 @@ async function renderLeadsLog(main, skipRefresh) {
             return `<div class="small" style="margin-top:6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
               <span style="color:${color};">${icon} ${label}</span>${counterText}
               <a href="#" class="mark-followup-link" data-lead-id="${l.id}" style="font-size:12px; color:#8A5FA8; text-decoration:underline;" title="Use this if you contacted them by phone or in person instead of the WhatsApp button.">mark followed up now</a>
-            </div>`;
+              ${isSnoozed
+                ? `<a href="#" class="clear-snooze-link" data-lead-id="${l.id}" style="font-size:12px; color:#A64B3C; text-decoration:underline;">clear snooze</a>`
+                : `<a href="#" class="snooze-toggle-link" data-lead-id="${l.id}" style="font-size:12px; color:#8A5FA8; text-decoration:underline;" title="Hide this lead from overdue/follow-up reminders until a date you pick — useful when they've said 'we'll let you know'.">⏰ snooze</a>`
+              }
+            </div>
+            ${!isSnoozed ? `
+              <div class="snooze-form" data-lead-id="${l.id}" style="display:none; margin-top:6px; align-items:center; gap:6px;">
+                <input type="date" class="snooze-date-input" data-lead-id="${l.id}" min="${todayStr}" style="flex:1;" />
+                <button class="btn-ghost snooze-set-btn" data-lead-id="${l.id}">Set</button>
+              </div>` : ""}`;
           })() : ""}
           ${hasLeadsAccess() && l.stage !== "Completed" ? `
             <div class="lead-sticky-note" style="margin-top:8px; background:#FBF3D9; border:1px solid #E8D488; border-radius:6px; padding:6px 8px;">
@@ -1113,6 +1126,45 @@ async function renderLeadsLog(main, skipRefresh) {
         if (wasNotInterested) alert(`${lead.name} has been moved to Not Interested — that was the 3rd follow-up with no response.`);
       } catch (err) {
         alert("Couldn't save — check your connection and try again.");
+      }
+    });
+  });
+
+  main.querySelectorAll(".snooze-toggle-link").forEach((link) => {
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      const form = main.querySelector(`.snooze-form[data-lead-id="${link.dataset.leadId}"]`);
+      if (form) form.style.display = form.style.display === "none" ? "flex" : "none";
+    });
+  });
+
+  main.querySelectorAll(".snooze-set-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const leadId = btn.dataset.leadId;
+      const input = main.querySelector(`.snooze-date-input[data-lead-id="${leadId}"]`);
+      if (!input || !input.value) return alert("Pick a date first.");
+      try {
+        const updated = await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ snoozeUntil: input.value }) });
+        const lead = LEADS.find((l) => l.id === leadId);
+        if (lead) lead.snooze_until = updated.snooze_until;
+        renderLeadsLog(main, true);
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  });
+
+  main.querySelectorAll(".clear-snooze-link").forEach((link) => {
+    link.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const leadId = link.dataset.leadId;
+      try {
+        const updated = await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ snoozeUntil: null }) });
+        const lead = LEADS.find((l) => l.id === leadId);
+        if (lead) lead.snooze_until = updated.snooze_until;
+        renderLeadsLog(main, true);
+      } catch (err) {
+        alert("Couldn't clear — check your connection and try again.");
       }
     });
   });

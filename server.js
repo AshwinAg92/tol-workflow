@@ -819,11 +819,11 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const leadsOnlyFields = [
     "stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "date",
     "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration", "whatsapp_number",
-    "cancellation_reason",
+    "cancellation_reason", "snooze_until",
   ];
   const sharedFields = ["event_time", "soundcheck_time", "venue"];
   if (!hasLeads) {
-    const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f);
+    const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f);
     const attemptedRestricted = leadsOnlyFields.some((f) => req.body[keyFor(f)] !== undefined);
     if (attemptedRestricted) return res.status(403).json({ error: "You don't have permission to update those fields" });
   }
@@ -831,6 +831,11 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   if (req.body.advanceDate) {
     const today = new Date().toISOString().slice(0, 10);
     if (req.body.advanceDate > today) return res.status(400).json({ error: "Advance received date can't be in the future" });
+  }
+
+  if (req.body.snoozeUntil) {
+    const today = new Date().toISOString().slice(0, 10);
+    if (req.body.snoozeUntil < today) return res.status(400).json({ error: "Snooze date can't be in the past" });
   }
 
   if (req.body.stage === "Completed" && lead.stage !== "Completed") {
@@ -845,7 +850,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const updates = [];
   const values = [];
   fields.forEach((f) => {
-    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f;
+    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f;
     if (req.body[key] !== undefined) {
       values.push(req.body[key]);
       updates.push(`${f} = $${values.length}`);
@@ -2032,7 +2037,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
   const [upcomingRes, upcomingCountRes, followUpsRes, accountsRes, paymentsRes, tasksRes, newLeadsRes, tentativeRes, interestedRes, stageCountsRes] = await Promise.all([
     pool.query(`SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1 ORDER BY date ASC LIMIT 5`, [today]),
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1`, [today]),
-    pool.query(`SELECT * FROM leads WHERE stage = 'Follow-up' ORDER BY last_followup_at ASC NULLS FIRST, created_at ASC`),
+    pool.query(`SELECT * FROM leads WHERE stage = 'Follow-up' AND (snooze_until IS NULL OR snooze_until <= $1) ORDER BY last_followup_at ASC NULLS FIRST, created_at ASC`, [today]),
     pool.query(`SELECT id, final_amount, quote_amount FROM leads WHERE stage IN ('Confirmed', 'Completed')`),
     pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments`),
     pool.query(`SELECT * FROM tasks WHERE done = 0 AND (due_date <= $1 OR due_date IS NULL) ORDER BY due_date ASC LIMIT 8`, [weekAhead]),
@@ -2070,6 +2075,32 @@ async function autoCompletePastEvents() {
     await pool.query(`UPDATE leads SET stage = 'Completed' WHERE stage = 'Confirmed' AND date < $1`, [today]);
   } catch (err) {
     console.error("autoCompletePastEvents failed:", err.message);
+  }
+}
+
+// A lead that's still undecided (New/Follow-up/Interested — never actually
+// booked) with an event date 2 days away or closer just isn't realistic to
+// pull off anymore, so auto-close it as Not Interested rather than let it
+// linger in the active pipeline. Deliberately excludes Tentative — that
+// stage means a date is already provisionally held for them, so it needs a
+// human call rather than a silent auto-close. Runs at boot and hourly.
+async function autoCloseNearDateLeads() {
+  try {
+    const cutoff = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
+    const { rows } = await pool.query(
+      `SELECT id, name, date, stage FROM leads WHERE stage IN ('New', 'Follow-up', 'Interested') AND date <= $1`,
+      [cutoff]
+    );
+    for (const lead of rows) {
+      const autoNote = `[Auto] Moved to Not Interested — event date (${lead.date}) is 2 days away or closer and it never progressed past ${lead.stage}.`;
+      await pool.query(
+        `UPDATE leads SET stage = 'Not Interested', notes = CASE WHEN notes IS NULL OR notes = '' THEN $1 ELSE $1 || chr(10) || notes END WHERE id = $2`,
+        [autoNote, lead.id]
+      );
+      logActivity({ user: null }, `${lead.name}: ${lead.stage} → Not Interested (auto — event date imminent, never confirmed)`, lead.id);
+    }
+  } catch (err) {
+    console.error("autoCloseNearDateLeads failed:", err.message);
   }
 }
 
@@ -2213,6 +2244,8 @@ ready.then(() => {
   app.listen(PORT, () => console.log(`TOL workflow app running on http://localhost:${PORT}`));
   autoCompletePastEvents();
   setInterval(autoCompletePastEvents, 60 * 60 * 1000);
+  autoCloseNearDateLeads();
+  setInterval(autoCloseNearDateLeads, 60 * 60 * 1000);
   runMonthlyBackupCheck();
   setInterval(runMonthlyBackupCheck, 60 * 60 * 1000);
 });
