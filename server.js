@@ -854,9 +854,33 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   // logFollowup is a trigger, not a raw field — the timestamp is always set
   // server-side (never trust a client-supplied clock) so "last followed up"
   // stays accurate regardless of who's clicking it or from where.
+  let autoMovedToNotInterested = false;
   if (hasLeads && req.body.logFollowup === true) {
     values.push(new Date().toISOString());
     updates.push(`last_followup_at = $${values.length}`);
+    const newFollowupCount = (lead.followup_count || 0) + 1;
+    values.push(newFollowupCount);
+    updates.push(`followup_count = $${values.length}`);
+    // After 3 follow-ups with no reply, and only while the lead is still
+    // sitting at New/Follow-up (i.e. never actually engaged), auto-close it
+    // out as Not Interested so it stops cluttering the active pipeline.
+    // Deliberately does NOT apply once a lead has progressed further
+    // (Interested/Tentative etc.) — "we'll let you know" leads are still
+    // warm and shouldn't get auto-declined just for going quiet a while.
+    if (newFollowupCount >= 3 && req.body.stage === undefined && ["New", "Follow-up"].includes(lead.stage)) {
+      autoMovedToNotInterested = true;
+      values.push("Not Interested");
+      updates.push(`stage = $${values.length}`);
+      const autoNote = `[Auto] Moved to Not Interested — 3 follow-ups sent with no response (as of ${new Date().toISOString().slice(0, 10)}).`;
+      values.push(lead.notes ? `${autoNote}\n${lead.notes}` : autoNote);
+      updates.push(`notes = $${values.length}`);
+    }
+  }
+  // Any deliberate stage change is a fresh read on the lead, so restart the
+  // no-response counter — it shouldn't carry over from a previous phase.
+  if (req.body.stage !== undefined && req.body.stage !== lead.stage) {
+    values.push(0);
+    updates.push(`followup_count = $${values.length}`);
   }
   if (updates.length === 0) return res.status(400).json({ error: "Nothing to update" });
 
@@ -894,6 +918,8 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     }
   } else if (req.body.advance !== undefined && Number(req.body.advance) !== Number(lead.advance || 0)) {
     logActivity(req, `Payment recorded for ${lead.name}: ₹${Number(req.body.advance).toLocaleString("en-IN")} received`, lead.id);
+  } else if (autoMovedToNotInterested) {
+    logActivity(req, `${lead.name}: ${lead.stage} → Not Interested (auto — 3 follow-ups, no response)`, lead.id);
   }
 });
 

@@ -996,8 +996,16 @@ async function renderLeadsLog(main, skipRefresh) {
               : `Last followed up ${timeAgo(l.last_followup_at)}${overdue ? " — overdue" : ""}`;
             const color = !l.last_followup_at || overdue ? "#B6752C" : "#5C7A5A";
             const icon = !l.last_followup_at || overdue ? "⏳" : "✓";
+            // The 3-follow-up auto-close only ever applies at New/Follow-up —
+            // once a lead progresses further it's clearly engaged, so no
+            // countdown applies (and none should be shown) past that point.
+            const countsTowardAutoClose = ["New", "Follow-up"].includes(l.stage);
+            const count = l.followup_count || 0;
+            const counterText = countsTowardAutoClose && count > 0
+              ? ` <span class="muted" style="${count >= 2 ? "color:#A64B3C;" : ""}">(${count}/3${count >= 2 ? " — one more with no response auto-closes this" : ""})</span>`
+              : "";
             return `<div class="small" style="margin-top:6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-              <span style="color:${color};">${icon} ${label}</span>
+              <span style="color:${color};">${icon} ${label}</span>${counterText}
               <a href="#" class="mark-followup-link" data-lead-id="${l.id}" style="font-size:12px; color:#8A5FA8; text-decoration:underline;" title="Use this if you contacted them by phone or in person instead of the WhatsApp button.">mark followed up now</a>
             </div>`;
           })() : ""}
@@ -1078,8 +1086,13 @@ async function renderLeadsLog(main, skipRefresh) {
       if (digitsOnly) window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
       try {
         const updated = await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ logFollowup: true }) });
+        const wasNotInterested = lead.stage !== "Not Interested" && updated.stage === "Not Interested";
         lead.last_followup_at = updated.last_followup_at;
+        lead.followup_count = updated.followup_count;
+        lead.stage = updated.stage;
+        lead.notes = updated.notes;
         renderLeadsLog(main, true);
+        if (wasNotInterested) alert(`${lead.name} has been moved to Not Interested — that was the 3rd follow-up with no response.`);
       } catch (err) { /* WhatsApp already opened; tracker just won't update this once */ }
     });
   });
@@ -1091,8 +1104,13 @@ async function renderLeadsLog(main, skipRefresh) {
       if (!lead) return;
       try {
         const updated = await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ logFollowup: true }) });
+        const wasNotInterested = lead.stage !== "Not Interested" && updated.stage === "Not Interested";
         lead.last_followup_at = updated.last_followup_at;
+        lead.followup_count = updated.followup_count;
+        lead.stage = updated.stage;
+        lead.notes = updated.notes;
         renderLeadsLog(main, true);
+        if (wasNotInterested) alert(`${lead.name} has been moved to Not Interested — that was the 3rd follow-up with no response.`);
       } catch (err) {
         alert("Couldn't save — check your connection and try again.");
       }

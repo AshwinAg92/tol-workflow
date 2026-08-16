@@ -193,6 +193,7 @@ async function setup() {
   // Ashwin/Prakriti can tell at a glance who still needs a nudge, instead of
   // having to remember or reopen WhatsApp to check.
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_followup_at TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS followup_count INTEGER DEFAULT 0`);
   // Lets a sent quote be tracked through to accepted/rejected instead of
   // just "sent and forgotten" — shown as a status dropdown in Quote history.
   await pool.query(`ALTER TABLE quotes ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'sent'`);
