@@ -942,8 +942,12 @@ async function renderLeadsLog(main, skipRefresh) {
       newInput.setSelectionRange(cursorPos, cursorPos);
     }
   });
-  main.querySelector("#leadsDateInput").addEventListener("change", (e) => { leadsDateFilter = e.target.value; renderLeadsLog(main, true); });
-  main.querySelector("#leadsQueryDateInput").addEventListener("change", (e) => { leadsQueryDateFilter = e.target.value; renderLeadsLog(main, true); });
+  // iOS Safari fires "change" on a date input the instant the wheel picker
+  // opens on an empty field (defaulting to today), not when the user actually
+  // confirms a choice — using "blur" instead means the filter only applies
+  // once they've actually closed the picker, not the moment they tap in.
+  main.querySelector("#leadsDateInput").addEventListener("blur", (e) => { leadsDateFilter = e.target.value; renderLeadsLog(main, true); });
+  main.querySelector("#leadsQueryDateInput").addEventListener("blur", (e) => { leadsQueryDateFilter = e.target.value; renderLeadsLog(main, true); });
   const clearEventDateBtn = main.querySelector("#clearEventDateBtn");
   if (clearEventDateBtn) clearEventDateBtn.addEventListener("click", () => { leadsDateFilter = ""; renderLeadsLog(main, true); });
   const clearQueryDateBtn = main.querySelector("#clearQueryDateBtn");
@@ -3158,7 +3162,10 @@ async function renderAccounts(main) {
       <div class="upload-form" style="margin-bottom:0;">
         <input type="text" id="acctSearch" placeholder="🔍 Search by name or phone…" style="flex:1; min-width:180px;" />
         <input type="text" id="acctCityFilter" placeholder="City…" style="flex:1; min-width:140px;" />
-        <input type="date" id="acctDateFilter" />
+        <div style="display:flex; align-items:center; gap:4px;">
+          <input type="date" id="acctDateFilter" />
+          <button class="btn-ghost" id="acctClearDateBtn" style="padding:4px 8px;" title="Clear date">✕</button>
+        </div>
         <select id="acctStageFilter">
           <option value="all">All events</option>
           <option value="Confirmed">Upcoming</option>
@@ -3273,7 +3280,15 @@ async function renderAccounts(main) {
   renderAcctCards();
   main.querySelector("#acctSearch").addEventListener("input", (e) => { acctFilters.search = e.target.value; renderAcctCards(); });
   main.querySelector("#acctCityFilter").addEventListener("input", (e) => { acctFilters.city = e.target.value; renderAcctCards(); });
-  main.querySelector("#acctDateFilter").addEventListener("change", (e) => { acctFilters.date = e.target.value; renderAcctCards(); });
+  // Use "blur" not "change" — iOS Safari fires "change" on an empty date
+  // input the instant the picker opens (defaulting to today), before the
+  // user has actually confirmed anything.
+  main.querySelector("#acctDateFilter").addEventListener("blur", (e) => { acctFilters.date = e.target.value; renderAcctCards(); });
+  main.querySelector("#acctClearDateBtn").addEventListener("click", () => {
+    acctFilters.date = "";
+    main.querySelector("#acctDateFilter").value = "";
+    renderAcctCards();
+  });
   main.querySelector("#acctStageFilter").addEventListener("change", (e) => { acctFilters.stage = e.target.value; renderAcctCards(); });
   main.querySelector("#acctClearFilters").addEventListener("click", () => {
     acctFilters.search = ""; acctFilters.city = ""; acctFilters.date = ""; acctFilters.stage = "all";
