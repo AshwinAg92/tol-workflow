@@ -1806,54 +1806,60 @@ function calendarGridMarkup() {
   `;
 }
 
+// Re-runs the label/cells update only, without touching anything else on the
+// page — used so month navigation doesn't force a full-page re-render (which
+// was resetting scroll position back to the top every time).
 function wireCalendarGrid(container) {
-  const confirmed = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed" || l.stage === "Tentative");
-  const first = new Date(calYear, calMonth - 1, 1);
-  const startDay = first.getDay();
-  const daysInMonth = new Date(calYear, calMonth, 0).getDate();
-  const cells = Array(startDay).fill(null).concat(Array.from({ length: daysInMonth }, (_, i) => i + 1));
-  const eventsByDay = {};
-  confirmed.forEach((l) => {
-    if (!l.date) return;
-    const d = new Date(l.date + "T00:00:00");
-    if (d.getFullYear() === calYear && d.getMonth() === calMonth - 1) {
-      (eventsByDay[d.getDate()] = eventsByDay[d.getDate()] || []).push(l);
-    }
-  });
-  container.querySelector("#calMonthLabel").textContent = first.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
-
-  const calCells = container.querySelector("#calCells");
-  calCells.innerHTML = "";
-  cells.forEach((d) => {
-    const evs = d ? (eventsByDay[d] || []) : [];
-    calCells.appendChild(el(`
-      <div class="cal-cell${d ? "" : " cal-cell-empty"}">
-        ${d ? `<div class="cal-day">${d}</div>` : ""}
-        ${evs.map((ev) => `<div class="cal-event${ev.stage === "Tentative" ? " cal-event-tentative" : ""}" data-lead-id="${ev.id}" style="cursor:pointer;${ev.stage === "Tentative" ? ` background:transparent; border:1px dashed ${STAGE_COLOR.Tentative}; color:${STAGE_COLOR.Tentative};` : ""}" title="Click to open ${ev.name}${ev.stage === "Tentative" ? " (Tentative)" : ""}">${ev.name.split(" ")[0]}${ev.stage === "Tentative" ? " ⏳" : ""}</div>`).join("")}
-      </div>
-    `));
-  });
-  calCells.querySelectorAll(".cal-event").forEach((pill) => {
-    pill.addEventListener("click", () => {
-      const lead = LEADS.find((l) => l.id === pill.dataset.leadId);
-      if (!lead) return;
-      if (hasLeadsAccess()) {
-        leadsSearch = lead.name;
-        leadsStageFilter = "all";
-        leadsCityFilter = "";
-        leadsDateFilter = "";
-        leadsQuoteDateFilter = "";
-        currentTab = "leads";
-        renderNav();
-        renderMain();
-      } else if (canAssignTeam()) {
-        openAssignTeamModal(lead.id);
+  function redraw() {
+    const confirmed = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed" || l.stage === "Tentative");
+    const first = new Date(calYear, calMonth - 1, 1);
+    const startDay = first.getDay();
+    const daysInMonth = new Date(calYear, calMonth, 0).getDate();
+    const cells = Array(startDay).fill(null).concat(Array.from({ length: daysInMonth }, (_, i) => i + 1));
+    const eventsByDay = {};
+    confirmed.forEach((l) => {
+      if (!l.date) return;
+      const d = new Date(l.date + "T00:00:00");
+      if (d.getFullYear() === calYear && d.getMonth() === calMonth - 1) {
+        (eventsByDay[d.getDate()] = eventsByDay[d.getDate()] || []).push(l);
       }
     });
-  });
+    container.querySelector("#calMonthLabel").textContent = first.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 
-  container.querySelector("#prevMonth").addEventListener("click", () => { calMonth--; if (calMonth < 1) { calMonth = 12; calYear--; } renderMain(); });
-  container.querySelector("#nextMonth").addEventListener("click", () => { calMonth++; if (calMonth > 12) { calMonth = 1; calYear++; } renderMain(); });
+    const calCells = container.querySelector("#calCells");
+    calCells.innerHTML = "";
+    cells.forEach((d) => {
+      const evs = d ? (eventsByDay[d] || []) : [];
+      calCells.appendChild(el(`
+        <div class="cal-cell${d ? "" : " cal-cell-empty"}">
+          ${d ? `<div class="cal-day">${d}</div>` : ""}
+          ${evs.map((ev) => `<div class="cal-event${ev.stage === "Tentative" ? " cal-event-tentative" : ""}" data-lead-id="${ev.id}" style="cursor:pointer;${ev.stage === "Tentative" ? ` background:transparent; border:1px dashed ${STAGE_COLOR.Tentative}; color:${STAGE_COLOR.Tentative};` : ""}" title="Click to open ${ev.name}${ev.stage === "Tentative" ? " (Tentative)" : ""}">${ev.name.split(" ")[0]}${ev.stage === "Tentative" ? " ⏳" : ""}</div>`).join("")}
+        </div>
+      `));
+    });
+    calCells.querySelectorAll(".cal-event").forEach((pill) => {
+      pill.addEventListener("click", () => {
+        const lead = LEADS.find((l) => l.id === pill.dataset.leadId);
+        if (!lead) return;
+        if (hasLeadsAccess()) {
+          leadsSearch = lead.name;
+          leadsStageFilter = "all";
+          leadsCityFilter = "";
+          leadsDateFilter = "";
+          leadsQuoteDateFilter = "";
+          currentTab = "leads";
+          renderNav();
+          renderMain();
+        } else if (canAssignTeam()) {
+          openAssignTeamModal(lead.id);
+        }
+      });
+    });
+  }
+
+  redraw();
+  container.querySelector("#prevMonth").addEventListener("click", () => { calMonth--; if (calMonth < 1) { calMonth = 12; calYear--; } redraw(); });
+  container.querySelector("#nextMonth").addEventListener("click", () => { calMonth++; if (calMonth > 12) { calMonth = 1; calYear++; } redraw(); });
 }
 
 async function renderCalendar(main) {
