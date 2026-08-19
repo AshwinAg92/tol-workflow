@@ -11,7 +11,7 @@ let leadsStageFilter = "all";
 let leadsSearch = "";
 let leadsCityFilter = "";
 let leadsDateFilter = "";
-let leadsQueryDateFilter = "";
+let leadsQuoteDateFilter = "";
 let leadsSortBy = "date";
 let leadsSelected = new Set();
 let quotationLeadId = null;
@@ -639,7 +639,7 @@ function initGlobalSearch() {
         leadsCityFilter = "";
         leadsStageFilter = "all";
         leadsDateFilter = "";
-        leadsQueryDateFilter = "";
+        leadsQuoteDateFilter = "";
         currentTab = "leads";
         input.value = "";
         close();
@@ -949,7 +949,7 @@ async function renderLeadsLog(main, skipRefresh) {
     .filter((l) => !leadsSearch || l.name.toLowerCase().includes(leadsSearch.toLowerCase()))
     .filter((l) => !leadsCityFilter || (l.city || "").toLowerCase().includes(leadsCityFilter.toLowerCase()))
     .filter((l) => !leadsDateFilter || l.date === leadsDateFilter)
-    .filter((l) => !leadsQueryDateFilter || (l.created_at || "").slice(0, 10) === leadsQueryDateFilter);
+    .filter((l) => !leadsQuoteDateFilter || (l.last_quoted_at || "").slice(0, 10) === leadsQuoteDateFilter);
   const filtered = leadsFilter === "all" ? baseFiltered : baseFiltered.filter((l) => l.event_type === leadsFilter);
   const countFor = (id) => baseFiltered.filter((l) => l.event_type === id).length;
   const shareLink = `${window.location.origin}/lead-form.html`;
@@ -984,10 +984,10 @@ async function renderLeadsLog(main, skipRefresh) {
           </div>
         </div>
         <div style="display:flex; flex-direction:column; gap:3px;">
-          <label class="muted small" for="leadsQueryDateInput">Query received on</label>
+          <label class="muted small" for="leadsQuoteDateInput">Quote sent on</label>
           <div style="display:flex; align-items:center; gap:4px;">
-            <input id="leadsQueryDateInput" type="date" value="${leadsQueryDateFilter}" />
-            ${leadsQueryDateFilter ? `<button class="btn-ghost" id="clearQueryDateBtn" style="padding:4px 8px;" title="Clear query date">✕</button>` : ""}
+            <input id="leadsQuoteDateInput" type="date" value="${leadsQuoteDateFilter}" />
+            ${leadsQuoteDateFilter ? `<button class="btn-ghost" id="clearQuoteDateBtn" style="padding:4px 8px;" title="Clear quote date">✕</button>` : ""}
           </div>
         </div>
         <select id="leadsStageSelect">
@@ -999,7 +999,7 @@ async function renderLeadsLog(main, skipRefresh) {
           <option value="followup" ${leadsSortBy === "followup" ? "selected" : ""}>Sort: Longest without follow-up</option>
           <option value="newest" ${leadsSortBy === "newest" ? "selected" : ""}>Sort: Newest submitted</option>
         </select>
-        ${(leadsSearch || leadsCityFilter || leadsDateFilter || leadsQueryDateFilter || leadsStageFilter !== "all") ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
+        ${(leadsSearch || leadsCityFilter || leadsDateFilter || leadsQuoteDateFilter || leadsStageFilter !== "all") ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
       </div>
     </div>
 
@@ -1033,15 +1033,15 @@ async function renderLeadsLog(main, skipRefresh) {
   // confirms a choice — using "blur" instead means the filter only applies
   // once they've actually closed the picker, not the moment they tap in.
   main.querySelector("#leadsDateInput").addEventListener("blur", (e) => { leadsDateFilter = e.target.value; renderLeadsLog(main, true); });
-  main.querySelector("#leadsQueryDateInput").addEventListener("blur", (e) => { leadsQueryDateFilter = e.target.value; renderLeadsLog(main, true); });
+  main.querySelector("#leadsQuoteDateInput").addEventListener("blur", (e) => { leadsQuoteDateFilter = e.target.value; renderLeadsLog(main, true); });
   const clearEventDateBtn = main.querySelector("#clearEventDateBtn");
   if (clearEventDateBtn) clearEventDateBtn.addEventListener("click", () => { leadsDateFilter = ""; renderLeadsLog(main, true); });
-  const clearQueryDateBtn = main.querySelector("#clearQueryDateBtn");
-  if (clearQueryDateBtn) clearQueryDateBtn.addEventListener("click", () => { leadsQueryDateFilter = ""; renderLeadsLog(main, true); });
+  const clearQuoteDateBtn = main.querySelector("#clearQuoteDateBtn");
+  if (clearQuoteDateBtn) clearQuoteDateBtn.addEventListener("click", () => { leadsQuoteDateFilter = ""; renderLeadsLog(main, true); });
   main.querySelector("#leadsStageSelect").addEventListener("change", (e) => { leadsStageFilter = e.target.value; renderLeadsLog(main, true); });
   main.querySelector("#leadsSortSelect").addEventListener("change", (e) => { leadsSortBy = e.target.value; renderLeadsLog(main, true); });
   const clearAllBtn = main.querySelector("#clearAllFilters");
-  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsCityFilter = ""; leadsDateFilter = ""; leadsQueryDateFilter = ""; leadsStageFilter = "all"; renderLeadsLog(main, true); });
+  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsCityFilter = ""; leadsDateFilter = ""; leadsQuoteDateFilter = ""; leadsStageFilter = "all"; renderLeadsLog(main, true); });
 
   const filterRow = main.querySelector("#filterRow");
   const allChip = el(`<button class="filter-chip${leadsFilter === "all" ? " filter-chip-active" : ""}">All <span class="mono">${baseFiltered.length}</span></button>`);
@@ -1842,7 +1842,7 @@ function wireCalendarGrid(container) {
         leadsStageFilter = "all";
         leadsCityFilter = "";
         leadsDateFilter = "";
-        leadsQueryDateFilter = "";
+        leadsQuoteDateFilter = "";
         currentTab = "leads";
         renderNav();
         renderMain();
@@ -1892,7 +1892,7 @@ async function renderCalendar(main) {
         leadsStageFilter = "all";
         leadsCityFilter = "";
         leadsDateFilter = "";
-        leadsQueryDateFilter = "";
+        leadsQuoteDateFilter = "";
         currentTab = "leads";
         renderNav();
         renderMain();
