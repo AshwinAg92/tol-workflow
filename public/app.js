@@ -718,8 +718,9 @@ function renderLeadsBulkBar(main) {
   bar.innerHTML = `
     <div class="card" style="margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#F5F0E4;">
       <span>${leadsSelected.size} selected</span>
-      <div style="display:flex; gap:8px;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn-ghost" id="bulkClearBtn">Clear</button>
+        <button class="btn-ghost" id="bulkWhatsappBtn">📤 WhatsApp follow-up (${leadsSelected.size})</button>
         <button class="btn-primary" id="bulkFollowupBtn">Mark ${leadsSelected.size} as followed up</button>
       </div>
     </div>
@@ -727,6 +728,9 @@ function renderLeadsBulkBar(main) {
   bar.querySelector("#bulkClearBtn").addEventListener("click", () => {
     leadsSelected.clear();
     renderLeadsLog(main, true);
+  });
+  bar.querySelector("#bulkWhatsappBtn").addEventListener("click", () => {
+    openBulkWhatsappFollowupModal(Array.from(leadsSelected), main);
   });
   bar.querySelector("#bulkFollowupBtn").addEventListener("click", async () => {
     const btn = bar.querySelector("#bulkFollowupBtn");
@@ -744,6 +748,88 @@ function renderLeadsBulkBar(main) {
       btn.textContent = `Mark ${leadsSelected.size} as followed up`;
     }
   });
+}
+
+// WhatsApp has no real bulk-send from a browser — every chat has to be opened
+// with its own tap (mobile browsers block auto-opening multiple windows in a
+// loop). This guided queue is the next best thing: step through the selected
+// leads one at a time, each pre-filled and ready, with the follow-up logged
+// automatically the moment you tap through — so it's one screen and one tap
+// per lead instead of hunting back through the whole list each time.
+function openBulkWhatsappFollowupModal(leadIds, main) {
+  const root = document.getElementById("modalRoot");
+  const queue = leadIds.map((id) => LEADS.find((l) => l.id === id)).filter((l) => l && (l.whatsapp_number || l.phone));
+  const skippedNoPhone = leadIds.length - queue.length;
+  let index = 0;
+  let sentCount = 0;
+
+  function renderStep() {
+    if (index >= queue.length) {
+      root.innerHTML = `
+        <div class="modal-overlay" id="overlay">
+          <div class="modal-card" style="max-width:400px;">
+            <div class="modal-head"><h3>Done</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+            <p style="margin:14px 0;">Followed up with ${sentCount} of ${queue.length}${skippedNoPhone > 0 ? ` (${skippedNoPhone} skipped — no phone number on file)` : ""}.</p>
+            <button class="btn-primary" id="bulkWaFinishBtn" style="width:100%;">Close</button>
+          </div>
+        </div>
+      `;
+      const finish = () => {
+        root.innerHTML = "";
+        leadsSelected.clear();
+        refreshLeads().then(() => renderLeadsLog(main, true));
+      };
+      root.querySelector("#closeModal").addEventListener("click", finish);
+      root.querySelector("#bulkWaFinishBtn").addEventListener("click", finish);
+      return;
+    }
+    const lead = queue[index];
+    const firstName = (lead.name || "").split(" ")[0] || "there";
+    const key = lead.stage === "Tentative" ? "tentative_followup" : "followup";
+    const tpl = MESSAGE_TEMPLATES[key] || TEMPLATE_META[key].default;
+    const msg = fillTemplate(tpl, {
+      firstName,
+      experience: packageName(lead.event_type),
+      dateClause: lead.date ? ` on ${fmtDate(lead.date)}` : "",
+    });
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay">
+        <div class="modal-card" style="max-width:420px;">
+          <div class="modal-head">
+            <h3>${lead.name}</h3>
+            <button class="icon-btn" id="closeModal">${ICON_X}</button>
+          </div>
+          <p class="muted small" style="margin-bottom:2px;">Lead ${index + 1} of ${queue.length}</p>
+          <p class="muted small" style="margin-bottom:14px;">${packageName(lead.event_type)} · ${lead.city || "—"} · ${fmtDate(lead.date)}</p>
+          <div class="card" style="background:#F5F0E4; white-space:pre-wrap; font-size:13.5px; margin-bottom:14px;">${msg}</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn-primary" id="bulkWaOpenBtn" style="flex:1;">💬 Open WhatsApp</button>
+            <button class="btn-ghost" id="bulkWaSkipBtn">Skip</button>
+          </div>
+        </div>
+      </div>
+    `;
+    root.querySelector("#closeModal").addEventListener("click", () => {
+      root.innerHTML = "";
+      leadsSelected.clear();
+      renderLeadsLog(main, true);
+    });
+    root.querySelector("#bulkWaSkipBtn").addEventListener("click", () => {
+      index++;
+      renderStep();
+    });
+    root.querySelector("#bulkWaOpenBtn").addEventListener("click", async () => {
+      const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
+      if (digitsOnly) window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
+      try {
+        await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ logFollowup: true }) });
+      } catch (err) { /* WhatsApp already opened; move on regardless */ }
+      sentCount++;
+      index++;
+      renderStep();
+    });
+  }
+  renderStep();
 }
 
 // A single consolidated view of everything about one lead — contact info,
