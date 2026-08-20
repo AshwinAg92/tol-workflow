@@ -2817,7 +2817,7 @@ async function openAssignTeamModal(leadId) {
                         <option value="declined" ${a.status === "declined" ? "selected" : ""}>Declined</option>
                       </select>
                     ` : ""}
-                    ${a && a.status === "accepted" && waDigits ? `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" target="_blank" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>` : ""}
+                    ${a && waDigits ? `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" target="_blank" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>` : ""}
                   </span>
                 </label>
                 ${isAdmin
