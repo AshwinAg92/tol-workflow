@@ -2803,7 +2803,7 @@ async function openAssignTeamModal(leadId) {
             const a = byTeamId[m.id];
             const existingFee = feeExpenseByTeamId[m.id];
             const waDigits = (m.phone || "").replace(/\D/g, "");
-            const waMsg = `Hi ${m.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.venue ? ` at ${lead.venue}` : lead.city ? ` in ${lead.city}` : ""}.${lead.event_time ? ` Event time: ${lead.event_time}.` : ""}${lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : ""} Let us know if you have any questions!`;
+            const waMsg = `Hi ${m.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.venue ? ` at ${lead.venue}` : lead.city ? ` in ${lead.city}` : ""}.${lead.event_time ? ` Event time: ${lead.event_time}.` : ""}${lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : ""}${lead.pcs ? ` Band size for this event: ${lead.pcs} pcs.` : ""} Let us know if you have any questions!`;
             return `
               <div class="check-row" style="align-items:flex-start; justify-content:space-between; gap:8px;">
                 <label style="display:flex; align-items:flex-start; gap:8px; flex:1; cursor:pointer;">
@@ -2834,7 +2834,7 @@ async function openAssignTeamModal(leadId) {
           <div id="tempArtistList">
             ${tempArtists.length === 0 ? `<p class="muted small">None added yet.</p>` : tempArtists.map((t) => {
               const waDigits = (t.phone || "").replace(/\D/g, "");
-              const waMsg = `Hi ${t.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.venue ? ` at ${lead.venue}` : lead.city ? ` in ${lead.city}` : ""}.${lead.event_time ? ` Event time: ${lead.event_time}.` : ""}${lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : ""} Let us know if you have any questions!`;
+              const waMsg = `Hi ${t.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.venue ? ` at ${lead.venue}` : lead.city ? ` in ${lead.city}` : ""}.${lead.event_time ? ` Event time: ${lead.event_time}.` : ""}${lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : ""}${lead.pcs ? ` Band size for this event: ${lead.pcs} pcs.` : ""} Let us know if you have any questions!`;
               return `
               <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
                 <div>
