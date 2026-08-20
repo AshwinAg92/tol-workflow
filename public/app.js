@@ -3178,8 +3178,12 @@ async function openAssignTeamModal(leadId) {
         await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ eventTime: eventTime || null, soundcheckTime: soundcheckTime || null, venue: venue || null }) });
       }
       await refreshLeads();
-      close();
       renderMain();
+      // Reopen (rather than close) so a newly-added artist's response
+      // dropdown and WhatsApp link show up immediately — those only render
+      // once the assignment actually exists server-side, so without this
+      // they'd stay invisible until manually reopening the modal.
+      openAssignTeamModal(leadId);
     } catch (err) {
       alert(err.message);
       btn.disabled = false;
