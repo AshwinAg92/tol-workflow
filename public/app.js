@@ -1004,6 +1004,7 @@ async function renderLeadsLog(main, skipRefresh) {
     </div>
 
     <div class="filter-row" id="filterRow"></div>
+    <div id="leadsSelectAllRow" style="margin-bottom:6px;"></div>
     <div id="leadsBulkBar"></div>
     <div id="leadsRows"></div>
   `;
@@ -1067,6 +1068,38 @@ async function renderLeadsLog(main, skipRefresh) {
     if (leadsStageFilter === "Follow-up") return new Date(b.created_at) - new Date(a.created_at);
     return new Date(a.date) - new Date(b.date);
   });
+
+  // "Select all" only ever applies to leads that are actually bulk-selectable
+  // (same New/Follow-up/Interested/Tentative rule as each card's own
+  // checkbox) — and only within whatever filters are currently applied, so
+  // it never silently pulls in leads the user can't see right now.
+  const selectAllRow = main.querySelector("#leadsSelectAllRow");
+  const bulkSelectableIds = sorted.filter((l) => hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage)).map((l) => l.id);
+  if (bulkSelectableIds.length > 0) {
+    const allSelected = bulkSelectableIds.every((id) => leadsSelected.has(id));
+    selectAllRow.innerHTML = `
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer; width:fit-content;">
+        <input type="checkbox" id="leadsSelectAllCheckbox" ${allSelected ? "checked" : ""} style="width:18px; height:18px;" />
+        <span class="small muted">${allSelected ? `Deselect all (${bulkSelectableIds.length})` : `Select all ${bulkSelectableIds.length} shown`}</span>
+      </label>
+    `;
+    selectAllRow.querySelector("#leadsSelectAllCheckbox").addEventListener("change", (e) => {
+      if (e.target.checked) bulkSelectableIds.forEach((id) => leadsSelected.add(id));
+      else bulkSelectableIds.forEach((id) => leadsSelected.delete(id));
+      // Update in place (checkbox states + the label text) rather than a
+      // full re-render, so the page doesn't jump around while you're
+      // scrolling through a long filtered list.
+      main.querySelectorAll(".lead-bulk-checkbox").forEach((cb) => {
+        cb.checked = leadsSelected.has(cb.dataset.leadId);
+      });
+      const nowAllSelected = bulkSelectableIds.every((id) => leadsSelected.has(id));
+      selectAllRow.querySelector("span").textContent = nowAllSelected ? `Deselect all (${bulkSelectableIds.length})` : `Select all ${bulkSelectableIds.length} shown`;
+      renderLeadsBulkBar(main);
+    });
+  } else {
+    selectAllRow.innerHTML = "";
+  }
+
   if (sorted.length === 0) {
     rows.innerHTML = `<div class="board-empty">No queries match these filters</div>`;
   } else {
@@ -1176,6 +1209,14 @@ async function renderLeadsLog(main, skipRefresh) {
       if (cb.checked) leadsSelected.add(cb.dataset.leadId);
       else leadsSelected.delete(cb.dataset.leadId);
       renderLeadsBulkBar(main);
+      const selectAllCb = main.querySelector("#leadsSelectAllCheckbox");
+      if (selectAllCb) {
+        const allBoxes = Array.from(main.querySelectorAll(".lead-bulk-checkbox"));
+        const nowAllSelected = allBoxes.length > 0 && allBoxes.every((b) => leadsSelected.has(b.dataset.leadId));
+        selectAllCb.checked = nowAllSelected;
+        const label = selectAllCb.parentElement.querySelector("span");
+        if (label) label.textContent = nowAllSelected ? `Deselect all (${allBoxes.length})` : `Select all ${allBoxes.length} shown`;
+      }
     });
   });
 
