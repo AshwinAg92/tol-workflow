@@ -3750,13 +3750,22 @@ async function renderDashboard(main) {
           <div class="card dash-stat"><div class="muted">Page views</div><div class="mono big">${websiteTraffic.totalPageViews.toLocaleString("en-IN")}</div></div>
         </div>
         <div class="revenue-chart-row" style="align-items:flex-end;">
-          ${websiteTraffic.byDay.map((d) => `
-            <div class="revenue-chart-col" title="${fmtDate(d.date.slice(0,4) + '-' + d.date.slice(4,6) + '-' + d.date.slice(6,8))}: ${d.sessions} sessions">
+          ${websiteTraffic.byDay.map((d, i) => {
+            const dateStr = `${d.date.slice(0, 4)}-${d.date.slice(4, 6)}-${d.date.slice(6, 8)}`;
+            // Labeling every bar would be unreadable at 30 daily columns on a
+            // phone screen, so only a spaced-out subset gets a visible day
+            // number — full date is still available via tap-and-hold/hover.
+            const showLabel = i % 5 === 0 || i === websiteTraffic.byDay.length - 1;
+            const dayLabel = showLabel ? new Date(dateStr).getDate() : "";
+            return `
+            <div class="revenue-chart-col" title="${fmtDate(dateStr)}: ${d.sessions} sessions">
               <div class="revenue-chart-bars" style="max-width:10px;">
                 <div class="revenue-bar" style="height:${d.sessions === 0 ? 2 : Math.max(4, (d.sessions / maxSessions) * 100)}%; background:#C1602B;"></div>
               </div>
+              <div class="muted" style="font-size:9px; margin-top:3px; height:12px;">${dayLabel}</div>
             </div>
-          `).join("")}
+          `;
+          }).join("")}
         </div>
         ${websiteTraffic.byChannel.length > 0 ? `
           <div class="muted small" style="font-weight:600; margin:14px 0 6px;">Where visitors came from</div>
