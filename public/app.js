@@ -3751,14 +3751,14 @@ async function renderDashboard(main) {
         </div>
         <div class="revenue-chart-row" style="align-items:flex-end;">
           ${websiteTraffic.byDay.map((d, i) => {
-            const dateStr = `${d.date.slice(0, 4)}-${d.date.slice(4, 6)}-${d.date.slice(6, 8)}`;
             // Labeling every bar would be unreadable at 30 daily columns on a
             // phone screen, so only a spaced-out subset gets a visible day
             // number — full date is still available via tap-and-hold/hover.
             const showLabel = i % 5 === 0 || i === websiteTraffic.byDay.length - 1;
-            const dayLabel = showLabel ? new Date(dateStr).getDate() : "";
+            const parsed = d.date ? new Date(d.date + "T00:00:00") : null;
+            const dayLabel = showLabel && parsed && !isNaN(parsed) ? parsed.getDate() : "";
             return `
-            <div class="revenue-chart-col" title="${fmtDate(dateStr)}: ${d.sessions} sessions">
+            <div class="revenue-chart-col" title="${d.date ? fmtDate(d.date) : "Unknown date"}: ${d.sessions} sessions">
               <div class="revenue-chart-bars" style="max-width:10px;">
                 <div class="revenue-bar" style="height:${d.sessions === 0 ? 2 : Math.max(4, (d.sessions / maxSessions) * 100)}%; background:#C1602B;"></div>
               </div>

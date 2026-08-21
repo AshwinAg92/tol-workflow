@@ -578,6 +578,17 @@ app.get("/api/public/live-instagram-stats", async (req, res) => {
 let websiteTrafficCache = { data: null, fetchedAt: 0 };
 const WEBSITE_TRAFFIC_TTL_MS = 60 * 60 * 1000; // 1 hour
 
+// Windsor.ai's GA4 connector can return the date dimension as either
+// "YYYY-MM-DD" or the raw GA4 "YYYYMMDD" — normalize once here so nothing
+// downstream has to guess the format (a previous mismatch here caused dates
+// to render as NaN in the dashboard chart).
+function normalizeTrafficDate(d) {
+  const s = String(d || "");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (/^\d{8}$/.test(s)) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  return s;
+}
+
 async function fetchWebsiteTraffic() {
   const apiKey = process.env.WINDSOR_API_KEY;
   if (!apiKey) return null;
@@ -591,7 +602,7 @@ async function fetchWebsiteTraffic() {
   const byChannelJson = await byChannelResp.json();
   const byDay = (Array.isArray(byDayJson) ? byDayJson : (byDayJson.data || []))
     .map((r) => ({
-      date: r.date,
+      date: normalizeTrafficDate(r.date),
       sessions: Number(r.sessions) || 0,
       activeUsers: Number(r.active_users) || 0,
       pageViews: Number(r.screen_page_views) || 0,
