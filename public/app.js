@@ -14,6 +14,7 @@ let leadsDateFilter = "";
 let leadsQuoteDateFilter = "";
 let leadsSortBy = "date";
 let leadsSelected = new Set();
+let dashActivityPage = 1;
 let quotationLeadId = null;
 let reopenQuoteDraft = null; // one-shot: set when reopening a past quote from history for editing
 let calYear = new Date().getFullYear(), calMonth = new Date().getMonth() + 1; // defaults to the real current month
@@ -3603,6 +3604,73 @@ async function renderAccounts(main) {
 }
 
 // ---------- Dashboard ----------
+// Paginated so a busy day's worth of activity doesn't turn into one long
+// scroll on the dashboard — redraws only this card, not the whole page, so
+// flipping pages doesn't reset scroll position elsewhere on the dashboard.
+const DASH_ACTIVITY_PAGE_SIZE = 8;
+function renderTodaysActivityCard(main, activity) {
+  const card = main.querySelector("#todaysActivityCard");
+  if (!card) return;
+  const totalPages = Math.max(1, Math.ceil(activity.length / DASH_ACTIVITY_PAGE_SIZE));
+  if (dashActivityPage > totalPages) dashActivityPage = totalPages;
+  if (dashActivityPage < 1) dashActivityPage = 1;
+  const pageItems = activity.slice((dashActivityPage - 1) * DASH_ACTIVITY_PAGE_SIZE, dashActivityPage * DASH_ACTIVITY_PAGE_SIZE);
+
+  card.innerHTML = `
+    <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
+      <span>📋 Today's activity${activity.length > 0 ? ` <span class="muted" style="font-weight:400;">(${activity.length})</span>` : ""}</span>
+      ${activity.length > 0 ? `<button class="btn-ghost" id="clearAllActivityBtn" style="font-size:11.5px; padding:3px 8px; font-weight:400;">Clear all</button>` : ""}
+    </div>
+    ${activity.length === 0 ? `<p class="muted small">Nothing logged yet today.</p>` : `
+      <div class="activity-log">
+        ${pageItems.map((a) => `
+          <div class="dash-list-item" style="display:flex; gap:10px; justify-content:space-between; align-items:flex-start;">
+            <div style="display:flex; gap:10px;">
+              <span class="muted small mono" style="flex-shrink:0; width:52px;">${fmtTime(a.created_at)}</span>
+              <span>${a.message}${a.actor && a.actor !== "System" ? ` <span class="muted small">— ${a.actor}</span>` : ""}</span>
+            </div>
+            <button class="icon-btn" data-dismiss-activity="${a.id}" title="Remove this entry">${ICON_X}</button>
+          </div>
+        `).join("")}
+      </div>
+      ${totalPages > 1 ? `
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; align-items:center;">
+          <button class="btn-ghost dash-activity-page-btn" data-page="${dashActivityPage - 1}" ${dashActivityPage === 1 ? "disabled" : ""} style="padding:3px 8px; font-size:12px;">‹</button>
+          ${Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => `
+            <button class="btn-ghost dash-activity-page-btn" data-page="${p}" style="padding:3px 9px; font-size:12px; ${p === dashActivityPage ? "background:#C1602B; color:#fff; border-color:#C1602B;" : ""}">${p}</button>
+          `).join("")}
+          <button class="btn-ghost dash-activity-page-btn" data-page="${dashActivityPage + 1}" ${dashActivityPage === totalPages ? "disabled" : ""} style="padding:3px 8px; font-size:12px;">›</button>
+        </div>
+      ` : ""}
+    `}
+  `;
+
+  card.querySelectorAll(".dash-activity-page-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      dashActivityPage = Number(btn.dataset.page);
+      renderTodaysActivityCard(main, activity);
+    });
+  });
+  card.querySelectorAll("[data-dismiss-activity]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await api(`/api/activity/${btn.dataset.dismissActivity}`, { method: "DELETE" });
+      const idx = activity.findIndex((a) => a.id === btn.dataset.dismissActivity);
+      if (idx !== -1) activity.splice(idx, 1);
+      renderTodaysActivityCard(main, activity);
+    });
+  });
+  const clearAllActivityBtn = card.querySelector("#clearAllActivityBtn");
+  if (clearAllActivityBtn) {
+    clearAllActivityBtn.addEventListener("click", async () => {
+      if (!confirm("Clear today's entire activity log?")) return;
+      await api("/api/activity", { method: "DELETE" });
+      activity.length = 0;
+      dashActivityPage = 1;
+      renderTodaysActivityCard(main, activity);
+    });
+  }
+}
+
 async function renderDashboard(main) {
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
   const canCoordinate = isAdmin || canAssignTeam();
@@ -3785,25 +3853,7 @@ async function renderDashboard(main) {
       ${calendarGridMarkup()}
     </div>
     ${isAdmin ? `
-    <div class="card" style="margin-bottom:16px;">
-      <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
-        <span>📋 Today's activity</span>
-        ${activity.length > 0 ? `<button class="btn-ghost" id="clearAllActivityBtn" style="font-size:11.5px; padding:3px 8px; font-weight:400;">Clear all</button>` : ""}
-      </div>
-      ${activity.length === 0 ? `<p class="muted small">Nothing logged yet today.</p>` : `
-        <div class="activity-log">
-          ${activity.map((a) => `
-            <div class="dash-list-item" style="display:flex; gap:10px; justify-content:space-between; align-items:flex-start;">
-              <div style="display:flex; gap:10px;">
-                <span class="muted small mono" style="flex-shrink:0; width:52px;">${fmtTime(a.created_at)}</span>
-                <span>${a.message}${a.actor && a.actor !== "System" ? ` <span class="muted small">— ${a.actor}</span>` : ""}</span>
-              </div>
-              <button class="icon-btn" data-dismiss-activity="${a.id}" title="Remove this entry">${ICON_X}</button>
-            </div>
-          `).join("")}
-        </div>
-      `}
-    </div>
+    <div class="card" id="todaysActivityCard" style="margin-bottom:16px;"></div>
     ` : ""}
     <div class="dash-grid">
       <div class="card">
@@ -3882,20 +3932,7 @@ async function renderDashboard(main) {
       renderMain();
     });
   }
-  main.querySelectorAll("[data-dismiss-activity]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      await api(`/api/activity/${btn.dataset.dismissActivity}`, { method: "DELETE" });
-      btn.closest(".dash-list-item").remove();
-    });
-  });
-  const clearAllActivityBtn = main.querySelector("#clearAllActivityBtn");
-  if (clearAllActivityBtn) {
-    clearAllActivityBtn.addEventListener("click", async () => {
-      if (!confirm("Clear today's entire activity log?")) return;
-      await api("/api/activity", { method: "DELETE" });
-      renderMain();
-    });
-  }
+  if (isAdmin) renderTodaysActivityCard(main, activity);
   const generalMsgBtn = main.querySelector("#sendGeneralMsgBtn");
   if (generalMsgBtn) {
     generalMsgBtn.addEventListener("click", async () => {
