@@ -1134,6 +1134,7 @@ async function renderLeadsLog(main, skipRefresh) {
           ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}${l.last_quoted_at ? ` <span class="muted">— sent ${fmtDate(l.last_quoted_at.slice(0, 10))}</span>` : ""}</div>` : ""}
           ${hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) ? (() => {
             const todayStr = new Date().toISOString().slice(0, 10);
+            const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
             const isSnoozed = !!l.snooze_until && l.snooze_until > todayStr;
             const days = daysSince(l.last_followup_at);
             const overdue = !isSnoozed && days >= 3;
@@ -1162,7 +1163,7 @@ async function renderLeadsLog(main, skipRefresh) {
             </div>
             ${!isSnoozed ? `
               <div class="snooze-form" data-lead-id="${l.id}" style="display:none; margin-top:6px; align-items:center; gap:6px;">
-                <input type="date" class="snooze-date-input" data-lead-id="${l.id}" min="${todayStr}" style="flex:1;" />
+                <input type="date" class="snooze-date-input" data-lead-id="${l.id}" min="${tomorrowStr}" value="${tomorrowStr}" style="flex:1;" />
                 <button class="btn-ghost snooze-set-btn" data-lead-id="${l.id}">Set</button>
               </div>` : ""}`;
           })() : ""}

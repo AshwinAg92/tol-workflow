@@ -846,7 +846,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
 
   if (req.body.snoozeUntil) {
     const today = new Date().toISOString().slice(0, 10);
-    if (req.body.snoozeUntil < today) return res.status(400).json({ error: "Snooze date can't be in the past" });
+    if (req.body.snoozeUntil <= today) return res.status(400).json({ error: "Snooze date must be a real future date, not today or earlier" });
   }
 
   if (req.body.stage === "Completed" && lead.stage !== "Completed") {
