@@ -945,11 +945,20 @@ async function renderLeadsLog(main, skipRefresh) {
     await refreshLeads();
   }
 
+  const todayStr = new Date().toISOString().slice(0, 10);
   const baseFiltered = LEADS
-    // "All stages" is meant as "everything active" — Completed events pile up
-    // fast and would otherwise bury the actual pipeline. Selecting Completed
-    // explicitly from the dropdown still shows them.
-    .filter((l) => leadsStageFilter === "all" ? l.stage !== "Completed" : l.stage === leadsStageFilter)
+    // "All stages" is meant as "everything active" — Completed events, and
+    // any other past-dated lead, would otherwise bury the actual pipeline.
+    // Tentative is the one exception: a past-dated Tentative hold is still
+    // unresolved (needs confirming or releasing), so it stays visible rather
+    // than silently disappearing. Selecting a specific stage from the
+    // dropdown always shows that stage's full history regardless of date.
+    .filter((l) => {
+      if (leadsStageFilter !== "all") return l.stage === leadsStageFilter;
+      if (l.stage === "Completed") return false;
+      if (l.date && l.date < todayStr && l.stage !== "Tentative") return false;
+      return true;
+    })
     .filter((l) => !leadsSearch || l.name.toLowerCase().includes(leadsSearch.toLowerCase()))
     .filter((l) => !leadsCityFilter || (l.city || "").toLowerCase().includes(leadsCityFilter.toLowerCase()))
     .filter((l) => !leadsDateFilter || l.date === leadsDateFilter)
