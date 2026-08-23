@@ -946,7 +946,10 @@ async function renderLeadsLog(main, skipRefresh) {
   }
 
   const baseFiltered = LEADS
-    .filter((l) => leadsStageFilter === "all" || l.stage === leadsStageFilter)
+    // "All stages" is meant as "everything active" — Completed events pile up
+    // fast and would otherwise bury the actual pipeline. Selecting Completed
+    // explicitly from the dropdown still shows them.
+    .filter((l) => leadsStageFilter === "all" ? l.stage !== "Completed" : l.stage === leadsStageFilter)
     .filter((l) => !leadsSearch || l.name.toLowerCase().includes(leadsSearch.toLowerCase()))
     .filter((l) => !leadsCityFilter || (l.city || "").toLowerCase().includes(leadsCityFilter.toLowerCase()))
     .filter((l) => !leadsDateFilter || l.date === leadsDateFilter)
