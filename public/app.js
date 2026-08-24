@@ -1471,7 +1471,7 @@ async function renderLeadsLog(main, skipRefresh) {
 // editable draft in the exact wording he uses, tweaks anything he wants,
 // then sends via WhatsApp/email. No code change ever needed to adjust
 // wording, amount, or format — the textarea is the source of truth.
-function buildQuoteText({ eventType, format, location, date, occasion, guests, duration, setPieces, formatType, charges, firstName }) {
+function buildQuoteText({ eventType, format, location, date, occasion, guests, duration, setPieces, formatType, charges, firstName, remarks }) {
   const amountLine = charges ? `₹${Number(charges).toLocaleString("en-IN")}/-` : "________";
   const isPheras = (format || "").trim().toLowerCase() === "musical pheras";
   const sessionConditions = isPheras
@@ -1500,7 +1500,7 @@ ${isPheras ? "" : "🎤 Format: {formatType}\n"}💰 *Performance Charges: {amou
 • Travel, Accommodation (from previous city of performance — informed 2 months prior)
 • Food for the Team (all meals)
 • Airport/Station Transfers
-
+${remarks ? "\n*NOTE*\n{remarks}\n" : ""}
 *TERMS*
 • An advance payment is required to confirm and block the date — booking is confirmed only upon receipt.
 • This quotation is valid for 7 days from the date of issue; charges are subject to revision after.
@@ -1524,6 +1524,7 @@ Warmly,
     amountLine,
     sessionConditions,
     firstName: firstName || "",
+    remarks: remarks || "",
   });
 }
 
@@ -1612,6 +1613,8 @@ async function renderQuotation(main) {
         </div>
         <label>Performance charges (₹)</label>
         <input id="qCharges" type="number" placeholder="e.g. 50000" />
+        <label>Special remarks (optional)</label>
+        <textarea id="qRemarks" rows="2" placeholder="e.g. This is an all-inclusive lump sum covering performance, travel, and accommodation — no separate charges apply."></textarea>
         <button class="btn-ghost full" id="generateBtn" style="margin-top:12px;">Generate quote draft ↓</button>
       </div>
       <div class="card email-preview">
@@ -1702,6 +1705,7 @@ async function renderQuotation(main) {
     main.querySelector("#qSubject").value = `Quotation for ${packageName(lead.event_type)} — Together, Out Loud`;
     main.querySelector("#qSet").value = "";
     main.querySelector("#qCharges").value = "";
+    main.querySelector("#qRemarks").value = "";
     // A pheras ceremony runs as long as the ceremony itself takes, and doesn't
     // have a Private/Public distinction the way a jamming session does — so
     // neither field applies and both are hidden rather than asked for.
@@ -1748,6 +1752,7 @@ async function renderQuotation(main) {
       setPieces: main.querySelector("#qSet").value,
       formatType: isPheras ? "" : main.querySelector("#qFormatType").value,
       charges: main.querySelector("#qCharges").value,
+      remarks: main.querySelector("#qRemarks").value,
       firstName: lead ? (lead.name || "").trim().split(" ")[0] : "",
     });
   }
@@ -4653,7 +4658,7 @@ const TEMPLATE_META = {
   },
 };
 
-const QUOTE_TEMPLATE_PLACEHOLDERS = ["firstName", "formatUpper", "location", "date", "occasion", "guests", "duration", "setPieces", "formatType", "amountLine", "sessionConditions"];
+const QUOTE_TEMPLATE_PLACEHOLDERS = ["firstName", "formatUpper", "location", "date", "occasion", "guests", "duration", "setPieces", "formatType", "amountLine", "sessionConditions", "remarks"];
 
 // ---------- Website content management (CMS for the marketing site) ----------
 async function renderWebsiteContent(main) {
