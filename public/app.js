@@ -1206,6 +1206,7 @@ async function renderLeadsLog(main, skipRefresh) {
             ${isConfirmedOrDone && hasAccountsAccess() ? `<button class="btn-ghost payments-btn" data-lead-id="${l.id}">💰 Payments</button>` : ""}
             ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost confirmation-msg-btn" data-lead-id="${l.id}">✅ Confirmation msg</button>` : ""}
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team</button>` : ""}
+            ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost lead-documents-btn" data-lead-id="${l.id}">📄 Documents</button>` : ""}
             ${hasLeadsAccess() && l.stage !== "Completed" ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}">✎ Edit</button>` : ""}
             ${CURRENT_USER?.accessLevel === "admin" && l.stage !== "Completed" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="color:#A64B3C;">🗑 Delete</button>` : ""}
             ${l.stage === "Completed" ? `<span class="muted small">🔒 Completed — locked</span>` : ""}
@@ -1366,6 +1367,13 @@ async function renderLeadsLog(main, skipRefresh) {
 
   main.querySelectorAll(".assign-team-btn").forEach((btn) => {
     btn.addEventListener("click", () => openAssignTeamModal(btn.dataset.leadId));
+  });
+
+  main.querySelectorAll(".lead-documents-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
+      if (lead) openLeadDocumentsModal(lead);
+    });
   });
 
   main.querySelectorAll(".payments-btn").forEach((btn) => {
@@ -2641,6 +2649,109 @@ function openEditLoginModal(user) {
 // One place to finish "the payment status" for an event right after it wraps —
 // client payments received, balance due, and every artist's paid/pending
 // status — without leaving the Leads tab to go find it all in Accounts.
+// Lets a client's documents be uploaded and sent without leaving the Leads
+// tab — mirrors the Documents tab's own upload/send logic exactly, just
+// scoped to one lead so there's no need to hunt for their card over there.
+async function openLeadDocumentsModal(lead) {
+  const root = document.getElementById("modalRoot");
+  const docs = await api("/api/documents");
+  const waPhone = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
+
+  function docRow(d) {
+    const fullUrl = window.location.origin + d.url;
+    const waText = encodeURIComponent(fillTemplate(MESSAGE_TEMPLATES.document_share || TEMPLATE_META.document_share.default, { label: d.notes || "document", link: fullUrl }));
+    return `
+      <div class="doc-row">
+        <div class="doc-name">${d.notes ? `<strong>${d.notes}</strong> — ` : ""}<a href="${d.url}" target="_blank">${d.original_name}</a></div>
+        ${waPhone ? `<a class="btn-ghost" href="https://wa.me/${waPhone}?text=${waText}" target="_blank" style="font-size:12px; padding:3px 8px;">Send to client</a>` : `<span class="muted small">No phone on file</span>`}
+        <button class="icon-btn" data-delete-lead-doc="${d.id}" title="Delete">${ICON_X}</button>
+      </div>
+    `;
+  }
+
+  function renderModal() {
+    const leadDocs = docs.filter((d) => d.lead_id === lead.id);
+    const generalDocs = docs.filter((d) => !d.lead_id);
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay">
+        <div class="modal-card" style="max-width:480px;">
+          <div class="modal-head">
+            <h3>Documents — ${lead.name}</h3>
+            <button class="icon-btn" id="closeModal">${ICON_X}</button>
+          </div>
+          ${!waPhone ? `<p class="muted small" style="color:#B6752C;">No phone number on file for this lead — add one via Edit to enable "Send to client".</p>` : ""}
+
+          <div class="section-label" style="margin-top:4px;">Upload a new file</div>
+          <div class="upload-form">
+            <input type="text" id="leadDocLabel" list="leadDocLabelOptions" placeholder="Label (e.g. Tech Rider, Invoice)" />
+            <datalist id="leadDocLabelOptions">
+              <option value="Tech Rider"></option>
+              <option value="Hospitality Rider"></option>
+              <option value="Contract"></option>
+              <option value="Invoice"></option>
+            </datalist>
+            <input type="file" id="leadDocFile" multiple />
+            <button class="btn-primary" id="leadDocUploadBtn">Upload</button>
+          </div>
+          <p class="muted small" style="margin-top:6px;">You can select several files at once — same label applies to all of them.</p>
+
+          <div class="section-label" style="margin-top:16px;">${lead.name}'s documents</div>
+          ${leadDocs.length === 0 ? `<p class="muted small">No documents uploaded for this event yet.</p>` : `<div class="table">${leadDocs.map(docRow).join("")}</div>`}
+
+          ${generalDocs.length > 0 ? `
+            <div class="section-label" style="margin-top:16px;">General documents</div>
+            <p class="muted small" style="margin-top:-4px;">Not tied to a specific event — send any of these to ${lead.name} too.</p>
+            <div class="table">${generalDocs.map(docRow).join("")}</div>
+          ` : ""}
+        </div>
+      </div>
+    `;
+
+    root.querySelector("#closeModal").addEventListener("click", () => { root.innerHTML = ""; });
+
+    root.querySelectorAll("[data-delete-lead-doc]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await fetch(`/api/documents/${btn.dataset.deleteLeadDoc}`, { method: "DELETE" });
+        const idx = docs.findIndex((d) => d.id === btn.dataset.deleteLeadDoc);
+        if (idx !== -1) docs.splice(idx, 1);
+        renderModal();
+      });
+    });
+
+    root.querySelector("#leadDocUploadBtn").addEventListener("click", async () => {
+      const fileInput = root.querySelector("#leadDocFile");
+      const files = Array.from(fileInput.files || []);
+      if (files.length === 0) return alert("Choose at least one file first.");
+      const notes = root.querySelector("#leadDocLabel").value || "";
+      const btn = root.querySelector("#leadDocUploadBtn");
+      btn.disabled = true;
+      try {
+        // One at a time (not parallel) so a slow connection doesn't choke on
+        // several large files at once, and progress text stays accurate.
+        for (let i = 0; i < files.length; i++) {
+          btn.textContent = files.length > 1 ? `Uploading ${i + 1} of ${files.length}…` : "Uploading…";
+          const formData = new FormData();
+          formData.append("file", files[i]);
+          formData.append("leadId", lead.id);
+          formData.append("notes", notes);
+          const resp = await fetch("/api/documents", { method: "POST", body: formData });
+          if (!resp.ok) throw new Error(`Failed to upload "${files[i].name}"`);
+        }
+        const updatedDocs = await api("/api/documents");
+        docs.length = 0;
+        docs.push(...updatedDocs);
+        renderModal();
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+        btn.textContent = "Upload";
+      }
+    });
+  }
+
+  renderModal();
+}
+
 async function openLeadPaymentsModal(leadId) {
   const lead = LEADS.find((l) => l.id === leadId);
   if (!lead) return;
@@ -4125,9 +4236,10 @@ async function renderTasks(main) {
 
 // ---------- Documents ----------
 async function renderDocuments(main) {
-  // Completed events drop off here — once an event's done there's no more need to
-  // send it documents — and the remaining (Confirmed) events sort soonest-first,
-  // same convention as the Calendar tab's "Upcoming confirmed events" list.
+  // Confirmed and Completed events both get a card here — Completed clients
+  // still need to receive documents sometimes (invoices, thank-you notes,
+  // etc.), and hiding them once the event passed made "send to client"
+  // silently stop working for anyone whose event had already happened.
   const eventLeads = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed").slice().sort((a, b) => new Date(a.date) - new Date(b.date));
   main.innerHTML = `
     <div class="view-head"><div><h2>Documents</h2><p class="muted">General files, plus files kept against a specific confirmed event — tag riders/contracts and send them straight to the client.</p></div></div>
