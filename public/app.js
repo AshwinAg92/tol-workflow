@@ -3765,6 +3765,10 @@ async function renderDashboard(main) {
       ` : ""}
       <button class="card dash-stat dash-stat-click" id="statUpcoming"><div class="muted">Upcoming events</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${data.upcomingEventsCount}</div></button>
     </div>
+    <div class="card" id="dashCalCard" style="margin-bottom:16px;">
+      <div class="section-label">Calendar</div>
+      ${calendarGridMarkup()}
+    </div>
     ${hasLeadsAccess() && data.stageCounts ? (() => {
       const funnelStages = ["New", "Follow-up", "Interested", "Tentative", "Confirmed", "Completed"];
       const counts = funnelStages.map((s) => data.stageCounts[s] || 0);
@@ -3865,10 +3869,6 @@ async function renderDashboard(main) {
       </div>
       `;
     })() : ""}
-    <div class="card" id="dashCalCard" style="margin-bottom:16px;">
-      <div class="section-label">Calendar</div>
-      ${calendarGridMarkup()}
-    </div>
     ${isAdmin ? `
     <div class="card" id="todaysActivityCard" style="margin-bottom:16px;"></div>
     ` : ""}
