@@ -2883,7 +2883,13 @@ async function openAssignTeamModal(leadId) {
                         <option value="declined" ${a.status === "declined" ? "selected" : ""}>Declined</option>
                       </select>
                     ` : ""}
-                    ${a && waDigits ? `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" target="_blank" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>` : ""}
+                    ${a && waDigits ? (isManager ? `
+                      <label style="display:flex; align-items:center; gap:6px; margin-top:4px; font-size:12px; cursor:pointer;">
+                        <input type="checkbox" class="include-client-contact-checkbox" data-team-id="${m.id}" />
+                        Include client contact (name &amp; number)
+                      </label>
+                      <button class="btn-ghost manager-wa-btn" data-team-id="${m.id}" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</button>
+                    ` : `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" target="_blank" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>`) : ""}
                   </span>
                 </label>
                 ${isAdmin
@@ -3114,6 +3120,20 @@ async function openAssignTeamModal(leadId) {
       } catch (err) {
         alert(err.message);
       }
+    });
+  });
+  root.querySelectorAll(".manager-wa-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const m = TEAM.find((x) => x.id === btn.dataset.teamId);
+      if (!m) return;
+      const waDigits = (m.phone || "").replace(/\D/g, "");
+      if (!waDigits) return;
+      let waMsg = `Hi ${m.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.venue ? ` at ${lead.venue}` : lead.city ? ` in ${lead.city}` : ""}.${lead.event_time ? ` Event time: ${lead.event_time}.` : ""}${lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : ""}${lead.pcs ? ` Band size for this event: ${lead.pcs} pcs.` : ""} Let us know if you have any questions!`;
+      const includeContact = root.querySelector(`.include-client-contact-checkbox[data-team-id="${m.id}"]`)?.checked;
+      if (includeContact) {
+        waMsg += `\n\nClient contact: ${lead.name}${lead.phone ? `, ${lead.phone}` : ""}`;
+      }
+      window.open(`https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}`, "_blank");
     });
   });
   root.querySelectorAll("[data-remove-temp-artist]").forEach((btn) => {
