@@ -4128,7 +4128,7 @@ async function renderDocuments(main) {
   // Completed events drop off here — once an event's done there's no more need to
   // send it documents — and the remaining (Confirmed) events sort soonest-first,
   // same convention as the Calendar tab's "Upcoming confirmed events" list.
-  const eventLeads = LEADS.filter((l) => l.stage === "Confirmed").slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+  const eventLeads = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed").slice().sort((a, b) => new Date(a.date) - new Date(b.date));
   main.innerHTML = `
     <div class="view-head"><div><h2>Documents</h2><p class="muted">General files, plus files kept against a specific confirmed event — tag riders/contracts and send them straight to the client.</p></div></div>
     <div class="card" style="margin-bottom:16px;">
