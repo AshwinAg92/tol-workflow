@@ -4458,8 +4458,11 @@ function openConfirmEventModal(lead) {
   });
 }
 
-function openConfirmationMessageModal(lead) {
+async function openConfirmationMessageModal(lead) {
   const root = document.getElementById("modalRoot");
+  const docs = await api("/api/documents");
+  const leadDocs = docs.filter((d) => d.lead_id === lead.id);
+  const generalDocs = docs.filter((d) => !d.lead_id);
   const firstName = (lead.name || "").split(" ")[0] || "there";
   const finalAmount = lead.final_amount || lead.quote_amount || 0;
   const received = lead.received || 0;
@@ -4499,6 +4502,27 @@ function openConfirmationMessageModal(lead) {
         <div class="modal-head"><h3>Send confirmation to ${lead.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <textarea id="ceMessage" rows="8" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${message}</textarea>
+          ${(leadDocs.length > 0 || generalDocs.length > 0) ? `
+            <div style="margin-top:14px;">
+              <div class="section-label" style="margin-bottom:6px;">📎 Attach document links (optional)</div>
+              ${leadDocs.map((d) => `
+                <label class="check-row" style="font-size:13.5px;">
+                  <input type="checkbox" class="confirm-doc-checkbox" data-doc-id="${d.id}" />
+                  <span>${d.notes || d.original_name}</span>
+                </label>
+              `).join("")}
+              ${generalDocs.length > 0 ? `
+                <div class="muted small" style="margin-top:6px; margin-bottom:2px;">General documents</div>
+                ${generalDocs.map((d) => `
+                  <label class="check-row" style="font-size:13.5px;">
+                    <input type="checkbox" class="confirm-doc-checkbox" data-doc-id="${d.id}" />
+                    <span>${d.notes || d.original_name}</span>
+                  </label>
+                `).join("")}
+              ` : ""}
+              <p class="muted small" style="margin-top:6px;">WhatsApp/email can't attach real files from a link like this — checked documents get added as links inside the message instead.</p>
+            </div>
+          ` : ""}
         </div>
         <div class="modal-foot">
           ${waLink ? `<button class="btn-ghost" id="waBtn">💬 WhatsApp</button>` : `<span class="muted small">No phone on file</span>`}
@@ -4512,9 +4536,20 @@ function openConfirmationMessageModal(lead) {
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#doneBtn").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
-  if (waLink) root.querySelector("#waBtn").addEventListener("click", () => window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(root.querySelector("#ceMessage").value)}`, "_blank"));
+  // Doc links are appended fresh at send-time rather than baked into the
+  // textarea, so re-checking boxes or clicking WhatsApp then Email never
+  // duplicates a link that's already there.
+  function finalMessage() {
+    const base = root.querySelector("#ceMessage").value;
+    const links = Array.from(root.querySelectorAll(".confirm-doc-checkbox:checked")).map((cb) => {
+      const doc = docs.find((d) => d.id === cb.dataset.docId);
+      return doc ? `📎 ${doc.notes || doc.original_name}: ${window.location.origin + doc.url}` : "";
+    }).filter(Boolean);
+    return links.length > 0 ? `${base}\n\n${links.join("\n")}` : base;
+  }
+  if (waLink) root.querySelector("#waBtn").addEventListener("click", () => window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(finalMessage())}`, "_blank"));
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
-    window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Your event is confirmed — Together, Out Loud")}&body=${encodeURIComponent(root.querySelector("#ceMessage").value)}`;
+    window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Your event is confirmed — Together, Out Loud")}&body=${encodeURIComponent(finalMessage())}`;
   });
 }
 
