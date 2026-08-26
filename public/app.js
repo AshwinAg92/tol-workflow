@@ -854,7 +854,7 @@ async function openLeadDetailModal(lead) {
             ${lead.phone ? `<div>📞 ${lead.phone}</div>` : ""}
             ${lead.whatsapp_number && lead.whatsapp_number !== lead.phone ? `<div>💬 WhatsApp: ${lead.whatsapp_number}</div>` : ""}
             ${lead.email ? `<div>✉️ ${lead.email}</div>` : ""}
-            <div class="muted small" style="margin-top:4px;">${packageName(lead.event_type)} · ${lead.city || "—"} · ${fmtDate(lead.date)}</div>
+            <div class="muted small" style="margin-top:4px;">${packageName(lead.event_type)} · ${lead.city || "—"}${lead.state ? `, ${lead.state}` : ""} · ${fmtDate(lead.date)}</div>
           </div>
           <div class="lead-detail-section">
             <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">From their enquiry</div>
@@ -1729,6 +1729,7 @@ async function renderQuotation(main) {
       lead.occasion ? ["Occasion", lead.occasion] : null,
       lead.details ? ["Tell us about your event", lead.details] : null,
       lead.guest_range ? ["Guest range (as submitted)", lead.guest_range] : null,
+      lead.state ? ["State", lead.state] : null,
       lead.budget ? ["Budget mentioned", inr(lead.budget)] : null,
       lead.alt_date ? ["Alternate date", fmtDate(lead.alt_date)] : null,
       lead.how_heard ? ["Heard about us via", lead.how_heard] : null,
@@ -1901,7 +1902,20 @@ function wireCalendarGrid(container) {
       calCells.appendChild(el(`
         <div class="cal-cell${d ? "" : " cal-cell-empty"}">
           ${d ? `<div class="cal-day">${d}</div>` : ""}
-          ${evs.map((ev) => `<div class="cal-event${ev.stage === "Tentative" ? " cal-event-tentative" : ""}" data-lead-id="${ev.id}" style="cursor:pointer;${ev.stage === "Tentative" ? ` background:transparent; border:1px dashed ${STAGE_COLOR.Tentative}; color:${STAGE_COLOR.Tentative};` : ""}" title="Click to open ${ev.name}${ev.stage === "Tentative" ? " (Tentative)" : ""}">${ev.name.split(" ")[0]}${ev.stage === "Tentative" ? " ⏳" : ""}</div>`).join("")}
+          ${evs.map((ev) => {
+            const isTentative = ev.stage === "Tentative";
+            // Siliguri stays the default brand terracotta (from the .cal-event
+            // CSS class); anywhere else gets peacock teal so out-of-town
+            // events stand out at a glance. Tentative keeps its own dashed
+            // stage-colored treatment regardless of location.
+            const isSiliguri = (ev.city || "").trim().toLowerCase() === "siliguri";
+            const style = isTentative
+              ? `cursor:pointer; background:transparent; border:1px dashed ${STAGE_COLOR.Tentative}; color:${STAGE_COLOR.Tentative};`
+              : isSiliguri
+              ? `cursor:pointer;`
+              : `cursor:pointer; background:#1C7A80;`;
+            return `<div class="cal-event${isTentative ? " cal-event-tentative" : ""}" data-lead-id="${ev.id}" style="${style}" title="${ev.name}${ev.city ? ` — ${ev.city}` : ""}${isTentative ? " (Tentative)" : ""}">${ev.city || "—"}${isTentative ? " ⏳" : ""}</div>`;
+          }).join("")}
         </div>
       `));
     });
@@ -4577,7 +4591,10 @@ function openNewLeadModal() {
               <div><label>City</label><input id="mCity" placeholder="e.g. Siliguri" /></div>
             </div>
             <div class="row-2">
+              <div><label>State</label><input id="mState" placeholder="e.g. West Bengal" /></div>
               <div><label>Event date</label><input id="mDate" type="date" /></div>
+            </div>
+            <div class="row-2">
               <div><label>Budget (optional)</label><input id="mBudget" placeholder="e.g. 90000" /></div>
             </div>
           </div>
@@ -4703,6 +4720,7 @@ function openNewLeadModal() {
         email: root.querySelector("#mEmail").value,
         eventType: root.querySelector("#mType").value,
         city: root.querySelector("#mCity").value,
+        state: root.querySelector("#mState").value || null,
         date,
         budget: root.querySelector("#mBudget").value ? Number(root.querySelector("#mBudget").value) : null,
         guestRange: root.querySelector("#mGuests").value || null,
@@ -4746,7 +4764,10 @@ function openEditLeadModal(leadId) {
             <div><label>City</label><input id="mCity" value="${lead.city || ""}" placeholder="e.g. Siliguri" /></div>
           </div>
           <div class="row-2">
+            <div><label>State</label><input id="mState" value="${lead.state || ""}" placeholder="e.g. West Bengal" /></div>
             <div><label>Event date</label><input id="mDate" type="date" value="${lead.date || ""}" /></div>
+          </div>
+          <div class="row-2">
             <div><label>Quoted amount (₹)</label><input id="mQuoteAmount" type="number" value="${lead.quote_amount || ""}" placeholder="e.g. 150000" /></div>
           </div>
           <div class="row-2">
@@ -4780,6 +4801,7 @@ function openEditLeadModal(leadId) {
           whatsappNumber: root.querySelector("#mWhatsapp").value.trim() || null,
           eventType: root.querySelector("#mType").value,
           city: root.querySelector("#mCity").value.trim() || null,
+          state: root.querySelector("#mState").value.trim() || null,
           date: root.querySelector("#mDate").value || lead.date,
           quoteAmount: root.querySelector("#mQuoteAmount").value ? Number(root.querySelector("#mQuoteAmount").value) : null,
           guestRange: root.querySelector("#mGuests").value || null,

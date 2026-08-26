@@ -463,7 +463,7 @@ app.get("/api/availability", async (req, res) => {
 
 app.post("/api/leads", async (req, res) => {
   const {
-    name, phone, email, eventType, city, date, budget, notes,
+    name, phone, email, eventType, city, state, date, budget, notes,
     venue, occasion, guestRange, details, howHeard, whatsappOptin, altDate, whatsappNumber, pcs,
   } = req.body;
   if (!name || !eventType || !date) {
@@ -501,12 +501,12 @@ app.post("/api/leads", async (req, res) => {
   const id = uuid();
   await pool.query(`
     INSERT INTO leads (
-      id, name, phone, email, event_type, city, date, budget, stage, advance, notes, created_at,
+      id, name, phone, email, event_type, city, state, date, budget, stage, advance, notes, created_at,
       venue, occasion, guest_range, details, how_heard, whatsapp_optin, alt_date, whatsapp_number, pcs
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'New', 0, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'New', 0, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
   `, [
-    id, name, phone || null, email || null, eventType, city || null, date, budget || null, notes || null, new Date().toISOString(),
+    id, name, phone || null, email || null, eventType, city || null, state || null, date, budget || null, notes || null, new Date().toISOString(),
     venue || null, occasion || null, guestRange || null,
     details || null, howHeard || null, whatsappOptin ? 1 : 0, altDate || null, whatsappNumber || null, pcs || null,
   ]);
@@ -830,7 +830,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const leadsOnlyFields = [
     "stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "date",
     "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration", "whatsapp_number",
-    "cancellation_reason", "snooze_until",
+    "cancellation_reason", "snooze_until", "state",
   ];
   const sharedFields = ["event_time", "soundcheck_time", "venue"];
   if (!hasLeads) {

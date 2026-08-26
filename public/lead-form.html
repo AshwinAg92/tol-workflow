@@ -140,6 +140,11 @@
         </div>
 
         <div class="q">
+          <label class="qlabel">State</label>
+          <input id="state" required placeholder="e.g. West Bengal" />
+        </div>
+
+        <div class="q">
           <label class="qlabel">Which experience are you interested in?</label>
           <select id="experience" required></select>
         </div>
@@ -374,6 +379,7 @@
         email: document.getElementById("email").value,
         eventType: experienceSelect.value,
         city: document.getElementById("city").value,
+        state: document.getElementById("state").value,
         date: document.getElementById("date").value,
         occasion: occasionSelect.value,
         guestRange: guestRangeSelect.value,
