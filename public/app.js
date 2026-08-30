@@ -851,7 +851,7 @@ async function openLeadDetailModal(lead) {
           <span class="tag" style="color:${STAGE_COLOR[lead.stage]};">${lead.stage}</span>
           <div class="lead-detail-section">
             <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Contact</div>
-            ${lead.phone ? `<div>📞 ${lead.phone}</div>` : ""}
+            ${lead.phone ? `<div>📞 <a href="tel:${lead.phone.replace(/\s+/g, "")}" style="color:inherit;">${lead.phone}</a></div>` : ""}
             ${lead.whatsapp_number && lead.whatsapp_number !== lead.phone ? `<div>💬 WhatsApp: ${lead.whatsapp_number}</div>` : ""}
             ${lead.email ? `<div>✉️ ${lead.email}</div>` : ""}
             <div class="muted small" style="margin-top:4px;">${packageName(lead.event_type)} · ${lead.city || "—"}${lead.state ? `, ${lead.state}` : ""} · ${fmtDate(lead.date)}</div>
@@ -1132,7 +1132,7 @@ async function renderLeadsLog(main, skipRefresh) {
               ${canBulkSelect ? `<input type="checkbox" class="lead-bulk-checkbox" data-lead-id="${l.id}" ${leadsSelected.has(l.id) ? "checked" : ""} style="margin-top:4px; width:18px; height:18px; flex-shrink:0;" />` : ""}
               <div>
                 <div class="lead-name">${l.name}</div>
-                <div class="muted small">${l.phone || ""}</div>
+                <div class="muted small">${l.phone ? `<a href="tel:${l.phone.replace(/\s+/g, "")}" style="color:inherit; text-decoration:underline;">${l.phone}</a>` : ""}</div>
                 ${l.combo_group_id ? `<div class="muted small" style="color:#8A5FA8;" title="Linked bookings share one client — pricing and payments live on the primary event.">🔗 Combo with ${comboSiblings.map((s) => `${packageName(s.event_type)} (${fmtDate(s.date)})`).join(", ")}</div>` : ""}
                 ${l.occasion && isConfirmedOrDone ? `<div class="muted small">${l.occasion}</div>` : ""}
                 ${l.alt_date ? `<div class="muted small" style="color:#B6752C;">Alt date: ${fmtDate(l.alt_date)}</div>` : ""}
@@ -1203,6 +1203,7 @@ async function renderLeadsLog(main, skipRefresh) {
             <button class="btn-ghost lead-detail-btn" data-lead-id="${l.id}">📋 Details</button>
             ${l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
             ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative" || l.stage === "Not Interested") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
+            ${l.phone ? `<a class="btn-ghost" href="tel:${l.phone.replace(/\s+/g, "")}" style="display:inline-block;">📞 Call</a>` : ""}
             ${isConfirmedOrDone && hasAccountsAccess() ? `<button class="btn-ghost payments-btn" data-lead-id="${l.id}">💰 Payments</button>` : ""}
             ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost confirmation-msg-btn" data-lead-id="${l.id}">✅ Confirmation msg</button>` : ""}
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team</button>` : ""}
