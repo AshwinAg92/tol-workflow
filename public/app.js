@@ -1202,7 +1202,7 @@ async function renderLeadsLog(main, skipRefresh) {
           <div class="lead-card-actions">
             <button class="btn-ghost lead-detail-btn" data-lead-id="${l.id}">📋 Details</button>
             ${l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
-            ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
+            ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative" || l.stage === "Not Interested") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
             ${isConfirmedOrDone && hasAccountsAccess() ? `<button class="btn-ghost payments-btn" data-lead-id="${l.id}">💰 Payments</button>` : ""}
             ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost confirmation-msg-btn" data-lead-id="${l.id}">✅ Confirmation msg</button>` : ""}
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team</button>` : ""}
