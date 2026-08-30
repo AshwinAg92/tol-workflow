@@ -821,7 +821,7 @@ function openBulkWhatsappFollowupModal(leadIds, main) {
     });
     root.querySelector("#bulkWaOpenBtn").addEventListener("click", async () => {
       const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
-      if (digitsOnly) window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
+      if (digitsOnly) window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
       try {
         await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ logFollowup: true }) });
       } catch (err) { /* WhatsApp already opened; move on regardless */ }
@@ -1263,7 +1263,7 @@ async function renderLeadsLog(main, skipRefresh) {
         dateClause: lead.date ? ` on ${fmtDate(lead.date)}` : "",
       });
       const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
-      if (digitsOnly) window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
+      if (digitsOnly) window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
       try {
         const updated = await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ logFollowup: true }) });
         const wasNotInterested = lead.stage !== "Not Interested" && updated.stage === "Not Interested";
@@ -1571,7 +1571,7 @@ function openQuoteViewModal(q) {
     setTimeout(() => { if (btn) btn.textContent = "Copy text"; }, 1500);
   });
   const waBtn = root.querySelector("#resendWaBtn");
-  if (waBtn) waBtn.addEventListener("click", () => window.open(`https://wa.me/${digits}?text=${encodeURIComponent(q.body)}`, "_blank"));
+  if (waBtn) waBtn.addEventListener("click", () => window.location.href = `https://wa.me/${digits}?text=${encodeURIComponent(q.body)}`);
   root.querySelector("#reopenQuoteBtn").addEventListener("click", () => {
     quotationLeadId = q.lead_id;
     reopenQuoteDraft = q.body;
@@ -2240,7 +2240,7 @@ async function openTeamMemberEventsModal(member) {
   if (showWhatsApp) {
     root.querySelector("#whatsappEventsBtn").addEventListener("click", () => {
       const digits = (member.phone || "").replace(/\D/g, "");
-      window.open(`https://wa.me/${digits}?text=${encodeURIComponent(buildWhatsAppMessage())}`, "_blank");
+      window.location.href = `https://wa.me/${digits}?text=${encodeURIComponent(buildWhatsAppMessage())}`;
     });
   }
 
@@ -2677,7 +2677,7 @@ async function openLeadDocumentsModal(lead) {
     return `
       <div class="doc-row">
         <div class="doc-name">${d.notes ? `<strong>${d.notes}</strong> — ` : ""}<a href="${d.url}" target="_blank">${d.original_name}</a></div>
-        ${waPhone ? `<a class="btn-ghost" href="https://wa.me/${waPhone}?text=${waText}" target="_blank" style="font-size:12px; padding:3px 8px;">Send to client</a>` : `<span class="muted small">No phone on file</span>`}
+        ${waPhone ? `<a class="btn-ghost" href="https://wa.me/${waPhone}?text=${waText}" style="font-size:12px; padding:3px 8px;">Send to client</a>` : `<span class="muted small">No phone on file</span>`}
         <button class="icon-btn" data-delete-lead-doc="${d.id}" title="Delete">${ICON_X}</button>
       </div>
     `;
@@ -2867,7 +2867,7 @@ async function openLeadPaymentsModal(leadId) {
           const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
           if (digitsOnly) {
             const msg = `Hi ${(lead.name || "").split(" ")[0] || "there"}, sharing your payment ledger with Together, Out Loud. Please find the PDF attached.`;
-            window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`, "_blank");
+            window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
             alert("PDF downloaded, and WhatsApp is opening in a new tab — attach the downloaded PDF file to that chat to send it.");
           } else {
             alert("PDF downloaded — this client has no phone number on file, so WhatsApp couldn't be opened automatically.");
@@ -3014,7 +3014,7 @@ async function openAssignTeamModal(leadId) {
                         Include client contact (name &amp; number)
                       </label>
                       <button class="btn-ghost manager-wa-btn" data-team-id="${m.id}" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</button>
-                    ` : `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" target="_blank" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>`) : ""}
+                    ` : `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>`) : ""}
                   </span>
                 </label>
                 ${isAdmin
@@ -3037,7 +3037,7 @@ async function openAssignTeamModal(leadId) {
                 <div>
                   <div>${t.name}${t.description ? ` <span class="muted small">— ${t.description}</span>` : ""}</div>
                   <div class="muted small">${t.phone ? `${t.phone}` : ""}${isAdmin ? `${t.phone ? " · " : ""}${t.fee_amount != null ? `Fee ${inr(t.fee_amount)}${t.fee_paid ? " · Paid" : " · Pending"}` : "No fee recorded"}` : ""}</div>
-                  ${waDigits ? `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" target="_blank" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>` : ""}
+                  ${waDigits ? `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>` : ""}
                   ${isAdmin ? `
                     <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
                       <input type="number" class="ta-fee-input" data-ta-id="${t.id}" placeholder="Fee ₹" value="${t.fee_amount != null ? t.fee_amount : ""}" style="width:100px; font-size:12.5px; padding:4px 6px;" />
@@ -3101,7 +3101,7 @@ async function openAssignTeamModal(leadId) {
                     <div class="muted small">${fmtDate(d.uploaded_at.slice(0, 10))}</div>
                   </div>
                   <div style="display:flex; gap:4px; flex-shrink:0;">
-                    ${waClientPhone ? `<a class="btn-ghost" href="https://wa.me/${waClientPhone}?text=${waText}" target="_blank" style="font-size:12px; padding:3px 8px;">Send to client</a>` : ""}
+                    ${waClientPhone ? `<a class="btn-ghost" href="https://wa.me/${waClientPhone}?text=${waText}" style="font-size:12px; padding:3px 8px;">Send to client</a>` : ""}
                     <button class="icon-btn" data-delete-event-doc="${d.id}">${ICON_X}</button>
                   </div>
                 </div>
@@ -3123,7 +3123,7 @@ async function openAssignTeamModal(leadId) {
                   </div>
                   <div style="display:flex; gap:4px; flex-shrink:0;">
                     <button class="btn-ghost attach-library-doc-btn" data-doc-id="${d.id}" style="font-size:12px; padding:3px 8px;">+ Attach to event</button>
-                    ${waClientPhone ? `<a class="btn-ghost" href="https://wa.me/${waClientPhone}?text=${waText}" target="_blank" style="font-size:12px; padding:3px 8px;">Send to client</a>` : ""}
+                    ${waClientPhone ? `<a class="btn-ghost" href="https://wa.me/${waClientPhone}?text=${waText}" style="font-size:12px; padding:3px 8px;">Send to client</a>` : ""}
                   </div>
                 </div>
               `;
@@ -3258,7 +3258,7 @@ async function openAssignTeamModal(leadId) {
       if (includeContact) {
         waMsg += `\n\nClient contact: ${lead.name}${lead.phone ? `, ${lead.phone}` : ""}`;
       }
-      window.open(`https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}`, "_blank");
+      window.location.href = `https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}`;
     });
   });
   root.querySelectorAll("[data-remove-temp-artist]").forEach((btn) => {
@@ -4292,7 +4292,7 @@ async function renderDocuments(main) {
       <div class="doc-row">
         <div class="doc-name">${d.notes ? `<strong>${d.notes}</strong> — ` : ""}<a href="${d.url}" target="_blank">${d.original_name}</a></div>
         <div class="muted mono">${fmtDate(d.uploaded_at.slice(0, 10))}</div>
-        ${lead && waPhone ? `<a class="btn-ghost" href="https://wa.me/${waPhone}?text=${waText}" target="_blank" style="font-size:12px; padding:4px 8px;">Send to client</a>` : ""}
+        ${lead && waPhone ? `<a class="btn-ghost" href="https://wa.me/${waPhone}?text=${waText}" style="font-size:12px; padding:4px 8px;">Send to client</a>` : ""}
         ${showPicker && clientsWithPhone.length > 0 ? `
           <select class="doc-send-select" data-doc-id="${d.id}" style="font-size:16px; max-width:170px;">
             <option value="">Send to…</option>
@@ -4355,7 +4355,7 @@ async function renderDocuments(main) {
       const fullUrl = window.location.origin + doc.url;
       const waPhone = (lead.whatsapp_number || lead.phone).replace(/\D/g, "");
       const waText = encodeURIComponent(fillTemplate(MESSAGE_TEMPLATES.document_share || TEMPLATE_META.document_share.default, { label: doc.notes || "document", link: fullUrl }));
-      window.open(`https://wa.me/${waPhone}?text=${waText}`, "_blank");
+      window.location.href = `https://wa.me/${waPhone}?text=${waText}`;
       sel.value = "";
     });
   });
@@ -4561,7 +4561,7 @@ async function openConfirmationMessageModal(lead) {
     }).filter(Boolean);
     return links.length > 0 ? `${base}\n\n${links.join("\n")}` : base;
   }
-  if (waLink) root.querySelector("#waBtn").addEventListener("click", () => window.open(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(finalMessage())}`, "_blank"));
+  if (waLink) root.querySelector("#waBtn").addEventListener("click", () => window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(finalMessage())}`);
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
     window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Your event is confirmed — Together, Out Loud")}&body=${encodeURIComponent(finalMessage())}`;
   });
