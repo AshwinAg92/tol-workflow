@@ -876,6 +876,7 @@ async function openLeadDetailModal(lead) {
             <div class="lead-detail-section">
               <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Financials</div>
               <div>Final: <span class="mono">${lead.final_amount || lead.quote_amount ? inr(lead.final_amount || lead.quote_amount) : "—"}</span>${lead.rate_type ? ` <span class="muted small">(${lead.rate_type === "inclusive" ? "inclusive of travel & accommodation" : "+ travel & accommodation billed separately"})</span>` : ""}</div>
+              ${lead.rate_note ? `<div class="muted small" style="margin-top:2px;">📝 ${lead.rate_note}</div>` : ""}
               <div>Received: <span class="mono">${inr(lead.received || 0)}</span></div>
             </div>
           ` : ""}
@@ -4429,6 +4430,9 @@ function openConfirmEventModal(lead) {
             <option value="exclusive" ${(lead.rate_type || "exclusive") === "exclusive" ? "selected" : ""}>Exclusive of travel &amp; accommodation (billed separately, at actuals)</option>
             <option value="inclusive" ${lead.rate_type === "inclusive" ? "selected" : ""}>Inclusive of travel &amp; accommodation (all-in lump sum)</option>
           </select>
+          <label style="margin-top:10px;">Details (optional)</label>
+          <input id="ceRateNote" value="${lead.rate_note || ""}" placeholder="e.g. Travel only included, accommodation billed separately" />
+          <p class="muted small" style="margin-top:4px;">Use this for anything the two options above don't quite cover — like only travel being included, not accommodation.</p>
           <label style="margin-top:10px;">Advance received now (optional)</label>
           <div class="row-2">
             <input id="ceAdvanceAmount" type="number" placeholder="e.g. 20000" />
@@ -4457,7 +4461,7 @@ function openConfirmEventModal(lead) {
       return;
     }
     try {
-      await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ stage: "Confirmed", finalAmount: finalAmount || null, date: chosenDate, rateType: root.querySelector("#ceRateType").value }) });
+      await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ stage: "Confirmed", finalAmount: finalAmount || null, date: chosenDate, rateType: root.querySelector("#ceRateType").value, rateNote: root.querySelector("#ceRateNote").value.trim() || null }) });
       const advanceAmount = root.querySelector("#ceAdvanceAmount").value;
       if (advanceAmount && Number(advanceAmount) > 0) {
         try {
@@ -4788,6 +4792,8 @@ function openEditLeadModal(leadId) {
               <option value="exclusive" ${(lead.rate_type || "exclusive") === "exclusive" ? "selected" : ""}>Exclusive of travel &amp; accommodation (billed separately, at actuals)</option>
               <option value="inclusive" ${lead.rate_type === "inclusive" ? "selected" : ""}>Inclusive of travel &amp; accommodation (all-in lump sum)</option>
             </select>
+            <label style="margin-top:10px;">Details (optional)</label>
+            <input id="mRateNote" value="${lead.rate_note || ""}" placeholder="e.g. Travel only included, accommodation billed separately" />
           ` : ""}
           ${lead.combo_group_id ? `<p class="muted small">This event is part of a combo booking. Editing the format/date here only changes this one event — the shared client details are separate per event.</p>` : ""}
           <p class="muted small">📌 Use the sticky note on the lead card to jot quick notes — no need to open Edit for that.</p>
@@ -4822,6 +4828,7 @@ function openEditLeadModal(leadId) {
           occasion: root.querySelector("#mOccasion").value || null,
           ...(root.querySelector("#mFinalAmount") ? { finalAmount: root.querySelector("#mFinalAmount").value ? Number(root.querySelector("#mFinalAmount").value) : null } : {}),
           ...(root.querySelector("#mRateType") ? { rateType: root.querySelector("#mRateType").value } : {}),
+          ...(root.querySelector("#mRateNote") ? { rateNote: root.querySelector("#mRateNote").value.trim() || null } : {}),
         }),
       });
       await refreshLeads();

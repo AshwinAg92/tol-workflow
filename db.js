@@ -197,6 +197,7 @@ async function setup() {
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS snooze_until TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS state TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS rate_type TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS rate_note TEXT`);
   // Lets a sent quote be tracked through to accepted/rejected instead of
   // just "sent and forgotten" — shown as a status dropdown in Quote history.
   await pool.query(`ALTER TABLE quotes ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'sent'`);
