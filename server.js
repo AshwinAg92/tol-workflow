@@ -830,11 +830,11 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const leadsOnlyFields = [
     "stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "date",
     "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration", "whatsapp_number",
-    "cancellation_reason", "snooze_until", "state",
+    "cancellation_reason", "snooze_until", "state", "rate_type",
   ];
   const sharedFields = ["event_time", "soundcheck_time", "venue"];
   if (!hasLeads) {
-    const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f);
+    const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f);
     const attemptedRestricted = leadsOnlyFields.some((f) => req.body[keyFor(f)] !== undefined);
     if (attemptedRestricted) return res.status(403).json({ error: "You don't have permission to update those fields" });
   }
@@ -861,7 +861,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const updates = [];
   const values = [];
   fields.forEach((f) => {
-    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f;
+    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f;
     if (req.body[key] !== undefined) {
       values.push(req.body[key]);
       updates.push(`${f} = $${values.length}`);
