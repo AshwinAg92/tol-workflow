@@ -3916,25 +3916,6 @@ async function renderDashboard(main) {
       <div class="section-label">Calendar</div>
       ${calendarGridMarkup()}
     </div>
-    ${hasLeadsAccess() && data.stageCounts ? (() => {
-      const funnelStages = ["New", "Follow-up", "Interested", "Tentative", "Confirmed", "Completed"];
-      const counts = funnelStages.map((s) => data.stageCounts[s] || 0);
-      const max = Math.max(1, ...counts);
-      return `
-      <div class="card" style="margin-bottom:16px;">
-        <div class="section-label" title="How many active leads sit in each stage right now.">Pipeline</div>
-        <div class="funnel-row">
-          ${funnelStages.map((s, i) => `
-            <div class="funnel-bar-col">
-              <div class="funnel-bar-track"><div class="funnel-bar-fill" style="height:${counts[i] === 0 ? 3 : Math.max(6, (counts[i] / max) * 100)}%; background:${STAGE_COLOR[s]};"></div></div>
-              <div class="mono funnel-count">${counts[i]}</div>
-              <div class="muted small funnel-label">${s}</div>
-            </div>
-          `).join("")}
-        </div>
-      </div>
-      `;
-    })() : ""}
     ${(() => {
       const todayStr = new Date().toISOString().slice(0, 10);
       const eventsToday = data.upcomingEvents.filter((l) => l.date === todayStr);
