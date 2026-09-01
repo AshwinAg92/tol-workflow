@@ -3434,61 +3434,25 @@ async function renderAccounts(main) {
       <button class="btn-ghost" id="exportExcelBtn">⬇ Export to Excel</button>
     </div>
     <div class="accounts-summary">
-      <div class="card summary-card"><div class="muted">Confirmed</div><div class="mono big">${inr(totals.quoted)}</div></div>
-      <div class="card summary-card"><div class="muted">Amount received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(totals.received)}</div></div>
-      <div class="card summary-card"><div class="muted">Outstanding</div><div class="mono big" style="color:${STAGE_COLOR["Follow-up"]}">${inr(totals.outstanding)}</div></div>
-      <div class="card summary-card"><div class="muted">Total profit</div><div class="mono big" style="color:${totals.profit >= 0 ? "#5C8A6B" : "#A64B3C"}">${inr(totals.profit)}</div></div>
+      <div class="card summary-card"><div class="muted">Confirmed</div><div class="mono big" id="acctSumConfirmed">${inr(totals.quoted)}</div></div>
+      <div class="card summary-card"><div class="muted">Amount received</div><div class="mono big" id="acctSumReceived" style="color:${STAGE_COLOR.Confirmed}">${inr(totals.received)}</div></div>
+      <div class="card summary-card"><div class="muted">Outstanding</div><div class="mono big" id="acctSumOutstanding" style="color:${STAGE_COLOR["Follow-up"]}">${inr(totals.outstanding)}</div></div>
+      <div class="card summary-card"><div class="muted">Total profit</div><div class="mono big" id="acctSumProfit" style="color:${totals.profit >= 0 ? "#5C8A6B" : "#A64B3C"}">${inr(totals.profit)}</div></div>
     </div>
-
-    ${(() => {
-      // Last 6 calendar months, booked value vs received, by event date —
-      // gives a shape-of-the-business glance instead of only cumulative totals.
-      const months = [];
-      const now = new Date();
-      for (let i = 5; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        months.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: d.toLocaleDateString("en-IN", { month: "short" }) });
-      }
-      const byMonth = {};
-      months.forEach((m) => (byMonth[m.key] = { booked: 0, received: 0 }));
-      sortedBookings.forEach((b) => {
-        if (!b.date) return;
-        const key = b.date.slice(0, 7);
-        if (!byMonth[key]) return;
-        const revenue = b.is_combo_primary === false ? 0 : (b.final_amount || b.quote_amount || 0);
-        byMonth[key].booked += revenue;
-        byMonth[key].received += b.received || 0;
-      });
-      const max = Math.max(1, ...months.map((m) => Math.max(byMonth[m.key].booked, byMonth[m.key].received)));
-      return `
-      <div class="card" style="margin-bottom:20px;">
-        <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
-          <span>Revenue — last 6 months</span>
-          <span class="muted small"><span style="color:#C1602B;">■</span> Booked &nbsp; <span style="color:#5C8A6B;">■</span> Received</span>
-        </div>
-        <div class="revenue-chart-row">
-          ${months.map((m) => `
-            <div class="revenue-chart-col">
-              <div class="revenue-chart-bars">
-                <div class="revenue-bar" style="height:${byMonth[m.key].booked === 0 ? 2 : Math.max(6, (byMonth[m.key].booked / max) * 100)}%; background:#C1602B;" title="Booked: ${inr(byMonth[m.key].booked)}"></div>
-                <div class="revenue-bar" style="height:${byMonth[m.key].received === 0 ? 2 : Math.max(6, (byMonth[m.key].received / max) * 100)}%; background:#5C8A6B;" title="Received: ${inr(byMonth[m.key].received)}"></div>
-              </div>
-              <div class="muted small funnel-label">${m.label}</div>
-            </div>
-          `).join("")}
-        </div>
-      </div>
-      `;
-    })()}
+    <p class="muted small" id="acctSumFilterNote" style="margin:-8px 0 16px;"></p>
 
     <div class="section-label">Events — tap one to add a payment or view its ledger</div>
     <div class="card" style="margin-bottom:10px;">
       <div class="upload-form" style="margin-bottom:0;">
-        <input type="text" id="acctSearch" placeholder="🔍 Search by name or phone…" style="flex:1; min-width:180px;" />
+        <input type="text" id="acctSearch" placeholder="🔍 Search by client / party name or phone…" style="flex:1; min-width:200px;" />
         <input type="text" id="acctCityFilter" placeholder="City…" style="flex:1; min-width:140px;" />
-        <div style="display:flex; align-items:center; gap:4px;">
-          <input type="date" id="acctDateFilter" />
-          <button class="btn-ghost" id="acctClearDateBtn" style="padding:4px 8px;" title="Clear date">✕</button>
+        <div style="display:flex; flex-direction:column; gap:3px;">
+          <label class="muted small" for="acctDateFrom">Event date from</label>
+          <input type="date" id="acctDateFrom" />
+        </div>
+        <div style="display:flex; flex-direction:column; gap:3px;">
+          <label class="muted small" for="acctDateTo">to</label>
+          <input type="date" id="acctDateTo" />
         </div>
         <select id="acctStageFilter">
           <option value="all">All events</option>
@@ -3563,15 +3527,37 @@ async function renderAccounts(main) {
 
   // ---- Events: searchable, tap-to-manage cards ----
   const acctCards = main.querySelector("#acctCards");
-  const acctFilters = { search: "", city: "", date: "", stage: "all" };
+  const acctFilters = { search: "", city: "", dateFrom: "", dateTo: "", stage: "all" };
+  function computeFilteredTotals(filtered) {
+    return filtered.reduce(
+      (acc, l) => {
+        const revenue = l.final_amount || l.quote_amount || 0;
+        acc.quoted += revenue;
+        acc.received += l.received || 0;
+        acc.profit += l.profit || 0;
+        return acc;
+      },
+      { quoted: 0, received: 0, profit: 0 }
+    );
+  }
   function renderAcctCards() {
     const q = acctFilters.search.trim().toLowerCase();
     const cityQ = acctFilters.city.trim().toLowerCase();
     const filtered = sortedBookings
       .filter((l) => !q || l.name.toLowerCase().includes(q) || (l.phone || "").includes(q))
       .filter((l) => !cityQ || (l.city || "").toLowerCase().includes(cityQ))
-      .filter((l) => !acctFilters.date || l.date === acctFilters.date)
+      .filter((l) => !acctFilters.dateFrom || (l.date && l.date >= acctFilters.dateFrom))
+      .filter((l) => !acctFilters.dateTo || (l.date && l.date <= acctFilters.dateTo))
       .filter((l) => acctFilters.stage === "all" || l.stage === acctFilters.stage);
+
+    const anyFilterActive = q || cityQ || acctFilters.dateFrom || acctFilters.dateTo || acctFilters.stage !== "all";
+    const filteredTotals = computeFilteredTotals(filtered);
+    main.querySelector("#acctSumConfirmed").textContent = inr(filteredTotals.quoted);
+    main.querySelector("#acctSumReceived").textContent = inr(filteredTotals.received);
+    main.querySelector("#acctSumOutstanding").textContent = inr(filteredTotals.quoted - filteredTotals.received);
+    main.querySelector("#acctSumProfit").textContent = inr(filteredTotals.profit);
+    main.querySelector("#acctSumFilterNote").textContent = anyFilterActive ? `Showing totals for ${filtered.length} matching event${filtered.length === 1 ? "" : "s"} — clear filters for the full picture.` : "";
+
     if (filtered.length === 0) {
       acctCards.innerHTML = `<div class="board-empty">${sortedBookings.length === 0 ? "No confirmed or completed bookings yet" : "No events match those filters"}</div>`;
       return;
@@ -3607,18 +3593,15 @@ async function renderAccounts(main) {
   // Use "blur" not "change" — iOS Safari fires "change" on an empty date
   // input the instant the picker opens (defaulting to today), before the
   // user has actually confirmed anything.
-  main.querySelector("#acctDateFilter").addEventListener("blur", (e) => { acctFilters.date = e.target.value; renderAcctCards(); });
-  main.querySelector("#acctClearDateBtn").addEventListener("click", () => {
-    acctFilters.date = "";
-    main.querySelector("#acctDateFilter").value = "";
-    renderAcctCards();
-  });
+  main.querySelector("#acctDateFrom").addEventListener("blur", (e) => { acctFilters.dateFrom = e.target.value; renderAcctCards(); });
+  main.querySelector("#acctDateTo").addEventListener("blur", (e) => { acctFilters.dateTo = e.target.value; renderAcctCards(); });
   main.querySelector("#acctStageFilter").addEventListener("change", (e) => { acctFilters.stage = e.target.value; renderAcctCards(); });
   main.querySelector("#acctClearFilters").addEventListener("click", () => {
-    acctFilters.search = ""; acctFilters.city = ""; acctFilters.date = ""; acctFilters.stage = "all";
+    acctFilters.search = ""; acctFilters.city = ""; acctFilters.dateFrom = ""; acctFilters.dateTo = ""; acctFilters.stage = "all";
     main.querySelector("#acctSearch").value = "";
     main.querySelector("#acctCityFilter").value = "";
-    main.querySelector("#acctDateFilter").value = "";
+    main.querySelector("#acctDateFrom").value = "";
+    main.querySelector("#acctDateTo").value = "";
     main.querySelector("#acctStageFilter").value = "all";
     renderAcctCards();
   });
