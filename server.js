@@ -600,6 +600,14 @@ async function fetchWebsiteTraffic() {
   if (!byChannelResp.ok) throw new Error(`Windsor.ai returned ${byChannelResp.status}`);
   const byDayJson = await byDayResp.json();
   const byChannelJson = await byChannelResp.json();
+  // Windsor.ai sometimes responds with HTTP 200 but an account/plan error
+  // message baked into the payload instead of real rows (e.g. hitting the
+  // Free plan's connected-account limit) — catch that here so it never gets
+  // parsed as a fake data row and shown to Ashwin as if it were a channel.
+  const rawText = JSON.stringify(byDayJson) + JSON.stringify(byChannelJson);
+  if (/free plan|upgrade|onboard\.windsor\.ai/i.test(rawText)) {
+    throw new Error("Windsor.ai account/plan limit reached");
+  }
   const byDay = (Array.isArray(byDayJson) ? byDayJson : (byDayJson.data || []))
     .map((r) => ({
       date: normalizeTrafficDate(r.date),
@@ -626,10 +634,10 @@ app.get("/api/website-traffic", requireAuth, requireAdmin, async (req, res) => {
       websiteTrafficCache = { data: traffic, fetchedAt: Date.now() };
       return res.json(traffic);
     }
-    return res.json(websiteTrafficCache.data || { byDay: [], byChannel: [], totalSessions: 0, totalUsers: 0, totalPageViews: 0 });
+    return res.json(websiteTrafficCache.data || { byDay: [], byChannel: [], totalSessions: 0, totalUsers: 0, totalPageViews: 0, unavailable: true });
   } catch (err) {
     console.error("Website traffic fetch failed:", err.message);
-    return res.json(websiteTrafficCache.data || { byDay: [], byChannel: [], totalSessions: 0, totalUsers: 0, totalPageViews: 0 });
+    return res.json(websiteTrafficCache.data || { byDay: [], byChannel: [], totalSessions: 0, totalUsers: 0, totalPageViews: 0, unavailable: true });
   }
 });
 

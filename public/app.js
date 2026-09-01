@@ -3996,6 +3996,8 @@ async function renderDashboard(main) {
               <span class="mono">${c.sessions.toLocaleString("en-IN")}</span>
             </div>
           `).join("")}
+        ` : websiteTraffic.unavailable ? `
+          <p class="muted small" style="margin-top:10px;">Traffic data is temporarily unavailable — check the Windsor.ai account (this usually means a plan or connection limit was hit).</p>
         ` : ""}
       </div>
       `;
