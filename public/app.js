@@ -802,6 +802,12 @@ function openBulkWhatsappFollowupModal(leadIds, main) {
           </div>
           <p class="muted small" style="margin-bottom:2px;">Lead ${index + 1} of ${queue.length}</p>
           <p class="muted small" style="margin-bottom:14px;">${packageName(lead.event_type)} · ${lead.city || "—"} · ${fmtDate(lead.date)}</p>
+          ${(() => {
+            if (!lead.date) return "";
+            const conflictLead = LEADS.find((o) => o.id !== lead.id && o.date === lead.date && ["Interested", "Tentative", "Confirmed"].includes(o.stage));
+            if (!conflictLead) return "";
+            return `<div style="background:#FFF4E5; color:#8A5A1F; padding:8px 10px; border-radius:6px; font-size:12.5px; margin-bottom:12px;">⚠️ ${conflictLead.name} is already ${conflictLead.stage} for this date — you may be chasing a date that's already spoken for.</div>`;
+          })()}
           <div class="card" style="background:#F5F0E4; white-space:pre-wrap; font-size:13.5px; margin-bottom:14px;">${msg}</div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button class="btn-primary" id="bulkWaOpenBtn" style="flex:1;">💬 Open WhatsApp</button>
@@ -1144,6 +1150,15 @@ async function renderLeadsLog(main, skipRefresh) {
             </select>
           </div>
           <div class="muted small" style="margin-top:8px;">${packageName(l.event_type)} · ${l.city || "—"} · <span class="mono">${fmtDate(l.date)}</span></div>
+          ${(() => {
+            // If this lead is still just New/Follow-up, warn when someone else
+            // has already advanced past that stage for the same date — helps
+            // avoid chasing a date that's effectively already spoken for.
+            if (!["New", "Follow-up"].includes(l.stage) || !l.date) return "";
+            const conflictLead = LEADS.find((o) => o.id !== l.id && o.date === l.date && ["Interested", "Tentative", "Confirmed"].includes(o.stage));
+            if (!conflictLead) return "";
+            return `<div style="background:#FFF4E5; color:#8A5A1F; padding:6px 10px; border-radius:6px; font-size:12.5px; margin-top:6px;">⚠️ ${conflictLead.name} is already ${conflictLead.stage} for this date</div>`;
+          })()}
           <div class="muted small">Submitted ${fmtDateTime(l.created_at)}</div>
           ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}${l.last_quoted_at ? ` <span class="muted">— sent ${fmtDate(l.last_quoted_at.slice(0, 10))}</span>` : ""}</div>` : ""}
           ${hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) ? (() => {
