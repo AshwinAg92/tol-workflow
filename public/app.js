@@ -3433,26 +3433,21 @@ async function renderAccounts(main) {
       <div><h2>Accounts</h2><p class="muted">Confirmed events, what's owed, and what's outstanding.</p></div>
       <button class="btn-ghost" id="exportExcelBtn">⬇ Export to Excel</button>
     </div>
-    <div class="accounts-summary">
-      <div class="card summary-card"><div class="muted">Confirmed</div><div class="mono big" id="acctSumConfirmed">${inr(totals.quoted)}</div></div>
-      <div class="card summary-card"><div class="muted">Amount received</div><div class="mono big" id="acctSumReceived" style="color:${STAGE_COLOR.Confirmed}">${inr(totals.received)}</div></div>
-      <div class="card summary-card"><div class="muted">Outstanding</div><div class="mono big" id="acctSumOutstanding" style="color:${STAGE_COLOR["Follow-up"]}">${inr(totals.outstanding)}</div></div>
-      <div class="card summary-card"><div class="muted">Total profit</div><div class="mono big" id="acctSumProfit" style="color:${totals.profit >= 0 ? "#5C8A6B" : "#A64B3C"}">${inr(totals.profit)}</div></div>
-    </div>
-    <p class="muted small" id="acctSumFilterNote" style="margin:-8px 0 16px;"></p>
 
-    <div class="section-label">Events — tap one to add a payment or view its ledger</div>
-    <div class="card" style="margin-bottom:10px;">
-      <div class="upload-form" style="margin-bottom:0;">
-        <input type="text" id="acctSearch" placeholder="🔍 Search by client / party name or phone…" style="flex:1; min-width:200px;" />
-        <input type="text" id="acctCityFilter" placeholder="City…" style="flex:1; min-width:140px;" />
-        <div style="display:flex; flex-direction:column; gap:3px;">
-          <label class="muted small" for="acctDateFrom">Event date from</label>
-          <input type="date" id="acctDateFrom" />
-        </div>
-        <div style="display:flex; flex-direction:column; gap:3px;">
-          <label class="muted small" for="acctDateTo">to</label>
-          <input type="date" id="acctDateTo" />
+    <div class="card" style="margin-bottom:18px;">
+      <div class="section-label" style="margin-bottom:10px;">Filter — updates the totals and event list below</div>
+      <div class="acct-filter-grid">
+        <input type="text" id="acctSearch" class="acct-filter-search" placeholder="🔍 Search by client / party name or phone…" />
+        <input type="text" id="acctCityFilter" placeholder="City…" />
+        <div class="acct-filter-daterange">
+          <div class="acct-filter-date-group">
+            <label class="muted small" for="acctDateFrom">Event date from</label>
+            <input type="date" id="acctDateFrom" />
+          </div>
+          <div class="acct-filter-date-group">
+            <label class="muted small" for="acctDateTo">to</label>
+            <input type="date" id="acctDateTo" />
+          </div>
         </div>
         <select id="acctStageFilter">
           <option value="all">All events</option>
@@ -3462,6 +3457,16 @@ async function renderAccounts(main) {
         <button class="btn-ghost" id="acctClearFilters">Clear filters</button>
       </div>
     </div>
+
+    <div class="accounts-summary">
+      <div class="card summary-card"><div class="muted">Confirmed</div><div class="mono big" id="acctSumConfirmed">${inr(totals.quoted)}</div></div>
+      <div class="card summary-card"><div class="muted">Amount received</div><div class="mono big" id="acctSumReceived" style="color:${STAGE_COLOR.Confirmed}">${inr(totals.received)}</div></div>
+      <div class="card summary-card"><div class="muted">Outstanding</div><div class="mono big" id="acctSumOutstanding" style="color:${STAGE_COLOR["Follow-up"]}">${inr(totals.outstanding)}</div></div>
+      <div class="card summary-card"><div class="muted">Total profit</div><div class="mono big" id="acctSumProfit" style="color:${totals.profit >= 0 ? "#5C8A6B" : "#A64B3C"}">${inr(totals.profit)}</div></div>
+    </div>
+    <p class="muted small" id="acctSumFilterNote" style="margin:-8px 0 16px;"></p>
+
+    <div class="section-label">Events — tap one to add a payment or view its ledger</div>
     <div id="acctCards" style="margin-bottom:24px;"></div>
 
     <div class="section-label">Add an expense or artist fee</div>

@@ -215,6 +215,18 @@ select.stage-select { width:auto; padding:4px 6px; font-size:12px; border-radius
 .doc-name a:hover { color:#C1602B; }
 .upload-form { display:flex; gap:8px; align-items:center; margin-bottom:16px; flex-wrap:wrap; }
 
+.acct-filter-grid { display:grid; grid-template-columns:1fr; gap:10px; }
+.acct-filter-grid input[type="text"],
+.acct-filter-grid input[type="date"],
+.acct-filter-grid select { width:100%; }
+.acct-filter-daterange { display:flex; gap:10px; }
+.acct-filter-date-group { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+@media (min-width: 720px) {
+  .acct-filter-grid { grid-template-columns:1.6fr 1fr 1.6fr 0.9fr auto; align-items:end; gap:10px; }
+  .acct-filter-grid .acct-filter-search { grid-row:1; }
+  .acct-filter-grid #acctClearFilters { white-space:nowrap; }
+}
+
 
 /* ---------- Mobile: collapsible sidebar ---------- */
 .mobile-topbar { display:none; }
