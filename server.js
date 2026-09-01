@@ -2000,7 +2000,7 @@ app.patch("/api/message-templates/:key", requireAuth, requireAdmin, async (req, 
 app.get("/api/activity", requireAuth, requireAdmin, async (req, res) => {
   const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
   const { rows } = await pool.query(
-    "SELECT * FROM activity_log WHERE created_at >= $1 ORDER BY created_at ASC",
+    "SELECT * FROM activity_log WHERE created_at >= $1 ORDER BY created_at DESC",
     [startOfToday.toISOString()]
   );
   res.json(rows);
