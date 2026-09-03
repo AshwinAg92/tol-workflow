@@ -1834,7 +1834,7 @@ async function renderQuotation(main) {
       await refreshLeads();
 
       const waHtml = result.whatsapp.link
-        ? `<div class="email-status sent">💬 Opened WhatsApp for ${result.lead.phone} — <a href="${result.whatsapp.link}" target="_blank">click here</a> if it didn't open</div>`
+        ? `<div class="email-status sent">💬 Opened WhatsApp for ${result.lead.phone} — <a href="${result.whatsapp.link}">click here</a> if it didn't open</div>`
         : `<div class="email-status unsent">💬 Couldn't prepare WhatsApp message — ${result.whatsapp.reason}</div>`;
 
       const mailHtml = result.mailto.link
@@ -1842,7 +1842,10 @@ async function renderQuotation(main) {
         : `<div class="email-status unsent">✉️ Couldn't prepare email — ${result.mailto.reason}</div>`;
 
       main.querySelector("#sendStatus").innerHTML = waHtml + mailHtml;
-      if (result.whatsapp.link) window.open(result.whatsapp.link, "_blank");
+      // Same-tab navigation, not window.open(..., "_blank") — on iOS Safari,
+      // opening a wa.me link in a new tab leaves a blank tab behind once the
+      // WhatsApp app takes over the handoff.
+      if (result.whatsapp.link) window.location.href = result.whatsapp.link;
     } catch (err) {
       alert(err.message);
     } finally {
