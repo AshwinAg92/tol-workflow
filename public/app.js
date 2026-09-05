@@ -3864,6 +3864,7 @@ async function renderDashboard(main) {
       </div>
       <textarea id="stickyNoteInput" rows="3" placeholder="Jot something down for yourself…" style="width:100%; padding:8px 10px; border:1px solid #E0CE8A; border-radius:6px; font-family:inherit; font-size:16px; background:#FFFDF6; resize:vertical;">${stickyNote.content || ""}</textarea>
     </div>
+    <div class="card" id="pushNotifBanner" style="margin-bottom:16px; display:none;"></div>
     ${!canCoordinate ? `
       <div class="card" style="margin-bottom:16px;">
         <div class="section-label">✉️ Message admin</div>
@@ -4062,6 +4063,7 @@ async function renderDashboard(main) {
       if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null; saveNote(); }
     });
   }
+  wirePushNotifBanner(main.querySelector("#pushNotifBanner"));
   main.querySelectorAll("[data-resolve-cancel]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await api(`/api/assignments/${btn.dataset.resolveCancel}/resolve-cancel`, {
@@ -6178,6 +6180,78 @@ async function openEventChat(leadId, leadName) {
 
   await loadMessages();
   eventChatInterval = setInterval(loadMessages, 5000);
+}
+
+// ---------- Push notifications ----------
+// iOS only allows Web Push for a Safari site that's been added to the home
+// screen and opened from there (standalone mode) — a regular Safari tab
+// can't request permission at all, pre-16.4 restriction still enforced.
+function isStandalonePWA() {
+  return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+}
+function pushSupported() {
+  return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+async function subscribeToPush() {
+  const reg = await navigator.serviceWorker.ready;
+  const { key } = await api("/api/push/vapid-public-key");
+  if (!key) throw new Error("Push isn't set up on the server yet");
+  const existing = await reg.pushManager.getSubscription();
+  const sub = existing || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(key) }));
+  await api("/api/push/subscribe", { method: "POST", body: JSON.stringify(sub.toJSON()) });
+}
+function wirePushNotifBanner(card) {
+  if (!card) return;
+  if (!pushSupported()) return; // silently hide — nothing actionable to show
+  if (Notification.permission === "granted") {
+    // Already granted at the OS level — make sure our subscription is still
+    // registered server-side (e.g. after a redeploy or a cleared subscription).
+    subscribeToPush().catch(() => {});
+    return;
+  }
+  if (Notification.permission === "denied") {
+    card.style.display = "block";
+    card.innerHTML = `<div class="section-label">🔕 Notifications are turned off</div><p class="muted small" style="margin-top:-4px;">To get alerted on new queries, enable notifications for this app in your phone's Settings.</p>`;
+    return;
+  }
+  if (!isStandalonePWA()) {
+    // Permission hasn't been decided yet, but we're in a regular browser
+    // tab — iOS won't even show the prompt from here, so don't ask.
+    return;
+  }
+  card.style.display = "block";
+  card.innerHTML = `
+    <div class="section-label">🔔 Get notified on new queries</div>
+    <p class="muted small" style="margin-top:-4px; margin-bottom:10px;">Turn on notifications so a new query pings your phone the moment it comes in.</p>
+    <button class="btn-primary" id="enablePushBtn">Enable notifications</button>
+    <span class="muted small" id="pushEnableStatus" style="margin-left:8px;"></span>
+  `;
+  card.querySelector("#enablePushBtn").addEventListener("click", async () => {
+    const btn = card.querySelector("#enablePushBtn");
+    const status = card.querySelector("#pushEnableStatus");
+    btn.disabled = true;
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        status.textContent = "Permission not granted.";
+        btn.disabled = false;
+        return;
+      }
+      await subscribeToPush();
+      card.innerHTML = `<div class="section-label">🔔 Notifications enabled ✓</div><p class="muted small" style="margin-top:-4px;">You'll get a ping whenever a new query comes in.</p>`;
+    } catch (err) {
+      status.textContent = "Couldn't enable — try again.";
+      btn.disabled = false;
+    }
+  });
 }
 
 // ---------- Boot ----------

@@ -7,6 +7,7 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const nodemailer = require("nodemailer");
+const webpush = require("web-push");
 const XLSX = require("xlsx");
 const { v4: uuid } = require("uuid");
 const { pool, ready } = require("./db");
@@ -525,6 +526,7 @@ app.post("/api/leads", async (req, res) => {
   ).catch((err) => console.error("Failed to create new-lead notification:", err.message));
 
   sendNewLeadEmail(created).catch((err) => console.error("New-lead email failed (not fatal):", err.message));
+  notifyNewQuery(created).catch((err) => console.error("Push notification failed (not fatal):", err.message));
 });
 
 // Public — deliberately no requireAuth: this powers the "Upcoming Events"
@@ -570,7 +572,66 @@ app.get("/api/public/live-instagram-stats", async (req, res) => {
   }
 });
 
-// ---------- Website traffic (Google Analytics 4, via Windsor.ai) ----------
+// ---------- Push notifications (new-query alerts to the home-screen PWA) ----------
+// iOS 16.4+ supports Web Push for Safari PWAs added to the home screen (not
+// in a regular Safari tab), which is how Ashwin/Prakriti use this app.
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT || "mailto:togetheroutloudclub@gmail.com",
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+}
+
+app.get("/api/push/vapid-public-key", requireAuth, (req, res) => {
+  res.json({ key: process.env.VAPID_PUBLIC_KEY || null });
+});
+
+app.post("/api/push/subscribe", requireAuth, async (req, res) => {
+  const { endpoint, keys } = req.body || {};
+  if (!endpoint || !keys || !keys.p256dh || !keys.auth) return res.status(400).json({ error: "Invalid subscription" });
+  await pool.query(
+    `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (endpoint) DO UPDATE SET user_id = $2, p256dh = $4, auth = $5`,
+    [uuid(), req.user.id, endpoint, keys.p256dh, keys.auth, new Date().toISOString()]
+  );
+  res.json({ ok: true });
+});
+
+app.post("/api/push/unsubscribe", requireAuth, async (req, res) => {
+  const { endpoint } = req.body || {};
+  if (endpoint) await pool.query(`DELETE FROM push_subscriptions WHERE endpoint = $1`, [endpoint]);
+  res.json({ ok: true });
+});
+
+// Sends to every registered subscription (any logged-in user who's opted in
+// on their device) — a new-query alert carries no financial/fee data, so
+// there's no role-visibility reason to restrict it to admins only.
+async function notifyNewQuery(lead) {
+  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return;
+  const { rows } = await pool.query(`SELECT * FROM push_subscriptions`);
+  if (rows.length === 0) return;
+  const payload = JSON.stringify({
+    title: "New query received",
+    body: `${lead.name} — ${packageName(lead.event_type)} in ${lead.city || "?"}`,
+    url: "/",
+  });
+  await Promise.all(rows.map(async (sub) => {
+    try {
+      await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload);
+    } catch (err) {
+      // 404/410 means the subscription is gone (uninstalled, permission revoked, etc.) — clean it up.
+      if (err.statusCode === 404 || err.statusCode === 410) {
+        await pool.query(`DELETE FROM push_subscriptions WHERE endpoint = $1`, [sub.endpoint]);
+      } else {
+        console.error("Push send failed:", err.message);
+      }
+    }
+  }));
+}
+
+
 // Internal-only (unlike Instagram stats above, which feed the public site) —
 // this powers a Dashboard card so Ashwin/Prakriti can see visits and traffic
 // sources without leaving the CRM to check analytics.google.com. Cached for
