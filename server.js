@@ -236,7 +236,7 @@ app.get("/api/users", requireAuth, requireAdmin, async (req, res) => {
 });
 
 app.post("/api/users", requireAuth, requireCapability("manage_team"), async (req, res) => {
-  const { name, roleTitle, phone, specialty, username, password, accessLevel, existingTeamId, permissions, isPerformer } = req.body;
+  const { name, roleTitle, phone, specialty, baseCity, username, password, accessLevel, existingTeamId, permissions, isPerformer } = req.body;
   if (!username || !password) return res.status(400).json({ error: "Username and password are required" });
   if (!existingTeamId && !name) return res.status(400).json({ error: "Name is required for a new team member" });
   if (!["admin", "staff", "performer"].includes(accessLevel)) return res.status(400).json({ error: "accessLevel must be 'admin', 'staff', or 'performer'" });
@@ -266,7 +266,7 @@ app.post("/api/users", requireAuth, requireCapability("manage_team"), async (req
     if (alreadyHasLogin) return res.status(400).json({ error: "That team member already has a login" });
   } else {
     teamId = uuid();
-    await pool.query("INSERT INTO team (id, name, role, phone, specialty) VALUES ($1, $2, $3, $4, $5)", [teamId, name, roleTitle || null, phone || null, specialty || null]);
+    await pool.query("INSERT INTO team (id, name, role, phone, specialty, base_city) VALUES ($1, $2, $3, $4, $5, $6)", [teamId, name, roleTitle || null, phone || null, specialty || null, baseCity || null]);
   }
   const userId = uuid();
   const passwordHash = bcrypt.hashSync(password, 10);
@@ -340,13 +340,14 @@ app.patch("/api/team/:id", requireAuth, requireCapability("manage_team"), async 
       return res.status(403).json({ error: "Managers can't edit an admin's details." });
     }
   }
-  const { name, role, phone, email, specialty } = req.body;
-  await pool.query(`UPDATE team SET name = $1, role = $2, phone = $3, email = $4, specialty = $5 WHERE id = $6`, [
+  const { name, role, phone, email, specialty, baseCity } = req.body;
+  await pool.query(`UPDATE team SET name = $1, role = $2, phone = $3, email = $4, specialty = $5, base_city = $6 WHERE id = $7`, [
     name || member.name,
     role !== undefined ? role : member.role,
     phone !== undefined ? phone : member.phone,
     email !== undefined ? email : member.email,
     specialty !== undefined ? specialty : member.specialty,
+    baseCity !== undefined ? baseCity : member.base_city,
     member.id,
   ]);
   res.json((await pool.query("SELECT * FROM team WHERE id = $1", [member.id])).rows[0]);
@@ -1299,7 +1300,7 @@ app.patch("/api/quotes/:id", requireAuth, async (req, res) => {
 // invitation they accept/decline from their own simplified view.
 app.get("/api/leads/:id/assignments", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const { rows } = await pool.query(`
-    SELECT event_assignments.*, team.name AS team_name
+    SELECT event_assignments.*, team.name AS team_name, team.base_city AS team_base_city
     FROM event_assignments JOIN team ON team.id = event_assignments.team_id
     WHERE lead_id = $1
     ORDER BY event_assignments.created_at ASC

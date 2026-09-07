@@ -2139,6 +2139,7 @@ async function renderTeam(main) {
         <div class="team-avatar">${m.name[0]}</div>
         <div class="team-name">${m.name}</div>
         <div class="muted">${m.role || ""}${m.specialty ? ` · ${m.specialty}` : ""}</div>
+        ${m.base_city ? `<div class="muted small">📍 ${m.base_city}</div>` : ""}
         ${m.phone ? `<div class="muted small">${m.phone}</div>` : ""}
         ${m.email ? `<div class="muted small">${m.email}</div>` : ""}
         <div class="team-count mono">${m.activeShows.length} active show${m.activeShows.length === 1 ? "" : "s"}</div>
@@ -2395,7 +2396,10 @@ function openAddMemberModal(onCreated) {
           </div>
           <label>Role / Specialty</label>
           <input id="nmRole" placeholder="e.g. Logistics & Sound, or Drummer, Photographer" />
-          <label>Phone</label>
+          <label>Base city</label>
+          <input id="nmBaseCity" placeholder="e.g. Siliguri" />
+          <p class="muted small" style="margin:2px 0 0;">Helps you spot who's already near an outstation event when planning travel.</p>
+          <label style="margin-top:8px;">Phone</label>
           <input id="nmPhone" placeholder="e.g. 9876543210" />
           <p class="muted small" style="margin:4px 0 0;">Username and password default to this phone number — change them below if you'd like something else.</p>
           <div class="row-2">
@@ -2451,6 +2455,7 @@ function openAddMemberModal(onCreated) {
         body: JSON.stringify({
           name,
           roleTitle: root.querySelector("#nmRole").value,
+          baseCity: root.querySelector("#nmBaseCity").value,
           phone: root.querySelector("#nmPhone").value,
           username,
           password,
@@ -2560,7 +2565,9 @@ function openEditMemberModal(member, linkedUser) {
             <div><label>Role / title</label><input id="emRole" value="${member.role || ""}" /></div>
             <div><label>Specialty (optional)</label><input id="emSpecialty" value="${member.specialty || ""}" placeholder="e.g. Drummer, Photographer" /></div>
           </div>
-          <div class="row-2">
+          <label>Base city</label>
+          <input id="emBaseCity" value="${member.base_city || ""}" placeholder="e.g. Siliguri" />
+          <div class="row-2" style="margin-top:8px;">
             <div><label>Phone</label><input id="emPhone" value="${member.phone || ""}" /></div>
             <div><label>Email</label><input id="emEmail" value="${member.email || ""}" /></div>
           </div>
@@ -2625,6 +2632,7 @@ function openEditMemberModal(member, linkedUser) {
           name: root.querySelector("#emName").value,
           role: root.querySelector("#emRole").value,
           specialty: root.querySelector("#emSpecialty").value,
+          baseCity: root.querySelector("#emBaseCity").value,
           phone: root.querySelector("#emPhone").value,
           email: root.querySelector("#emEmail").value,
         }),
@@ -3079,7 +3087,7 @@ async function openAssignTeamModal(leadId) {
                 <label style="display:flex; align-items:flex-start; gap:8px; flex:1; cursor:pointer;">
                   <input type="checkbox" data-team-id="${m.id}" ${a ? "checked" : ""} />
                   <span style="flex:1;">
-                    <div>${m.name} <span class="muted small">— ${m.role || ""}</span></div>
+                    <div>${m.name} <span class="muted small">— ${m.role || ""}${m.base_city ? ` · 📍 ${m.base_city}` : ""}</span></div>
                     ${a ? `
                       <select class="mark-response-select" data-assignment-id="${a.id}" style="margin-top:2px; font-size:12.5px; padding:2px 6px; color:${statusColor[a.status]};">
                         <option value="pending" ${a.status === "pending" ? "selected" : ""}>Pending response</option>
@@ -3545,7 +3553,7 @@ async function openTravelPlanModal(leadId) {
           ${assignments.map((a) => `
             <label class="rate-inclusion-pill">
               <input type="checkbox" id="${prefix}Member_${a.team_id}" ${memberIds.includes(a.team_id) ? "checked" : ""} />
-              ${a.team_name}
+              ${a.team_name}${a.team_base_city ? ` <span class="muted small">(${a.team_base_city})</span>` : ""}
             </label>
           `).join("")}
         </div>
