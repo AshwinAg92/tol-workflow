@@ -2790,9 +2790,14 @@ async function executeAssistantTool(name, input) {
         pool.query("SELECT COUNT(*) c FROM leads WHERE stage = 'New'"),
         pool.query("SELECT COUNT(*) c FROM leads WHERE stage = 'Follow-up' AND (snooze_until IS NULL OR snooze_until <= $1)", [today]),
         pool.query("SELECT COUNT(*) c FROM leads WHERE stage IN ('Confirmed','Completed') AND date >= $1", [today]),
-        pool.query("SELECT final_amount, quote_amount, received FROM leads WHERE stage IN ('Confirmed','Completed')"),
+        pool.query(`
+          SELECT leads.final_amount, leads.quote_amount, COALESCE(pay.total, 0) AS received
+          FROM leads
+          LEFT JOIN (SELECT lead_id, SUM(amount) AS total FROM payments GROUP BY lead_id) pay ON pay.lead_id = leads.id
+          WHERE leads.stage IN ('Confirmed','Completed')
+        `),
       ]);
-      const outstanding = accountsRows.rows.reduce((s, l) => s + ((l.final_amount || l.quote_amount || 0) - (l.received || 0)), 0);
+      const outstanding = accountsRows.rows.reduce((s, l) => s + ((l.final_amount || l.quote_amount || 0) - (Number(l.received) || 0)), 0);
       return { result: {
         newLeads: Number(newLeads.rows[0].c),
         followUpsDue: Number(followUps.rows[0].c),
@@ -2802,42 +2807,60 @@ async function executeAssistantTool(name, input) {
     }
     case "search_leads": {
       const { query, stage, limit } = input;
-      let sql = "SELECT id, name, phone, city, stage, date, final_amount, quote_amount, received FROM leads WHERE 1=1";
+      let sql = `
+        SELECT leads.id, leads.name, leads.phone, leads.city, leads.stage, leads.date, leads.final_amount, leads.quote_amount,
+          COALESCE(pay.total, 0) AS received
+        FROM leads
+        LEFT JOIN (SELECT lead_id, SUM(amount) AS total FROM payments GROUP BY lead_id) pay ON pay.lead_id = leads.id
+        WHERE 1=1
+      `;
       const params = [];
-      if (query) { params.push(`%${query}%`); sql += ` AND (name ILIKE $${params.length} OR phone ILIKE $${params.length} OR city ILIKE $${params.length})`; }
-      if (stage) { params.push(stage); sql += ` AND stage = $${params.length}`; }
-      sql += ` ORDER BY date DESC NULLS LAST LIMIT ${Math.min(Number(limit) || 15, 30)}`;
+      if (query) { params.push(`%${query}%`); sql += ` AND (leads.name ILIKE $${params.length} OR leads.phone ILIKE $${params.length} OR leads.city ILIKE $${params.length})`; }
+      if (stage) { params.push(stage); sql += ` AND leads.stage = $${params.length}`; }
+      sql += ` ORDER BY leads.date DESC NULLS LAST LIMIT ${Math.min(Number(limit) || 15, 30)}`;
       const { rows } = await pool.query(sql, params);
       return { result: rows.map((l) => ({
         id: l.id, name: l.name, phone: l.phone, city: l.city, stage: l.stage, date: l.date,
-        amount: l.final_amount || l.quote_amount, received: l.received,
-        balance: (l.final_amount || l.quote_amount || 0) - (l.received || 0),
+        amount: l.final_amount || l.quote_amount, received: Number(l.received),
+        balance: (l.final_amount || l.quote_amount || 0) - Number(l.received),
       })) };
     }
     case "get_lead_detail": {
       const lead = await findLeadByNameOrId(input.nameOrId);
       if (!lead) return { result: { error: "No matching lead found" } };
-      const legs = (await pool.query("SELECT id FROM travel_legs WHERE lead_id = $1", [lead.id])).rows;
+      const [legs, paySum] = await Promise.all([
+        pool.query("SELECT id FROM travel_legs WHERE lead_id = $1", [lead.id]),
+        pool.query("SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE lead_id = $1", [lead.id]),
+      ]);
+      const received = Number(paySum.rows[0].total);
       return { result: {
         id: lead.id, name: lead.name, phone: lead.phone, city: lead.city, state: lead.state,
         stage: lead.stage, date: lead.date, eventType: lead.event_type, occasion: lead.occasion,
         pcs: lead.pcs, venue: lead.venue,
-        quoteAmount: lead.quote_amount, finalAmount: lead.final_amount, received: lead.received,
-        balance: (lead.final_amount || lead.quote_amount || 0) - (lead.received || 0),
+        quoteAmount: lead.quote_amount, finalAmount: lead.final_amount, received,
+        balance: (lead.final_amount || lead.quote_amount || 0) - received,
         rateInclusions: lead.rate_inclusions, rateNote: lead.rate_note, notes: lead.notes,
-        travelLegsCount: legs.length,
+        travelLegsCount: legs.rows.length,
       } };
     }
     case "get_accounts_summary": {
       const { dateFrom, dateTo } = input;
-      let sql = "SELECT final_amount, quote_amount, received, profit FROM leads WHERE stage IN ('Confirmed','Completed')";
+      let sql = `
+        SELECT leads.final_amount, leads.quote_amount, COALESCE(pay.total, 0) AS received, COALESCE(exp.total, 0) AS approved_expenses
+        FROM leads
+        LEFT JOIN (SELECT lead_id, SUM(amount) AS total FROM payments GROUP BY lead_id) pay ON pay.lead_id = leads.id
+        LEFT JOIN (SELECT lead_id, SUM(amount) AS total FROM expenses WHERE approved = 1 GROUP BY lead_id) exp ON exp.lead_id = leads.id
+        WHERE leads.stage IN ('Confirmed','Completed')
+      `;
       const params = [];
-      if (dateFrom) { params.push(dateFrom); sql += ` AND date >= $${params.length}`; }
-      if (dateTo) { params.push(dateTo); sql += ` AND date <= $${params.length}`; }
+      if (dateFrom) { params.push(dateFrom); sql += ` AND leads.date >= $${params.length}`; }
+      if (dateTo) { params.push(dateTo); sql += ` AND leads.date <= $${params.length}`; }
       const { rows } = await pool.query(sql, params);
       const totals = rows.reduce((acc, l) => {
         const revenue = l.final_amount || l.quote_amount || 0;
-        acc.confirmed += revenue; acc.received += l.received || 0; acc.profit += l.profit || 0;
+        acc.confirmed += revenue;
+        acc.received += Number(l.received);
+        acc.profit += revenue - Number(l.approved_expenses);
         return acc;
       }, { confirmed: 0, received: 0, profit: 0 });
       return { result: { ...totals, outstanding: totals.confirmed - totals.received, eventCount: rows.length } };
