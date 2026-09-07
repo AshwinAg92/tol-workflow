@@ -1387,41 +1387,43 @@ async function canViewTravelLegs(user, leadId) {
 
 app.get("/api/leads/:id/travel-legs", requireAuth, async (req, res) => {
   if (!(await canViewTravelLegs(req.user, req.params.id))) return res.status(403).json({ error: "Not available for this event" });
-  const { rows: legs } = await pool.query(`
-    SELECT travel_legs.*, team.name AS team_name
-    FROM travel_legs JOIN team ON team.id = travel_legs.team_id
-    WHERE lead_id = $1
-    ORDER BY travel_legs.created_at ASC
-  `, [req.params.id]);
+  const { rows: legs } = await pool.query(`SELECT * FROM travel_legs WHERE lead_id = $1 ORDER BY created_at ASC`, [req.params.id]);
   const legIds = legs.map((l) => l.id);
-  const tickets = legIds.length > 0
-    ? (await pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents WHERE travel_leg_id = ANY($1) ORDER BY uploaded_at ASC`, [legIds])).rows
-    : [];
+  const [members, tickets] = legIds.length > 0 ? await Promise.all([
+    pool.query(`SELECT travel_leg_members.leg_id, team.id AS team_id, team.name AS team_name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id = ANY($1)`, [legIds]),
+    pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents WHERE travel_leg_id = ANY($1) ORDER BY uploaded_at ASC`, [legIds]),
+  ]) : [{ rows: [] }, { rows: [] }];
   res.json(legs.map((leg) => ({
     ...leg,
-    tickets: tickets.filter((t) => t.travel_leg_id === leg.id).map((t) => ({ ...t, url: `/api/documents/${t.id}/file` })),
+    members: members.rows.filter((m) => m.leg_id === leg.id).map((m) => ({ teamId: m.team_id, name: m.team_name })),
+    tickets: tickets.rows.filter((t) => t.travel_leg_id === leg.id).map((t) => ({ ...t, url: `/api/documents/${t.id}/file` })),
   })));
 });
 
 app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Event not found" });
-  const { teamId, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status, notes } = req.body;
-  if (!teamId) return res.status(400).json({ error: "teamId is required" });
+  const { teamIds, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status, notes } = req.body;
+  if (!Array.isArray(teamIds) || teamIds.length === 0) return res.status(400).json({ error: "Select at least one artist" });
   const id = uuid();
   const now = new Date().toISOString();
   await pool.query(`
-    INSERT INTO travel_legs (id, lead_id, team_id, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
-  `, [id, req.params.id, teamId, mode || null, fromCity || null, toCity || lead.city || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, now]);
-  const member = (await pool.query("SELECT name FROM team WHERE id = $1", [teamId])).rows[0];
+    INSERT INTO travel_legs (id, lead_id, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
+  `, [id, req.params.id, mode || null, fromCity || null, toCity || lead.city || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, now]);
+  for (const teamId of teamIds) {
+    await pool.query(`INSERT INTO travel_leg_members (id, leg_id, team_id) VALUES ($1, $2, $3)`, [uuid(), id, teamId]);
+  }
+  const members = (await pool.query(`SELECT name FROM team WHERE id = ANY($1)`, [teamIds])).rows;
   res.status(201).json({ id });
-  if (member) {
-    logActivity(req, `Travel added for ${member.name}: ${lead.name} (${lead.date})`, lead.id);
-    await pool.query(`
-      INSERT INTO notifications (id, team_id, message, created_at)
-      VALUES ($1, $2, $3, $4)
-    `, [uuid(), teamId, `Your travel details for ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""} have been added — check My Events.`, now]).catch(() => {});
+  if (members.length > 0) {
+    logActivity(req, `Travel added for ${members.map((m) => m.name).join(", ")}: ${lead.name} (${lead.date})`, lead.id);
+    for (const teamId of teamIds) {
+      await pool.query(`
+        INSERT INTO notifications (id, team_id, message, created_at)
+        VALUES ($1, $2, $3, $4)
+      `, [uuid(), teamId, `Your travel details for ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""} have been added — check My Events.`, now]).catch(() => {});
+    }
   }
 });
 
@@ -1436,21 +1438,48 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
     const key = keyFor(f);
     if (req.body[key] !== undefined) { values.push(req.body[key]); updates.push(`${f} = $${values.length}`); }
   });
-  if (updates.length === 0) return res.status(400).json({ error: "Nothing to update" });
-  values.push(new Date().toISOString());
-  updates.push(`updated_at = $${values.length}`);
-  values.push(req.params.id);
-  await pool.query(`UPDATE travel_legs SET ${updates.join(", ")} WHERE id = $${values.length}`, values);
+  if (updates.length > 0) {
+    values.push(new Date().toISOString());
+    updates.push(`updated_at = $${values.length}`);
+    values.push(req.params.id);
+    await pool.query(`UPDATE travel_legs SET ${updates.join(", ")} WHERE id = $${values.length}`, values);
+  }
+
+  // Membership is replaced wholesale when teamIds is given, rather than
+  // diffed field-by-field — simpler, and the modal always sends the full
+  // ticked set anyway.
+  let newlyAdded = [];
+  if (Array.isArray(req.body.teamIds)) {
+    const before = (await pool.query("SELECT team_id FROM travel_leg_members WHERE leg_id = $1", [req.params.id])).rows.map((r) => r.team_id);
+    newlyAdded = req.body.teamIds.filter((id) => !before.includes(id));
+    const removed = before.filter((id) => !req.body.teamIds.includes(id));
+    for (const teamId of newlyAdded) {
+      await pool.query(`INSERT INTO travel_leg_members (id, leg_id, team_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [uuid(), req.params.id, teamId]);
+    }
+    if (removed.length > 0) {
+      await pool.query(`DELETE FROM travel_leg_members WHERE leg_id = $1 AND team_id = ANY($2)`, [req.params.id, removed]);
+    }
+  }
+
   res.json((await pool.query("SELECT * FROM travel_legs WHERE id = $1", [req.params.id])).rows[0]);
+
+  const lead = (await pool.query("SELECT name, date, city FROM leads WHERE id = $1", [leg.lead_id])).rows[0];
+  if (!lead) return;
+  const now = new Date().toISOString();
   if (req.body.status !== undefined && req.body.status !== leg.status) {
-    const lead = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [leg.lead_id])).rows[0];
-    const member = (await pool.query("SELECT name FROM team WHERE id = $1", [leg.team_id])).rows[0];
-    if (lead && member) {
+    const allMembers = (await pool.query("SELECT team_id FROM travel_leg_members WHERE leg_id = $1", [req.params.id])).rows;
+    for (const m of allMembers) {
       await pool.query(`
         INSERT INTO notifications (id, team_id, message, created_at)
         VALUES ($1, $2, $3, $4)
-      `, [uuid(), leg.team_id, `Travel update for ${lead.name} on ${lead.date}: now "${TRAVEL_STATUS_LABELS[req.body.status] || req.body.status}".`, new Date().toISOString()]).catch(() => {});
+      `, [uuid(), m.team_id, `Travel update for ${lead.name} on ${lead.date}: now "${TRAVEL_STATUS_LABELS[req.body.status] || req.body.status}".`, now]).catch(() => {});
     }
+  }
+  for (const teamId of newlyAdded) {
+    await pool.query(`
+      INSERT INTO notifications (id, team_id, message, created_at)
+      VALUES ($1, $2, $3, $4)
+    `, [uuid(), teamId, `Your travel details for ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""} have been added — check My Events.`, now]).catch(() => {});
   }
 });
 

@@ -3492,19 +3492,20 @@ async function openTravelPlanModal(leadId) {
     api(`/api/leads/${leadId}/travel-legs`),
     api(`/api/leads/${leadId}/assignments`),
   ]);
-  let addingFor = null; // team_id currently showing the add-leg form, or "new" for a fresh one
+  let addingNew = false;
   let editingLegId = null;
 
   function legCard(leg) {
     const editing = editingLegId === leg.id;
-    if (editing) return legForm({ leg, teamName: leg.team_name });
+    if (editing) return legForm({ leg });
     const statusColor = leg.status === "not_booked" ? "#B6752C" : "#5C8A6B";
     const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
+    const names = leg.members.map((m) => m.name).join(", ") || "No one added yet";
     return `
       <div class="card" style="margin-bottom:10px;">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
           <div>
-            <div style="font-weight:600;">${leg.team_name}</div>
+            <div style="font-weight:600;">${names}</div>
             <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${route ? ` · ${route}` : ""}</div>
           </div>
           <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
@@ -3532,12 +3533,22 @@ async function openTravelPlanModal(leadId) {
     `;
   }
 
-  function legForm({ leg, teamName, teamId }) {
+  function legForm({ leg }) {
     const isNew = !leg;
     const prefix = isNew ? "new" : "edit";
+    const memberIds = leg ? leg.members.map((m) => m.teamId) : [];
     return `
       <div class="card" style="margin-bottom:10px; border-color:#C1602B;">
-        ${isNew ? `<div style="font-weight:600; margin-bottom:8px;">Travel for ${teamName}</div>` : `<div style="font-weight:600; margin-bottom:8px;">Editing — ${teamName}</div>`}
+        <div style="font-weight:600; margin-bottom:8px;">${isNew ? "Add travel" : "Editing travel"}</div>
+        <label>Who's travelling together on this journey?</label>
+        <div class="rate-inclusions-grid" style="margin-bottom:10px;">
+          ${assignments.map((a) => `
+            <label class="rate-inclusion-pill">
+              <input type="checkbox" id="${prefix}Member_${a.team_id}" ${memberIds.includes(a.team_id) ? "checked" : ""} />
+              ${a.team_name}
+            </label>
+          `).join("")}
+        </div>
         <div class="row-2">
           <div><label>Mode</label><select id="${prefix}Mode">
             <option value="">Not set</option>
@@ -3558,9 +3569,9 @@ async function openTravelPlanModal(leadId) {
         <label>Booking ref / PNR (optional)</label>
         <input id="${prefix}BookingRef" value="${leg?.booking_ref || ""}" placeholder="e.g. PNR or booking number" />
         <label style="margin-top:8px;">Notes (optional)</label>
-        <input id="${prefix}Notes" value="${leg?.notes || ""}" placeholder="e.g. Sharing a cab with the drummer" />
+        <input id="${prefix}Notes" value="${leg?.notes || ""}" placeholder="e.g. Same train, different coach" />
         <div style="display:flex; gap:8px; margin-top:10px;">
-          <button class="btn-primary" data-save-leg="${isNew ? teamId : leg.id}" data-is-new="${isNew}">Save</button>
+          <button class="btn-primary" data-save-leg="${isNew ? "new" : leg.id}" data-is-new="${isNew}">Save</button>
           <button class="btn-ghost" data-cancel-leg-form="1">Cancel</button>
         </div>
       </div>
@@ -3568,8 +3579,6 @@ async function openTravelPlanModal(leadId) {
   }
 
   function renderModal() {
-    const legTeamIds = new Set(legs.map((l) => l.team_id));
-    const withoutTravel = assignments.filter((a) => !legTeamIds.has(a.team_id));
     root.innerHTML = `
       <div class="modal-overlay" id="overlay">
         <div class="modal-card" style="width:640px; max-width:96vw;">
@@ -3578,16 +3587,10 @@ async function openTravelPlanModal(leadId) {
             <button class="icon-btn" id="closeModal">${ICON_X}</button>
           </div>
           <div class="modal-body">
-            ${legs.length === 0 && addingFor === null ? `<p class="muted small">No travel added yet.</p>` : ""}
+            ${legs.length === 0 && !addingNew ? `<p class="muted small">No travel added yet.</p>` : ""}
             ${legs.map(legCard).join("")}
-            ${addingFor && addingFor !== "existing" ? legForm({ teamName: assignments.find((a) => a.team_id === addingFor)?.team_name, teamId: addingFor }) : ""}
-            ${withoutTravel.length > 0 && !addingFor ? `
-              <div class="section-label" style="margin-top:${legs.length > 0 ? "16px" : "0"};">Add travel for</div>
-              <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                ${withoutTravel.map((a) => `<button class="btn-ghost" data-add-leg-for="${a.team_id}" data-team-name="${a.team_name}">+ ${a.team_name}</button>`).join("")}
-              </div>
-            ` : ""}
-            ${withoutTravel.length === 0 && assignments.length === 0 ? `<p class="muted small" style="margin-top:10px;">No one's assigned to this event yet — add the team first.</p>` : ""}
+            ${addingNew ? legForm({}) : ""}
+            ${assignments.length === 0 ? `<p class="muted small" style="margin-top:10px;">No one's assigned to this event yet — add the team first.</p>` : (!addingNew ? `<button class="btn-ghost" id="addLegBtn" style="margin-top:${legs.length > 0 ? "6px" : "0"};">+ Add travel</button>` : "")}
           </div>
           <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
         </div>
@@ -3598,14 +3601,13 @@ async function openTravelPlanModal(leadId) {
     root.querySelector("#cancelModal").addEventListener("click", close);
     root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
 
-    root.querySelectorAll("[data-add-leg-for]").forEach((btn) => {
-      btn.addEventListener("click", () => { addingFor = btn.dataset.addLegFor; renderModal(); });
-    });
+    const addBtn = root.querySelector("#addLegBtn");
+    if (addBtn) addBtn.addEventListener("click", () => { addingNew = true; renderModal(); });
     root.querySelectorAll("[data-edit-leg]").forEach((btn) => {
       btn.addEventListener("click", () => { editingLegId = btn.dataset.editLeg; renderModal(); });
     });
     root.querySelectorAll("[data-cancel-leg-form]").forEach((btn) => {
-      btn.addEventListener("click", () => { addingFor = null; editingLegId = null; renderModal(); });
+      btn.addEventListener("click", () => { addingNew = false; editingLegId = null; renderModal(); });
     });
     root.querySelectorAll("[data-delete-leg]").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -3620,7 +3622,10 @@ async function openTravelPlanModal(leadId) {
       btn.addEventListener("click", async () => {
         const isNew = btn.dataset.isNew === "true";
         const prefix = isNew ? "new" : "edit";
+        const teamIds = assignments.filter((a) => root.querySelector(`#${prefix}Member_${a.team_id}`)?.checked).map((a) => a.team_id);
+        if (teamIds.length === 0) return alert("Tick at least one artist for this journey.");
         const payload = {
+          teamIds,
           mode: root.querySelector(`#${prefix}Mode`).value || null,
           fromCity: root.querySelector(`#${prefix}FromCity`).value.trim() || null,
           toCity: root.querySelector(`#${prefix}ToCity`).value.trim() || null,
@@ -3633,18 +3638,15 @@ async function openTravelPlanModal(leadId) {
         btn.disabled = true;
         try {
           if (isNew) {
-            const created = await api(`/api/leads/${leadId}/travel-legs`, { method: "POST", body: JSON.stringify({ ...payload, teamId: btn.dataset.saveLeg }) });
-            const updated = await api(`/api/leads/${leadId}/travel-legs`);
-            legs.length = 0;
-            legs.push(...updated);
-            addingFor = null;
+            await api(`/api/leads/${leadId}/travel-legs`, { method: "POST", body: JSON.stringify(payload) });
+            addingNew = false;
           } else {
             await api(`/api/travel-legs/${btn.dataset.saveLeg}`, { method: "PATCH", body: JSON.stringify(payload) });
-            const updated = await api(`/api/leads/${leadId}/travel-legs`);
-            legs.length = 0;
-            legs.push(...updated);
             editingLegId = null;
           }
+          const updated = await api(`/api/leads/${leadId}/travel-legs`);
+          legs.length = 0;
+          legs.push(...updated);
           renderModal();
         } catch (err) {
           alert(err.message);
@@ -3708,14 +3710,15 @@ async function openTravelPlanViewModal(leadId, leadName) {
         <div class="modal-head"><h3>Travel plan — ${leadName}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           ${legs.length === 0 ? `<p class="muted small">No travel added yet for this event.</p>` : legs.map((leg) => {
-            const isMine = CURRENT_USER?.teamId && leg.team_id === CURRENT_USER.teamId;
+            const isMine = CURRENT_USER?.teamId && leg.members.some((m) => m.teamId === CURRENT_USER.teamId);
             const statusColor = leg.status === "not_booked" ? "#B6752C" : "#5C8A6B";
             const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
+            const names = leg.members.map((m) => (CURRENT_USER?.teamId && m.teamId === CURRENT_USER.teamId ? `${m.name} (You)` : m.name)).join(", ") || "No one added yet";
             return `
               <div class="card" style="margin-bottom:10px; ${isMine ? "border-color:#C1602B;" : ""}">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
                   <div>
-                    <div style="font-weight:600;">${leg.team_name}${isMine ? ` <span class="muted small" style="font-weight:400;">(You)</span>` : ""}</div>
+                    <div style="font-weight:600;">${names}</div>
                     <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${route ? ` · ${route}` : ""}</div>
                   </div>
                   <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>

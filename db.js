@@ -256,6 +256,24 @@ async function setup() {
     );
   `);
   await pool.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS travel_leg_id TEXT REFERENCES travel_legs(id) ON DELETE CASCADE`);
+  // A journey (train/flight/car) can carry several artists at once — this
+  // join table is what actually links artists to a leg now. The old
+  // single team_id column on travel_legs stays in place (unused going
+  // forward) so nothing breaks; existing single-artist legs are copied over.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS travel_leg_members (
+      id TEXT PRIMARY KEY,
+      leg_id TEXT REFERENCES travel_legs(id) ON DELETE CASCADE,
+      team_id TEXT REFERENCES team(id),
+      UNIQUE(leg_id, team_id)
+    );
+  `);
+  await pool.query(`
+    INSERT INTO travel_leg_members (id, leg_id, team_id)
+    SELECT id || '-member', id, team_id FROM travel_legs
+    WHERE team_id IS NOT NULL
+    ON CONFLICT (leg_id, team_id) DO NOTHING
+  `);
   // Lets a sent quote be tracked through to accepted/rejected instead of
   // just "sent and forgotten" — shown as a status dropdown in Quote history.
   await pool.query(`ALTER TABLE quotes ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'sent'`);
