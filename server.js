@@ -2666,7 +2666,10 @@ app.post("/api/admin/backup/email", requireAuth, requireAdmin, async (req, res) 
 // function calling) rather than a paid API — same tool-calling architecture,
 // just a different wire format for the request/response.
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const ASSISTANT_MODEL = "llama-3.3-70b-versatile";
+// llama-3.3-70b-versatile was deprecated by Groq (decommissioned Aug 2026) —
+// openai/gpt-oss-120b is their recommended replacement for general-purpose,
+// tool-calling use.
+const ASSISTANT_MODEL = "openai/gpt-oss-120b";
 
 const ASSISTANT_SYSTEM_PROMPT = `You are the AI manager assistant inside Ashwin Agarwal's CRM for "Together, Out Loud" (TOL), a live music performance company co-founded by Prakriti Modi and Ashwin, offering Bhajan Jamming, Musical Pheras, Bollywood Jamming, Devotional Satsang, and related formats for weddings, satsangs, and celebrations.
 
