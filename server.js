@@ -572,6 +572,163 @@ app.get("/api/public/live-instagram-stats", async (req, res) => {
   }
 });
 
+// ---------- Google Calendar sync (Confirmed/Completed events) ----------
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || "https://www.togetheroutloud.in/api/google-calendar/callback";
+const GOOGLE_CALENDAR_AUTH_ROW_ID = "singleton";
+
+app.get("/api/google-calendar/status", requireAuth, requireAdmin, async (req, res) => {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) return res.json({ configured: false, connected: false });
+  const row = (await pool.query("SELECT connected_by, connected_at FROM google_calendar_auth WHERE id = $1", [GOOGLE_CALENDAR_AUTH_ROW_ID])).rows[0];
+  res.json({ configured: true, connected: !!row, connectedBy: row?.connected_by || null, connectedAt: row?.connected_at || null });
+});
+
+app.get("/api/google-calendar/connect", requireAuth, requireAdmin, (req, res) => {
+  if (!GOOGLE_CLIENT_ID) return res.status(500).send("Google Calendar isn't configured yet — GOOGLE_CLIENT_ID is missing.");
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_REDIRECT_URI,
+    response_type: "code",
+    scope: "https://www.googleapis.com/auth/calendar.events",
+    access_type: "offline",
+    prompt: "consent",
+  });
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+});
+
+app.get("/api/google-calendar/callback", requireAuth, requireAdmin, async (req, res) => {
+  const { code, error } = req.query;
+  if (error) return res.redirect(`/?googleCalendar=error&reason=${encodeURIComponent(error)}`);
+  if (!code) return res.redirect(`/?googleCalendar=error&reason=no_code`);
+  try {
+    const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code, client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri: GOOGLE_REDIRECT_URI, grant_type: "authorization_code",
+      }),
+    });
+    const tokenJson = await tokenResp.json();
+    if (!tokenResp.ok || !tokenJson.refresh_token) {
+      // No refresh_token usually means Google already had a prior grant and
+      // didn't re-issue one — prompt=consent above should prevent this, but
+      // if it still happens, the fix is disconnecting in Google's own
+      // account permissions page, then reconnecting here.
+      return res.redirect(`/?googleCalendar=error&reason=${encodeURIComponent(tokenJson.error || "no_refresh_token")}`);
+    }
+    const actor = await actorName(req.user);
+    await pool.query(`
+      INSERT INTO google_calendar_auth (id, access_token, refresh_token, expires_at, connected_by, connected_at)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (id) DO UPDATE SET access_token = $2, refresh_token = $3, expires_at = $4, connected_by = $5, connected_at = $6
+    `, [GOOGLE_CALENDAR_AUTH_ROW_ID, tokenJson.access_token, tokenJson.refresh_token, Date.now() + tokenJson.expires_in * 1000, actor, new Date().toISOString()]);
+    res.redirect(`/?googleCalendar=connected`);
+  } catch (err) {
+    console.error("Google Calendar connect failed:", err.message);
+    res.redirect(`/?googleCalendar=error&reason=${encodeURIComponent(err.message)}`);
+  }
+});
+
+app.post("/api/google-calendar/disconnect", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM google_calendar_auth WHERE id = $1", [GOOGLE_CALENDAR_AUTH_ROW_ID]);
+  res.json({ ok: true });
+});
+
+async function getGoogleAccessToken() {
+  const row = (await pool.query("SELECT * FROM google_calendar_auth WHERE id = $1", [GOOGLE_CALENDAR_AUTH_ROW_ID])).rows[0];
+  if (!row) return null;
+  if (row.expires_at > Date.now() + 60000) return row.access_token;
+  const resp = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      refresh_token: row.refresh_token, client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+      grant_type: "refresh_token",
+    }),
+  });
+  const json = await resp.json();
+  if (!resp.ok) {
+    // Refresh token itself got revoked (e.g. Ashwin removed TOL's access in
+    // his Google account) — clear the row so status shows "disconnected"
+    // instead of silently failing forever.
+    if (json.error === "invalid_grant") await pool.query("DELETE FROM google_calendar_auth WHERE id = $1", [GOOGLE_CALENDAR_AUTH_ROW_ID]);
+    throw new Error(`Google token refresh failed: ${json.error || resp.status}`);
+  }
+  await pool.query("UPDATE google_calendar_auth SET access_token = $1, expires_at = $2 WHERE id = $3",
+    [json.access_token, Date.now() + json.expires_in * 1000, GOOGLE_CALENDAR_AUTH_ROW_ID]);
+  return json.access_token;
+}
+
+// Keeps one Google Calendar event per Confirmed/Completed lead in sync —
+// creates it, updates it on further edits, and removes it if the lead moves
+// away from those stages (e.g. cancelled). All-day event on the event date,
+// since leads don't reliably have a specific start time.
+async function syncLeadToGoogleCalendar(lead) {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) return;
+  let accessToken;
+  try {
+    accessToken = await getGoogleAccessToken();
+  } catch (err) {
+    console.error("Google Calendar sync skipped:", err.message);
+    return;
+  }
+  if (!accessToken) return; // not connected — nothing to do
+
+  const isBooked = lead.stage === "Confirmed" || lead.stage === "Completed";
+  const headers = { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" };
+
+  if (!isBooked) {
+    if (lead.google_event_id) {
+      await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${lead.google_event_id}`, { method: "DELETE", headers })
+        .catch((err) => console.error("Google Calendar delete failed:", err.message));
+      await pool.query("UPDATE leads SET google_event_id = NULL WHERE id = $1", [lead.id]);
+    }
+    return;
+  }
+
+  if (!lead.date) return;
+  const nextDay = new Date(lead.date + "T00:00:00Z");
+  nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+  const descriptionLines = [
+    lead.phone ? `Phone: ${lead.phone}` : null,
+    (lead.final_amount || lead.quote_amount) ? `Amount: ₹${Number(lead.final_amount || lead.quote_amount).toLocaleString("en-IN")}` : null,
+    lead.notes ? `Notes: ${lead.notes}` : null,
+  ].filter(Boolean);
+  const body = {
+    summary: `${lead.name} — ${packageName(lead.event_type)}`,
+    location: [lead.venue, lead.city, lead.state].filter(Boolean).join(", "),
+    description: descriptionLines.join("\n"),
+    start: { date: lead.date },
+    end: { date: nextDay.toISOString().slice(0, 10) },
+  };
+
+  try {
+    if (lead.google_event_id) {
+      const resp = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${lead.google_event_id}`, {
+        method: "PATCH", headers, body: JSON.stringify(body),
+      });
+      if (resp.status === 404) {
+        // Someone deleted it directly in Google Calendar — recreate rather than error out.
+        lead.google_event_id = null;
+      } else if (!resp.ok) {
+        throw new Error(`Update failed: ${resp.status}`);
+      } else {
+        return;
+      }
+    }
+    const createResp = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events`, {
+      method: "POST", headers, body: JSON.stringify(body),
+    });
+    const createJson = await createResp.json();
+    if (!createResp.ok) throw new Error(`Create failed: ${createJson.error?.message || createResp.status}`);
+    await pool.query("UPDATE leads SET google_event_id = $1 WHERE id = $2", [createJson.id, lead.id]);
+  } catch (err) {
+    console.error("Google Calendar sync failed for lead", lead.id, ":", err.message);
+  }
+}
+
 // ---------- Push notifications (new-query alerts to the home-screen PWA) ----------
 // iOS 16.4+ supports Web Push for Safari PWAs added to the home screen (not
 // in a regular Safari tab), which is how Ashwin/Prakriti use this app.
@@ -985,7 +1142,9 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     }
   }
 
-  res.json((await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0]);
+  const updatedLead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  res.json(updatedLead);
+  syncLeadToGoogleCalendar(updatedLead).catch((err) => console.error("Google Calendar sync error:", err.message));
 
   if (req.body.stage !== undefined && req.body.stage !== lead.stage) {
     if (req.body.stage === "Confirmed") {

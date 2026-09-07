@@ -209,6 +209,22 @@ async function setup() {
       created_at TEXT NOT NULL
     );
   `);
+
+  // ---------- Google Calendar sync ----------
+  // Single-row table (one connected account for the whole team, like the
+  // shared CRM email inbox) rather than per-user, since "Confirmed events"
+  // is one shared calendar everyone cares about, not a personal one.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS google_calendar_auth (
+      id TEXT PRIMARY KEY,
+      access_token TEXT,
+      refresh_token TEXT NOT NULL,
+      expires_at BIGINT NOT NULL,
+      connected_by TEXT,
+      connected_at TEXT NOT NULL
+    );
+  `);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_event_id TEXT`);
   // Lets a sent quote be tracked through to accepted/rejected instead of
   // just "sent and forgotten" — shown as a status dropdown in Quote history.
   await pool.query(`ALTER TABLE quotes ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'sent'`);

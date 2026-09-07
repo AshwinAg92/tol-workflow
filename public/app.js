@@ -5334,11 +5334,61 @@ async function renderWebsiteContent(main) {
   });
 }
 
+function wireGoogleCalendarSettings(main) {
+  const statusEl = main.querySelector("#googleCalendarStatus");
+  if (!statusEl) return;
+
+  // Surface the redirect result from /api/google-calendar/callback, then
+  // clean the URL so a refresh doesn't re-show the same message.
+  const params = new URLSearchParams(window.location.search);
+  const gcResult = params.get("googleCalendar");
+  if (gcResult) {
+    const reason = params.get("reason");
+    window.history.replaceState({}, "", window.location.pathname);
+    if (gcResult === "connected") {
+      setTimeout(() => alert("Google Calendar connected ✓"), 100);
+    } else if (gcResult === "error") {
+      setTimeout(() => alert(`Couldn't connect Google Calendar${reason ? `: ${reason}` : ""}`), 100);
+    }
+  }
+
+  api("/api/google-calendar/status").then((status) => {
+    if (!status.configured) {
+      statusEl.innerHTML = `<p class="muted small">Not set up yet — this needs a one-time Google Cloud setup on the server side first.</p>`;
+      return;
+    }
+    if (status.connected) {
+      statusEl.innerHTML = `
+        <p class="muted small">✅ Connected${status.connectedBy ? ` by ${status.connectedBy}` : ""}${status.connectedAt ? ` on ${fmtDate(status.connectedAt.slice(0, 10))}` : ""}.</p>
+        <button class="btn-ghost" id="disconnectGCalBtn">Disconnect</button>
+      `;
+      statusEl.querySelector("#disconnectGCalBtn").addEventListener("click", async () => {
+        if (!confirm("Disconnect Google Calendar? Existing calendar events won't be deleted, but future changes won't sync.")) return;
+        await api("/api/google-calendar/disconnect", { method: "POST" });
+        wireGoogleCalendarSettings(main);
+      });
+    } else {
+      statusEl.innerHTML = `<button class="btn-primary" id="connectGCalBtn">Connect Google Calendar</button>`;
+      statusEl.querySelector("#connectGCalBtn").addEventListener("click", () => {
+        window.location.href = "/api/google-calendar/connect";
+      });
+    }
+  }).catch(() => {
+    statusEl.innerHTML = `<p class="muted small">Couldn't load Google Calendar status.</p>`;
+  });
+}
+
 async function renderSettings(main) {
   main.innerHTML = `
     <div class="view-head"><div><h2>Settings</h2><p class="muted">Customize wording and options yourself — no code changes needed. Tap a section to expand it.</p></div></div>
 
     <div id="templateCards"></div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">Google Calendar</div>
+      <p class="muted small" style="margin-top:-4px;">When connected, Confirmed and Completed events sync automatically to your Google Calendar — created, updated, and removed as their stage changes.</p>
+      <div id="googleCalendarStatus"><p class="muted small">Loading…</p></div>
+    </div>
 
     <div class="card" style="margin-bottom:16px;">
       <div class="section-label">Data backup</div>
@@ -5395,6 +5445,8 @@ async function renderSettings(main) {
       </div>
     </details>
   `).join("");
+
+  wireGoogleCalendarSettings(main);
 
   container.querySelectorAll("[data-reset-template]").forEach((btn) => {
     btn.addEventListener("click", () => {
