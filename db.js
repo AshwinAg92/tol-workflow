@@ -232,6 +232,9 @@ async function setup() {
   // and rate_note (free text for anything the checkboxes don't cover) stay
   // in place for older records and edge cases.
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS rate_inclusions TEXT`);
+  // Free-text elaboration when Occasion is "Other" — so "Other" alone never
+  // has to be the final word on what the event actually was.
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS occasion_other TEXT`);
 
   // ---------- Travel plan (per-artist, per-event) ----------
   // One row per artist per outstation event: where they're travelling from,

@@ -930,7 +930,7 @@ async function openLeadDetailModal(lead) {
           <div class="lead-detail-section">
             <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">From their enquiry</div>
             ${[
-              lead.occasion ? ["Occasion", lead.occasion] : null,
+              lead.occasion ? ["Occasion", lead.occasion === "Other" && lead.occasion_other ? `Other — ${lead.occasion_other}` : lead.occasion] : null,
               lead.guest_range ? ["Guests", lead.guest_range] : null,
               lead.budget ? ["Budget mentioned", inr(lead.budget)] : null,
               lead.alt_date ? ["Alternate date", fmtDate(lead.alt_date)] : null,
@@ -1853,7 +1853,7 @@ async function renderQuotation(main) {
     // so whoever's quoting doesn't have to flip back to Leads to check it.
     const ctx = main.querySelector("#leadContextCard");
     const rows = [
-      lead.occasion ? ["Occasion", lead.occasion] : null,
+      lead.occasion ? ["Occasion", lead.occasion === "Other" && lead.occasion_other ? `Other — ${lead.occasion_other}` : lead.occasion] : null,
       lead.details ? ["Tell us about your event", lead.details] : null,
       lead.guest_range ? ["Guest range (as submitted)", lead.guest_range] : null,
       lead.state ? ["State", lead.state] : null,
@@ -3559,6 +3559,22 @@ async function openAssignTeamModal(leadId) {
   const viewDirectoryBtn = root.querySelector("#viewTempArtistDirectoryBtn");
   if (viewDirectoryBtn) viewDirectoryBtn.addEventListener("click", () => openTempArtistDirectoryModal(tempArtistDirectory, () => openAssignTeamModal(leadId)));
 
+  // Cap staffing at the committed band size (+1, for a manager/coordinator
+  // who isn't playing) — cheaper to catch an over-staffed lineup here than
+  // to discover it on the event day.
+  if (lead.pcs && Number(lead.pcs) > 0) {
+    const maxArtists = Number(lead.pcs) + 1;
+    root.querySelectorAll('input[type="checkbox"][data-team-id]').forEach((cb) => {
+      cb.addEventListener("change", () => {
+        const totalSelected = root.querySelectorAll('input[type="checkbox"][data-team-id]:checked').length + tempArtists.length;
+        if (cb.checked && totalSelected > maxArtists) {
+          cb.checked = false;
+          alert(`This is a ${lead.pcs}-piece band — you've already got ${maxArtists} people lined up (band + 1 for a manager/coordinator). Uncheck someone else first, or update the band size via Edit if it's actually changed.`);
+        }
+      });
+    });
+  }
+
   root.querySelector("#submitModal").addEventListener("click", async (e) => {
     const btn = e.currentTarget;
     if (btn.disabled) return;
@@ -5090,7 +5106,7 @@ function openNewLeadModal() {
 
           <div class="row-2" style="margin-top:10px;">
             <div><label>No. of guests</label><select id="mGuests"><option value="">Not specified</option>${CONFIG.guestRanges.map((g) => `<option value="${g}">${g}</option>`).join("")}</select></div>
-            <div><label>Occasion</label><select id="mOccasion"><option value="">Not specified</option>${CONFIG.occasions.map((o) => `<option value="${o}">${o}</option>`).join("")}</select></div>
+            <div><label>Occasion</label><select id="mOccasion"><option value="" disabled selected hidden>Choose an occasion…</option>${CONFIG.occasions.map((o) => `<option value="${o}">${o}</option>`).join("")}</select></div>
           </div>
           <div class="row-2" id="mPcsRow">
             <div><label>Pcs (No. of Musicians)</label><input id="mPcs" type="number" placeholder="e.g. 5" /></div>
@@ -5251,8 +5267,14 @@ function openEditLeadModal(leadId) {
           </div>
           <div class="row-2">
             <div><label>No. of guests</label><select id="mGuests"><option value="">Not specified</option>${CONFIG.guestRanges.map((g) => `<option value="${g}" ${g === lead.guest_range ? "selected" : ""}>${g}</option>`).join("")}</select></div>
-            <div><label>Occasion</label><select id="mOccasion"><option value="">Not specified</option>${CONFIG.occasions.map((o) => `<option value="${o}" ${o === lead.occasion ? "selected" : ""}>${o}</option>`).join("")}</select></div>
+            <div><label>Occasion</label><select id="mOccasion"><option value="" disabled ${!lead.occasion ? "selected" : ""} hidden>Choose an occasion…</option>${CONFIG.occasions.map((o) => `<option value="${o}" ${o === lead.occasion ? "selected" : ""}>${o}</option>`).join("")}</select></div>
           </div>
+          <div id="mOccasionOtherWrap" style="display:${lead.occasion === "Other" ? "block" : "none"};">
+            <label>Please specify</label>
+            <input id="mOccasionOther" value="${lead.occasion_other || ""}" placeholder="What's the occasion?" />
+          </div>
+          <label>Band size (Pcs)</label>
+          <input id="mPcs" type="number" min="1" value="${lead.pcs || ""}" placeholder="e.g. 4" />
           ${(lead.stage === "Confirmed" || lead.stage === "Completed") ? `
             <label>Final confirmed amount (₹)</label>
             <input id="mFinalAmount" type="number" value="${lead.final_amount || ""}" placeholder="e.g. 150000" />
@@ -5272,6 +5294,9 @@ function openEditLeadModal(leadId) {
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#cancelModal").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#mOccasion").addEventListener("change", (e) => {
+    root.querySelector("#mOccasionOtherWrap").style.display = e.target.value === "Other" ? "block" : "none";
+  });
   root.querySelector("#submitModal").addEventListener("click", async () => {
     const name = root.querySelector("#mName").value.trim();
     if (!name) return alert("Name is required.");
@@ -5292,6 +5317,8 @@ function openEditLeadModal(leadId) {
           quoteAmount: root.querySelector("#mQuoteAmount").value ? Number(root.querySelector("#mQuoteAmount").value) : null,
           guestRange: root.querySelector("#mGuests").value || null,
           occasion: root.querySelector("#mOccasion").value || null,
+          occasionOther: root.querySelector("#mOccasion").value === "Other" ? (root.querySelector("#mOccasionOther").value.trim() || null) : null,
+          pcs: root.querySelector("#mPcs").value.trim() || null,
           ...(root.querySelector("#mFinalAmount") ? { finalAmount: root.querySelector("#mFinalAmount").value ? Number(root.querySelector("#mFinalAmount").value) : null } : {}),
           ...(root.querySelector(`#mInclusion_${RATE_INCLUSIONS[0].id}`) ? { rateInclusions: JSON.stringify(readRateInclusions(root, "m")) } : {}),
           ...(root.querySelector("#mRateNote") ? { rateNote: root.querySelector("#mRateNote").value.trim() || null } : {}),

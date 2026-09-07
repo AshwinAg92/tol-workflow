@@ -45,7 +45,7 @@ const EXPERIENCES = PACKAGES.map((p) => ({ id: p.id, name: p.name }));
 
 const OCCASIONS = [
   "Wedding", "Engagement", "Sangeet", "Reception", "Housewarming", "Birthday",
-  "Corporate Event", "Spiritual Gathering / Satsang", "Temple Event", "Private Celebration", "Other",
+  "New Born Celebration", "Corporate Event", "Spiritual Gathering / Satsang", "Temple Event", "Private Celebration", "Other",
 ];
 
 const GUEST_RANGES = ["Upto 100", "100–300", "300–500", "500–1000", "More than 1000"];
