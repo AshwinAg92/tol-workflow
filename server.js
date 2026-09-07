@@ -798,15 +798,13 @@ app.post("/api/push/unsubscribe", requireAuth, async (req, res) => {
 // Sends to every registered subscription (any logged-in user who's opted in
 // on their device) — a new-query alert carries no financial/fee data, so
 // there's no role-visibility reason to restrict it to admins only.
-async function notifyNewQuery(lead) {
+async function sendPushToAll(title, body, url = "/", { adminOnly = false } = {}) {
   if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return;
-  const { rows } = await pool.query(`SELECT * FROM push_subscriptions`);
+  const { rows } = adminOnly
+    ? (await pool.query(`SELECT push_subscriptions.* FROM push_subscriptions JOIN users ON users.id = push_subscriptions.user_id WHERE users.access_level = 'admin'`))
+    : (await pool.query(`SELECT * FROM push_subscriptions`));
   if (rows.length === 0) return;
-  const payload = JSON.stringify({
-    title: "New query received",
-    body: `${lead.name} — ${packageName(lead.event_type)} in ${lead.city || "?"}`,
-    url: "/",
-  });
+  const payload = JSON.stringify({ title, body, url });
   await Promise.all(rows.map(async (sub) => {
     try {
       await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload);
@@ -819,6 +817,9 @@ async function notifyNewQuery(lead) {
       }
     }
   }));
+}
+async function notifyNewQuery(lead) {
+  await sendPushToAll("New query received", `${lead.name} — ${packageName(lead.event_type)} in ${lead.city || "?"}`, "/");
 }
 
 
@@ -2660,6 +2661,319 @@ app.post("/api/admin/backup/email", requireAuth, requireAdmin, async (req, res) 
   }
 });
 
+// ---------- AI Assistant (manager-style chat, admin only) ----------
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const ASSISTANT_MODEL = "claude-sonnet-4-6";
+
+const ASSISTANT_SYSTEM_PROMPT = `You are the AI manager assistant inside Ashwin Agarwal's CRM for "Together, Out Loud" (TOL), a live music performance company co-founded by Prakriti Modi and Ashwin, offering Bhajan Jamming, Musical Pheras, Bollywood Jamming, Devotional Satsang, and related formats for weddings, satsangs, and celebrations.
+
+You act like a sharp, proactive business manager — concise and direct, not a generic chatbot. Ashwin is the only person who talks to you here.
+
+You have tools to look up real data from the CRM (leads, accounts, team, a specific event). ALWAYS use them instead of guessing when asked about specific numbers, leads, or people — never invent figures.
+
+You can also propose changes — a lead's stage, or its sticky note — using the propose_* tools. These do NOT apply immediately; they get staged for Ashwin to confirm with a button in the chat UI. Always briefly explain what you're proposing and why.
+
+For general business advice (pricing, staffing, growth, how to word something), give your own honest, practical opinion — don't hedge like a generic assistant. This is a real business and Ashwin wants a real answer.
+
+Keep responses tight — a few sentences or a short list, not an essay, unless he's clearly asked for something in depth.`;
+
+const ASSISTANT_TOOLS = [
+  {
+    name: "get_dashboard_summary",
+    description: "Get an overview of the business right now: new leads, follow-ups due, upcoming events, and total outstanding revenue.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "search_leads",
+    description: "Search/filter leads by name, phone, or city, and/or by exact stage. Returns matching leads with key details.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Text to search in name, phone, or city (optional)" },
+        stage: { type: "string", description: "Filter by exact stage — one of: New, Follow-up, Interested, Tentative, Confirmed, Completed, Not Interested, Cancelled (optional)" },
+        limit: { type: "integer", description: "Max results, default 15, max 30" },
+      },
+    },
+  },
+  {
+    name: "get_lead_detail",
+    description: "Get full details for one specific lead/event by name (partial match ok) or id — financials, rate inclusions, notes, and travel plan count.",
+    input_schema: {
+      type: "object",
+      properties: { nameOrId: { type: "string", description: "Lead's name (or partial name) or its id" } },
+      required: ["nameOrId"],
+    },
+  },
+  {
+    name: "get_accounts_summary",
+    description: "Get financial totals (confirmed value, received, outstanding, profit, event count) for Confirmed/Completed events, optionally filtered by date range.",
+    input_schema: {
+      type: "object",
+      properties: {
+        dateFrom: { type: "string", description: "YYYY-MM-DD, optional" },
+        dateTo: { type: "string", description: "YYYY-MM-DD, optional" },
+      },
+    },
+  },
+  {
+    name: "get_team_summary",
+    description: "Get the team roster (name, role, base city) and each person's upcoming assigned events.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "propose_lead_stage_change",
+    description: "Propose changing a lead's stage. Does NOT apply immediately — stages it for Ashwin to confirm in the UI. Always explain your reasoning in your reply.",
+    input_schema: {
+      type: "object",
+      properties: {
+        nameOrId: { type: "string" },
+        newStage: { type: "string", description: "One of: New, Follow-up, Interested, Tentative, Confirmed, Completed, Not Interested, Cancelled" },
+        reason: { type: "string" },
+      },
+      required: ["nameOrId", "newStage"],
+    },
+  },
+  {
+    name: "propose_add_note",
+    description: "Propose replacing the sticky note on a lead. Does NOT apply immediately — stages it for Ashwin to confirm in the UI.",
+    input_schema: {
+      type: "object",
+      properties: { nameOrId: { type: "string" }, note: { type: "string" } },
+      required: ["nameOrId", "note"],
+    },
+  },
+];
+
+async function callAnthropic(messages, { maxTokens = 1536, useTools = true } = {}) {
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: ASSISTANT_MODEL,
+      max_tokens: maxTokens,
+      system: ASSISTANT_SYSTEM_PROMPT,
+      messages,
+      ...(useTools ? { tools: ASSISTANT_TOOLS } : {}),
+    }),
+  });
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Assistant error (${resp.status}): ${errText.slice(0, 300)}`);
+  }
+  return resp.json();
+}
+
+async function findLeadByNameOrId(nameOrId) {
+  const byId = (await pool.query("SELECT * FROM leads WHERE id = $1", [nameOrId])).rows[0];
+  if (byId) return byId;
+  const { rows } = await pool.query("SELECT * FROM leads WHERE name ILIKE $1 ORDER BY created_at DESC LIMIT 1", [`%${nameOrId}%`]);
+  return rows[0] || null;
+}
+
+async function executeAssistantTool(name, input) {
+  switch (name) {
+    case "get_dashboard_summary": {
+      const today = new Date().toISOString().slice(0, 10);
+      const [newLeads, followUps, upcoming, accountsRows] = await Promise.all([
+        pool.query("SELECT COUNT(*) c FROM leads WHERE stage = 'New'"),
+        pool.query("SELECT COUNT(*) c FROM leads WHERE stage = 'Follow-up' AND (snooze_until IS NULL OR snooze_until <= $1)", [today]),
+        pool.query("SELECT COUNT(*) c FROM leads WHERE stage IN ('Confirmed','Completed') AND date >= $1", [today]),
+        pool.query("SELECT final_amount, quote_amount, received FROM leads WHERE stage IN ('Confirmed','Completed')"),
+      ]);
+      const outstanding = accountsRows.rows.reduce((s, l) => s + ((l.final_amount || l.quote_amount || 0) - (l.received || 0)), 0);
+      return { result: {
+        newLeads: Number(newLeads.rows[0].c),
+        followUpsDue: Number(followUps.rows[0].c),
+        upcomingEvents: Number(upcoming.rows[0].c),
+        totalOutstanding: outstanding,
+      } };
+    }
+    case "search_leads": {
+      const { query, stage, limit } = input;
+      let sql = "SELECT id, name, phone, city, stage, date, final_amount, quote_amount, received FROM leads WHERE 1=1";
+      const params = [];
+      if (query) { params.push(`%${query}%`); sql += ` AND (name ILIKE $${params.length} OR phone ILIKE $${params.length} OR city ILIKE $${params.length})`; }
+      if (stage) { params.push(stage); sql += ` AND stage = $${params.length}`; }
+      sql += ` ORDER BY date DESC NULLS LAST LIMIT ${Math.min(Number(limit) || 15, 30)}`;
+      const { rows } = await pool.query(sql, params);
+      return { result: rows.map((l) => ({
+        id: l.id, name: l.name, phone: l.phone, city: l.city, stage: l.stage, date: l.date,
+        amount: l.final_amount || l.quote_amount, received: l.received,
+        balance: (l.final_amount || l.quote_amount || 0) - (l.received || 0),
+      })) };
+    }
+    case "get_lead_detail": {
+      const lead = await findLeadByNameOrId(input.nameOrId);
+      if (!lead) return { result: { error: "No matching lead found" } };
+      const legs = (await pool.query("SELECT id FROM travel_legs WHERE lead_id = $1", [lead.id])).rows;
+      return { result: {
+        id: lead.id, name: lead.name, phone: lead.phone, city: lead.city, state: lead.state,
+        stage: lead.stage, date: lead.date, eventType: lead.event_type, occasion: lead.occasion,
+        pcs: lead.pcs, venue: lead.venue,
+        quoteAmount: lead.quote_amount, finalAmount: lead.final_amount, received: lead.received,
+        balance: (lead.final_amount || lead.quote_amount || 0) - (lead.received || 0),
+        rateInclusions: lead.rate_inclusions, rateNote: lead.rate_note, notes: lead.notes,
+        travelLegsCount: legs.length,
+      } };
+    }
+    case "get_accounts_summary": {
+      const { dateFrom, dateTo } = input;
+      let sql = "SELECT final_amount, quote_amount, received, profit FROM leads WHERE stage IN ('Confirmed','Completed')";
+      const params = [];
+      if (dateFrom) { params.push(dateFrom); sql += ` AND date >= $${params.length}`; }
+      if (dateTo) { params.push(dateTo); sql += ` AND date <= $${params.length}`; }
+      const { rows } = await pool.query(sql, params);
+      const totals = rows.reduce((acc, l) => {
+        const revenue = l.final_amount || l.quote_amount || 0;
+        acc.confirmed += revenue; acc.received += l.received || 0; acc.profit += l.profit || 0;
+        return acc;
+      }, { confirmed: 0, received: 0, profit: 0 });
+      return { result: { ...totals, outstanding: totals.confirmed - totals.received, eventCount: rows.length } };
+    }
+    case "get_team_summary": {
+      const today = new Date().toISOString().slice(0, 10);
+      const team = (await pool.query("SELECT id, name, role, base_city FROM team")).rows;
+      const assignments = (await pool.query(`
+        SELECT event_assignments.team_id, leads.name AS lead_name, leads.date
+        FROM event_assignments JOIN leads ON leads.id = event_assignments.lead_id
+        WHERE leads.date >= $1 AND leads.stage IN ('Confirmed','Completed') AND event_assignments.status != 'declined'
+      `, [today])).rows;
+      return { result: team.map((m) => ({
+        name: m.name, role: m.role, baseCity: m.base_city,
+        upcomingEvents: assignments.filter((a) => a.team_id === m.id).map((a) => `${a.lead_name} (${a.date})`),
+      })) };
+    }
+    case "propose_lead_stage_change": {
+      const lead = await findLeadByNameOrId(input.nameOrId);
+      if (!lead) return { result: { error: "No matching lead found" } };
+      if (!STAGES.includes(input.newStage)) return { result: { error: `"${input.newStage}" isn't a valid stage.` } };
+      return {
+        result: { staged: true, message: `Staged: ${lead.name} → ${input.newStage}. Awaiting confirmation in the UI.` },
+        proposedAction: { type: "update_lead_stage", label: `Change ${lead.name}'s stage to ${input.newStage}`, params: { leadId: lead.id, newStage: input.newStage } },
+      };
+    }
+    case "propose_add_note": {
+      const lead = await findLeadByNameOrId(input.nameOrId);
+      if (!lead) return { result: { error: "No matching lead found" } };
+      return {
+        result: { staged: true, message: `Staged note update for ${lead.name}. Awaiting confirmation in the UI.` },
+        proposedAction: { type: "add_note", label: `Update note for ${lead.name}`, params: { leadId: lead.id, note: input.note } },
+      };
+    }
+    default:
+      return { result: { error: `Unknown tool: ${name}` } };
+  }
+}
+
+app.get("/api/assistant/status", requireAuth, requireAdmin, (req, res) => {
+  res.json({ configured: !!ANTHROPIC_API_KEY });
+});
+
+app.get("/api/assistant/messages", requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM assistant_messages WHERE user_id = $1 ORDER BY created_at ASC LIMIT 100", [req.user.id]);
+  res.json(rows);
+});
+
+app.delete("/api/assistant/messages", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM assistant_messages WHERE user_id = $1", [req.user.id]);
+  res.status(204).end();
+});
+
+app.post("/api/assistant/chat", requireAuth, requireAdmin, async (req, res) => {
+  if (!ANTHROPIC_API_KEY) return res.status(500).json({ error: "The assistant isn't connected yet — ANTHROPIC_API_KEY is missing on the server." });
+  const { message } = req.body;
+  if (!message || !message.trim()) return res.status(400).json({ error: "Message is required" });
+
+  const priorHistory = (await pool.query("SELECT role, content FROM assistant_messages WHERE user_id = $1 ORDER BY created_at ASC LIMIT 40", [req.user.id])).rows;
+  const messages = priorHistory.map((m) => ({ role: m.role, content: m.content }));
+  messages.push({ role: "user", content: message });
+  await pool.query("INSERT INTO assistant_messages (id, user_id, role, content, created_at) VALUES ($1,$2,'user',$3,$4)", [uuid(), req.user.id, message, new Date().toISOString()]);
+
+  const pendingActions = [];
+  let finalText = "";
+  try {
+    for (let iter = 0; iter < 6; iter++) {
+      const data = await callAnthropic(messages);
+      const toolUses = data.content.filter((b) => b.type === "tool_use");
+      const textBlocks = data.content.filter((b) => b.type === "text");
+      if (textBlocks.length > 0) finalText = textBlocks.map((b) => b.text).join("\n");
+      if (toolUses.length === 0) break;
+      messages.push({ role: "assistant", content: data.content });
+      const toolResults = [];
+      for (const tu of toolUses) {
+        let result;
+        try {
+          const out = await executeAssistantTool(tu.name, tu.input || {});
+          result = out.result;
+          if (out.proposedAction) pendingActions.push(out.proposedAction);
+        } catch (err) {
+          result = { error: err.message };
+        }
+        toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(result) });
+      }
+      messages.push({ role: "user", content: toolResults });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+
+  await pool.query("INSERT INTO assistant_messages (id, user_id, role, content, created_at) VALUES ($1,$2,'assistant',$3,$4)", [uuid(), req.user.id, finalText || "I couldn't come up with a response — try rephrasing?", new Date().toISOString()]);
+  res.json({ reply: finalText, actions: pendingActions });
+});
+
+app.post("/api/assistant/actions/execute", requireAuth, requireAdmin, async (req, res) => {
+  const { type, params } = req.body || {};
+  try {
+    if (type === "update_lead_stage") {
+      const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [params.leadId])).rows[0];
+      if (!lead) return res.status(404).json({ error: "Lead not found" });
+      await pool.query("UPDATE leads SET stage = $1 WHERE id = $2", [params.newStage, lead.id]);
+      logActivity(req, `${lead.name}: ${lead.stage} → ${params.newStage} (via AI Assistant)`, lead.id);
+      const updated = (await pool.query("SELECT * FROM leads WHERE id = $1", [lead.id])).rows[0];
+      syncLeadToGoogleCalendar(updated).catch((err) => console.error("Google Calendar sync error:", err.message));
+    } else if (type === "add_note") {
+      const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [params.leadId])).rows[0];
+      if (!lead) return res.status(404).json({ error: "Lead not found" });
+      await pool.query("UPDATE leads SET notes = $1 WHERE id = $2", [params.note, lead.id]);
+      logActivity(req, `Note updated for ${lead.name} (via AI Assistant)`, lead.id);
+    } else {
+      return res.status(400).json({ error: "Unknown action type" });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Once-per-day proactive push (checked hourly, only fires from 9am IST
+// onward so it doesn't land at 2am right after the date rolls over) —
+// same "flag row in message_templates" pattern as the monthly backup email.
+async function runDailyBriefingCheck() {
+  if (!ANTHROPIC_API_KEY) return;
+  const hourIST = Number(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata", hour: "2-digit", hour12: false }));
+  if (hourIST < 9) return;
+  try {
+    const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    const flag = (await pool.query("SELECT template FROM message_templates WHERE key = 'last_briefing_sent_date'")).rows[0];
+    if (flag?.template === todayKey) return;
+    const dash = (await executeAssistantTool("get_dashboard_summary", {})).result;
+    const acct = (await executeAssistantTool("get_accounts_summary", {})).result;
+    const data = await callAnthropic(
+      [{ role: "user", content: `Write a short, punchy 2-3 sentence daily briefing for Ashwin based on this data (no greeting, get straight to it — this goes in a phone push notification so keep it brief): ${JSON.stringify({ ...dash, ...acct })}` }],
+      { maxTokens: 300, useTools: false }
+    );
+    const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join(" ").trim();
+    await sendPushToAll("📋 Today's briefing", text || "Check the dashboard for today's numbers.", "/", { adminOnly: true });
+    await pool.query(`
+      INSERT INTO message_templates (key, template, updated_at) VALUES ('last_briefing_sent_date', $1, $2)
+      ON CONFLICT (key) DO UPDATE SET template = $1, updated_at = $2
+    `, [todayKey, new Date().toISOString()]);
+    console.log(`Daily briefing sent for ${todayKey}`);
+  } catch (err) {
+    console.error("Daily briefing failed (will retry next hour):", err.message);
+  }
+}
+
 // Anything unmatched by an API route or a static file gets a branded 404
 // instead of Express's bare "Cannot GET /..." — API paths still get JSON so
 // client-side error handling isn't affected.
@@ -2677,4 +2991,6 @@ ready.then(() => {
   setInterval(autoCloseNearDateLeads, 60 * 60 * 1000);
   runMonthlyBackupCheck();
   setInterval(runMonthlyBackupCheck, 60 * 60 * 1000);
+  runDailyBriefingCheck();
+  setInterval(runDailyBriefingCheck, 60 * 60 * 1000);
 });

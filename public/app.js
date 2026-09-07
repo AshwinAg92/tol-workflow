@@ -91,6 +91,7 @@ function clientArrangementsPhrase(lead) {
 
 const NAV = [
   { id: "dashboard", label: "Dashboard" },
+  { id: "assistant", label: "Assistant" },
   { id: "leads", label: "Leads" },
   { id: "quotation", label: "Quotation" },
   { id: "accounts", label: "Accounts" },
@@ -107,6 +108,7 @@ const NAV = [
 // list of ten equally-weighted items.
 const NAV_GROUPS = {
   dashboard: "Overview",
+  assistant: "Overview",
   leads: "Pipeline",
   quotation: "Pipeline",
   accounts: "Pipeline",
@@ -118,9 +120,10 @@ const NAV_GROUPS = {
   website: "Admin",
   settings: "Admin",
 };
-// "settings" and "website" are admin-only (handled directly in renderNav) and aren't
-// something a manager can be granted piecemeal, so they're excluded from the staff permission checklist.
-const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "dashboard" && n.id !== "settings" && n.id !== "website");
+// "settings", "website", and "assistant" are admin-only (handled directly in
+// renderNav) and aren't something a manager can be granted piecemeal, so
+// they're excluded from the staff permission checklist.
+const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "dashboard" && n.id !== "settings" && n.id !== "website" && n.id !== "assistant");
 
 // Fills a {placeholder} template with values — any placeholder with no matching value
 // is left as an empty string rather than showing the raw {token} in the sent message.
@@ -602,7 +605,7 @@ function renderNav() {
   nav.innerHTML = "";
   const perms = CURRENT_USER?.accessLevel === "staff" ? CURRENT_USER.permissions : null;
   let visibleNav = NAV.filter((n) => {
-    if (n.id === "settings" || n.id === "website") return CURRENT_USER?.accessLevel === "admin";
+    if (n.id === "settings" || n.id === "website" || n.id === "assistant") return CURRENT_USER?.accessLevel === "admin";
     return n.id === "dashboard" || !Array.isArray(perms) || perms.includes(n.id);
   });
   if (CURRENT_USER?.isPerformer && CURRENT_USER.accessLevel !== "performer") {
@@ -6134,6 +6137,155 @@ async function renderSettings(main) {
   });
 }
 
+// ---------- AI Assistant ----------
+async function renderAssistant(main) {
+  main.innerHTML = `
+    <div class="view-head">
+      <div><h2>Assistant</h2><p class="muted">Ask about your data, get a briefing, or think through a decision — it can also propose changes for you to confirm.</p></div>
+      <button class="btn-ghost" id="assistantNewChatBtn">🗑 New conversation</button>
+    </div>
+    <div id="assistantBody"><p class="muted small">Loading…</p></div>
+  `;
+  main.querySelector("#assistantNewChatBtn").addEventListener("click", async () => {
+    if (!confirm("Start a new conversation? This clears the current chat history.")) return;
+    await api("/api/assistant/messages", { method: "DELETE" });
+    renderAssistant(main);
+  });
+
+  const body = main.querySelector("#assistantBody");
+  let status;
+  try {
+    status = await api("/api/assistant/status");
+  } catch {
+    body.innerHTML = `<p class="muted small">Couldn't load the assistant.</p>`;
+    return;
+  }
+  if (!status.configured) {
+    body.innerHTML = `
+      <div class="card">
+        <div class="section-label">Not connected yet</div>
+        <p class="muted small">The assistant needs an Anthropic API key set up on the server (ANTHROPIC_API_KEY) before it can respond. Ask Claude in your dev session to finish wiring it up once you have a key from console.anthropic.com.</p>
+      </div>
+    `;
+    return;
+  }
+
+  body.innerHTML = `
+    <div class="card" id="assistantChatCard" style="display:flex; flex-direction:column; height:65vh; max-height:640px;">
+      <div id="assistantMessages" style="flex:1; overflow-y:auto; padding:4px 2px;"></div>
+      <div id="assistantSuggestions" style="display:flex; gap:8px; flex-wrap:wrap; margin:8px 0;"></div>
+      <div style="display:flex; gap:8px; align-items:flex-end; border-top:1px solid #EFE9DC; padding-top:10px;">
+        <textarea id="assistantInput" rows="1" placeholder="Ask anything about your business…" style="flex:1; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px; resize:none;"></textarea>
+        <button class="btn-primary" id="assistantSendBtn">Send</button>
+      </div>
+    </div>
+  `;
+
+  const messagesEl = main.querySelector("#assistantMessages");
+  const inputEl = main.querySelector("#assistantInput");
+  const sendBtn = main.querySelector("#assistantSendBtn");
+  const suggestionsEl = main.querySelector("#assistantSuggestions");
+
+  function scrollToBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
+
+  function appendBubble(role, text) {
+    const bubble = document.createElement("div");
+    bubble.style.cssText = `margin-bottom:10px; display:flex; ${role === "user" ? "justify-content:flex-end;" : "justify-content:flex-start;"}`;
+    bubble.innerHTML = `<div style="max-width:80%; padding:9px 13px; border-radius:12px; white-space:pre-wrap; font-size:14.5px; line-height:1.45; ${role === "user" ? "background:#C1602B; color:#fff; border-bottom-right-radius:3px;" : "background:#F5F0E4; color:#2A2620; border-bottom-left-radius:3px;"}">${text.replace(/</g, "&lt;")}</div>`;
+    messagesEl.appendChild(bubble);
+    scrollToBottom();
+    return bubble;
+  }
+
+  function appendActionCards(actions) {
+    if (!actions || actions.length === 0) return;
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "margin:6px 0 14px;";
+    actions.forEach((action) => {
+      const card = document.createElement("div");
+      card.className = "card";
+      card.style.cssText = "margin-bottom:8px; border-color:#C1602B; padding:10px 12px;";
+      card.innerHTML = `
+        <div style="font-size:13.5px; margin-bottom:8px;">🔔 <strong>Proposed:</strong> ${action.label}</div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="btn-primary action-confirm-btn" style="font-size:12.5px; padding:5px 10px;">Confirm</button>
+          <button class="btn-ghost action-dismiss-btn" style="font-size:12.5px; padding:5px 10px;">Dismiss</button>
+          <span class="muted small action-status"></span>
+        </div>
+      `;
+      card.querySelector(".action-confirm-btn").addEventListener("click", async () => {
+        const statusSpan = card.querySelector(".action-status");
+        const btns = card.querySelectorAll("button");
+        btns.forEach((b) => (b.disabled = true));
+        statusSpan.textContent = "Applying…";
+        try {
+          await api("/api/assistant/actions/execute", { method: "POST", body: JSON.stringify({ type: action.type, params: action.params }) });
+          statusSpan.textContent = "Done ✓";
+          card.style.borderColor = "#5C8A6B";
+          await refreshLeads();
+        } catch (err) {
+          statusSpan.textContent = "Failed — try again";
+          btns.forEach((b) => (b.disabled = false));
+        }
+      });
+      card.querySelector(".action-dismiss-btn").addEventListener("click", () => card.remove());
+      wrap.appendChild(card);
+    });
+    messagesEl.appendChild(wrap);
+    scrollToBottom();
+  }
+
+  async function sendMessage(text) {
+    if (!text.trim()) return;
+    appendBubble("user", text);
+    inputEl.value = "";
+    inputEl.style.height = "auto";
+    sendBtn.disabled = true;
+    inputEl.disabled = true;
+    suggestionsEl.innerHTML = "";
+    const thinkingBubble = appendBubble("assistant", "…");
+    try {
+      const result = await api("/api/assistant/chat", { method: "POST", body: JSON.stringify({ message: text }) });
+      thinkingBubble.remove();
+      appendBubble("assistant", result.reply || "(no response)");
+      appendActionCards(result.actions);
+    } catch (err) {
+      thinkingBubble.remove();
+      appendBubble("assistant", `Something went wrong: ${err.message}`);
+    } finally {
+      sendBtn.disabled = false;
+      inputEl.disabled = false;
+      inputEl.focus();
+    }
+  }
+
+  sendBtn.addEventListener("click", () => sendMessage(inputEl.value));
+  inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(inputEl.value); }
+  });
+  inputEl.addEventListener("input", () => {
+    inputEl.style.height = "auto";
+    inputEl.style.height = `${Math.min(inputEl.scrollHeight, 120)}px`;
+  });
+
+  // Load prior history
+  try {
+    const history = await api("/api/assistant/messages");
+    if (history.length === 0) {
+      appendBubble("assistant", "Hi Ashwin — I'm your assistant here. I can pull up numbers, check on specific leads, give you a briefing, or just think through a decision with you. What do you need?");
+      const suggestions = ["📋 Give me today's briefing", "Who hasn't paid yet?", "How many events are confirmed this month?", "Any advice on pricing for a big wedding?"];
+      suggestionsEl.innerHTML = suggestions.map((s) => `<button class="btn-ghost assistant-suggestion-btn" style="font-size:12.5px; padding:5px 10px;">${s}</button>`).join("");
+      suggestionsEl.querySelectorAll(".assistant-suggestion-btn").forEach((btn) => {
+        btn.addEventListener("click", () => sendMessage(btn.textContent.replace(/^📋 /, "")));
+      });
+    } else {
+      history.forEach((m) => appendBubble(m.role, m.content));
+    }
+  } catch (err) {
+    appendBubble("assistant", "Couldn't load our chat history, but you can still send a new message.");
+  }
+}
+
 // ---------- Main dispatch ----------
 function renderMain() {
   const main = document.getElementById("main");
@@ -6153,6 +6305,7 @@ function renderMain() {
   else if (currentTab === "accounts") renderAccounts(main);
   else if (currentTab === "myevents") renderMyEvents(main);
   else if (currentTab === "settings") renderSettings(main);
+  else if (currentTab === "assistant") renderAssistant(main);
   else if (currentTab === "website") renderWebsiteContent(main);
 }
 

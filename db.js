@@ -236,6 +236,17 @@ async function setup() {
   // has to be the final word on what the event actually was.
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS occasion_other TEXT`);
 
+  // ---------- AI Assistant (manager-style chat, admin only) ----------
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS assistant_messages (
+      id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id),
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+
   // ---------- Travel plan (per-artist, per-event) ----------
   // One row per artist per outstation event: where they're travelling from,
   // how, and whether it's booked — visible to every artist assigned to that
