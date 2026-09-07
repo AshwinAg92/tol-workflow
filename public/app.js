@@ -898,6 +898,7 @@ function openBulkWhatsappFollowupModal(leadIds, main) {
 async function openLeadDetailModal(lead) {
   const root = document.getElementById("modalRoot");
   const isConfirmedOrDone = lead.stage === "Confirmed" || lead.stage === "Completed";
+  const balance = (lead.final_amount || lead.quote_amount || 0) - (lead.received || 0);
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
@@ -907,6 +908,11 @@ async function openLeadDetailModal(lead) {
         </div>
         <div class="modal-body">
           <span class="tag" style="color:${STAGE_COLOR[lead.stage]};">${lead.stage}</span>
+          ${isConfirmedOrDone && lead.pcs ? `
+            <div style="margin-top:10px; padding:10px 14px; background:#FBF3D9; border:1px solid #E8D488; border-radius:8px; display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-weight:700; font-size:16px;">🎵 Band size committed: ${lead.pcs} pcs</span>
+            </div>
+          ` : ""}
           <div class="lead-detail-section">
             <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Contact</div>
             ${lead.phone ? `<div>📞 <a href="tel:${lead.phone.replace(/\s+/g, "")}" style="color:inherit;">${lead.phone}</a></div>` : ""}
@@ -914,6 +920,13 @@ async function openLeadDetailModal(lead) {
             ${lead.email ? `<div>✉️ ${lead.email}</div>` : ""}
             <div class="muted small" style="margin-top:4px;">${packageName(lead.event_type)} · ${lead.city || "—"}${lead.state ? `, ${lead.state}` : ""} · ${fmtDate(lead.date)}</div>
           </div>
+          ${isConfirmedOrDone ? `
+            <div class="lead-detail-section">
+              <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Event day</div>
+              ${lead.venue ? `<div>📍 ${lead.venue}</div>` : `<p class="muted small">No venue set yet.</p>`}
+              ${(lead.event_time || lead.soundcheck_time) ? `<div class="muted small" style="margin-top:2px;">${lead.soundcheck_time ? `Sound check ${fmtTimeHM(lead.soundcheck_time)}` : ""}${lead.soundcheck_time && lead.event_time ? " · " : ""}${lead.event_time ? `Event ${fmtTimeHM(lead.event_time)}` : ""}</div>` : ""}
+            </div>
+          ` : ""}
           <div class="lead-detail-section">
             <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">From their enquiry</div>
             ${[
@@ -933,10 +946,17 @@ async function openLeadDetailModal(lead) {
           ${isConfirmedOrDone ? `
             <div class="lead-detail-section">
               <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Financials</div>
-              <div>Final: <span class="mono">${lead.final_amount || lead.quote_amount ? inr(lead.final_amount || lead.quote_amount) : "—"}</span></div>
-              ${rateInclusionsSummaryText(lead) ? `<div class="muted small" style="margin-top:2px;">${rateInclusionsSummaryText(lead)}</div>` : ""}
+              <div class="lead-card-financials" style="margin-top:0;">
+                <div><span class="muted small">Final</span><div class="mono">${lead.final_amount || lead.quote_amount ? inr(lead.final_amount || lead.quote_amount) : "—"}</div></div>
+                <div><span class="muted small">Received</span><div class="mono">${inr(lead.received || 0)}</div></div>
+                <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
+              </div>
+              ${rateInclusionsSummaryText(lead) ? `<div class="muted small" style="margin-top:8px;">${rateInclusionsSummaryText(lead)}</div>` : ""}
               ${lead.rate_note ? `<div class="muted small" style="margin-top:2px;">📝 ${lead.rate_note}</div>` : ""}
-              <div>Received: <span class="mono">${inr(lead.received || 0)}</span></div>
+            </div>
+            <div class="lead-detail-section">
+              <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">🧳 Who's travelling</div>
+              <div id="leadDetailTravel"><p class="muted small">Loading…</p></div>
             </div>
           ` : ""}
         </div>
@@ -989,6 +1009,38 @@ async function openLeadDetailModal(lead) {
   } catch (err) {
     const container = root.querySelector("#leadDetailQuotes");
     if (container) container.innerHTML = `<p class="muted small">Couldn't load quotes.</p>`;
+  }
+
+  if (isConfirmedOrDone && canAssignTeam()) {
+    try {
+      const legs = await api(`/api/leads/${lead.id}/travel-legs`);
+      const container = root.querySelector("#leadDetailTravel");
+      if (!container) return; // modal closed while loading
+      container.innerHTML = legs.length === 0
+        ? `<p class="muted small">No travel added yet.</p>`
+        : legs.map((leg) => {
+            const names = leg.members.map((m) => m.name).join(", ") || "No one added yet";
+            const statusColor = leg.status === "not_booked" ? "#B6752C" : "#5C8A6B";
+            const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
+            return `
+              <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+                <div>
+                  <div>${names}</div>
+                  <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${route ? ` · ${route}` : ""}${leg.tickets.length > 0 ? ` · ${leg.tickets.length} ticket${leg.tickets.length === 1 ? "" : "s"}` : ""}</div>
+                </div>
+                <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
+              </div>
+            `;
+          }).join("");
+      container.innerHTML += `<button class="btn-ghost full" id="leadDetailManageTravelBtn" style="margin-top:8px;">Manage travel plan</button>`;
+      root.querySelector("#leadDetailManageTravelBtn").addEventListener("click", () => { close(); openTravelPlanModal(lead.id); });
+    } catch (err) {
+      const container = root.querySelector("#leadDetailTravel");
+      if (container) container.innerHTML = `<p class="muted small">Couldn't load travel plan.</p>`;
+    }
+  } else if (isConfirmedOrDone) {
+    const container = root.querySelector("#leadDetailTravel");
+    if (container) container.innerHTML = `<p class="muted small">Not available for your account.</p>`;
   }
 }
 
