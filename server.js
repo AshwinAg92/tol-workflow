@@ -636,6 +636,26 @@ app.post("/api/google-calendar/disconnect", requireAuth, requireAdmin, async (re
   res.json({ ok: true });
 });
 
+// One-off backfill for events that were Confirmed/Completed before the sync
+// was connected — normal syncing only fires on a stage change going forward,
+// so anything already sitting in those stages needs this to catch up.
+app.post("/api/google-calendar/backfill", requireAuth, requireAdmin, async (req, res) => {
+  const leads = (await pool.query("SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') ORDER BY date ASC")).rows;
+  let created = 0, updated = 0, failed = 0;
+  for (const lead of leads) {
+    const hadEventId = !!lead.google_event_id;
+    try {
+      await syncLeadToGoogleCalendar(lead);
+      const after = (await pool.query("SELECT google_event_id FROM leads WHERE id = $1", [lead.id])).rows[0];
+      if (after.google_event_id) { hadEventId ? updated++ : created++; }
+      else failed++;
+    } catch (err) {
+      failed++;
+    }
+  }
+  res.json({ total: leads.length, created, updated, failed });
+});
+
 async function getGoogleAccessToken() {
   const row = (await pool.query("SELECT * FROM google_calendar_auth WHERE id = $1", [GOOGLE_CALENDAR_AUTH_ROW_ID])).rows[0];
   if (!row) return null;

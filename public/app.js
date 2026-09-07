@@ -5360,8 +5360,26 @@ function wireGoogleCalendarSettings(main) {
     if (status.connected) {
       statusEl.innerHTML = `
         <p class="muted small">✅ Connected${status.connectedBy ? ` by ${status.connectedBy}` : ""}${status.connectedAt ? ` on ${fmtDate(status.connectedAt.slice(0, 10))}` : ""}.</p>
-        <button class="btn-ghost" id="disconnectGCalBtn">Disconnect</button>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <button class="btn-ghost" id="backfillGCalBtn">Sync all Confirmed/Completed events now</button>
+          <button class="btn-ghost" id="disconnectGCalBtn">Disconnect</button>
+          <span class="muted small" id="backfillGCalStatus"></span>
+        </div>
       `;
+      statusEl.querySelector("#backfillGCalBtn").addEventListener("click", async () => {
+        const btn = statusEl.querySelector("#backfillGCalBtn");
+        const note = statusEl.querySelector("#backfillGCalStatus");
+        btn.disabled = true;
+        note.textContent = "Syncing…";
+        try {
+          const result = await api("/api/google-calendar/backfill", { method: "POST" });
+          note.textContent = `Done — ${result.created} added, ${result.updated} already synced, ${result.failed} skipped (out of ${result.total}).`;
+        } catch (err) {
+          note.textContent = "Couldn't sync — try again.";
+        } finally {
+          btn.disabled = false;
+        }
+      });
       statusEl.querySelector("#disconnectGCalBtn").addEventListener("click", async () => {
         if (!confirm("Disconnect Google Calendar? Existing calendar events won't be deleted, but future changes won't sync.")) return;
         await api("/api/google-calendar/disconnect", { method: "POST" });
