@@ -215,6 +215,11 @@ select.stage-select { width:auto; padding:4px 6px; font-size:12px; border-radius
 .doc-name a:hover { color:#C1602B; }
 .upload-form { display:flex; gap:8px; align-items:center; margin-bottom:16px; flex-wrap:wrap; }
 
+.rate-inclusions-grid { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
+.rate-inclusion-pill { display:flex; align-items:center; gap:6px; padding:7px 12px; border:1px solid #DDD5C4; border-radius:20px; font-size:14px; cursor:pointer; background:#FAF7F0; user-select:none; }
+.rate-inclusion-pill:has(input:checked) { background:#EFE3D3; border-color:#C1602B; font-weight:600; }
+.rate-inclusion-pill input { margin:0; width:15px; height:15px; accent-color:#C1602B; }
+
 .acct-filter-grid { display:grid; grid-template-columns:1fr; gap:10px; }
 .acct-filter-grid input[type="text"],
 .acct-filter-grid input[type="date"],

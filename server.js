@@ -711,10 +711,21 @@ async function syncLeadToGoogleCalendar(lead) {
   if (!lead.date) return;
   const nextDay = new Date(lead.date + "T00:00:00Z");
   nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+  const RATE_INCLUSION_LABELS = { travel: "Travel", local_transfers: "Local transfers", hotel: "Hotel / accommodation", food: "Food" };
+  let inclusionsText = null;
+  if (lead.rate_inclusions !== null && lead.rate_inclusions !== undefined) {
+    let list = [];
+    try { list = JSON.parse(lead.rate_inclusions) || []; } catch { list = []; }
+    inclusionsText = list.length > 0
+      ? `Includes: ${list.map((id) => RATE_INCLUSION_LABELS[id] || id).join(", ")}`
+      : "Billed separately — travel, stay & food not included";
+  }
   const descriptionLines = [
     `Client: ${lead.name}`,
     lead.phone ? `Phone: ${lead.phone}` : null,
     (lead.final_amount || lead.quote_amount) ? `Amount: ₹${Number(lead.final_amount || lead.quote_amount).toLocaleString("en-IN")}` : null,
+    inclusionsText,
+    lead.rate_note ? `Note: ${lead.rate_note}` : null,
     lead.notes ? `Notes: ${lead.notes}` : null,
   ].filter(Boolean);
   const body = {
@@ -1077,11 +1088,11 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const leadsOnlyFields = [
     "stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "date",
     "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration", "whatsapp_number",
-    "cancellation_reason", "snooze_until", "state", "rate_type", "rate_note",
+    "cancellation_reason", "snooze_until", "state", "rate_type", "rate_note", "rate_inclusions",
   ];
   const sharedFields = ["event_time", "soundcheck_time", "venue"];
   if (!hasLeads) {
-    const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f);
+    const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f);
     const attemptedRestricted = leadsOnlyFields.some((f) => req.body[keyFor(f)] !== undefined);
     if (attemptedRestricted) return res.status(403).json({ error: "You don't have permission to update those fields" });
   }
@@ -1108,7 +1119,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const updates = [];
   const values = [];
   fields.forEach((f) => {
-    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f;
+    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f;
     if (req.body[key] !== undefined) {
       values.push(req.body[key]);
       updates.push(`${f} = $${values.length}`);

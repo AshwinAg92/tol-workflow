@@ -225,6 +225,12 @@ async function setup() {
     );
   `);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_event_id TEXT`);
+  // JSON array of inclusion keys (travel/local_transfers/hotel/food) — replaces
+  // the old binary rate_type dropdown with explicit, tickable line items so
+  // there's no ambiguity about what a quoted rate actually covers. rate_type
+  // and rate_note (free text for anything the checkboxes don't cover) stay
+  // in place for older records and edge cases.
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS rate_inclusions TEXT`);
   // Lets a sent quote be tracked through to accepted/rejected instead of
   // just "sent and forgotten" — shown as a status dropdown in Quote history.
   await pool.query(`ALTER TABLE quotes ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'sent'`);

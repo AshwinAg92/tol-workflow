@@ -38,6 +38,44 @@ const STAGE_COLOR = {
   Cancelled: "#A64B3C",
 };
 
+// What a quoted/confirmed rate can include — explicit tickable line items
+// instead of one ambiguous "inclusive/exclusive" toggle.
+const RATE_INCLUSIONS = [
+  { id: "travel", label: "Travel" },
+  { id: "local_transfers", label: "Local transfers" },
+  { id: "hotel", label: "Hotel / accommodation" },
+  { id: "food", label: "Food" },
+];
+function parseRateInclusions(raw) {
+  if (!raw) return [];
+  try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : []; } catch { return []; }
+}
+function rateInclusionsCheckboxesHtml(prefix, selected) {
+  return `
+    <label style="margin-top:10px;">What's included in this rate?</label>
+    <div class="rate-inclusions-grid">
+      ${RATE_INCLUSIONS.map((opt) => `
+        <label class="rate-inclusion-pill">
+          <input type="checkbox" id="${prefix}Inclusion_${opt.id}" ${selected.includes(opt.id) ? "checked" : ""} />
+          ${opt.label}
+        </label>
+      `).join("")}
+    </div>
+    <p class="muted small" style="margin-top:4px;">Leave all unticked if travel, stay & food are billed separately at actuals.</p>
+  `;
+}
+function readRateInclusions(root, prefix) {
+  return RATE_INCLUSIONS.filter((opt) => root.querySelector(`#${prefix}Inclusion_${opt.id}`)?.checked).map((opt) => opt.id);
+}
+function rateInclusionsSummaryText(lead) {
+  const list = parseRateInclusions(lead.rate_inclusions);
+  if (list.length > 0) return `Includes: ${list.map((id) => RATE_INCLUSIONS.find((o) => o.id === id)?.label || id).join(", ")}`;
+  if (lead.rate_inclusions !== null && lead.rate_inclusions !== undefined) return "Billed separately — travel, stay & food not included";
+  // Legacy records set via the old exclusive/inclusive dropdown, before inclusions existed.
+  if (lead.rate_type) return lead.rate_type === "inclusive" ? "Inclusive of travel & accommodation (all-in lump sum)" : "+ travel & accommodation billed separately";
+  return null;
+}
+
 const NAV = [
   { id: "dashboard", label: "Dashboard" },
   { id: "leads", label: "Leads" },
@@ -882,7 +920,8 @@ async function openLeadDetailModal(lead) {
           ${isConfirmedOrDone ? `
             <div class="lead-detail-section">
               <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Financials</div>
-              <div>Final: <span class="mono">${lead.final_amount || lead.quote_amount ? inr(lead.final_amount || lead.quote_amount) : "—"}</span>${lead.rate_type ? ` <span class="muted small">(${lead.rate_type === "inclusive" ? "inclusive of travel & accommodation" : "+ travel & accommodation billed separately"})</span>` : ""}</div>
+              <div>Final: <span class="mono">${lead.final_amount || lead.quote_amount ? inr(lead.final_amount || lead.quote_amount) : "—"}</span></div>
+              ${rateInclusionsSummaryText(lead) ? `<div class="muted small" style="margin-top:2px;">${rateInclusionsSummaryText(lead)}</div>` : ""}
               ${lead.rate_note ? `<div class="muted small" style="margin-top:2px;">📝 ${lead.rate_note}</div>` : ""}
               <div>Received: <span class="mono">${inr(lead.received || 0)}</span></div>
             </div>
@@ -4436,13 +4475,9 @@ function openConfirmEventModal(lead) {
           <label>Final closed rate (₹)</label>
           <input id="ceAmount" type="number" value="${lead.quote_amount || ""}" placeholder="e.g. 145000" />
           <label style="margin-top:10px;">This rate is —</label>
-          <select id="ceRateType">
-            <option value="exclusive" ${(lead.rate_type || "exclusive") === "exclusive" ? "selected" : ""}>Exclusive of travel &amp; accommodation (billed separately, at actuals)</option>
-            <option value="inclusive" ${lead.rate_type === "inclusive" ? "selected" : ""}>Inclusive of travel &amp; accommodation (all-in lump sum)</option>
-          </select>
-          <label style="margin-top:10px;">Details (optional)</label>
-          <input id="ceRateNote" value="${lead.rate_note || ""}" placeholder="e.g. Travel only included, accommodation billed separately" />
-          <p class="muted small" style="margin-top:4px;">Use this for anything the two options above don't quite cover — like only travel being included, not accommodation.</p>
+          ${rateInclusionsCheckboxesHtml("ce", parseRateInclusions(lead.rate_inclusions))}
+          <label style="margin-top:10px;">Anything else to note? (optional)</label>
+          <input id="ceRateNote" value="${lead.rate_note || ""}" placeholder="e.g. Hotel only for the lead artist, not the full band" />
           <label style="margin-top:10px;">Advance received now (optional)</label>
           <div class="row-2">
             <input id="ceAdvanceAmount" type="number" placeholder="e.g. 20000" />
@@ -4471,7 +4506,7 @@ function openConfirmEventModal(lead) {
       return;
     }
     try {
-      await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ stage: "Confirmed", finalAmount: finalAmount || null, date: chosenDate, rateType: root.querySelector("#ceRateType").value, rateNote: root.querySelector("#ceRateNote").value.trim() || null }) });
+      await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ stage: "Confirmed", finalAmount: finalAmount || null, date: chosenDate, rateInclusions: JSON.stringify(readRateInclusions(root, "ce")), rateNote: root.querySelector("#ceRateNote").value.trim() || null }) });
       const advanceAmount = root.querySelector("#ceAdvanceAmount").value;
       if (advanceAmount && Number(advanceAmount) > 0) {
         try {
@@ -4798,12 +4833,9 @@ function openEditLeadModal(leadId) {
             <label>Final confirmed amount (₹)</label>
             <input id="mFinalAmount" type="number" value="${lead.final_amount || ""}" placeholder="e.g. 150000" />
             <label style="margin-top:10px;">This rate is —</label>
-            <select id="mRateType">
-              <option value="exclusive" ${(lead.rate_type || "exclusive") === "exclusive" ? "selected" : ""}>Exclusive of travel &amp; accommodation (billed separately, at actuals)</option>
-              <option value="inclusive" ${lead.rate_type === "inclusive" ? "selected" : ""}>Inclusive of travel &amp; accommodation (all-in lump sum)</option>
-            </select>
-            <label style="margin-top:10px;">Details (optional)</label>
-            <input id="mRateNote" value="${lead.rate_note || ""}" placeholder="e.g. Travel only included, accommodation billed separately" />
+            ${rateInclusionsCheckboxesHtml("m", parseRateInclusions(lead.rate_inclusions))}
+            <label style="margin-top:10px;">Anything else to note? (optional)</label>
+            <input id="mRateNote" value="${lead.rate_note || ""}" placeholder="e.g. Hotel only for the lead artist, not the full band" />
           ` : ""}
           ${lead.combo_group_id ? `<p class="muted small">This event is part of a combo booking. Editing the format/date here only changes this one event — the shared client details are separate per event.</p>` : ""}
           <p class="muted small">📌 Use the sticky note on the lead card to jot quick notes — no need to open Edit for that.</p>
@@ -4837,7 +4869,7 @@ function openEditLeadModal(leadId) {
           guestRange: root.querySelector("#mGuests").value || null,
           occasion: root.querySelector("#mOccasion").value || null,
           ...(root.querySelector("#mFinalAmount") ? { finalAmount: root.querySelector("#mFinalAmount").value ? Number(root.querySelector("#mFinalAmount").value) : null } : {}),
-          ...(root.querySelector("#mRateType") ? { rateType: root.querySelector("#mRateType").value } : {}),
+          ...(root.querySelector(`#mInclusion_${RATE_INCLUSIONS[0].id}`) ? { rateInclusions: JSON.stringify(readRateInclusions(root, "m")) } : {}),
           ...(root.querySelector("#mRateNote") ? { rateNote: root.querySelector("#mRateNote").value.trim() || null } : {}),
         }),
       });
