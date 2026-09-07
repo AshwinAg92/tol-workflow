@@ -712,12 +712,13 @@ async function syncLeadToGoogleCalendar(lead) {
   const nextDay = new Date(lead.date + "T00:00:00Z");
   nextDay.setUTCDate(nextDay.getUTCDate() + 1);
   const descriptionLines = [
+    `Client: ${lead.name}`,
     lead.phone ? `Phone: ${lead.phone}` : null,
     (lead.final_amount || lead.quote_amount) ? `Amount: ₹${Number(lead.final_amount || lead.quote_amount).toLocaleString("en-IN")}` : null,
     lead.notes ? `Notes: ${lead.notes}` : null,
   ].filter(Boolean);
   const body = {
-    summary: `${lead.name} — ${packageName(lead.event_type)}`,
+    summary: `${lead.city || "Unknown city"} — ${packageName(lead.event_type)}`,
     location: [lead.venue, lead.city, lead.state].filter(Boolean).join(", "),
     description: descriptionLines.join("\n"),
     start: { date: lead.date },
