@@ -15,6 +15,7 @@ let leadsQuoteDateFilter = "";
 let leadsSortBy = "date";
 let leadsSelected = new Set();
 let dashActivityPage = 1;
+let dashActivityActorFilter = "all";
 let quotationLeadId = null;
 let reopenQuoteDraft = null; // one-shot: set when reopening a past quote from history for editing
 let calYear = new Date().getFullYear(), calMonth = new Date().getMonth() + 1; // defaults to the real current month
@@ -3781,17 +3782,27 @@ const DASH_ACTIVITY_PAGE_SIZE = 8;
 function renderTodaysActivityCard(main, activity) {
   const card = main.querySelector("#todaysActivityCard");
   if (!card) return;
-  const totalPages = Math.max(1, Math.ceil(activity.length / DASH_ACTIVITY_PAGE_SIZE));
+  const actors = Array.from(new Set(activity.map((a) => a.actor).filter((a) => a && a !== "System"))).sort();
+  const filtered = dashActivityActorFilter === "all" ? activity : activity.filter((a) => a.actor === dashActivityActorFilter);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / DASH_ACTIVITY_PAGE_SIZE));
   if (dashActivityPage > totalPages) dashActivityPage = totalPages;
   if (dashActivityPage < 1) dashActivityPage = 1;
-  const pageItems = activity.slice((dashActivityPage - 1) * DASH_ACTIVITY_PAGE_SIZE, dashActivityPage * DASH_ACTIVITY_PAGE_SIZE);
+  const pageItems = filtered.slice((dashActivityPage - 1) * DASH_ACTIVITY_PAGE_SIZE, dashActivityPage * DASH_ACTIVITY_PAGE_SIZE);
 
   card.innerHTML = `
-    <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
-      <span>📋 Today's activity${activity.length > 0 ? ` <span class="muted" style="font-weight:400;">(${activity.length})</span>` : ""}</span>
-      ${activity.length > 0 ? `<button class="btn-ghost" id="clearAllActivityBtn" style="font-size:11.5px; padding:3px 8px; font-weight:400;">Clear all</button>` : ""}
+    <div class="section-label" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+      <span>📋 Today's activity${filtered.length > 0 ? ` <span class="muted" style="font-weight:400;">(${filtered.length}${dashActivityActorFilter !== "all" ? ` of ${activity.length}` : ""})</span>` : ""}</span>
+      <div style="display:flex; gap:8px; align-items:center;">
+        ${actors.length > 1 ? `
+          <select id="dashActivityActorSelect" style="font-size:12px; padding:3px 6px;">
+            <option value="all" ${dashActivityActorFilter === "all" ? "selected" : ""}>Everyone</option>
+            ${actors.map((a) => `<option value="${a}" ${dashActivityActorFilter === a ? "selected" : ""}>${a}</option>`).join("")}
+          </select>
+        ` : ""}
+        ${activity.length > 0 ? `<button class="btn-ghost" id="clearAllActivityBtn" style="font-size:11.5px; padding:3px 8px; font-weight:400;">Clear all</button>` : ""}
+      </div>
     </div>
-    ${activity.length === 0 ? `<p class="muted small">Nothing logged yet today.</p>` : `
+    ${activity.length === 0 ? `<p class="muted small">Nothing logged yet today.</p>` : filtered.length === 0 ? `<p class="muted small">Nothing from ${dashActivityActorFilter} today.</p>` : `
       <div class="activity-log">
         ${pageItems.map((a) => `
           <div class="dash-list-item" style="display:flex; gap:10px; justify-content:space-between; align-items:flex-start;">
@@ -3815,6 +3826,14 @@ function renderTodaysActivityCard(main, activity) {
     `}
   `;
 
+  const actorSelect = card.querySelector("#dashActivityActorSelect");
+  if (actorSelect) {
+    actorSelect.addEventListener("change", () => {
+      dashActivityActorFilter = actorSelect.value;
+      dashActivityPage = 1;
+      renderTodaysActivityCard(main, activity);
+    });
+  }
   card.querySelectorAll(".dash-activity-page-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       dashActivityPage = Number(btn.dataset.page);
@@ -5357,6 +5376,7 @@ async function renderSettings(main) {
       <summary style="cursor:pointer; font-weight:600;">Activity history (audit log)</summary>
       <p class="muted small" style="margin-top:8px;">Every stage change, payment, quote, and assignment across the whole CRM — read-only, last 300 entries. This is separate from the Dashboard's "Today's activity," which is just a clearable daily to-do list.</p>
       <input type="text" id="auditSearchInput" placeholder="Search by keyword or name…" style="margin-bottom:10px;" />
+      <select id="auditActorSelect" style="margin-bottom:10px;"><option value="all">Everyone</option></select>
       <div id="auditLogRows"><p class="muted small">Loading…</p></div>
     </details>
   `;
@@ -5539,15 +5559,22 @@ async function renderSettings(main) {
         `).join("");
     };
     renderAuditRows(entries);
-    const searchInput = main.querySelector("#auditSearchInput");
-    if (searchInput) {
-      searchInput.addEventListener("input", () => {
-        const q = searchInput.value.trim().toLowerCase();
-        renderAuditRows(!q ? entries : entries.filter((a) =>
-          (a.message || "").toLowerCase().includes(q) || (a.actor || "").toLowerCase().includes(q)
-        ));
-      });
+    const actorSelect = main.querySelector("#auditActorSelect");
+    const actors = Array.from(new Set(entries.map((a) => a.actor).filter((a) => a && a !== "System"))).sort();
+    if (actorSelect) {
+      actorSelect.innerHTML = `<option value="all">Everyone</option>${actors.map((a) => `<option value="${a}">${a}</option>`).join("")}`;
     }
+    const applyFilters = () => {
+      const q = searchInput.value.trim().toLowerCase();
+      const actorFilter = actorSelect ? actorSelect.value : "all";
+      renderAuditRows(entries.filter((a) =>
+        (actorFilter === "all" || a.actor === actorFilter) &&
+        (!q || (a.message || "").toLowerCase().includes(q) || (a.actor || "").toLowerCase().includes(q))
+      ));
+    };
+    const searchInput = main.querySelector("#auditSearchInput");
+    if (searchInput) searchInput.addEventListener("input", applyFilters);
+    if (actorSelect) actorSelect.addEventListener("change", applyFilters);
   }).catch(() => {
     const rowsEl = main.querySelector("#auditLogRows");
     if (rowsEl) rowsEl.innerHTML = `<p class="muted small">Couldn't load activity history.</p>`;
