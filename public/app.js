@@ -6164,7 +6164,7 @@ async function renderAssistant(main) {
     body.innerHTML = `
       <div class="card">
         <div class="section-label">Not connected yet</div>
-        <p class="muted small">The assistant needs an Anthropic API key set up on the server (ANTHROPIC_API_KEY) before it can respond. Ask Claude in your dev session to finish wiring it up once you have a key from console.anthropic.com.</p>
+        <p class="muted small">The assistant needs a free Groq API key set up on the server (GROQ_API_KEY) before it can respond — get one at console.groq.com and send it over.</p>
       </div>
     `;
     return;

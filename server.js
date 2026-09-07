@@ -2662,8 +2662,11 @@ app.post("/api/admin/backup/email", requireAuth, requireAdmin, async (req, res) 
 });
 
 // ---------- AI Assistant (manager-style chat, admin only) ----------
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const ASSISTANT_MODEL = "claude-sonnet-4-6";
+// Runs on Groq (free tier, OpenAI-compatible chat completions API with
+// function calling) rather than a paid API — same tool-calling architecture,
+// just a different wire format for the request/response.
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const ASSISTANT_MODEL = "llama-3.3-70b-versatile";
 
 const ASSISTANT_SYSTEM_PROMPT = `You are the AI manager assistant inside Ashwin Agarwal's CRM for "Together, Out Loud" (TOL), a live music performance company co-founded by Prakriti Modi and Ashwin, offering Bhajan Jamming, Musical Pheras, Bollywood Jamming, Devotional Satsang, and related formats for weddings, satsangs, and celebrations.
 
@@ -2677,16 +2680,18 @@ For general business advice (pricing, staffing, growth, how to word something), 
 
 Keep responses tight — a few sentences or a short list, not an essay, unless he's clearly asked for something in depth.`;
 
+// OpenAI-style function-calling schema (Groq's chat completions API is
+// OpenAI-compatible) — same tool set as before, just wrapped differently.
 const ASSISTANT_TOOLS = [
   {
     name: "get_dashboard_summary",
     description: "Get an overview of the business right now: new leads, follow-ups due, upcoming events, and total outstanding revenue.",
-    input_schema: { type: "object", properties: {} },
+    parameters: { type: "object", properties: {} },
   },
   {
     name: "search_leads",
     description: "Search/filter leads by name, phone, or city, and/or by exact stage. Returns matching leads with key details.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         query: { type: "string", description: "Text to search in name, phone, or city (optional)" },
@@ -2698,7 +2703,7 @@ const ASSISTANT_TOOLS = [
   {
     name: "get_lead_detail",
     description: "Get full details for one specific lead/event by name (partial match ok) or id — financials, rate inclusions, notes, and travel plan count.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: { nameOrId: { type: "string", description: "Lead's name (or partial name) or its id" } },
       required: ["nameOrId"],
@@ -2707,7 +2712,7 @@ const ASSISTANT_TOOLS = [
   {
     name: "get_accounts_summary",
     description: "Get financial totals (confirmed value, received, outstanding, profit, event count) for Confirmed/Completed events, optionally filtered by date range.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         dateFrom: { type: "string", description: "YYYY-MM-DD, optional" },
@@ -2718,12 +2723,12 @@ const ASSISTANT_TOOLS = [
   {
     name: "get_team_summary",
     description: "Get the team roster (name, role, base city) and each person's upcoming assigned events.",
-    input_schema: { type: "object", properties: {} },
+    parameters: { type: "object", properties: {} },
   },
   {
     name: "propose_lead_stage_change",
     description: "Propose changing a lead's stage. Does NOT apply immediately — stages it for Ashwin to confirm in the UI. Always explain your reasoning in your reply.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         nameOrId: { type: "string" },
@@ -2736,7 +2741,7 @@ const ASSISTANT_TOOLS = [
   {
     name: "propose_add_note",
     description: "Propose replacing the sticky note on a lead. Does NOT apply immediately — stages it for Ashwin to confirm in the UI.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: { nameOrId: { type: "string" }, note: { type: "string" } },
       required: ["nameOrId", "note"],
@@ -2744,23 +2749,30 @@ const ASSISTANT_TOOLS = [
   },
 ];
 
-async function callAnthropic(messages, { maxTokens = 1536, useTools = true } = {}) {
-  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+// Returns a normalized shape regardless of provider quirks: { text, toolCalls: [{id, name, input}] }
+async function callAssistantModel(messages, { maxTokens = 1024, useTools = true } = {}) {
+  const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+    headers: { "content-type": "application/json", "authorization": `Bearer ${GROQ_API_KEY}` },
     body: JSON.stringify({
       model: ASSISTANT_MODEL,
       max_tokens: maxTokens,
-      system: ASSISTANT_SYSTEM_PROMPT,
-      messages,
-      ...(useTools ? { tools: ASSISTANT_TOOLS } : {}),
+      messages: [{ role: "system", content: ASSISTANT_SYSTEM_PROMPT }, ...messages],
+      ...(useTools ? { tools: ASSISTANT_TOOLS.map((t) => ({ type: "function", function: t })) } : {}),
     }),
   });
   if (!resp.ok) {
     const errText = await resp.text();
     throw new Error(`Assistant error (${resp.status}): ${errText.slice(0, 300)}`);
   }
-  return resp.json();
+  const data = await resp.json();
+  const msg = data.choices?.[0]?.message || {};
+  const toolCalls = (msg.tool_calls || []).map((tc) => {
+    let input = {};
+    try { input = JSON.parse(tc.function.arguments || "{}"); } catch { input = {}; }
+    return { id: tc.id, name: tc.function.name, input };
+  });
+  return { text: msg.content || "", toolCalls, rawAssistantMessage: msg };
 }
 
 async function findLeadByNameOrId(nameOrId) {
@@ -2866,7 +2878,7 @@ async function executeAssistantTool(name, input) {
 }
 
 app.get("/api/assistant/status", requireAuth, requireAdmin, (req, res) => {
-  res.json({ configured: !!ANTHROPIC_API_KEY });
+  res.json({ configured: !!GROQ_API_KEY });
 });
 
 app.get("/api/assistant/messages", requireAuth, requireAdmin, async (req, res) => {
@@ -2880,7 +2892,7 @@ app.delete("/api/assistant/messages", requireAuth, requireAdmin, async (req, res
 });
 
 app.post("/api/assistant/chat", requireAuth, requireAdmin, async (req, res) => {
-  if (!ANTHROPIC_API_KEY) return res.status(500).json({ error: "The assistant isn't connected yet — ANTHROPIC_API_KEY is missing on the server." });
+  if (!GROQ_API_KEY) return res.status(500).json({ error: "The assistant isn't connected yet — GROQ_API_KEY is missing on the server." });
   const { message } = req.body;
   if (!message || !message.trim()) return res.status(400).json({ error: "Message is required" });
 
@@ -2893,25 +2905,21 @@ app.post("/api/assistant/chat", requireAuth, requireAdmin, async (req, res) => {
   let finalText = "";
   try {
     for (let iter = 0; iter < 6; iter++) {
-      const data = await callAnthropic(messages);
-      const toolUses = data.content.filter((b) => b.type === "tool_use");
-      const textBlocks = data.content.filter((b) => b.type === "text");
-      if (textBlocks.length > 0) finalText = textBlocks.map((b) => b.text).join("\n");
-      if (toolUses.length === 0) break;
-      messages.push({ role: "assistant", content: data.content });
-      const toolResults = [];
-      for (const tu of toolUses) {
+      const { text, toolCalls, rawAssistantMessage } = await callAssistantModel(messages);
+      if (text) finalText = text;
+      if (toolCalls.length === 0) break;
+      messages.push(rawAssistantMessage);
+      for (const tc of toolCalls) {
         let result;
         try {
-          const out = await executeAssistantTool(tu.name, tu.input || {});
+          const out = await executeAssistantTool(tc.name, tc.input || {});
           result = out.result;
           if (out.proposedAction) pendingActions.push(out.proposedAction);
         } catch (err) {
           result = { error: err.message };
         }
-        toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(result) });
+        messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) });
       }
-      messages.push({ role: "user", content: toolResults });
     }
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -2949,7 +2957,7 @@ app.post("/api/assistant/actions/execute", requireAuth, requireAdmin, async (req
 // onward so it doesn't land at 2am right after the date rolls over) —
 // same "flag row in message_templates" pattern as the monthly backup email.
 async function runDailyBriefingCheck() {
-  if (!ANTHROPIC_API_KEY) return;
+  if (!GROQ_API_KEY) return;
   const hourIST = Number(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata", hour: "2-digit", hour12: false }));
   if (hourIST < 9) return;
   try {
@@ -2958,12 +2966,11 @@ async function runDailyBriefingCheck() {
     if (flag?.template === todayKey) return;
     const dash = (await executeAssistantTool("get_dashboard_summary", {})).result;
     const acct = (await executeAssistantTool("get_accounts_summary", {})).result;
-    const data = await callAnthropic(
+    const { text } = await callAssistantModel(
       [{ role: "user", content: `Write a short, punchy 2-3 sentence daily briefing for Ashwin based on this data (no greeting, get straight to it — this goes in a phone push notification so keep it brief): ${JSON.stringify({ ...dash, ...acct })}` }],
       { maxTokens: 300, useTools: false }
     );
-    const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join(" ").trim();
-    await sendPushToAll("📋 Today's briefing", text || "Check the dashboard for today's numbers.", "/", { adminOnly: true });
+    await sendPushToAll("📋 Today's briefing", text.trim() || "Check the dashboard for today's numbers.", "/", { adminOnly: true });
     await pool.query(`
       INSERT INTO message_templates (key, template, updated_at) VALUES ('last_briefing_sent_date', $1, $2)
       ON CONFLICT (key) DO UPDATE SET template = $1, updated_at = $2
