@@ -46,6 +46,9 @@ const RATE_INCLUSIONS = [
   { id: "hotel", label: "Hotel / accommodation" },
   { id: "food", label: "Food" },
 ];
+// Travel plan mode/status labels — mirrors the same constants in server.js.
+const TRAVEL_MODE_LABELS = { flight: "Flight", train: "Train", bus: "Bus", car: "Car", self: "Self-arranged" };
+const TRAVEL_STATUS_LABELS = { not_booked: "Not booked yet", booked: "Booked", self_arranged: "Self-arranged" };
 function parseRateInclusions(raw) {
   if (!raw) return [];
   try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : []; } catch { return []; }
@@ -1273,6 +1276,7 @@ async function renderLeadsLog(main, skipRefresh) {
             ${isConfirmedOrDone && hasAccountsAccess() ? `<button class="btn-ghost payments-btn" data-lead-id="${l.id}">💰 Payments</button>` : ""}
             ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost confirmation-msg-btn" data-lead-id="${l.id}">✅ Confirmation msg</button>` : ""}
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team</button>` : ""}
+            ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost travel-plan-btn" data-lead-id="${l.id}">🧳 Travel</button>` : ""}
             ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost lead-documents-btn" data-lead-id="${l.id}">📄 Documents</button>` : ""}
             ${hasLeadsAccess() && l.stage !== "Completed" ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}">✎ Edit</button>` : ""}
             ${CURRENT_USER?.accessLevel === "admin" && l.stage !== "Completed" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="color:#A64B3C;">🗑 Delete</button>` : ""}
@@ -1434,6 +1438,10 @@ async function renderLeadsLog(main, skipRefresh) {
 
   main.querySelectorAll(".assign-team-btn").forEach((btn) => {
     btn.addEventListener("click", () => openAssignTeamModal(btn.dataset.leadId));
+  });
+
+  main.querySelectorAll(".travel-plan-btn").forEach((btn) => {
+    btn.addEventListener("click", () => openTravelPlanModal(btn.dataset.leadId));
   });
 
   main.querySelectorAll(".lead-documents-btn").forEach((btn) => {
@@ -3047,6 +3055,7 @@ async function openAssignTeamModal(leadId) {
       <div class="modal-card" style="width:680px; max-width:96vw;">
         <div class="modal-head"><h3>Team for ${lead.name}${lead.occasion ? ` <span class="muted" style="font-weight:400; font-size:14px;">— ${lead.occasion}</span>` : ""}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
+          <button class="btn-ghost" id="openTravelPlanFromTeamBtn" style="margin-bottom:12px;">🧳 Travel plan</button>
           <div class="section-label">Event day details</div>
           <div class="row-2" style="margin-bottom:8px;">
             <div><label>Event time</label><input id="eventTimeInput" type="time" value="${lead.event_time || ""}" /></div>
@@ -3226,6 +3235,7 @@ async function openAssignTeamModal(leadId) {
   root.querySelector("#cancelModal").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
   root.querySelector("#openChatBtn").addEventListener("click", () => openEventChat(leadId, lead.name));
+  root.querySelector("#openTravelPlanFromTeamBtn").addEventListener("click", () => openTravelPlanModal(leadId));
   root.querySelector("#addMemberInlineBtn").addEventListener("click", () => {
     openAddMemberModal(() => openAssignTeamModal(leadId));
   });
@@ -3470,6 +3480,266 @@ async function openAssignTeamModal(leadId) {
       btn.disabled = false;
     }
   });
+}
+
+// ---------- Travel plan (per-artist, per-event) ----------
+async function openTravelPlanModal(leadId) {
+  const lead = LEADS.find((l) => l.id === leadId);
+  if (!lead) return;
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `<div class="modal-overlay" id="overlay"><div class="modal-card"><p class="muted small" style="padding:20px;">Loading…</p></div></div>`;
+  const [legs, assignments] = await Promise.all([
+    api(`/api/leads/${leadId}/travel-legs`),
+    api(`/api/leads/${leadId}/assignments`),
+  ]);
+  let addingFor = null; // team_id currently showing the add-leg form, or "new" for a fresh one
+  let editingLegId = null;
+
+  function legCard(leg) {
+    const editing = editingLegId === leg.id;
+    if (editing) return legForm({ leg, teamName: leg.team_name });
+    const statusColor = leg.status === "not_booked" ? "#B6752C" : "#5C8A6B";
+    const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
+    return `
+      <div class="card" style="margin-bottom:10px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+          <div>
+            <div style="font-weight:600;">${leg.team_name}</div>
+            <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${route ? ` · ${route}` : ""}</div>
+          </div>
+          <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
+        </div>
+        ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small" style="margin-top:6px;">${leg.departure_at ? `Departs ${fmtDateTime(leg.departure_at)}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Arrives ${fmtDateTime(leg.arrival_at)}` : ""}</div>` : ""}
+        ${leg.booking_ref ? `<div class="muted small" style="margin-top:2px;">Ref: ${leg.booking_ref}</div>` : ""}
+        ${leg.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${leg.notes}</div>` : ""}
+        ${leg.tickets.length > 0 ? `
+          <div style="margin-top:8px;">
+            ${leg.tickets.map((t) => `
+              <div class="doc-row" style="padding:6px 0;">
+                <div class="doc-name"><a href="${t.url}" target="_blank">🎫 ${t.original_name}</a></div>
+                <button class="icon-btn" data-delete-ticket="${t.id}" data-leg-id="${leg.id}" title="Delete">${ICON_X}</button>
+              </div>
+            `).join("")}
+          </div>
+        ` : ""}
+        <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
+          <label class="btn-ghost" style="font-size:12px; padding:3px 8px; cursor:pointer;">+ Add ticket<input type="file" data-ticket-upload="${leg.id}" style="display:none;" /></label>
+          <button class="btn-ghost" data-edit-leg="${leg.id}" style="font-size:12px; padding:3px 8px;">Edit</button>
+          <button class="btn-ghost" data-delete-leg="${leg.id}" style="font-size:12px; padding:3px 8px; color:#A64B3C;">Delete</button>
+          <span class="muted small" data-ticket-status="${leg.id}"></span>
+        </div>
+      </div>
+    `;
+  }
+
+  function legForm({ leg, teamName, teamId }) {
+    const isNew = !leg;
+    const prefix = isNew ? "new" : "edit";
+    return `
+      <div class="card" style="margin-bottom:10px; border-color:#C1602B;">
+        ${isNew ? `<div style="font-weight:600; margin-bottom:8px;">Travel for ${teamName}</div>` : `<div style="font-weight:600; margin-bottom:8px;">Editing — ${teamName}</div>`}
+        <div class="row-2">
+          <div><label>Mode</label><select id="${prefix}Mode">
+            <option value="">Not set</option>
+            ${Object.entries(TRAVEL_MODE_LABELS).map(([id, label]) => `<option value="${id}" ${leg?.mode === id ? "selected" : ""}>${label}</option>`).join("")}
+          </select></div>
+          <div><label>Status</label><select id="${prefix}Status">
+            ${Object.entries(TRAVEL_STATUS_LABELS).map(([id, label]) => `<option value="${id}" ${(leg?.status || "not_booked") === id ? "selected" : ""}>${label}</option>`).join("")}
+          </select></div>
+        </div>
+        <div class="row-2">
+          <div><label>From city</label><input id="${prefix}FromCity" value="${leg?.from_city || ""}" placeholder="e.g. Siliguri" /></div>
+          <div><label>To city</label><input id="${prefix}ToCity" value="${leg?.to_city || lead.city || ""}" placeholder="e.g. ${lead.city || "event city"}" /></div>
+        </div>
+        <div class="row-2">
+          <div><label>Departure</label><input id="${prefix}Departure" type="datetime-local" value="${leg?.departure_at ? leg.departure_at.slice(0, 16) : ""}" /></div>
+          <div><label>Arrival</label><input id="${prefix}Arrival" type="datetime-local" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 16) : ""}" /></div>
+        </div>
+        <label>Booking ref / PNR (optional)</label>
+        <input id="${prefix}BookingRef" value="${leg?.booking_ref || ""}" placeholder="e.g. PNR or booking number" />
+        <label style="margin-top:8px;">Notes (optional)</label>
+        <input id="${prefix}Notes" value="${leg?.notes || ""}" placeholder="e.g. Sharing a cab with the drummer" />
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <button class="btn-primary" data-save-leg="${isNew ? teamId : leg.id}" data-is-new="${isNew}">Save</button>
+          <button class="btn-ghost" data-cancel-leg-form="1">Cancel</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderModal() {
+    const legTeamIds = new Set(legs.map((l) => l.team_id));
+    const withoutTravel = assignments.filter((a) => !legTeamIds.has(a.team_id));
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay">
+        <div class="modal-card" style="width:640px; max-width:96vw;">
+          <div class="modal-head">
+            <h3>Travel plan — ${lead.name}${lead.city ? ` <span class="muted" style="font-weight:400; font-size:14px;">(${lead.city}, ${fmtDate(lead.date)})</span>` : ""}</h3>
+            <button class="icon-btn" id="closeModal">${ICON_X}</button>
+          </div>
+          <div class="modal-body">
+            ${legs.length === 0 && addingFor === null ? `<p class="muted small">No travel added yet.</p>` : ""}
+            ${legs.map(legCard).join("")}
+            ${addingFor && addingFor !== "existing" ? legForm({ teamName: assignments.find((a) => a.team_id === addingFor)?.team_name, teamId: addingFor }) : ""}
+            ${withoutTravel.length > 0 && !addingFor ? `
+              <div class="section-label" style="margin-top:${legs.length > 0 ? "16px" : "0"};">Add travel for</div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                ${withoutTravel.map((a) => `<button class="btn-ghost" data-add-leg-for="${a.team_id}" data-team-name="${a.team_name}">+ ${a.team_name}</button>`).join("")}
+              </div>
+            ` : ""}
+            ${withoutTravel.length === 0 && assignments.length === 0 ? `<p class="muted small" style="margin-top:10px;">No one's assigned to this event yet — add the team first.</p>` : ""}
+          </div>
+          <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
+        </div>
+      </div>
+    `;
+    const close = () => (root.innerHTML = "");
+    root.querySelector("#closeModal").addEventListener("click", close);
+    root.querySelector("#cancelModal").addEventListener("click", close);
+    root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+
+    root.querySelectorAll("[data-add-leg-for]").forEach((btn) => {
+      btn.addEventListener("click", () => { addingFor = btn.dataset.addLegFor; renderModal(); });
+    });
+    root.querySelectorAll("[data-edit-leg]").forEach((btn) => {
+      btn.addEventListener("click", () => { editingLegId = btn.dataset.editLeg; renderModal(); });
+    });
+    root.querySelectorAll("[data-cancel-leg-form]").forEach((btn) => {
+      btn.addEventListener("click", () => { addingFor = null; editingLegId = null; renderModal(); });
+    });
+    root.querySelectorAll("[data-delete-leg]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this travel entry? Any attached tickets go with it.")) return;
+        await api(`/api/travel-legs/${btn.dataset.deleteLeg}`, { method: "DELETE" });
+        const idx = legs.findIndex((l) => l.id === btn.dataset.deleteLeg);
+        if (idx !== -1) legs.splice(idx, 1);
+        renderModal();
+      });
+    });
+    root.querySelectorAll("[data-save-leg]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const isNew = btn.dataset.isNew === "true";
+        const prefix = isNew ? "new" : "edit";
+        const payload = {
+          mode: root.querySelector(`#${prefix}Mode`).value || null,
+          fromCity: root.querySelector(`#${prefix}FromCity`).value.trim() || null,
+          toCity: root.querySelector(`#${prefix}ToCity`).value.trim() || null,
+          departureAt: root.querySelector(`#${prefix}Departure`).value || null,
+          arrivalAt: root.querySelector(`#${prefix}Arrival`).value || null,
+          bookingRef: root.querySelector(`#${prefix}BookingRef`).value.trim() || null,
+          status: root.querySelector(`#${prefix}Status`).value,
+          notes: root.querySelector(`#${prefix}Notes`).value.trim() || null,
+        };
+        btn.disabled = true;
+        try {
+          if (isNew) {
+            const created = await api(`/api/leads/${leadId}/travel-legs`, { method: "POST", body: JSON.stringify({ ...payload, teamId: btn.dataset.saveLeg }) });
+            const updated = await api(`/api/leads/${leadId}/travel-legs`);
+            legs.length = 0;
+            legs.push(...updated);
+            addingFor = null;
+          } else {
+            await api(`/api/travel-legs/${btn.dataset.saveLeg}`, { method: "PATCH", body: JSON.stringify(payload) });
+            const updated = await api(`/api/leads/${leadId}/travel-legs`);
+            legs.length = 0;
+            legs.push(...updated);
+            editingLegId = null;
+          }
+          renderModal();
+        } catch (err) {
+          alert(err.message);
+          btn.disabled = false;
+        }
+      });
+    });
+    root.querySelectorAll("[data-ticket-upload]").forEach((input) => {
+      input.addEventListener("change", async () => {
+        const file = input.files[0];
+        if (!file) return;
+        const legId = input.dataset.ticketUpload;
+        const statusEl = root.querySelector(`[data-ticket-status="${legId}"]`);
+        if (statusEl) statusEl.textContent = "Uploading…";
+        try {
+          const formData = new FormData();
+          formData.append("file", file);
+          const resp = await fetch(`/api/travel-legs/${legId}/tickets`, { method: "POST", body: formData });
+          if (!resp.ok) throw new Error("Upload failed");
+          const updated = await api(`/api/leads/${leadId}/travel-legs`);
+          legs.length = 0;
+          legs.push(...updated);
+          renderModal();
+        } catch (err) {
+          if (statusEl) statusEl.textContent = "Couldn't upload — try again.";
+        }
+      });
+    });
+    root.querySelectorAll("[data-delete-ticket]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await api(`/api/documents/${btn.dataset.deleteTicket}`, { method: "DELETE" });
+        const leg = legs.find((l) => l.id === btn.dataset.legId);
+        if (leg) leg.tickets = leg.tickets.filter((t) => t.id !== btn.dataset.deleteTicket);
+        renderModal();
+      });
+    });
+  }
+
+  renderModal();
+}
+
+// Read-only version for artists — shows everyone's travel for the event (not
+// just their own) so a group can spot they're on the same train/flight and
+// coordinate a shared cab, without any edit/delete controls.
+async function openTravelPlanViewModal(leadId, leadName) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `<div class="modal-overlay" id="overlay"><div class="modal-card"><p class="muted small" style="padding:20px;">Loading…</p></div></div>`;
+  let legs;
+  try {
+    legs = await api(`/api/leads/${leadId}/travel-legs`);
+  } catch (err) {
+    root.innerHTML = `<div class="modal-overlay" id="overlay"><div class="modal-card"><div class="modal-head"><h3>Travel plan</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div><p class="muted small" style="padding:0 20px 20px;">Couldn't load travel plan.</p></div></div>`;
+    root.querySelector("#closeModal").addEventListener("click", () => (root.innerHTML = ""));
+    root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") root.innerHTML = ""; });
+    return;
+  }
+
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card" style="width:560px; max-width:96vw;">
+        <div class="modal-head"><h3>Travel plan — ${leadName}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body">
+          ${legs.length === 0 ? `<p class="muted small">No travel added yet for this event.</p>` : legs.map((leg) => {
+            const isMine = CURRENT_USER?.teamId && leg.team_id === CURRENT_USER.teamId;
+            const statusColor = leg.status === "not_booked" ? "#B6752C" : "#5C8A6B";
+            const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
+            return `
+              <div class="card" style="margin-bottom:10px; ${isMine ? "border-color:#C1602B;" : ""}">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+                  <div>
+                    <div style="font-weight:600;">${leg.team_name}${isMine ? ` <span class="muted small" style="font-weight:400;">(You)</span>` : ""}</div>
+                    <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${route ? ` · ${route}` : ""}</div>
+                  </div>
+                  <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
+                </div>
+                ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small" style="margin-top:6px;">${leg.departure_at ? `Departs ${fmtDateTime(leg.departure_at)}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Arrives ${fmtDateTime(leg.arrival_at)}` : ""}</div>` : ""}
+                ${leg.booking_ref ? `<div class="muted small" style="margin-top:2px;">Ref: ${leg.booking_ref}</div>` : ""}
+                ${leg.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${leg.notes}</div>` : ""}
+                ${leg.tickets.length > 0 ? `
+                  <div style="margin-top:8px;">
+                    ${leg.tickets.map((t) => `<div class="doc-row" style="padding:6px 0;"><div class="doc-name"><a href="${t.url}" target="_blank">🎫 ${t.original_name}</a></div></div>`).join("")}
+                  </div>
+                ` : ""}
+              </div>
+            `;
+          }).join("")}
+        </div>
+        <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
+      </div>
+    </div>
+  `;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
 }
 
 // ---------- Accounts ----------
@@ -5820,6 +6090,7 @@ async function renderMyEvents(main) {
         ${e.status === "accepted" ? `
           <button class="btn-ghost full" data-request-cancel="${e.id}" style="margin-top:8px; color:#A64B3C;">Request to cancel</button>
         ` : ""}
+        <button class="btn-ghost full" data-view-travel="${e.lead_id}" data-view-travel-name="${e.lead_name}" style="margin-top:8px;">🧳 Travel plan</button>
         <button class="btn-ghost full" data-chat-lead="${e.lead_id}" data-chat-name="${e.lead_name}" style="margin-top:10px;">💬 Event chat</button>
         `}
       </div>
@@ -5874,6 +6145,9 @@ async function renderMyEvents(main) {
   });
   main.querySelectorAll("[data-chat-lead]").forEach((btn) => {
     btn.addEventListener("click", () => openEventChat(btn.dataset.chatLead, btn.dataset.chatName));
+  });
+  main.querySelectorAll("[data-view-travel]").forEach((btn) => {
+    btn.addEventListener("click", () => openTravelPlanViewModal(btn.dataset.viewTravel, btn.dataset.viewTravelName));
   });
 }
 
@@ -6049,6 +6323,7 @@ function renderPerformerTabContent() {
       ${e.status === "accepted" ? `
         <button class="btn-ghost full" data-request-cancel="${e.id}" style="margin-top:8px; color:#A64B3C;">Request to cancel</button>
       ` : ""}
+      <button class="btn-ghost full" data-view-travel="${e.lead_id}" data-view-travel-name="${e.lead_name}" style="margin-top:8px;">🧳 Travel plan</button>
       <button class="btn-ghost full" data-chat-lead="${e.lead_id}" data-chat-name="${e.lead_name}" style="margin-top:10px;">💬 Event chat</button>
       `}
     </div>

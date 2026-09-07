@@ -231,6 +231,31 @@ async function setup() {
   // and rate_note (free text for anything the checkboxes don't cover) stay
   // in place for older records and edge cases.
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS rate_inclusions TEXT`);
+
+  // ---------- Travel plan (per-artist, per-event) ----------
+  // One row per artist per outstation event: where they're travelling from,
+  // how, and whether it's booked — visible to every artist assigned to that
+  // event (not just the one it's for) so a group can coordinate a shared
+  // cab/train, and tickets attach here for quick access without digging
+  // through WhatsApp.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS travel_legs (
+      id TEXT PRIMARY KEY,
+      lead_id TEXT REFERENCES leads(id) ON DELETE CASCADE,
+      team_id TEXT REFERENCES team(id),
+      mode TEXT,
+      from_city TEXT,
+      to_city TEXT,
+      departure_at TEXT,
+      arrival_at TEXT,
+      booking_ref TEXT,
+      status TEXT NOT NULL DEFAULT 'not_booked',
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+  await pool.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS travel_leg_id TEXT REFERENCES travel_legs(id) ON DELETE CASCADE`);
   // Lets a sent quote be tracked through to accepted/rejected instead of
   // just "sent and forgotten" — shown as a status dropdown in Quote history.
   await pool.query(`ALTER TABLE quotes ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'sent'`);

@@ -1374,6 +1374,104 @@ app.patch("/api/assignments/:id/mark-response", requireAuth, requireCapability("
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
 });
 
+// ---------- Travel legs (per-artist travel plan for outstation events) ----------
+const TRAVEL_MODE_LABELS = { flight: "Flight", train: "Train", bus: "Bus", car: "Car", self: "Self-arranged" };
+const TRAVEL_STATUS_LABELS = { not_booked: "Not booked yet", booked: "Booked", self_arranged: "Self-arranged" };
+
+async function canViewTravelLegs(user, leadId) {
+  if (userHasSection(user, "assign_team") || user.access_level === "admin") return true;
+  if (!user.team_id) return false;
+  const a = (await pool.query("SELECT 1 FROM event_assignments WHERE lead_id = $1 AND team_id = $2", [leadId, user.team_id])).rows[0];
+  return !!a;
+}
+
+app.get("/api/leads/:id/travel-legs", requireAuth, async (req, res) => {
+  if (!(await canViewTravelLegs(req.user, req.params.id))) return res.status(403).json({ error: "Not available for this event" });
+  const { rows: legs } = await pool.query(`
+    SELECT travel_legs.*, team.name AS team_name
+    FROM travel_legs JOIN team ON team.id = travel_legs.team_id
+    WHERE lead_id = $1
+    ORDER BY travel_legs.created_at ASC
+  `, [req.params.id]);
+  const legIds = legs.map((l) => l.id);
+  const tickets = legIds.length > 0
+    ? (await pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents WHERE travel_leg_id = ANY($1) ORDER BY uploaded_at ASC`, [legIds])).rows
+    : [];
+  res.json(legs.map((leg) => ({
+    ...leg,
+    tickets: tickets.filter((t) => t.travel_leg_id === leg.id).map((t) => ({ ...t, url: `/api/documents/${t.id}/file` })),
+  })));
+});
+
+app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  if (!lead) return res.status(404).json({ error: "Event not found" });
+  const { teamId, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status, notes } = req.body;
+  if (!teamId) return res.status(400).json({ error: "teamId is required" });
+  const id = uuid();
+  const now = new Date().toISOString();
+  await pool.query(`
+    INSERT INTO travel_legs (id, lead_id, team_id, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+  `, [id, req.params.id, teamId, mode || null, fromCity || null, toCity || lead.city || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, now]);
+  const member = (await pool.query("SELECT name FROM team WHERE id = $1", [teamId])).rows[0];
+  res.status(201).json({ id });
+  if (member) {
+    logActivity(req, `Travel added for ${member.name}: ${lead.name} (${lead.date})`, lead.id);
+    await pool.query(`
+      INSERT INTO notifications (id, team_id, message, created_at)
+      VALUES ($1, $2, $3, $4)
+    `, [uuid(), teamId, `Your travel details for ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""} have been added — check My Events.`, now]).catch(() => {});
+  }
+});
+
+app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const leg = (await pool.query("SELECT * FROM travel_legs WHERE id = $1", [req.params.id])).rows[0];
+  if (!leg) return res.status(404).json({ error: "Travel leg not found" });
+  const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes"];
+  const keyFor = (f) => (f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f);
+  const updates = [];
+  const values = [];
+  fields.forEach((f) => {
+    const key = keyFor(f);
+    if (req.body[key] !== undefined) { values.push(req.body[key]); updates.push(`${f} = $${values.length}`); }
+  });
+  if (updates.length === 0) return res.status(400).json({ error: "Nothing to update" });
+  values.push(new Date().toISOString());
+  updates.push(`updated_at = $${values.length}`);
+  values.push(req.params.id);
+  await pool.query(`UPDATE travel_legs SET ${updates.join(", ")} WHERE id = $${values.length}`, values);
+  res.json((await pool.query("SELECT * FROM travel_legs WHERE id = $1", [req.params.id])).rows[0]);
+  if (req.body.status !== undefined && req.body.status !== leg.status) {
+    const lead = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [leg.lead_id])).rows[0];
+    const member = (await pool.query("SELECT name FROM team WHERE id = $1", [leg.team_id])).rows[0];
+    if (lead && member) {
+      await pool.query(`
+        INSERT INTO notifications (id, team_id, message, created_at)
+        VALUES ($1, $2, $3, $4)
+      `, [uuid(), leg.team_id, `Travel update for ${lead.name} on ${lead.date}: now "${TRAVEL_STATUS_LABELS[req.body.status] || req.body.status}".`, new Date().toISOString()]).catch(() => {});
+    }
+  }
+});
+
+app.delete("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  await pool.query("DELETE FROM travel_legs WHERE id = $1", [req.params.id]);
+  res.status(204).end();
+});
+
+app.post("/api/travel-legs/:id/tickets", requireAuth, requireCapability("assign_team"), upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+  const leg = (await pool.query("SELECT * FROM travel_legs WHERE id = $1", [req.params.id])).rows[0];
+  if (!leg) return res.status(404).json({ error: "Travel leg not found" });
+  const id = uuid();
+  await pool.query(`
+    INSERT INTO documents (id, lead_id, travel_leg_id, original_name, notes, uploaded_at, mime_type, file_data)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+  `, [id, leg.lead_id, leg.id, req.file.originalname, req.body.notes || null, new Date().toISOString(), req.file.mimetype, req.file.buffer]);
+  const doc = (await pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents WHERE id = $1`, [id])).rows[0];
+  res.status(201).json({ ...doc, url: `/api/documents/${doc.id}/file` });
+});
+
 // ---------- Temporary artists — one-off performers hired for a single event, not part of the permanent team ----------
 // Their fee (if given) lives as a row in the same `expenses` table used everywhere
 // else in Accounts, linked via temp_artists.expense_id — so it automatically counts
@@ -2174,7 +2272,7 @@ app.delete("/api/tasks/:id", requireAuth, async (req, res) => {
 // note above. List/attach queries deliberately exclude file_data so listing
 // documents doesn't ship megabytes of base64 on every page load; the actual
 // bytes are only read out in the dedicated /file route below.
-const DOC_LIST_COLUMNS = "id, lead_id, original_name, notes, uploaded_at";
+const DOC_LIST_COLUMNS = "id, lead_id, original_name, notes, uploaded_at, travel_leg_id";
 
 app.get("/api/documents", requireAuth, async (req, res) => {
   const { leadId } = req.query;
