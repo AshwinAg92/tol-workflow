@@ -391,6 +391,10 @@ async function setup() {
     );
   `);
   await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS expense_id TEXT REFERENCES expenses(id) ON DELETE SET NULL`);
+  // For "future requirements" — a persistent contact record, not just a
+  // per-event line item, so a temp artist hired once can be found and
+  // reached again later.
+  await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS base_city TEXT`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS activity_log (

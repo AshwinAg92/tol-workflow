@@ -2079,7 +2079,10 @@ async function renderTeam(main) {
   main.innerHTML = `
     <div class="view-head">
       <div><h2>Team</h2><p class="muted">Your band's musicians, crew, and staff.</p></div>
-      ${canManage ? `<button class="btn-primary" id="addMemberBtn">+ Add team member</button>` : ""}
+      <div style="display:flex; gap:8px;">
+        ${canManage ? `<button class="btn-ghost" id="tempArtistDirBtn">📇 Temporary artists</button>` : ""}
+        ${canManage ? `<button class="btn-primary" id="addMemberBtn">+ Add team member</button>` : ""}
+      </div>
     </div>
     ${isAdmin && LEADS.some((l) => l.is_seed) ? `
       <div class="card" style="margin-bottom:20px; border-color:#A64B3C;">
@@ -2213,6 +2216,13 @@ async function renderTeam(main) {
   }
   if (canManage) {
     main.querySelector("#addMemberBtn").addEventListener("click", () => openAddMemberModal());
+    const tempArtistDirBtn = main.querySelector("#tempArtistDirBtn");
+    if (tempArtistDirBtn) {
+      tempArtistDirBtn.addEventListener("click", async () => {
+        const directory = await api("/api/temp-artists").catch(() => []);
+        openTempArtistDirectoryModal(directory, null);
+      });
+    }
   }
 }
 
@@ -3025,16 +3035,66 @@ async function openLeadPaymentsModal(leadId) {
   }
 }
 
+// A browsable roster of every guest/temporary artist hired across all
+// events — for "have we used someone like this before, and how do we reach
+// them" when planning a new booking, separate from any single event's list.
+function openTempArtistDirectoryModal(directory, onBack) {
+  const root = document.getElementById("modalRoot");
+  let query = "";
+  function render() {
+    const q = query.trim().toLowerCase();
+    const filtered = !q ? directory : directory.filter((t) =>
+      t.name.toLowerCase().includes(q) || (t.phone || "").includes(q) || (t.baseCity || "").toLowerCase().includes(q) || (t.description || "").toLowerCase().includes(q)
+    );
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay">
+        <div class="modal-card" style="width:560px; max-width:96vw;">
+          <div class="modal-head"><h3>Temporary artists — all-time</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+          <div class="modal-body">
+            <input type="text" id="taDirSearch" placeholder="🔍 Search by name, phone, city…" value="${query}" style="margin-bottom:12px;" />
+            ${filtered.length === 0 ? `<p class="muted small">No matches.</p>` : filtered.map((t) => {
+              const waDigits = (t.phone || "").replace(/\D/g, "");
+              return `
+              <div class="card" style="margin-bottom:10px;">
+                <div style="font-weight:600;">${t.name}${t.description ? ` <span class="muted small" style="font-weight:400;">— ${t.description}</span>` : ""}</div>
+                <div class="muted small" style="margin-top:2px;">${t.phone || "No phone on file"}${t.baseCity ? ` · 📍 ${t.baseCity}` : ""}</div>
+                <div class="muted small" style="margin-top:4px;">Hired for: ${t.events.map((e) => `${e.leadName} (${fmtDate(e.date)}${e.city ? `, ${e.city}` : ""})`).join(", ")}</div>
+                ${waDigits ? `<a class="btn-ghost" href="https://wa.me/${waDigits}" style="display:inline-block; margin-top:6px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>` : ""}
+              </div>
+            `;
+            }).join("")}
+          </div>
+          <div class="modal-foot">
+            ${onBack ? `<button class="btn-ghost" id="backToEventBtn">‹ Back to event</button>` : ""}
+            <button class="btn-ghost" id="cancelModal">Close</button>
+          </div>
+        </div>
+      </div>
+    `;
+    const close = () => (root.innerHTML = "");
+    root.querySelector("#closeModal").addEventListener("click", close);
+    root.querySelector("#cancelModal").addEventListener("click", close);
+    root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+    const backBtn = root.querySelector("#backToEventBtn");
+    if (backBtn) backBtn.addEventListener("click", onBack);
+    root.querySelector("#taDirSearch").addEventListener("input", (e) => { query = e.target.value; render(); });
+    root.querySelector("#taDirSearch").focus();
+    root.querySelector("#taDirSearch").selectionStart = root.querySelector("#taDirSearch").value.length;
+  }
+  render();
+}
+
 async function openAssignTeamModal(leadId) {
   const lead = LEADS.find((l) => l.id === leadId);
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
-  const [assignments, tempArtists, leadExpenses, myReimbursements, allDocuments, myOwnFee] = await Promise.all([
+  const [assignments, tempArtists, leadExpenses, myReimbursements, allDocuments, myOwnFee, tempArtistDirectory] = await Promise.all([
     api(`/api/leads/${leadId}/assignments`),
     api(`/api/leads/${leadId}/temp-artists`),
     isAdmin ? api(`/api/expenses?leadId=${leadId}`) : Promise.resolve([]),
     api(`/api/my/reimbursements`).catch(() => []),
     api(`/api/documents`).catch(() => []),
     !isAdmin ? api(`/api/my/artist-fee?leadId=${leadId}`).catch(() => null) : Promise.resolve(null),
+    api(`/api/temp-artists`).catch(() => []),
   ]);
   const leadDocuments = allDocuments.filter((d) => d.lead_id === leadId);
   const generalDocuments = allDocuments.filter((d) => !d.lead_id);
@@ -3123,13 +3183,13 @@ async function openAssignTeamModal(leadId) {
               <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
                 <div>
                   <div>${t.name}${t.description ? ` <span class="muted small">— ${t.description}</span>` : ""}</div>
-                  <div class="muted small">${t.phone ? `${t.phone}` : ""}${isAdmin ? `${t.phone ? " · " : ""}${t.fee_amount != null ? `Fee ${inr(t.fee_amount)}${t.fee_paid ? " · Paid" : " · Pending"}` : "No fee recorded"}` : ""}</div>
+                  <div class="muted small">${t.phone ? `${t.phone}` : ""}${t.base_city ? `${t.phone ? " · " : ""}📍 ${t.base_city}` : ""}${isAdmin ? `${(t.phone || t.base_city) ? " · " : ""}${t.fee_amount != null ? `Fee ${inr(t.fee_amount)}${t.fee_paid ? " · Paid" : " · Pending"}` : "No fee recorded"}` : ""}</div>
                   ${waDigits ? `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>` : ""}
                   ${isAdmin ? `
                     <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
                       <input type="number" class="ta-fee-input" data-ta-id="${t.id}" placeholder="Fee ₹" value="${t.fee_amount != null ? t.fee_amount : ""}" style="width:100px; font-size:12.5px; padding:4px 6px;" />
                       <button class="btn-ghost ta-save-fee-btn" data-ta-id="${t.id}" style="font-size:12px; padding:4px 8px;">Save fee</button>
-                      <button class="btn-ghost ta-edit-details-btn" data-ta-id="${t.id}" data-name="${(t.name || "").replace(/"/g, "&quot;")}" data-phone="${(t.phone || "").replace(/"/g, "&quot;")}" data-description="${(t.description || "").replace(/"/g, "&quot;")}" style="font-size:12px; padding:4px 8px;">✎ Edit details</button>
+                      <button class="btn-ghost ta-edit-details-btn" data-ta-id="${t.id}" data-name="${(t.name || "").replace(/"/g, "&quot;")}" data-phone="${(t.phone || "").replace(/"/g, "&quot;")}" data-description="${(t.description || "").replace(/"/g, "&quot;")}" data-base-city="${(t.base_city || "").replace(/"/g, "&quot;")}" style="font-size:12px; padding:4px 8px;">✎ Edit details</button>
                     </div>
                   ` : ""}
                 </div>
@@ -3139,15 +3199,20 @@ async function openAssignTeamModal(leadId) {
             }).join("")}
           </div>
           <div class="row-2" style="margin-top:8px;">
-            <input id="taName" placeholder="Name" />
+            <input id="taName" placeholder="Name" list="tempArtistDirectoryList" />
             <input id="taPhone" placeholder="Phone" />
           </div>
+          <datalist id="tempArtistDirectoryList">
+            ${tempArtistDirectory.map((t) => `<option value="${t.name}"></option>`).join("")}
+          </datalist>
           <div class="row-2" style="margin-top:8px;">
             <input id="taDescription" placeholder="Description (e.g. session tabla player)" />
-            ${isAdmin ? `<input id="taFee" type="number" placeholder="Fee ₹ (optional)" />` : ""}
+            <input id="taBaseCity" placeholder="Base city" />
           </div>
+          ${isAdmin ? `<input id="taFee" type="number" placeholder="Fee ₹ (optional)" style="margin-top:8px;" />` : ""}
           <button class="btn-ghost full" id="addTempArtistBtn" style="margin-top:8px;">+ Add temporary artist</button>
           <p class="muted small" style="margin-top:4px;">Tip: hitting the overall Save button below also adds this if you've filled it in.${isAdmin ? " Any fee entered here counts toward this event's expenses/profit automatically — no need to add it again under Accounts." : ""}</p>
+          ${tempArtistDirectory.length > 0 ? `<button class="btn-ghost full" id="viewTempArtistDirectoryBtn" style="margin-top:6px;">📇 View all past temporary artists (${tempArtistDirectory.length})</button>` : ""}
 
           <div class="section-label" style="margin-top:16px;">Artist reimbursements</div>
           ${leadReimbursements.length > 0 ? `
@@ -3375,10 +3440,12 @@ async function openAssignTeamModal(leadId) {
       if (newPhone === null) return;
       const newDescription = prompt("Description:", btn.dataset.description || "");
       if (newDescription === null) return;
+      const newBaseCity = prompt("Base city:", btn.dataset.baseCity || "");
+      if (newBaseCity === null) return;
       try {
         await api(`/api/temp-artists/${btn.dataset.taId}`, {
           method: "PATCH",
-          body: JSON.stringify({ name: newName.trim(), phone: newPhone.trim(), description: newDescription.trim() }),
+          body: JSON.stringify({ name: newName.trim(), phone: newPhone.trim(), description: newDescription.trim(), baseCity: newBaseCity.trim() }),
         });
         openAssignTeamModal(leadId);
       } catch (err) {
@@ -3405,6 +3472,7 @@ async function openAssignTeamModal(leadId) {
           name,
           phone: root.querySelector("#taPhone").value.trim(),
           description: root.querySelector("#taDescription").value.trim(),
+          baseCity: root.querySelector("#taBaseCity").value.trim(),
           feeAmount: feeInput ? (feeInput.value.trim() || null) : null,
         }),
       });
@@ -3426,6 +3494,18 @@ async function openAssignTeamModal(leadId) {
       btn.disabled = false;
     }
   });
+  // Picking a name already in the directory (via the datalist) fills in
+  // their known phone/city/description automatically — no need to retype
+  // details for someone hired before.
+  root.querySelector("#taName").addEventListener("change", (e) => {
+    const match = tempArtistDirectory.find((t) => t.name.toLowerCase() === e.target.value.trim().toLowerCase());
+    if (!match) return;
+    if (match.phone) root.querySelector("#taPhone").value = match.phone;
+    if (match.baseCity) root.querySelector("#taBaseCity").value = match.baseCity;
+    if (match.description) root.querySelector("#taDescription").value = match.description;
+  });
+  const viewDirectoryBtn = root.querySelector("#viewTempArtistDirectoryBtn");
+  if (viewDirectoryBtn) viewDirectoryBtn.addEventListener("click", () => openTempArtistDirectoryModal(tempArtistDirectory, () => openAssignTeamModal(leadId)));
 
   root.querySelector("#submitModal").addEventListener("click", async (e) => {
     const btn = e.currentTarget;

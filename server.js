@@ -1522,7 +1522,7 @@ app.get("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_te
 app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
-  const { name, description, phone, feeAmount } = req.body;
+  const { name, description, phone, baseCity, feeAmount } = req.body;
   if (!name) return res.status(400).json({ error: "Name is required" });
   const isAdmin = req.user.access_level === "admin";
   if (!isAdmin && feeAmount !== undefined && feeAmount !== null && feeAmount !== "") {
@@ -1540,9 +1540,9 @@ app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_t
     `, [expenseId, req.params.id, `Artist fee — ${name} (guest artist)`, Number(feeAmount), now]);
   }
   await pool.query(`
-    INSERT INTO temp_artists (id, lead_id, name, description, phone, expense_id, created_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
-  `, [id, req.params.id, name, description || null, phone || null, expenseId, now]);
+    INSERT INTO temp_artists (id, lead_id, name, description, phone, base_city, expense_id, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+  `, [id, req.params.id, name, description || null, phone || null, baseCity || null, expenseId, now]);
   const { rows } = await pool.query(`
     SELECT temp_artists.*, expenses.amount AS fee_amount, expenses.paid AS fee_paid,
       expenses.payment_date AS fee_payment_date, expenses.payment_mode AS fee_payment_mode
@@ -1558,7 +1558,7 @@ app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_t
 app.patch("/api/temp-artists/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const artist = (await pool.query("SELECT * FROM temp_artists WHERE id = $1", [req.params.id])).rows[0];
   if (!artist) return res.status(404).json({ error: "Not found" });
-  const { feeAmount, name, phone, description } = req.body;
+  const { feeAmount, name, phone, description, baseCity } = req.body;
   const isAdmin = req.user.access_level === "admin";
   if (feeAmount !== undefined) {
     if (!isAdmin) return res.status(403).json({ error: "Only an admin can set or change artist fees" });
@@ -1583,10 +1583,10 @@ app.patch("/api/temp-artists/:id", requireAuth, requireCapability("assign_team")
       await pool.query("UPDATE temp_artists SET expense_id = $1 WHERE id = $2", [expenseId, artist.id]);
     }
   }
-  if (name !== undefined || phone !== undefined || description !== undefined) {
+  if (name !== undefined || phone !== undefined || description !== undefined || baseCity !== undefined) {
     await pool.query(`
-      UPDATE temp_artists SET name = COALESCE($1, name), phone = COALESCE($2, phone), description = COALESCE($3, description) WHERE id = $4
-    `, [name ?? null, phone ?? null, description ?? null, artist.id]);
+      UPDATE temp_artists SET name = COALESCE($1, name), phone = COALESCE($2, phone), description = COALESCE($3, description), base_city = COALESCE($4, base_city) WHERE id = $5
+    `, [name ?? null, phone ?? null, description ?? null, baseCity ?? null, artist.id]);
   }
   const { rows } = await pool.query(`
     SELECT temp_artists.*, expenses.amount AS fee_amount, expenses.paid AS fee_paid,
@@ -1601,6 +1601,36 @@ app.delete("/api/temp-artists/:id", requireAuth, requireCapability("assign_team"
   if (artist?.expense_id) await pool.query("DELETE FROM expenses WHERE id = $1", [artist.expense_id]);
   await pool.query("DELETE FROM temp_artists WHERE id = $1", [req.params.id]);
   res.status(204).end();
+});
+
+// A running roster of every one-off/guest artist ever hired, across all
+// events — separate from the per-event list above, this is the "who have
+// we used before, and how do we reach them" reference for future bookings.
+// Grouped by phone (or name, if no phone) so the same person hired for
+// several events shows up once with their most recent details and full history.
+app.get("/api/temp-artists", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const { rows } = await pool.query(`
+    SELECT temp_artists.*, leads.name AS lead_name, leads.date AS lead_date, leads.city AS lead_city
+    FROM temp_artists
+    JOIN leads ON leads.id = temp_artists.lead_id
+    ORDER BY temp_artists.created_at DESC
+  `);
+  const groups = new Map();
+  for (const row of rows) {
+    const key = (row.phone && row.phone.trim()) ? `phone:${row.phone.trim()}` : `name:${row.name.trim().toLowerCase()}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        name: row.name, phone: row.phone, baseCity: row.base_city, description: row.description,
+        events: [],
+      });
+    }
+    const g = groups.get(key);
+    // Most recent non-empty details win, since that's most likely to be current.
+    if (row.base_city) g.baseCity = row.base_city;
+    if (row.description) g.description = row.description;
+    g.events.push({ leadName: row.lead_name, date: row.lead_date, city: row.lead_city });
+  }
+  res.json(Array.from(groups.values()).sort((a, b) => (b.events[0]?.date || "").localeCompare(a.events[0]?.date || "")));
 });
 
 // ---------- Performer/photographer view — deliberately narrow: only their own events ----------
