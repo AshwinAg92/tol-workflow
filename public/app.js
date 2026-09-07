@@ -75,6 +75,16 @@ function rateInclusionsSummaryText(lead) {
   if (lead.rate_type) return lead.rate_type === "inclusive" ? "Inclusive of travel & accommodation (all-in lump sum)" : "+ travel & accommodation billed separately";
   return null;
 }
+// What's left for the CLIENT to arrange, for the confirmation message —
+// the inverse of what we've included in the quoted rate. Venue technical
+// requirements (power, stage, mic points) are always the client's to sort,
+// regardless of the travel/stay/food inclusions.
+function clientArrangementsPhrase(lead) {
+  const included = parseRateInclusions(lead.rate_inclusions);
+  const mapping = [["travel", "travel"], ["hotel", "accommodation"], ["food", "meals"], ["local_transfers", "local transfers"]];
+  const remaining = mapping.filter(([id]) => !included.includes(id)).map(([, label]) => label);
+  return remaining.length === 0 ? "the venue technical requirements" : `the ${remaining.join(", ")}, and venue technical requirements`;
+}
 
 const NAV = [
   { id: "dashboard", label: "Dashboard" },
@@ -4553,6 +4563,7 @@ async function openConfirmationMessageModal(lead) {
     performanceFee: finalAmount ? Number(finalAmount).toLocaleString("en-IN") : "",
     advance: Number(received || 0).toLocaleString("en-IN"),
     outstanding: finalAmount ? Number(outstanding).toLocaleString("en-IN") : "",
+    clientArrangements: clientArrangementsPhrase(lead),
   });
   // The Confirmed template is shared across every package (unlike the quote
   // wording, which is per-package) -- so Pheras' "no fixed duration" is
@@ -4899,9 +4910,9 @@ const TEMPLATE_META = {
   },
   confirmed: {
     label: "Confirmed client message",
-    description: "Starting text shown when you confirm an event — you can still tweak it per-send before it goes out. Location, Set, Duration, Fee, Advance, and Outstanding are pulled automatically from the lead.",
-    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "amountLine", "location", "occasion", "pieces", "duration", "performanceFee", "advance", "outstanding"],
-    default: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe are pleased to confirm our booking for: {clientName}\nLocation: {location}\nDate: {date}\nOccasion: {occasion}\nSet: {pieces} Pieces\nDuration: {duration}\nPerformance Fee: ₹{performanceFee}/-\nAdvance: ₹{advance}/-\nOutstanding: ₹{outstanding}\n\nAs discussed, we request your support in arranging the travel, accommodation, meals, local transfers, and venue technical requirements.\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud",
+    description: "Starting text shown when you confirm an event — you can still tweak it per-send before it goes out. Location, Set, Duration, Fee, Advance, Outstanding, and what the client needs to arrange are pulled automatically from the lead.",
+    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "amountLine", "location", "occasion", "pieces", "duration", "performanceFee", "advance", "outstanding", "clientArrangements"],
+    default: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe are pleased to confirm our booking for: {clientName}\nLocation: {location}\nDate: {date}\nOccasion: {occasion}\nSet: {pieces} Pieces\nDuration: {duration}\nPerformance Fee: ₹{performanceFee}/-\nAdvance: ₹{advance}/-\nOutstanding: ₹{outstanding}\n\nAs discussed, we request your support in arranging {clientArrangements}.\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud",
   },
   document_share: {
     label: "Document share message",
