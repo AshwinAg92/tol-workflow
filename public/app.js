@@ -3510,7 +3510,7 @@ async function openTravelPlanModal(leadId) {
           </div>
           <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
         </div>
-        ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small" style="margin-top:6px;">${leg.departure_at ? `Departs ${fmtDateTime(leg.departure_at)}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Arrives ${fmtDateTime(leg.arrival_at)}` : ""}</div>` : ""}
+        ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small" style="margin-top:6px;">${leg.departure_at ? `Departs ${fmtDateTime(leg.departure_at)}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Returns ${fmtDateTime(leg.arrival_at)}` : ""}</div>` : ""}
         ${leg.booking_ref ? `<div class="muted small" style="margin-top:2px;">Ref: ${leg.booking_ref}</div>` : ""}
         ${leg.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${leg.notes}</div>` : ""}
         ${leg.tickets.length > 0 ? `
@@ -3564,7 +3564,7 @@ async function openTravelPlanModal(leadId) {
         </div>
         <div class="row-2">
           <div><label>Departure</label><input id="${prefix}Departure" type="datetime-local" value="${leg?.departure_at ? leg.departure_at.slice(0, 16) : ""}" /></div>
-          <div><label>Arrival</label><input id="${prefix}Arrival" type="datetime-local" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 16) : ""}" /></div>
+          <div><label>Return</label><input id="${prefix}Arrival" type="datetime-local" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 16) : ""}" /></div>
         </div>
         <label>Booking ref / PNR (optional)</label>
         <input id="${prefix}BookingRef" value="${leg?.booking_ref || ""}" placeholder="e.g. PNR or booking number" />
@@ -3723,7 +3723,7 @@ async function openTravelPlanViewModal(leadId, leadName) {
                   </div>
                   <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
                 </div>
-                ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small" style="margin-top:6px;">${leg.departure_at ? `Departs ${fmtDateTime(leg.departure_at)}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Arrives ${fmtDateTime(leg.arrival_at)}` : ""}</div>` : ""}
+                ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small" style="margin-top:6px;">${leg.departure_at ? `Departs ${fmtDateTime(leg.departure_at)}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Returns ${fmtDateTime(leg.arrival_at)}` : ""}</div>` : ""}
                 ${leg.booking_ref ? `<div class="muted small" style="margin-top:2px;">Ref: ${leg.booking_ref}</div>` : ""}
                 ${leg.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${leg.notes}</div>` : ""}
                 ${leg.tickets.length > 0 ? `
