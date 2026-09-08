@@ -175,7 +175,7 @@ app.use("/api", (req, res, next) => {
 // app.js and index.html change on every deploy but have no cache-busting
 // filename (no hash in the URL), so browsers were caching stale copies for
 // days — this forces a fresh fetch every time, ending that recurring issue.
-app.use(["/app.js", "/index.html", "/home.html"], (req, res, next) => {
+app.use(["/app.js", "/index.html", "/home.html", "/styles.css"], (req, res, next) => {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   next();
 });
