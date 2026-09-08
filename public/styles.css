@@ -258,7 +258,12 @@ select.stage-select { width:auto; padding:4px 6px; font-size:12px; border-radius
     display:block; position:fixed; inset:0; background:rgba(20,17,10,0.4); z-index:40;
   }
   .main { padding:18px 14px; }
-  .dash-stats { grid-template-columns:1fr; }
+  .card { padding:14px; }
+  .dash-stats { grid-template-columns:repeat(2, 1fr); gap:8px; }
+  .dash-stat { padding:12px !important; }
+  .dash-stat .muted { font-size:11px; }
+  .dash-stat .big { font-size:20px; }
+  .dash-stats > *:last-child:nth-child(odd) { grid-column:1 / -1; }
   .dash-grid { grid-template-columns:1fr; }
   .quote-grid { grid-template-columns:1fr; }
   .leads-table-row { grid-template-columns:1.6fr 1fr 0.9fr 1fr 0.7fr; }
