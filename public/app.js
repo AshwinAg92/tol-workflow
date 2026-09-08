@@ -3252,7 +3252,7 @@ async function openAssignTeamModal(leadId) {
               <div class="card" style="margin-bottom:10px; padding:12px 14px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
                   <label style="display:flex; align-items:center; gap:10px; flex:1; min-width:0; cursor:pointer;">
-                    <input type="checkbox" data-team-id="${m.id}" ${a ? "checked" : ""} style="flex-shrink:0;" />
+                    <input type="checkbox" class="assign-team-checkbox" data-team-id="${m.id}" ${a ? "checked" : ""} style="flex-shrink:0;" />
                     <span style="min-width:0;">
                       <div style="font-weight:600;">${m.name}</div>
                       <div class="muted small">${m.role || ""}${m.base_city ? ` · 📍 ${m.base_city}` : ""}</div>
@@ -3666,9 +3666,9 @@ async function openAssignTeamModal(leadId) {
   // to discover it on the event day.
   if (lead.pcs && Number(lead.pcs) > 0) {
     const maxArtists = Number(lead.pcs) + 1;
-    root.querySelectorAll('input[type="checkbox"][data-team-id]').forEach((cb) => {
+    root.querySelectorAll('input.assign-team-checkbox[data-team-id]').forEach((cb) => {
       cb.addEventListener("change", () => {
-        const totalSelected = root.querySelectorAll('input[type="checkbox"][data-team-id]:checked').length + tempArtists.length;
+        const totalSelected = root.querySelectorAll('input.assign-team-checkbox[data-team-id]:checked').length + tempArtists.length;
         if (cb.checked && totalSelected > maxArtists) {
           cb.checked = false;
           alert(`This is a ${lead.pcs}-piece band — you've already got ${maxArtists} people lined up (band + 1 for a manager/coordinator). Uncheck someone else first, or update the band size via Edit if it's actually changed.`);
@@ -3681,8 +3681,8 @@ async function openAssignTeamModal(leadId) {
     const btn = e.currentTarget;
     if (btn.disabled) return;
     btn.disabled = true;
-    const checked = [...root.querySelectorAll('input[type="checkbox"][data-team-id]:checked')].map((c) => c.dataset.teamId);
-    const unchecked = [...root.querySelectorAll('input[type="checkbox"][data-team-id]:not(:checked)')].map((c) => c.dataset.teamId);
+    const checked = [...root.querySelectorAll('input.assign-team-checkbox[data-team-id]:checked')].map((c) => c.dataset.teamId);
+    const unchecked = [...root.querySelectorAll('input.assign-team-checkbox[data-team-id]:not(:checked)')].map((c) => c.dataset.teamId);
     try {
       if (!(await submitPendingTempArtist())) { btn.disabled = false; return; }
       const newlyChecked = checked.filter((id) => !byTeamId[id]);
