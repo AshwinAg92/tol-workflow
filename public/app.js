@@ -3216,6 +3216,9 @@ async function openAssignTeamModal(leadId) {
   if (!isAdmin && myOwnFee && CURRENT_USER?.teamId) {
     feeExpenseByTeamId[CURRENT_USER.teamId] = myOwnFee;
   }
+  // Anything logged against this event that isn't an artist fee — travel,
+  // venue rental, decor, etc. — shown as its own list in the modal.
+  const otherExpenses = leadExpenses.filter((e) => !e.team_id);
 
   const statusLabel = { pending: "Pending response", accepted: "Accepted", declined: "Declined" };
   const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C" };
@@ -3246,36 +3249,61 @@ async function openAssignTeamModal(leadId) {
               ? `Hi ${m.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.venue ? ` at ${lead.venue}` : lead.city ? ` in ${lead.city}` : ""}.${lead.event_time ? ` Event time: ${lead.event_time}.` : ""}${lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : ""}${lead.pcs ? ` Band size for this event: ${lead.pcs} pcs.` : ""} Let us know if you have any questions!`
               : `Hi ${m.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.city ? ` in ${lead.city}` : ""}. Let us know if you have any questions!`;
             return `
-              <div class="check-row" style="align-items:flex-start; justify-content:space-between; gap:8px;">
-                <label style="display:flex; align-items:flex-start; gap:8px; flex:1; cursor:pointer;">
-                  <input type="checkbox" data-team-id="${m.id}" ${a ? "checked" : ""} />
-                  <span style="flex:1;">
-                    <div>${m.name} <span class="muted small">— ${m.role || ""}${m.base_city ? ` · 📍 ${m.base_city}` : ""}</span></div>
-                    ${a ? `
-                      <select class="mark-response-select" data-assignment-id="${a.id}" style="margin-top:2px; font-size:12.5px; padding:2px 6px; color:${statusColor[a.status]};">
-                        <option value="pending" ${a.status === "pending" ? "selected" : ""}>Pending response</option>
-                        <option value="accepted" ${a.status === "accepted" ? "selected" : ""}>Accepted</option>
-                        <option value="declined" ${a.status === "declined" ? "selected" : ""}>Declined</option>
-                      </select>
-                    ` : ""}
-                    ${a && waDigits ? (isManager ? `
-                      <label style="display:flex; align-items:center; gap:6px; margin-top:4px; font-size:12px; cursor:pointer;">
+              <div class="card" style="margin-bottom:10px; padding:12px 14px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                  <label style="display:flex; align-items:center; gap:10px; flex:1; min-width:0; cursor:pointer;">
+                    <input type="checkbox" data-team-id="${m.id}" ${a ? "checked" : ""} style="flex-shrink:0;" />
+                    <span style="min-width:0;">
+                      <div style="font-weight:600;">${m.name}</div>
+                      <div class="muted small">${m.role || ""}${m.base_city ? ` · 📍 ${m.base_city}` : ""}</div>
+                    </span>
+                  </label>
+                  ${isAdmin
+                    ? `<input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : ""}" style="width:100px; flex-shrink:0;" />`
+                    : (CURRENT_USER?.teamId === m.id && existingFee ? `<span class="muted small" style="flex-shrink:0; white-space:nowrap;">Your fee: ${inr(existingFee.amount)}</span>` : "")}
+                </div>
+                ${a ? `
+                  <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; padding-top:10px; border-top:1px solid #EFE9DC;">
+                    <select class="mark-response-select" data-assignment-id="${a.id}" style="font-size:12.5px; padding:4px 8px; color:${statusColor[a.status]};">
+                      <option value="pending" ${a.status === "pending" ? "selected" : ""}>Pending response</option>
+                      <option value="accepted" ${a.status === "accepted" ? "selected" : ""}>Accepted</option>
+                      <option value="declined" ${a.status === "declined" ? "selected" : ""}>Declined</option>
+                    </select>
+                    ${waDigits ? (isManager ? `
+                      <label style="display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer;">
                         <input type="checkbox" class="include-client-contact-checkbox" data-team-id="${m.id}" />
-                        Include client contact (name &amp; number)
+                        Include client contact
                       </label>
-                      <button class="btn-ghost manager-wa-btn" data-team-id="${m.id}" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</button>
-                    ` : `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>`) : ""}
-                  </span>
-                </label>
-                ${isAdmin
-                  ? `<input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : ""}" style="width:100px; flex-shrink:0;" />`
-                  : (CURRENT_USER?.teamId === m.id && existingFee ? `<span class="muted small" style="flex-shrink:0; white-space:nowrap;">Your fee: ${inr(existingFee.amount)}</span>` : "")}
+                      <button class="btn-ghost manager-wa-btn" data-team-id="${m.id}" style="font-size:12px; padding:4px 9px;">💬 WhatsApp</button>
+                    ` : `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" style="font-size:12px; padding:4px 9px;">💬 WhatsApp</a>`) : ""}
+                  </div>
+                ` : ""}
               </div>
             `;
           }).join("")}
           <p class="muted small" style="margin-top:4px;">Not every artist uses their own login — use the status dropdown to record their response yourself.</p>
           ${isAdmin ? `<p class="muted small" style="margin-top:2px;">Enter a fee next to any artist above and it's saved as an expense against this event — no need to add it separately in Accounts.</p>` : ""}
           <button class="btn-ghost full" id="addMemberInlineBtn" style="margin-top:10px;">+ Add new member</button>
+
+          ${isAdmin ? `
+            <div class="section-label" style="margin-top:20px;">Other event expenses (travel, venue, decor, etc.)</div>
+            <div id="otherExpensesList">
+              ${otherExpenses.length === 0 ? `<p class="muted small">None added yet.</p>` : otherExpenses.map((e) => `
+                <div class="card" style="margin-bottom:8px; padding:10px 14px; display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                  <div style="min-width:0;">
+                    <div style="font-weight:600;">${e.head}</div>
+                    <div class="muted small">${inr(e.amount)}${e.paid ? " · Paid" : " · Pending"}</div>
+                  </div>
+                  <button class="btn-ghost remove-other-expense-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 9px; flex-shrink:0; color:#A64B3C;">🗑</button>
+                </div>
+              `).join("")}
+            </div>
+            <div class="row-2" style="margin-top:8px;">
+              <input id="otherExpenseHead" placeholder="e.g. Travel, Venue rental, Decor" />
+              <input id="otherExpenseAmount" type="number" placeholder="Amount ₹" />
+            </div>
+            <button class="btn-ghost full" id="addOtherExpenseBtn" style="margin-top:8px;">+ Add expense</button>
+          ` : ""}
 
           <div class="section-label" style="margin-top:16px;">Temporary artists (one-off, this event only)</div>
           <div id="tempArtistList">
@@ -3414,6 +3442,29 @@ async function openAssignTeamModal(leadId) {
   root.querySelector("#openTravelPlanFromTeamBtn").addEventListener("click", () => openTravelPlanModal(leadId));
   root.querySelector("#addMemberInlineBtn").addEventListener("click", () => {
     openAddMemberModal(() => openAssignTeamModal(leadId));
+  });
+  const addOtherExpenseBtn = root.querySelector("#addOtherExpenseBtn");
+  if (addOtherExpenseBtn) {
+    addOtherExpenseBtn.addEventListener("click", async () => {
+      const head = root.querySelector("#otherExpenseHead").value.trim();
+      const amount = root.querySelector("#otherExpenseAmount").value.trim();
+      if (!head || !amount) return alert("Enter both a description and an amount.");
+      addOtherExpenseBtn.disabled = true;
+      try {
+        await api("/api/expenses", { method: "POST", body: JSON.stringify({ leadId, head, amount, paid: false }) });
+        openAssignTeamModal(leadId);
+      } catch (err) {
+        alert(err.message);
+        addOtherExpenseBtn.disabled = false;
+      }
+    });
+  }
+  root.querySelectorAll(".remove-other-expense-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Remove this expense?")) return;
+      await api(`/api/expenses/${btn.dataset.expenseId}`, { method: "DELETE" });
+      openAssignTeamModal(leadId);
+    });
   });
   root.querySelector("#reimbTeamId").addEventListener("change", (e) => {
     root.querySelector("#reimbArtistName").style.display = e.target.value === "__other__" ? "block" : "none";
