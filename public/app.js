@@ -215,6 +215,47 @@ function daysSince(isoString) {
   return Math.floor((Date.now() - new Date(isoString).getTime()) / 86400000);
 }
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+
+// A single "Contact" tap opens a small menu of Call / Text / WhatsApp,
+// instead of only offering a phone call.
+function openContactMenu(anchorEl, phone) {
+  const existing = document.getElementById("contactMenuPopover");
+  if (existing) existing.remove();
+  if (!phone) return;
+  const cleanPhone = phone.replace(/\s+/g, "");
+  const waDigits = phone.replace(/\D/g, "");
+
+  const menu = document.createElement("div");
+  menu.id = "contactMenuPopover";
+  menu.style.cssText = "position:fixed; z-index:2000; background:#fff; border:1px solid #DDD5C4; border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,0.15); overflow:hidden; min-width:150px;";
+  menu.innerHTML = `
+    <a href="tel:${cleanPhone}" style="display:block; padding:10px 14px; color:#2A2620; text-decoration:none; font-size:14px;">📞 Call</a>
+    <a href="sms:${cleanPhone}" style="display:block; padding:10px 14px; color:#2A2620; text-decoration:none; font-size:14px; border-top:1px solid #EFE9DC;">💬 Text</a>
+    <a href="https://wa.me/${waDigits}" style="display:block; padding:10px 14px; color:#2A2620; text-decoration:none; font-size:14px; border-top:1px solid #EFE9DC;">🟢 WhatsApp</a>
+  `;
+  document.body.appendChild(menu);
+
+  const rect = anchorEl.getBoundingClientRect();
+  const menuHeight = menu.offsetHeight;
+  const spaceBelow = window.innerHeight - rect.bottom;
+  menu.style.left = `${Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8)}px`;
+  if (spaceBelow < menuHeight + 8) menu.style.top = `${rect.top - menuHeight - 4}px`;
+  else menu.style.top = `${rect.bottom + 4}px`;
+
+  // Same-tab navigation on the WhatsApp link — window.open(..., "_blank")
+  // leaves a blank Safari tab behind on iOS once the WhatsApp app takes over.
+  menu.querySelectorAll("a").forEach((a) => {
+    a.addEventListener("click", () => setTimeout(() => menu.remove(), 50));
+  });
+  setTimeout(() => {
+    document.addEventListener("click", function closeMenu(e) {
+      if (!menu.contains(e.target) && e.target !== anchorEl) {
+        menu.remove();
+        document.removeEventListener("click", closeMenu);
+      }
+    });
+  }, 0);
+}
 const fmtTime = (d) => d ? new Date(d).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—";
 // Formats a plain "HH:MM" string (from an <input type="time">, not a full date) into 12-hour display.
 const fmtTimeHM = (hm) => {
@@ -1327,7 +1368,7 @@ async function renderLeadsLog(main, skipRefresh) {
             <button class="btn-ghost lead-detail-btn" data-lead-id="${l.id}">📋 Details</button>
             ${l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
             ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative" || l.stage === "Not Interested") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
-            ${l.phone ? `<a class="btn-ghost" href="tel:${l.phone.replace(/\s+/g, "")}" style="display:inline-block;">📞 Call</a>` : ""}
+            ${l.phone ? `<button class="btn-ghost contact-lead-btn" data-phone="${l.phone}">📞 Contact</button>` : ""}
             ${isConfirmedOrDone && hasAccountsAccess() ? `<button class="btn-ghost payments-btn" data-lead-id="${l.id}">💰 Payments</button>` : ""}
             ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost confirmation-msg-btn" data-lead-id="${l.id}">✅ Confirmation msg</button>` : ""}
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team</button>` : ""}
@@ -1365,6 +1406,13 @@ async function renderLeadsLog(main, skipRefresh) {
     btn.addEventListener("click", () => {
       const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
       if (lead) openLeadDetailModal(lead);
+    });
+  });
+
+  main.querySelectorAll(".contact-lead-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openContactMenu(btn, btn.dataset.phone);
     });
   });
 
