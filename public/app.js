@@ -4753,13 +4753,14 @@ function renderTodaysActivityCard(main, activity) {
 async function renderDashboard(main) {
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
   const canCoordinate = isAdmin || canAssignTeam();
-  const [data, announcements, teamNotifs, activity, stickyNote, websiteTraffic] = await Promise.all([
+  const [data, announcements, teamNotifs, activity, stickyNote, websiteTraffic, travelLegs] = await Promise.all([
     api("/api/dashboard"),
     api("/api/announcements"),
     canCoordinate ? api("/api/admin/notifications") : Promise.resolve([]),
     isAdmin ? api("/api/activity") : Promise.resolve([]),
     api("/api/my/sticky-note").catch(() => ({ content: "" })),
     isAdmin ? api("/api/website-traffic").catch(() => null) : Promise.resolve(null),
+    canAssignTeam() ? api("/api/travel-legs").catch(() => []) : Promise.resolve([]),
   ]);
   main.innerHTML = `
     <div class="view-head">
@@ -4918,34 +4919,40 @@ async function renderDashboard(main) {
     ${isAdmin ? `
     <div class="card" id="todaysActivityCard" style="margin-bottom:16px;"></div>
     ` : ""}
-    <div class="dash-grid">
-      <div class="card">
-        <div class="section-label">Upcoming events${data.upcomingEventsCount > data.upcomingEvents.length ? ` <span class="muted" style="font-weight:400;">(next ${data.upcomingEvents.length} of ${data.upcomingEventsCount} — see all in Leads)</span>` : ""}</div>
-        ${data.upcomingEvents.length === 0 ? `<p class="muted small">Nothing confirmed and upcoming yet.</p>` : data.upcomingEvents.map((l) => `
-          <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-            <div class="dash-list-item-click" data-lead-id="${l.id}" style="flex:1; cursor:pointer;">
-              <div>${l.name} — <span class="mono">${fmtDate(l.date)}</span></div>
-              <div class="muted">${packageName(l.event_type)} · ${l.city || ""}</div>
-            </div>
-            <button class="btn-ghost open-event-chat-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="flex-shrink:0; font-size:12px; padding:4px 8px;">💬 Chat</button>
-          </div>
-        `).join("")}
+    ${canAssignTeam() ? `
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>🧳 Upcoming travel</span>
+        <button class="btn-ghost" id="dashSeeTravelCalBtn" style="font-size:12px; padding:3px 8px;">See Travel Calendar</button>
       </div>
-      ${hasLeadsAccess() ? `
-      <div class="card">
-        <div class="section-label">Leads waiting on a follow-up</div>
-        ${data.pendingFollowUps.length === 0 ? `<p class="muted small">No one's waiting on you right now.</p>` : data.pendingFollowUps.map((l) => `
-          <div class="dash-list-item dash-list-item-click" data-lead-id="${l.id}">
-            <div>${l.name} <span class="muted">— ${packageName(l.event_type)}</span></div>
-            <div class="muted">${fmtDate(l.date)} · ${l.city || ""}</div>
-            <div class="small" style="color:${!l.last_followup_at || daysSince(l.last_followup_at) >= 3 ? "#B6752C" : "#5C7A5A"};">
-              ${!l.last_followup_at ? "⏳ Not yet followed up" : `${daysSince(l.last_followup_at) >= 3 ? "⏳" : "✓"} Last followed up ${timeAgo(l.last_followup_at)}${daysSince(l.last_followup_at) >= 3 ? " — overdue" : ""}`}
+      ${(() => {
+        const today = new Date().toISOString().slice(0, 10);
+        const mine = CURRENT_USER?.teamId
+          ? travelLegs.filter((l) => l.members.some((m) => m.teamId === CURRENT_USER.teamId))
+          : travelLegs;
+        const upcomingTravel = mine
+          .filter((l) => (l.departure_at || l.arrival_at) && (l.departure_at || l.arrival_at).slice(0, 10) >= today)
+          .sort((a, b) => (a.departure_at || a.arrival_at).localeCompare(b.departure_at || b.arrival_at))
+          .slice(0, 5);
+        if (upcomingTravel.length === 0) return `<p class="muted small">Nothing upcoming.</p>`;
+        return upcomingTravel.map((leg) => {
+          const label = leg.lead_id ? `${leg.lead_name}${leg.lead_city ? ` (${leg.lead_city})` : ""}` : (leg.label || "Travel");
+          const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
+          const dt = leg.departure_at || leg.arrival_at;
+          const statusColor = leg.status === "not_booked" ? "#B6752C" : "#5C8A6B";
+          return `
+            <div class="dash-list-item dash-travel-item-click" data-open-travel-leg="${leg.id}" data-lead-id="${leg.lead_id || ""}">
+              <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+                <div>${route || label} <span class="mono muted small">${dt ? fmtDate(dt.slice(0, 10)) : ""}</span></div>
+                <span class="tag" style="color:${statusColor}; flex-shrink:0; font-size:11px;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
+              </div>
+              <div class="muted">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${leg.lead_id ? ` · ${label}` : ""}</div>
             </div>
-          </div>
-        `).join("")}
-      </div>
-      ` : ""}
+          `;
+        }).join("");
+      })()}
     </div>
+    ` : ""}
   `;
 
   wireCalendarGrid(main.querySelector("#dashCalCard"));
@@ -5050,6 +5057,21 @@ async function renderDashboard(main) {
   main.querySelectorAll(".dash-list-item-click").forEach((row) => {
     row.addEventListener("click", () => openEventForCurrentUser(row.dataset.leadId));
   });
+  main.querySelectorAll(".dash-travel-item-click").forEach((row) => {
+    row.addEventListener("click", () => {
+      if (row.dataset.leadId) openTravelPlanModal(row.dataset.leadId);
+      else openStandaloneTravelLegModal(row.dataset.openTravelLeg, () => renderDashboard(main));
+    });
+  });
+  const seeTravelCalBtn = main.querySelector("#dashSeeTravelCalBtn");
+  if (seeTravelCalBtn) {
+    seeTravelCalBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      currentTab = "travelcal";
+      renderNav();
+      renderMain();
+    });
+  }
   main.querySelectorAll(".open-event-chat-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
