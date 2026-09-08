@@ -20,6 +20,7 @@ let quotationLeadId = null;
 let reopenQuoteDraft = null; // one-shot: set when reopening a past quote from history for editing
 let calYear = new Date().getFullYear(), calMonth = new Date().getMonth() + 1; // defaults to the real current month
 let travelCalYear = new Date().getFullYear(), travelCalMonth = new Date().getMonth() + 1;
+let travelCalSelectedIds; // Set of team_ids to show, or null for "everyone" — initialized lazily once TEAM is loaded
 
 // Small inline SVG icons (currentColor stroke, 16px) replacing emoji on the
 // icon-only ".icon-btn" controls (close/edit/remove) — crisp and consistent
@@ -2187,26 +2188,55 @@ async function renderTravelCalendar(main) {
     main.innerHTML = `<div class="view-head"><div><h2>Travel Calendar</h2></div></div><p class="muted small">Couldn't load travel data.</p>`;
     return;
   }
+  // Default to "just me" the first time this loads — if the logged-in
+  // person isn't on the team roster (e.g. an admin who doesn't perform),
+  // fall back to showing everyone (null = no filter) instead of an empty calendar.
+  if (travelCalSelectedIds === undefined) {
+    travelCalSelectedIds = CURRENT_USER?.teamId && TEAM.some((m) => m.id === CURRENT_USER.teamId)
+      ? new Set([CURRENT_USER.teamId])
+      : null;
+  }
 
   main.innerHTML = `
     <div class="view-head">
       <div><h2>Travel Calendar</h2><p class="muted">Every artist's travel, pulled from each event's Travel plan, plus anything logged manually here.</p></div>
       <button class="btn-primary" id="addManualTravelBtn">+ Log travel manually</button>
     </div>
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-label" style="margin-top:0;">Show travel for</div>
+      <div class="rate-inclusions-grid" id="travelCalPeopleFilter">
+        ${TEAM.map((m) => `
+          <label class="rate-inclusion-pill">
+            <input type="checkbox" data-team-id="${m.id}" ${(travelCalSelectedIds === null || travelCalSelectedIds.has(m.id)) ? "checked" : ""} />
+            ${m.name}${CURRENT_USER?.teamId === m.id ? " (You)" : ""}
+          </label>
+        `).join("")}
+      </div>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button class="btn-ghost" id="travelCalSelectAllBtn" style="font-size:12px; padding:4px 9px;">Everyone</button>
+        <button class="btn-ghost" id="travelCalSelectMeBtn" style="font-size:12px; padding:4px 9px;">Just me</button>
+      </div>
+    </div>
     <div class="card">${calendarGridMarkup()}</div>
     <div class="section-label" style="margin-top:20px;">Upcoming travel</div>
     <div id="travelCalList"></div>
   `;
 
+  function visibleLegs() {
+    if (travelCalSelectedIds === null) return legs; // no filter — show everyone
+    return legs.filter((leg) => leg.members.some((m) => travelCalSelectedIds.has(m.teamId)));
+  }
+
   function legLabel(leg) { return leg.lead_id ? `${leg.lead_name}${leg.lead_city ? ` (${leg.lead_city})` : ""}` : (leg.label || "Travel"); }
 
   function redraw() {
+    const visible = visibleLegs();
     const first = new Date(travelCalYear, travelCalMonth - 1, 1);
     const startDay = first.getDay();
     const daysInMonth = new Date(travelCalYear, travelCalMonth, 0).getDate();
     const cells = Array(startDay).fill(null).concat(Array.from({ length: daysInMonth }, (_, i) => i + 1));
     const eventsByDay = {};
-    legs.forEach((leg) => {
+    visible.forEach((leg) => {
       const addOn = (dateStr, kind) => {
         if (!dateStr) return;
         const d = new Date(dateStr);
@@ -2245,35 +2275,65 @@ async function renderTravelCalendar(main) {
   main.querySelector("#nextMonth").addEventListener("click", () => { travelCalMonth++; if (travelCalMonth > 12) { travelCalMonth = 1; travelCalYear++; } redraw(); });
 
   const listEl = main.querySelector("#travelCalList");
-  const today = new Date().toISOString().slice(0, 10);
-  // Sort/filter by whichever date is actually set — a leg logged with only
-  // a return date (no departure known yet) should still show up here.
-  const upcoming = legs
-    .filter((l) => (l.departure_at || l.arrival_at) && (l.departure_at || l.arrival_at).slice(0, 10) >= today)
-    .sort((a, b) => (a.departure_at || a.arrival_at).localeCompare(b.departure_at || b.arrival_at));
-  listEl.innerHTML = upcoming.length === 0 ? `<p class="muted small">Nothing upcoming.</p>` : "";
-  upcoming.forEach((leg) => {
-    const names = leg.members.map((m) => m.name).join(", ") || "No one added yet";
-    const statusColor = leg.status === "not_booked" ? "#B6752C" : "#5C8A6B";
-    const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
-    const card = el(`
-      <div class="card" style="margin-bottom:8px; cursor:pointer;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
-          <div>
-            <div style="font-weight:600;">${legLabel(leg)}</div>
-            <div class="muted small">${names}</div>
-            <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${route ? ` · ${route}` : ""}</div>
-            ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small">${leg.departure_at ? `Departs ${fmtDateTime(leg.departure_at)}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Returns ${fmtDateTime(leg.arrival_at)}` : ""}</div>` : ""}
+  function redrawList() {
+    const today = new Date().toISOString().slice(0, 10);
+    // Sort/filter by whichever date is actually set — a leg logged with only
+    // a return date (no departure known yet) should still show up here.
+    const upcoming = visibleLegs()
+      .filter((l) => (l.departure_at || l.arrival_at) && (l.departure_at || l.arrival_at).slice(0, 10) >= today)
+      .sort((a, b) => (a.departure_at || a.arrival_at).localeCompare(b.departure_at || b.arrival_at));
+    listEl.innerHTML = upcoming.length === 0 ? `<p class="muted small">Nothing upcoming.</p>` : "";
+    upcoming.forEach((leg) => {
+      const names = leg.members.map((m) => m.name).join(", ") || "No one added yet";
+      const statusColor = leg.status === "not_booked" ? "#B6752C" : "#5C8A6B";
+      const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
+      const card = el(`
+        <div class="card" style="margin-bottom:8px; cursor:pointer;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+            <div>
+              <div style="font-weight:600;">${legLabel(leg)}</div>
+              <div class="muted small">${names}</div>
+              <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${route ? ` · ${route}` : ""}</div>
+              ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small">${leg.departure_at ? `Departs ${fmtDateTime(leg.departure_at)}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Returns ${fmtDateTime(leg.arrival_at)}` : ""}</div>` : ""}
+            </div>
+            <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
           </div>
-          <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
         </div>
-      </div>
-    `);
-    card.addEventListener("click", () => {
-      if (leg.lead_id) openTravelPlanModal(leg.lead_id);
-      else openStandaloneTravelLegModal(leg.id, () => renderTravelCalendar(main));
+      `);
+      card.addEventListener("click", () => {
+        if (leg.lead_id) openTravelPlanModal(leg.lead_id);
+        else openStandaloneTravelLegModal(leg.id, () => renderTravelCalendar(main));
+      });
+      listEl.appendChild(card);
     });
-    listEl.appendChild(card);
+  }
+  redrawList();
+
+  main.querySelectorAll('#travelCalPeopleFilter input[type="checkbox"]').forEach((cb) => {
+    cb.addEventListener("change", () => {
+      // "null" means every box is currently checked without an explicit set
+      // behind it — turn that into a real full set before applying the toggle,
+      // otherwise unchecking one box would have nothing to remove it from.
+      if (travelCalSelectedIds === null) travelCalSelectedIds = new Set(TEAM.map((m) => m.id));
+      if (cb.checked) travelCalSelectedIds.add(cb.dataset.teamId);
+      else travelCalSelectedIds.delete(cb.dataset.teamId);
+      redraw();
+      redrawList();
+    });
+  });
+  main.querySelector("#travelCalSelectAllBtn").addEventListener("click", () => {
+    travelCalSelectedIds = null;
+    main.querySelectorAll('#travelCalPeopleFilter input[type="checkbox"]').forEach((cb) => (cb.checked = true));
+    redraw();
+    redrawList();
+  });
+  main.querySelector("#travelCalSelectMeBtn").addEventListener("click", () => {
+    travelCalSelectedIds = CURRENT_USER?.teamId ? new Set([CURRENT_USER.teamId]) : new Set();
+    main.querySelectorAll('#travelCalPeopleFilter input[type="checkbox"]').forEach((cb) => {
+      cb.checked = travelCalSelectedIds.has(cb.dataset.teamId);
+    });
+    redraw();
+    redrawList();
   });
 
   main.querySelector("#addManualTravelBtn").addEventListener("click", () => openStandaloneTravelLegModal(null, () => renderTravelCalendar(main)));
