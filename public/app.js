@@ -4168,6 +4168,7 @@ async function renderAccounts(main) {
             <div><span class="muted small">Final</span><div class="mono">${total ? inr(total) : "—"}</div></div>
             <div><span class="muted small">Received</span><div class="mono">${inr(l.received)}</div></div>
             <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
+            <div><span class="muted small">Expenses</span><div class="mono">${l.expenses ? inr(l.expenses) : "—"}</div></div>
             <div><span class="muted small">Profit</span><div class="mono" style="color:${l.profit == null ? "inherit" : l.profit >= 0 ? "#5C8A6B" : "#A64B3C"};">${l.profit == null ? "See combo" : inr(l.profit)}</div></div>
           </div>
         </div>
