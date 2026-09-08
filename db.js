@@ -235,6 +235,9 @@ async function setup() {
   // Free-text elaboration when Occasion is "Other" — so "Other" alone never
   // has to be the final word on what the event actually was.
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS occasion_other TEXT`);
+  // Preset reason captured whenever a lead moves to Not Interested — feeds
+  // the month-end "why are we losing leads" breakdown.
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS not_interested_reason TEXT`);
   // Lets a travel leg exist without a lead — for manually-logged trips
   // (scouting a venue, a personal trip, anything not tied to a booked
   // event) shown on the standalone Travel Calendar.

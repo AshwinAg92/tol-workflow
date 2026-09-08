@@ -51,6 +51,24 @@ const RATE_INCLUSIONS = [
 // Travel plan mode/status labels — mirrors the same constants in server.js.
 const TRAVEL_MODE_LABELS = { flight: "Flight", train: "Train", bus: "Bus", car: "Car", self: "Self-arranged" };
 const TRAVEL_STATUS_LABELS = { not_booked: "Not booked yet", booked: "Booked", self_arranged: "Self-arranged" };
+
+// Preset reasons for moving a lead to Not Interested — feeds the month-end
+// "why are we losing leads" breakdown. The auto-close strings in server.js
+// (3 follow-ups no response / event date imminent) match two of these
+// exactly, so those show up correctly in the report too.
+const NOT_INTERESTED_REASONS = [
+  "Budget too high",
+  "Chose another vendor",
+  "Date not available / clashed",
+  "Event postponed",
+  "No response after follow-ups",
+  "Went cold — date passed without progress",
+  "Client changed plans (venue/format changed)",
+  "Outside our service area",
+  "Didn't like the package offered",
+  "Event cancelled entirely",
+  "Other",
+];
 function parseRateInclusions(raw) {
   if (!raw) return [];
   try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : []; } catch { return []; }
@@ -222,6 +240,50 @@ const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "numer
 
 // A single "Contact" tap opens a small menu of Call / Text / WhatsApp,
 // instead of only offering a phone call.
+// Dropdown of preset reasons for moving a lead to Not Interested, so the
+// month-end "why are we losing leads" report has clean, groupable data
+// instead of free text. Returns a Promise resolving to the chosen reason
+// string, or null if the person backs out (stage change is then aborted).
+function openNotInterestedReasonModal(leadName) {
+  return new Promise((resolve) => {
+    const root = document.getElementById("modalRoot");
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay">
+        <div class="modal-card" style="width:420px; max-width:96vw;">
+          <div class="modal-head"><h3>Why is "${leadName}" not interested?</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+          <div class="modal-body">
+            <label>Reason</label>
+            <select id="niReasonSelect">
+              ${NOT_INTERESTED_REASONS.map((r) => `<option value="${r}">${r}</option>`).join("")}
+            </select>
+            <div id="niOtherWrap" style="display:none; margin-top:8px;">
+              <label>Please specify</label>
+              <input id="niOtherInput" placeholder="What happened?" />
+            </div>
+          </div>
+          <div class="modal-foot">
+            <button class="btn-ghost" id="cancelModal">Cancel</button>
+            <button class="btn-primary" id="niSaveBtn">Save</button>
+          </div>
+        </div>
+      </div>
+    `;
+    let resolved = false;
+    const finish = (value) => { if (!resolved) { resolved = true; root.innerHTML = ""; resolve(value); } };
+    root.querySelector("#closeModal").addEventListener("click", () => finish(null));
+    root.querySelector("#cancelModal").addEventListener("click", () => finish(null));
+    root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") finish(null); });
+    root.querySelector("#niReasonSelect").addEventListener("change", (e) => {
+      root.querySelector("#niOtherWrap").style.display = e.target.value === "Other" ? "block" : "none";
+    });
+    root.querySelector("#niSaveBtn").addEventListener("click", () => {
+      const selected = root.querySelector("#niReasonSelect").value;
+      const reason = selected === "Other" ? (root.querySelector("#niOtherInput").value.trim() || "Other") : selected;
+      finish(reason);
+    });
+  });
+}
+
 function openContactMenu(anchorEl, phone) {
   const existing = document.getElementById("contactMenuPopover");
   if (existing) existing.remove();
@@ -1630,6 +1692,14 @@ async function renderLeadsLog(main, skipRefresh) {
           return;
         }
       }
+      let notInterestedReason;
+      if (newStage === "Not Interested" && lead.stage !== "Not Interested") {
+        notInterestedReason = await openNotInterestedReasonModal(lead.name);
+        if (notInterestedReason === null) {
+          renderMain();
+          return;
+        }
+      }
       sel.disabled = true;
       try {
         await api(`/api/leads/${leadId}`, {
@@ -1637,6 +1707,7 @@ async function renderLeadsLog(main, skipRefresh) {
           body: JSON.stringify({
             stage: newStage,
             ...(cancellationReason !== undefined ? { cancellation_reason: cancellationReason || null } : {}),
+            ...(notInterestedReason !== undefined ? { notInterestedReason: notInterestedReason || null } : {}),
           }),
         });
         await refreshLeads();
@@ -6330,11 +6401,81 @@ function wireGoogleCalendarSettings(main) {
   });
 }
 
+// A month-end breakdown of why leads went Not Interested, grouped by the
+// preset reason picked at the time. Grouped by the lead's created_at month
+// (when it came in), since that's the only date consistently on record —
+// there's no separate "closed at" timestamp to group by instead.
+function openNotInterestedReportModal() {
+  const root = document.getElementById("modalRoot");
+  const now = new Date();
+  let selectedYear = now.getFullYear();
+  let selectedMonth = now.getMonth() + 1; // 1-12
+
+  function render() {
+    const notInterested = LEADS.filter((l) => {
+      if (l.stage !== "Not Interested" || !l.created_at) return false;
+      const d = new Date(l.created_at);
+      return d.getFullYear() === selectedYear && d.getMonth() + 1 === selectedMonth;
+    });
+    const counts = {};
+    notInterested.forEach((l) => {
+      const reason = l.not_interested_reason || "No reason recorded";
+      counts[reason] = (counts[reason] || 0) + 1;
+    });
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const monthLabel = new Date(selectedYear, selectedMonth - 1, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay">
+        <div class="modal-card" style="width:480px; max-width:96vw;">
+          <div class="modal-head"><h3>Not Interested reasons</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+          <div class="modal-body">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px;">
+              <button class="btn-ghost" id="niReportPrev" style="padding:4px 10px;">‹</button>
+              <div style="flex:1; text-align:center; font-weight:600;">${monthLabel}</div>
+              <button class="btn-ghost" id="niReportNext" style="padding:4px 10px;">›</button>
+            </div>
+            ${notInterested.length === 0 ? `<p class="muted small">No leads went Not Interested that month.</p>` : `
+              <p class="muted small" style="margin-top:-6px; margin-bottom:10px;">${notInterested.length} lead${notInterested.length === 1 ? "" : "s"} total.</p>
+              ${sorted.map(([reason, count]) => `
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #EFE9DC;">
+                  <span>${reason}</span>
+                  <span class="mono" style="font-weight:600;">${count} <span class="muted small" style="font-weight:400;">(${Math.round((count / notInterested.length) * 100)}%)</span></span>
+                </div>
+              `).join("")}
+            `}
+          </div>
+          <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
+        </div>
+      </div>
+    `;
+    const close = () => (root.innerHTML = "");
+    root.querySelector("#closeModal").addEventListener("click", close);
+    root.querySelector("#cancelModal").addEventListener("click", close);
+    root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+    root.querySelector("#niReportPrev").addEventListener("click", () => {
+      selectedMonth--; if (selectedMonth < 1) { selectedMonth = 12; selectedYear--; }
+      render();
+    });
+    root.querySelector("#niReportNext").addEventListener("click", () => {
+      selectedMonth++; if (selectedMonth > 12) { selectedMonth = 1; selectedYear++; }
+      render();
+    });
+  }
+  render();
+}
+
 async function renderSettings(main) {
   main.innerHTML = `
     <div class="view-head"><div><h2>Settings</h2><p class="muted">Customize wording and options yourself — no code changes needed. Tap a section to expand it.</p></div></div>
 
     <div id="templateCards"></div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">Not Interested reasons report</div>
+      <p class="muted small" style="margin-top:-4px;">A month-end breakdown of why leads didn't convert, based on the reason picked when a lead is moved to Not Interested.</p>
+      <button class="btn-ghost" id="openNotInterestedReportBtn">📊 View report</button>
+    </div>
 
     <div class="card" style="margin-bottom:16px;">
       <div class="section-label">Google Calendar</div>
@@ -6399,6 +6540,7 @@ async function renderSettings(main) {
   `).join("");
 
   wireGoogleCalendarSettings(main);
+  main.querySelector("#openNotInterestedReportBtn").addEventListener("click", () => openNotInterestedReportModal());
 
   container.querySelectorAll("[data-reset-template]").forEach((btn) => {
     btn.addEventListener("click", () => {

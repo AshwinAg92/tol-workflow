@@ -1090,11 +1090,11 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const leadsOnlyFields = [
     "stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "date",
     "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration", "whatsapp_number",
-    "cancellation_reason", "snooze_until", "state", "rate_type", "rate_note", "rate_inclusions", "occasion_other",
+    "cancellation_reason", "snooze_until", "state", "rate_type", "rate_note", "rate_inclusions", "occasion_other", "not_interested_reason",
   ];
   const sharedFields = ["event_time", "soundcheck_time", "venue"];
   if (!hasLeads) {
-    const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f);
+    const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f === "not_interested_reason" ? "notInterestedReason" : f);
     const attemptedRestricted = leadsOnlyFields.some((f) => req.body[keyFor(f)] !== undefined);
     if (attemptedRestricted) return res.status(403).json({ error: "You don't have permission to update those fields" });
   }
@@ -1121,7 +1121,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const updates = [];
   const values = [];
   fields.forEach((f) => {
-    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f;
+    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f === "not_interested_reason" ? "notInterestedReason" : f;
     if (req.body[key] !== undefined) {
       values.push(req.body[key]);
       updates.push(`${f} = $${values.length}`);
@@ -1150,6 +1150,10 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
       const autoNote = `[Auto] Moved to Not Interested — 3 follow-ups sent with no response (as of ${new Date().toISOString().slice(0, 10)}).`;
       values.push(lead.notes ? `${autoNote}\n${lead.notes}` : autoNote);
       updates.push(`notes = $${values.length}`);
+      if (!lead.not_interested_reason) {
+        values.push("No response after follow-ups");
+        updates.push(`not_interested_reason = $${values.length}`);
+      }
     }
   }
   // Any deliberate stage change is a fresh read on the lead, so restart the
@@ -2560,7 +2564,7 @@ async function autoCloseNearDateLeads() {
     for (const lead of rows) {
       const autoNote = `[Auto] Moved to Not Interested — event date (${lead.date}) is 2 days away or closer and it never progressed past ${lead.stage}.`;
       await pool.query(
-        `UPDATE leads SET stage = 'Not Interested', notes = CASE WHEN notes IS NULL OR notes = '' THEN $1 ELSE $1 || chr(10) || notes END WHERE id = $2`,
+        `UPDATE leads SET stage = 'Not Interested', not_interested_reason = COALESCE(not_interested_reason, 'Went cold — date passed without progress'), notes = CASE WHEN notes IS NULL OR notes = '' THEN $1 ELSE $1 || chr(10) || notes END WHERE id = $2`,
         [autoNote, lead.id]
       );
       logActivity({ user: null }, `${lead.name}: ${lead.stage} → Not Interested (auto — event date imminent, never confirmed)`, lead.id);
