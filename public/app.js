@@ -3554,9 +3554,20 @@ async function openAssignTeamModal(leadId) {
             // size) so they can plan the other artists — everyone else just
             // needs to know when and where they're playing.
             const isManager = /manager/i.test(m.role || "");
-            const waMsg = isManager
-              ? `Hi ${m.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.venue ? ` at ${lead.venue}` : lead.city ? ` in ${lead.city}` : ""}.${lead.event_time ? ` Event time: ${lead.event_time}.` : ""}${lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : ""}${lead.pcs ? ` Band size for this event: ${lead.pcs} pcs.` : ""} Let us know if you have any questions!`
-              : `Hi ${m.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.city ? ` in ${lead.city}` : ""}. Let us know if you have any questions!`;
+            const waMsg = fillTemplate(MESSAGE_TEMPLATES.artist_confirmation || TEMPLATE_META.artist_confirmation.default, {
+              artistName: m.name,
+              clientName: lead.name,
+              experience: packageName(lead.event_type),
+              date: fmtDate(lead.date),
+              cityClause: lead.city ? ` in ${lead.city}` : "",
+              // Only a manager needs the full logistics (venue, timings, band
+              // size) so they can plan the other artists — everyone else just
+              // needs to know when and where they're playing.
+              venueClause: isManager && lead.venue ? ` at ${lead.venue}` : "",
+              eventTimeClause: isManager && lead.event_time ? ` Event time: ${lead.event_time}.` : "",
+              soundcheckClause: isManager && lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : "",
+              pcsClause: isManager && lead.pcs ? ` Band size for this event: ${lead.pcs} pcs.` : "",
+            });
             return `
               <div class="card" style="margin-bottom:10px; padding:12px 14px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
@@ -5793,6 +5804,12 @@ const TEMPLATE_META = {
     description: "Sent with \"Send to client\" / \"Send to…\" on the Documents tab.",
     placeholders: ["label", "link"],
     default: "Hi! Sharing the {label} for your event with Together, Out Loud: {link}",
+  },
+  artist_confirmation: {
+    label: "Artist confirmation message",
+    description: "Sent via the WhatsApp button next to each artist in an event's Team tab. Venue/timing/band size are only included for whoever has \"Manager\" in their role — other artists get the shorter version automatically.",
+    placeholders: ["artistName", "clientName", "experience", "date", "cityClause", "venueClause", "eventTimeClause", "soundcheckClause", "pcsClause"],
+    default: "Hi {artistName}, confirming your performance for {clientName} — {experience} on {date}{cityClause}{venueClause}{eventTimeClause}{soundcheckClause}{pcsClause} Let us know if you have any questions!",
   },
 };
 
