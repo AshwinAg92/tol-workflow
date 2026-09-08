@@ -235,6 +235,10 @@ async function setup() {
   // Free-text elaboration when Occasion is "Other" — so "Other" alone never
   // has to be the final word on what the event actually was.
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS occasion_other TEXT`);
+  // Lets a travel leg exist without a lead — for manually-logged trips
+  // (scouting a venue, a personal trip, anything not tied to a booked
+  // event) shown on the standalone Travel Calendar.
+  await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS label TEXT`);
 
   // ---------- AI Assistant (manager-style chat, admin only) ----------
   await pool.query(`

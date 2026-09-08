@@ -1402,6 +1402,42 @@ app.get("/api/leads/:id/travel-legs", requireAuth, async (req, res) => {
   })));
 });
 
+// Every travel leg across every event, plus any standalone (no lead) entries
+// logged directly — this is what the standalone Travel Calendar reads from,
+// so a client-linked trip and a manually-logged one show up side by side.
+app.get("/api/travel-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const { rows: legs } = await pool.query(`
+    SELECT travel_legs.*, leads.name AS lead_name, leads.city AS lead_city
+    FROM travel_legs
+    LEFT JOIN leads ON leads.id = travel_legs.lead_id
+    ORDER BY travel_legs.departure_at ASC NULLS LAST, travel_legs.created_at ASC
+  `);
+  const legIds = legs.map((l) => l.id);
+  const members = legIds.length > 0
+    ? (await pool.query(`SELECT travel_leg_members.leg_id, team.id AS team_id, team.name AS team_name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id = ANY($1)`, [legIds])).rows
+    : [];
+  res.json(legs.map((leg) => ({
+    ...leg,
+    members: members.filter((m) => m.leg_id === leg.id).map((m) => ({ teamId: m.team_id, name: m.team_name })),
+  })));
+});
+
+app.post("/api/travel-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const { label, teamIds, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status, notes } = req.body;
+  if (!label || !label.trim()) return res.status(400).json({ error: "A label is required for manually-logged travel" });
+  const id = uuid();
+  const now = new Date().toISOString();
+  await pool.query(`
+    INSERT INTO travel_legs (id, lead_id, label, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, created_at, updated_at)
+    VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
+  `, [id, label.trim(), mode || null, fromCity || null, toCity || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, now]);
+  for (const teamId of (Array.isArray(teamIds) ? teamIds : [])) {
+    await pool.query(`INSERT INTO travel_leg_members (id, leg_id, team_id) VALUES ($1, $2, $3)`, [uuid(), id, teamId]);
+  }
+  logActivity(req, `Travel logged manually: ${label.trim()}`, null);
+  res.status(201).json({ id });
+});
+
 app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Event not found" });
@@ -1432,7 +1468,7 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
 app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const leg = (await pool.query("SELECT * FROM travel_legs WHERE id = $1", [req.params.id])).rows[0];
   if (!leg) return res.status(404).json({ error: "Travel leg not found" });
-  const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes"];
+  const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "label"];
   const keyFor = (f) => (f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f);
   const updates = [];
   const values = [];

@@ -19,6 +19,7 @@ let dashActivityActorFilter = "all";
 let quotationLeadId = null;
 let reopenQuoteDraft = null; // one-shot: set when reopening a past quote from history for editing
 let calYear = new Date().getFullYear(), calMonth = new Date().getMonth() + 1; // defaults to the real current month
+let travelCalYear = new Date().getFullYear(), travelCalMonth = new Date().getMonth() + 1;
 
 // Small inline SVG icons (currentColor stroke, 16px) replacing emoji on the
 // icon-only ".icon-btn" controls (close/edit/remove) — crisp and consistent
@@ -97,6 +98,7 @@ const NAV = [
   { id: "accounts", label: "Accounts" },
   { id: "tasks", label: "Tasks & Chats" },
   { id: "calendar", label: "Calendar" },
+  { id: "travelcal", label: "Travel Calendar" },
   { id: "documents", label: "Documents" },
   { id: "team", label: "Team" },
   { id: "website", label: "Website" },
@@ -115,6 +117,7 @@ const NAV_GROUPS = {
   myevents: "Pipeline",
   tasks: "Operations",
   calendar: "Operations",
+  travelcal: "Operations",
   documents: "Operations",
   team: "Operations",
   website: "Admin",
@@ -123,7 +126,7 @@ const NAV_GROUPS = {
 // "settings", "website", and "assistant" are admin-only (handled directly in
 // renderNav) and aren't something a manager can be granted piecemeal, so
 // they're excluded from the staff permission checklist.
-const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "dashboard" && n.id !== "settings" && n.id !== "website" && n.id !== "assistant");
+const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "dashboard" && n.id !== "settings" && n.id !== "website" && n.id !== "assistant" && n.id !== "travelcal");
 
 // Fills a {placeholder} template with values — any placeholder with no matching value
 // is left as an empty string rather than showing the raw {token} in the sent message.
@@ -647,6 +650,7 @@ function renderNav() {
   const perms = CURRENT_USER?.accessLevel === "staff" ? CURRENT_USER.permissions : null;
   let visibleNav = NAV.filter((n) => {
     if (n.id === "settings" || n.id === "website" || n.id === "assistant") return CURRENT_USER?.accessLevel === "admin";
+    if (n.id === "travelcal") return canAssignTeam();
     return n.id === "dashboard" || !Array.isArray(perms) || perms.includes(n.id);
   });
   if (CURRENT_USER?.isPerformer && CURRENT_USER.accessLevel !== "performer") {
@@ -2173,6 +2177,210 @@ async function renderCalendar(main) {
   });
 }
 
+// ---------- Travel Calendar ----------
+async function renderTravelCalendar(main) {
+  main.innerHTML = `<div class="view-head"><div><h2>Travel Calendar</h2></div></div><p class="muted">Loading…</p>`;
+  let legs;
+  try {
+    legs = await api("/api/travel-legs");
+  } catch (err) {
+    main.innerHTML = `<div class="view-head"><div><h2>Travel Calendar</h2></div></div><p class="muted small">Couldn't load travel data.</p>`;
+    return;
+  }
+
+  main.innerHTML = `
+    <div class="view-head">
+      <div><h2>Travel Calendar</h2><p class="muted">Every artist's travel, pulled from each event's Travel plan, plus anything logged manually here.</p></div>
+      <button class="btn-primary" id="addManualTravelBtn">+ Log travel manually</button>
+    </div>
+    <div class="card">${calendarGridMarkup()}</div>
+    <div class="section-label" style="margin-top:20px;">Upcoming travel</div>
+    <div id="travelCalList"></div>
+  `;
+
+  function legLabel(leg) { return leg.lead_id ? `${leg.lead_name}${leg.lead_city ? ` (${leg.lead_city})` : ""}` : (leg.label || "Travel"); }
+
+  function redraw() {
+    const first = new Date(travelCalYear, travelCalMonth - 1, 1);
+    const startDay = first.getDay();
+    const daysInMonth = new Date(travelCalYear, travelCalMonth, 0).getDate();
+    const cells = Array(startDay).fill(null).concat(Array.from({ length: daysInMonth }, (_, i) => i + 1));
+    const eventsByDay = {};
+    legs.forEach((leg) => {
+      const addOn = (dateStr, kind) => {
+        if (!dateStr) return;
+        const d = new Date(dateStr);
+        if (d.getFullYear() === travelCalYear && d.getMonth() === travelCalMonth - 1) {
+          (eventsByDay[d.getDate()] = eventsByDay[d.getDate()] || []).push({ leg, kind });
+        }
+      };
+      addOn(leg.departure_at, "depart");
+      if (leg.arrival_at && leg.arrival_at.slice(0, 10) !== (leg.departure_at || "").slice(0, 10)) addOn(leg.arrival_at, "return");
+    });
+    main.querySelector("#calMonthLabel").textContent = first.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+    const calCells = main.querySelector("#calCells");
+    calCells.innerHTML = "";
+    cells.forEach((d) => {
+      const evs = d ? (eventsByDay[d] || []) : [];
+      calCells.appendChild(el(`
+        <div class="cal-cell${d ? "" : " cal-cell-empty"}">
+          ${d ? `<div class="cal-day">${d}</div>` : ""}
+          ${evs.map(({ leg, kind }) => `
+            <div class="cal-event" data-leg-id="${leg.id}" style="cursor:pointer; ${kind === "return" ? "background:#8A5FA8;" : ""}" title="${legLabel(leg)}${kind === "return" ? " — Return" : ""}">${kind === "return" ? "↩ " : ""}${legLabel(leg)}</div>
+          `).join("")}
+        </div>
+      `));
+    });
+    calCells.querySelectorAll(".cal-event").forEach((pill) => {
+      pill.addEventListener("click", () => {
+        const leg = legs.find((l) => l.id === pill.dataset.legId);
+        if (!leg) return;
+        if (leg.lead_id) openTravelPlanModal(leg.lead_id);
+        else openStandaloneTravelLegModal(leg.id, () => renderTravelCalendar(main));
+      });
+    });
+  }
+  redraw();
+  main.querySelector("#prevMonth").addEventListener("click", () => { travelCalMonth--; if (travelCalMonth < 1) { travelCalMonth = 12; travelCalYear--; } redraw(); });
+  main.querySelector("#nextMonth").addEventListener("click", () => { travelCalMonth++; if (travelCalMonth > 12) { travelCalMonth = 1; travelCalYear++; } redraw(); });
+
+  const listEl = main.querySelector("#travelCalList");
+  const today = new Date().toISOString().slice(0, 10);
+  const upcoming = legs.filter((l) => l.departure_at && l.departure_at.slice(0, 10) >= today).sort((a, b) => a.departure_at.localeCompare(b.departure_at));
+  listEl.innerHTML = upcoming.length === 0 ? `<p class="muted small">Nothing upcoming.</p>` : "";
+  upcoming.forEach((leg) => {
+    const names = leg.members.map((m) => m.name).join(", ") || "No one added yet";
+    const statusColor = leg.status === "not_booked" ? "#B6752C" : "#5C8A6B";
+    const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
+    const card = el(`
+      <div class="card" style="margin-bottom:8px; cursor:pointer;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+          <div>
+            <div style="font-weight:600;">${legLabel(leg)}</div>
+            <div class="muted small">${names}</div>
+            <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${route ? ` · ${route}` : ""} · ${fmtDateTime(leg.departure_at)}</div>
+          </div>
+          <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
+        </div>
+      </div>
+    `);
+    card.addEventListener("click", () => {
+      if (leg.lead_id) openTravelPlanModal(leg.lead_id);
+      else openStandaloneTravelLegModal(leg.id, () => renderTravelCalendar(main));
+    });
+    listEl.appendChild(card);
+  });
+
+  main.querySelector("#addManualTravelBtn").addEventListener("click", () => openStandaloneTravelLegModal(null, () => renderTravelCalendar(main)));
+}
+
+// A travel entry not tied to any event — scouting a venue, a personal trip,
+// anything worth keeping on the shared travel calendar without a booking
+// behind it. Shares the same fields as an event's travel plan, minus the lead.
+function openStandaloneTravelLegModal(legId, onDone) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `<div class="modal-overlay" id="overlay"><div class="modal-card"><p class="muted small" style="padding:20px;">Loading…</p></div></div>`;
+
+  (async () => {
+    let leg = null;
+    if (legId) {
+      const all = await api("/api/travel-legs");
+      leg = all.find((l) => l.id === legId);
+    }
+    const memberIds = leg ? leg.members.map((m) => m.teamId) : [];
+
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay">
+        <div class="modal-card" style="width:520px; max-width:96vw;">
+          <div class="modal-head"><h3>${leg ? "Edit travel" : "Log travel manually"}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+          <div class="modal-body">
+            <label>What's this trip for?</label>
+            <input id="stlLabel" value="${leg?.label || ""}" placeholder="e.g. Scouting venue in Kolkata" />
+            <label style="margin-top:10px;">Who's travelling? (optional)</label>
+            <div class="rate-inclusions-grid" style="margin-bottom:10px;">
+              ${TEAM.map((m) => `
+                <label class="rate-inclusion-pill">
+                  <input type="checkbox" id="stlMember_${m.id}" ${memberIds.includes(m.id) ? "checked" : ""} />
+                  ${m.name}
+                </label>
+              `).join("")}
+            </div>
+            <div class="row-2">
+              <div><label>Mode</label><select id="stlMode">
+                <option value="">Not set</option>
+                ${Object.entries(TRAVEL_MODE_LABELS).map(([id, label]) => `<option value="${id}" ${leg?.mode === id ? "selected" : ""}>${label}</option>`).join("")}
+              </select></div>
+              <div><label>Status</label><select id="stlStatus">
+                ${Object.entries(TRAVEL_STATUS_LABELS).map(([id, label]) => `<option value="${id}" ${(leg?.status || "not_booked") === id ? "selected" : ""}>${label}</option>`).join("")}
+              </select></div>
+            </div>
+            <div class="row-2">
+              <div><label>From city</label><input id="stlFromCity" value="${leg?.from_city || ""}" /></div>
+              <div><label>To city</label><input id="stlToCity" value="${leg?.to_city || ""}" /></div>
+            </div>
+            <div class="row-2">
+              <div><label>Departure</label><input id="stlDeparture" type="datetime-local" value="${leg?.departure_at ? leg.departure_at.slice(0, 16) : ""}" /></div>
+              <div><label>Return</label><input id="stlArrival" type="datetime-local" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 16) : ""}" /></div>
+            </div>
+            <label>Booking ref / PNR (optional)</label>
+            <input id="stlBookingRef" value="${leg?.booking_ref || ""}" />
+            <label style="margin-top:8px;">Notes (optional)</label>
+            <input id="stlNotes" value="${leg?.notes || ""}" />
+          </div>
+          <div class="modal-foot">
+            ${leg ? `<button class="btn-ghost" id="stlDeleteBtn" style="color:#A64B3C; margin-right:auto;">Delete</button>` : ""}
+            <button class="btn-ghost" id="cancelModal">Cancel</button>
+            <button class="btn-primary" id="stlSaveBtn">Save</button>
+          </div>
+        </div>
+      </div>
+    `;
+    const close = () => (root.innerHTML = "");
+    root.querySelector("#closeModal").addEventListener("click", close);
+    root.querySelector("#cancelModal").addEventListener("click", close);
+    root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+
+    const deleteBtn = root.querySelector("#stlDeleteBtn");
+    if (deleteBtn) {
+      deleteBtn.addEventListener("click", async () => {
+        if (!confirm("Delete this travel entry?")) return;
+        await api(`/api/travel-legs/${leg.id}`, { method: "DELETE" });
+        close();
+        if (onDone) onDone();
+      });
+    }
+
+    root.querySelector("#stlSaveBtn").addEventListener("click", async () => {
+      const label = root.querySelector("#stlLabel").value.trim();
+      if (!label) return alert("Give this trip a short label first.");
+      const teamIds = TEAM.filter((m) => root.querySelector(`#stlMember_${m.id}`)?.checked).map((m) => m.id);
+      const payload = {
+        label,
+        teamIds,
+        mode: root.querySelector("#stlMode").value || null,
+        fromCity: root.querySelector("#stlFromCity").value.trim() || null,
+        toCity: root.querySelector("#stlToCity").value.trim() || null,
+        departureAt: root.querySelector("#stlDeparture").value || null,
+        arrivalAt: root.querySelector("#stlArrival").value || null,
+        bookingRef: root.querySelector("#stlBookingRef").value.trim() || null,
+        status: root.querySelector("#stlStatus").value,
+        notes: root.querySelector("#stlNotes").value.trim() || null,
+      };
+      const btn = root.querySelector("#stlSaveBtn");
+      btn.disabled = true;
+      try {
+        if (leg) await api(`/api/travel-legs/${leg.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+        else await api("/api/travel-legs", { method: "POST", body: JSON.stringify(payload) });
+        close();
+        if (onDone) onDone();
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+      }
+    });
+  })();
+}
+
 // ---------- Team ----------
 async function renderTeam(main) {
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
@@ -2887,35 +3095,39 @@ async function openLeadDocumentsModal(lead) {
     const generalDocs = docs.filter((d) => !d.lead_id);
     root.innerHTML = `
       <div class="modal-overlay" id="overlay">
-        <div class="modal-card" style="max-width:480px;">
+        <div class="modal-card" style="max-width:520px;">
           <div class="modal-head">
             <h3>Documents — ${lead.name}</h3>
             <button class="icon-btn" id="closeModal">${ICON_X}</button>
           </div>
-          ${!waPhone ? `<p class="muted small" style="color:#B6752C;">No phone number on file for this lead — add one via Edit to enable "Send to client".</p>` : ""}
+          <div class="modal-body">
+            ${!waPhone ? `<p class="muted small" style="color:#B6752C; margin-top:0;">No phone number on file for this lead — add one via Edit to enable "Send to client".</p>` : ""}
 
-          <div class="section-label" style="margin-top:4px;">Upload a new file</div>
-          <div class="upload-form">
-            <input type="text" id="leadDocLabel" list="leadDocLabelOptions" placeholder="Label (e.g. Tech Rider, Invoice)" />
-            <datalist id="leadDocLabelOptions">
-              <option value="Tech Rider"></option>
-              <option value="Hospitality Rider"></option>
-              <option value="Contract"></option>
-              <option value="Invoice"></option>
-            </datalist>
-            <input type="file" id="leadDocFile" multiple />
-            <button class="btn-primary" id="leadDocUploadBtn">Upload</button>
+            <div class="card" style="margin-bottom:16px;">
+              <div class="section-label" style="margin-top:0;">Upload a new file</div>
+              <input type="text" id="leadDocLabel" list="leadDocLabelOptions" placeholder="Label (e.g. Tech Rider, Invoice)" />
+              <datalist id="leadDocLabelOptions">
+                <option value="Tech Rider"></option>
+                <option value="Hospitality Rider"></option>
+                <option value="Contract"></option>
+                <option value="Invoice"></option>
+              </datalist>
+              <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
+                <input type="file" id="leadDocFile" multiple style="flex:1; min-width:160px;" />
+                <button class="btn-primary" id="leadDocUploadBtn">Upload</button>
+              </div>
+              <p class="muted small" style="margin-top:8px; margin-bottom:0;">You can select several files at once — same label applies to all of them.</p>
+            </div>
+
+            <div class="section-label">${lead.name}'s documents</div>
+            ${leadDocs.length === 0 ? `<p class="muted small">No documents uploaded for this event yet.</p>` : `<div class="table" style="margin-bottom:16px;">${leadDocs.map(docRow).join("")}</div>`}
+
+            ${generalDocs.length > 0 ? `
+              <div class="section-label" style="margin-top:16px;">General documents</div>
+              <p class="muted small" style="margin-top:-6px; margin-bottom:8px;">Not tied to a specific event — send any of these to ${lead.name} too.</p>
+              <div class="table">${generalDocs.map(docRow).join("")}</div>
+            ` : ""}
           </div>
-          <p class="muted small" style="margin-top:6px;">You can select several files at once — same label applies to all of them.</p>
-
-          <div class="section-label" style="margin-top:16px;">${lead.name}'s documents</div>
-          ${leadDocs.length === 0 ? `<p class="muted small">No documents uploaded for this event yet.</p>` : `<div class="table">${leadDocs.map(docRow).join("")}</div>`}
-
-          ${generalDocs.length > 0 ? `
-            <div class="section-label" style="margin-top:16px;">General documents</div>
-            <p class="muted small" style="margin-top:-4px;">Not tied to a specific event — send any of these to ${lead.name} too.</p>
-            <div class="table">${generalDocs.map(docRow).join("")}</div>
-          ` : ""}
         </div>
       </div>
     `;
@@ -6406,6 +6618,7 @@ function renderMain() {
   else if (currentTab === "myevents") renderMyEvents(main);
   else if (currentTab === "settings") renderSettings(main);
   else if (currentTab === "assistant") renderAssistant(main);
+  else if (currentTab === "travelcal") renderTravelCalendar(main);
   else if (currentTab === "website") renderWebsiteContent(main);
 }
 
@@ -6446,6 +6659,12 @@ function renderLoginScreen(errorMsg) {
 
 async function handleLogout() {
   await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+  // Wipe the offline data cache on logout — on a shared device, the next
+  // person to log in shouldn't be able to see the previous user's
+  // cached leads/accounts/etc while offline.
+  if ("caches" in window) {
+    try { await caches.delete("tol-api-v1"); } catch (e) { /* best effort */ }
+  }
   window.location.reload();
 }
 
