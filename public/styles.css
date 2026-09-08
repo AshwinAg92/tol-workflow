@@ -127,7 +127,7 @@ nav { display:flex; flex-direction:column; gap:2px; }
 .cal-month { font-family:'Fraunces',serif; font-size:16px; margin-bottom:12px; }
 .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
 .cal-head { font-size:11px; color:#8A8578; text-align:center; margin-bottom:6px; }
-.cal-cell { min-height:56px; border-radius:6px; background:#F1ECE3; padding:5px; font-size:11px; }
+.cal-cell { min-height:56px; min-width:0; overflow:hidden; border-radius:6px; background:#F1ECE3; padding:5px; font-size:11px; }
 .cal-cell-empty { background:transparent; }
 .cal-day { font-family:'JetBrains Mono',monospace; color:#8A8578; margin-bottom:3px; }
 .cal-event { background:#C1602B; color:#FFFFFF; border-radius:4px; padding:1px 4px; margin-top:2px; font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

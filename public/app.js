@@ -2197,30 +2197,51 @@ async function renderTravelCalendar(main) {
       : null;
   }
 
+  function filterSummaryText() {
+    if (travelCalSelectedIds === null) return "Everyone";
+    if (travelCalSelectedIds.size === 0) return "No one selected";
+    const names = TEAM.filter((m) => travelCalSelectedIds.has(m.id)).map((m) => (CURRENT_USER?.teamId === m.id ? "You" : m.name));
+    return names.join(", ");
+  }
+
   main.innerHTML = `
     <div class="view-head">
       <div><h2>Travel Calendar</h2><p class="muted">Every artist's travel, pulled from each event's Travel plan, plus anything logged manually here.</p></div>
       <button class="btn-primary" id="addManualTravelBtn">+ Log travel manually</button>
     </div>
-    <div class="card" style="margin-bottom:16px;">
-      <div class="section-label" style="margin-top:0;">Show travel for</div>
-      <div class="rate-inclusions-grid" id="travelCalPeopleFilter">
-        ${TEAM.map((m) => `
-          <label class="rate-inclusion-pill">
-            <input type="checkbox" data-team-id="${m.id}" ${(travelCalSelectedIds === null || travelCalSelectedIds.has(m.id)) ? "checked" : ""} />
-            ${m.name}${CURRENT_USER?.teamId === m.id ? " (You)" : ""}
-          </label>
-        `).join("")}
-      </div>
-      <div style="display:flex; gap:8px; margin-top:8px;">
-        <button class="btn-ghost" id="travelCalSelectAllBtn" style="font-size:12px; padding:4px 9px;">Everyone</button>
-        <button class="btn-ghost" id="travelCalSelectMeBtn" style="font-size:12px; padding:4px 9px;">Just me</button>
+    <div class="card" style="margin-bottom:16px; padding:0;">
+      <button id="travelCalFilterToggle" style="width:100%; display:flex; justify-content:space-between; align-items:center; padding:12px 14px; background:none; border:none; cursor:pointer; text-align:left; font:inherit; color:inherit;">
+        <span><span class="muted small" style="text-transform:uppercase; letter-spacing:0.03em; font-weight:600;">Showing</span> — <strong id="travelCalFilterSummary">${filterSummaryText()}</strong></span>
+        <span id="travelCalFilterChevron" class="muted">▾</span>
+      </button>
+      <div id="travelCalFilterBody" style="display:none; padding:0 14px 14px;">
+        <div class="rate-inclusions-grid" id="travelCalPeopleFilter">
+          ${TEAM.map((m) => `
+            <label class="rate-inclusion-pill">
+              <input type="checkbox" data-team-id="${m.id}" ${(travelCalSelectedIds === null || travelCalSelectedIds.has(m.id)) ? "checked" : ""} />
+              ${m.name}${CURRENT_USER?.teamId === m.id ? " (You)" : ""}
+            </label>
+          `).join("")}
+        </div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="btn-ghost" id="travelCalSelectAllBtn" style="font-size:12px; padding:4px 9px;">Everyone</button>
+          <button class="btn-ghost" id="travelCalSelectMeBtn" style="font-size:12px; padding:4px 9px;">Just me</button>
+        </div>
       </div>
     </div>
     <div class="card">${calendarGridMarkup()}</div>
     <div class="section-label" style="margin-top:20px;">Upcoming travel</div>
     <div id="travelCalList"></div>
   `;
+
+  const filterToggle = main.querySelector("#travelCalFilterToggle");
+  const filterBody = main.querySelector("#travelCalFilterBody");
+  const filterChevron = main.querySelector("#travelCalFilterChevron");
+  filterToggle.addEventListener("click", () => {
+    const isOpen = filterBody.style.display !== "none";
+    filterBody.style.display = isOpen ? "none" : "block";
+    filterChevron.textContent = isOpen ? "▾" : "▴";
+  });
 
   function visibleLegs() {
     if (travelCalSelectedIds === null) return legs; // no filter — show everyone
@@ -2286,17 +2307,22 @@ async function renderTravelCalendar(main) {
     upcoming.forEach((leg) => {
       const names = leg.members.map((m) => m.name).join(", ") || "No one added yet";
       const statusColor = leg.status === "not_booked" ? "#B6752C" : "#5C8A6B";
-      const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
+      const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ") || leg.lead_city || "";
+      const primaryDt = leg.departure_at || leg.arrival_at;
+      const dateObj = primaryDt ? new Date(primaryDt) : null;
       const card = el(`
-        <div class="card" style="margin-bottom:8px; cursor:pointer;">
-          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
-            <div>
-              <div style="font-weight:600;">${legLabel(leg)}</div>
-              <div class="muted small">${names}</div>
-              <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${route ? ` · ${route}` : ""}</div>
-              ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small">${leg.departure_at ? `Departs ${fmtDateTime(leg.departure_at)}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Returns ${fmtDateTime(leg.arrival_at)}` : ""}</div>` : ""}
+        <div class="card" style="margin-bottom:8px; cursor:pointer; display:flex; gap:12px; align-items:flex-start;">
+          <div style="flex-shrink:0; text-align:center; min-width:42px;">
+            <div style="font-size:21px; font-weight:700; line-height:1.1;">${dateObj ? dateObj.getDate() : "—"}</div>
+            <div class="muted small" style="text-transform:uppercase;">${dateObj ? dateObj.toLocaleDateString("en-IN", { month: "short" }) : ""}</div>
+          </div>
+          <div style="flex:1; min-width:0;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+              <div style="font-weight:600;">${route || legLabel(leg)}</div>
+              <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
             </div>
-            <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
+            <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${dateObj ? ` · ${dateObj.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}${leg.arrival_at && leg.departure_at ? ` – ${new Date(leg.arrival_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : ""}` : ""}</div>
+            <div class="muted small">${legLabel(leg)} · ${names}</div>
           </div>
         </div>
       `);
@@ -2309,6 +2335,9 @@ async function renderTravelCalendar(main) {
   }
   redrawList();
 
+  const filterSummaryEl = main.querySelector("#travelCalFilterSummary");
+  function refreshFilterSummary() { filterSummaryEl.textContent = filterSummaryText(); }
+
   main.querySelectorAll('#travelCalPeopleFilter input[type="checkbox"]').forEach((cb) => {
     cb.addEventListener("change", () => {
       // "null" means every box is currently checked without an explicit set
@@ -2317,6 +2346,7 @@ async function renderTravelCalendar(main) {
       if (travelCalSelectedIds === null) travelCalSelectedIds = new Set(TEAM.map((m) => m.id));
       if (cb.checked) travelCalSelectedIds.add(cb.dataset.teamId);
       else travelCalSelectedIds.delete(cb.dataset.teamId);
+      refreshFilterSummary();
       redraw();
       redrawList();
     });
@@ -2324,6 +2354,7 @@ async function renderTravelCalendar(main) {
   main.querySelector("#travelCalSelectAllBtn").addEventListener("click", () => {
     travelCalSelectedIds = null;
     main.querySelectorAll('#travelCalPeopleFilter input[type="checkbox"]').forEach((cb) => (cb.checked = true));
+    refreshFilterSummary();
     redraw();
     redrawList();
   });
@@ -2332,6 +2363,7 @@ async function renderTravelCalendar(main) {
     main.querySelectorAll('#travelCalPeopleFilter input[type="checkbox"]').forEach((cb) => {
       cb.checked = travelCalSelectedIds.has(cb.dataset.teamId);
     });
+    refreshFilterSummary();
     redraw();
     redrawList();
   });
