@@ -1054,17 +1054,20 @@ async function openLeadDetailModal(lead) {
             <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Quotes sent</div>
             <div id="leadDetailQuotes"><p class="muted small">Loading…</p></div>
           </div>
-          ${isConfirmedOrDone ? `
+          ${["Tentative", "Confirmed", "Completed"].includes(lead.stage) ? `
             <div class="lead-detail-section">
               <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Financials</div>
               <div class="lead-card-financials" style="margin-top:0;">
-                <div><span class="muted small">Final</span><div class="mono">${lead.final_amount || lead.quote_amount ? inr(lead.final_amount || lead.quote_amount) : "—"}</div></div>
+                <div><span class="muted small">${lead.stage === "Tentative" ? "Rate held" : "Final"}</span><div class="mono">${lead.final_amount || lead.quote_amount ? inr(lead.final_amount || lead.quote_amount) : "—"}</div></div>
                 <div><span class="muted small">Received</span><div class="mono">${inr(lead.received || 0)}</div></div>
                 <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
               </div>
               ${rateInclusionsSummaryText(lead) ? `<div class="muted small" style="margin-top:8px;">${rateInclusionsSummaryText(lead)}</div>` : ""}
               ${lead.rate_note ? `<div class="muted small" style="margin-top:2px;">📝 ${lead.rate_note}</div>` : ""}
+              ${lead.stage === "Tentative" ? `<p class="muted small" style="margin-top:6px;">This is a tentative hold, not a locked-in rate yet.</p>` : ""}
             </div>
+          ` : ""}
+          ${isConfirmedOrDone ? `
             <div class="lead-detail-section">
               <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">🧳 Who's travelling</div>
               <div id="leadDetailTravel"><p class="muted small">Loading…</p></div>
@@ -1345,6 +1348,7 @@ async function renderLeadsLog(main, skipRefresh) {
       const displayQuote = comboPrimary ? comboPrimary.quote_amount : l.quote_amount;
       const displayFinal = comboPrimary ? comboPrimary.final_amount : l.final_amount;
       const isConfirmedOrDone = l.stage === "Confirmed" || l.stage === "Completed";
+      const hasRateInfo = ["Tentative", "Confirmed", "Completed"].includes(l.stage);
       const displayReceived = comboPrimary ? comboPrimary.received : l.received;
       const balance = (displayFinal || displayQuote || 0) - (displayReceived || 0);
       const canBulkSelect = hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage);
@@ -1422,12 +1426,14 @@ async function renderLeadsLog(main, skipRefresh) {
             </div>
           ` : (l.notes ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#F5F0E4; border-radius:4px;">📝 ${l.notes}</div>` : "")}
           ${l.stage === "Cancelled" && l.cancellation_reason ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#FBEAE7; border-radius:4px; color:#A64B3C;">❌ Cancelled: ${l.cancellation_reason}</div>` : ""}
-          ${isConfirmedOrDone ? `
+          ${hasRateInfo ? `
             <div class="lead-card-financials">
-              <div><span class="muted small">Final</span><div class="mono">${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
+              <div><span class="muted small">${l.stage === "Tentative" ? "Rate held" : "Final"}</span><div class="mono">${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
               <div><span class="muted small">Received</span><div class="mono">${inr(displayReceived || 0)}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
               <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
             </div>
+          ` : ""}
+          ${isConfirmedOrDone ? `
             ${(l.event_time || l.soundcheck_time) ? `<div class="muted small" style="margin-top:6px;">${l.soundcheck_time ? `SC ${fmtTimeHM(l.soundcheck_time)}` : ""}${l.soundcheck_time && l.event_time ? " · " : ""}${l.event_time ? `Event ${fmtTimeHM(l.event_time)}` : ""}</div>` : ""}
             ${l.venue ? `<div class="muted small">📍 ${l.venue}</div>` : ""}
           ` : ""}
@@ -5791,8 +5797,8 @@ function openEditLeadModal(leadId) {
           </div>
           <label>Band size (Pcs)</label>
           <input id="mPcs" type="number" min="1" value="${lead.pcs || ""}" placeholder="e.g. 4" />
-          ${(lead.stage === "Confirmed" || lead.stage === "Completed") ? `
-            <label>Final confirmed amount (₹)</label>
+          ${["Tentative", "Confirmed", "Completed"].includes(lead.stage) ? `
+            <label>${lead.stage === "Tentative" ? "Tentative rate held (₹)" : "Final confirmed amount (₹)"}</label>
             <input id="mFinalAmount" type="number" value="${lead.final_amount || ""}" placeholder="e.g. 150000" />
             <label style="margin-top:10px;">This rate is —</label>
             ${rateInclusionsCheckboxesHtml("m", parseRateInclusions(lead.rate_inclusions))}
