@@ -1689,6 +1689,10 @@ async function renderLeadsLog(main, skipRefresh) {
         openConfirmEventModal(lead);
         return;
       }
+      if (newStage === "Tentative" && lead.stage !== "Tentative") {
+        openTentativeRateModal(lead);
+        return;
+      }
       let cancellationReason;
       if (newStage === "Cancelled" && lead.stage !== "Cancelled") {
         cancellationReason = prompt(`Why is "${lead.name}" being cancelled? (This is shared with any artists already assigned, and kept on record.)`);
@@ -5408,6 +5412,63 @@ async function renderDocuments(main) {
   });
 }
 
+
+// Same idea as Confirm, but for a Tentative hold — a rate at this point is
+// provisional, so no advance-payment step (that belongs to an actual
+// confirmation), just what's being held and what it covers.
+function openTentativeRateModal(lead) {
+  const root = document.getElementById("modalRoot");
+  const conflict = LEADS.find((l) => l.id !== lead.id && (l.stage === "Confirmed" || l.stage === "Tentative") && l.date === lead.date);
+
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>Tentative hold — ${lead.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body">
+          <p class="muted small">This moves the lead to Tentative and records the rate being held — not locked in yet.</p>
+          ${conflict ? `
+            <div style="background:#FFF4E5; color:#8A5A1F; padding:10px 12px; border-radius:6px; font-size:13px; margin-bottom:12px;">
+              ⚠️ ${conflict.name} is already ${conflict.stage} for ${fmtDate(lead.date)}. Double-check before holding another event the same day.
+            </div>
+          ` : ""}
+          <div class="muted small mono" style="margin-bottom:8px;">Quoted: ${lead.quote_amount ? inr(lead.quote_amount) : "—"}</div>
+          <label>Rate held (₹, optional)</label>
+          <input id="teAmount" type="number" value="${lead.final_amount || lead.quote_amount || ""}" placeholder="e.g. 145000" />
+          <label style="margin-top:10px;">This rate is —</label>
+          ${rateInclusionsCheckboxesHtml("te", parseRateInclusions(lead.rate_inclusions))}
+          <label style="margin-top:10px;">Anything else to note? (optional)</label>
+          <input id="teRateNote" value="${lead.rate_note || ""}" placeholder="e.g. Hotel only for the lead artist, not the full band" />
+        </div>
+        <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Hold as Tentative</button></div>
+      </div>
+    </div>
+  `;
+  const close = () => { root.innerHTML = ""; renderMain(); };
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#submitModal").addEventListener("click", async () => {
+    const finalAmount = root.querySelector("#teAmount").value;
+    const btn = root.querySelector("#submitModal");
+    btn.disabled = true;
+    try {
+      await api(`/api/leads/${lead.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          stage: "Tentative",
+          finalAmount: finalAmount || null,
+          rateInclusions: JSON.stringify(readRateInclusions(root, "te")),
+          rateNote: root.querySelector("#teRateNote").value.trim() || null,
+        }),
+      });
+      await refreshLeads();
+      close();
+    } catch (err) {
+      alert(err.message);
+      btn.disabled = false;
+    }
+  });
+}
 
 function openConfirmEventModal(lead) {
   const root = document.getElementById("modalRoot");
