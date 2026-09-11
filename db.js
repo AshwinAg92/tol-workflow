@@ -439,6 +439,7 @@ async function setup() {
     tentative_followup: "Hi {firstName}, following up on your {experience}{dateClause} — we've tentatively held this date for you with Together, Out Loud. Let us know if you'd like to go ahead so we can lock it in for you!",
     confirmed: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe look forward to creating a memorable experience with you. — Together, Out Loud",
     document_share: "Hi! Sharing the {label} for your event with Together, Out Loud: {link}",
+    bank_details: "Company name: Next Generation Group\nAccount number: 10189214106\nIFSC: IDFB0060384\nSWIFT code: IDFBINBBMUM\nBank name: IDFC FIRST\nBranch: SILIGURI-SEVOKE ROAD BRANCH",
   };
   for (const [key, template] of Object.entries(defaultTemplates)) {
     await pool.query(
