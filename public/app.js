@@ -1441,6 +1441,7 @@ async function renderLeadsLog(main, skipRefresh) {
             <button class="btn-ghost lead-detail-btn" data-lead-id="${l.id}">📋 Details</button>
             ${l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
             ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative" || l.stage === "Not Interested") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
+            ${l.stage === "Tentative" && hasLeadsAccess() ? `<button class="btn-ghost tentative-confirm-info-btn" data-lead-id="${l.id}">📨 Send confirm details</button>` : ""}
             ${l.phone ? `<button class="btn-ghost contact-lead-btn" data-phone="${l.phone}">📞 Contact</button>` : ""}
             ${isConfirmedOrDone && hasAccountsAccess() ? `<button class="btn-ghost payments-btn" data-lead-id="${l.id}">💰 Payments</button>` : ""}
             ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost confirmation-msg-btn" data-lead-id="${l.id}">✅ Confirmation msg</button>` : ""}
@@ -1635,6 +1636,13 @@ async function renderLeadsLog(main, skipRefresh) {
     btn.addEventListener("click", () => {
       const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
       if (lead) openConfirmationMessageModal(lead);
+    });
+  });
+
+  main.querySelectorAll(".tentative-confirm-info-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
+      if (lead) openTentativeConfirmInfoModal(lead);
     });
   });
 
@@ -5549,6 +5557,51 @@ function openConfirmEventModal(lead) {
   });
 }
 
+// Sent from a Tentative lead — tells the client what's needed to lock the
+// date in (advance + bank details) and what they'll get once it's actually
+// confirmed (tech rider, etc.), without promising those documents early.
+async function openTentativeConfirmInfoModal(lead) {
+  const root = document.getElementById("modalRoot");
+  const firstName = (lead.name || "").split(" ")[0] || "there";
+  const tpl = MESSAGE_TEMPLATES.tentative_confirm_info || TEMPLATE_META.tentative_confirm_info.default;
+  const message = fillTemplate(tpl, {
+    firstName,
+    clientName: lead.name || "",
+    experience: packageName(lead.event_type),
+    date: fmtDate(lead.date),
+    cityClause: lead.city ? ` in ${lead.city}` : "",
+    bankDetails: MESSAGE_TEMPLATES.bank_details || "",
+  });
+  const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
+  const waLink = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}` : null;
+  const mailLink = lead.email ? `mailto:${lead.email}?subject=${encodeURIComponent("Next steps to confirm your event — Together, Out Loud")}&body=${encodeURIComponent(message)}` : null;
+
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>Send confirm details to ${lead.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body">
+          ${!(MESSAGE_TEMPLATES.bank_details || "").trim() ? `<p class="muted small" style="color:#B6752C; margin-top:0;">No bank/UPI details on file — add them in Settings so they fill in automatically here.</p>` : ""}
+          <textarea id="tiMessage" rows="9" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${message}</textarea>
+        </div>
+        <div class="modal-foot">
+          ${waLink ? `<button class="btn-ghost" id="waBtn">💬 WhatsApp</button>` : `<span class="muted small">No phone on file</span>`}
+          ${mailLink ? `<button class="btn-ghost" id="mailBtn">✉️ Email</button>` : ""}
+          <button class="btn-primary" id="doneBtn">Done</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const close = () => { root.innerHTML = ""; renderMain(); };
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#doneBtn").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  if (waLink) root.querySelector("#waBtn").addEventListener("click", () => window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(root.querySelector("#tiMessage").value)}`);
+  if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
+    window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Next steps to confirm your event — Together, Out Loud")}&body=${encodeURIComponent(root.querySelector("#tiMessage").value)}`;
+  });
+}
+
 async function openConfirmationMessageModal(lead) {
   const root = document.getElementById("modalRoot");
   const docs = await api("/api/documents");
@@ -5948,6 +6001,12 @@ const TEMPLATE_META = {
     description: "Sent via the WhatsApp button next to each artist in an event's Team tab. Venue/timing/band size are only included for whoever has \"Manager\" in their role — other artists get the shorter version automatically.",
     placeholders: ["artistName", "clientName", "experience", "date", "cityClause", "venueClause", "eventTimeClause", "soundcheckClause", "pcsClause"],
     default: "Hi {artistName}, confirming your performance for {clientName} — {experience} on {date}{cityClause}{venueClause}{eventTimeClause}{soundcheckClause}{pcsClause} Let us know if you have any questions!",
+  },
+  tentative_confirm_info: {
+    label: "Tentative → what happens next",
+    description: "Sent from a Tentative lead's \"Send confirm details\" button — tells the client what's needed to lock the date in and what they'll get once confirmed (tech rider, etc.), with your bank/UPI details for the advance.",
+    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "bankDetails"],
+    default: "Hi {firstName}, to go ahead and lock in your {experience} on {date}{cityClause}, here's what happens next:\n\n1. An advance payment secures the date.\n2. Once confirmed, we'll share the tech rider, hospitality rider, and all other event-day details.\n\n{bankDetails}\n\nLet us know once you're ready and we'll get everything moving!",
   },
 };
 
@@ -6539,6 +6598,14 @@ async function renderSettings(main) {
     <div id="templateCards"></div>
 
     <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">Bank / UPI details for advance payments</div>
+      <p class="muted small" style="margin-top:-4px;">Plain text, used to fill the {bankDetails} placeholder in the "Tentative → what happens next" message. Not a message template itself — just your payment info.</p>
+      <textarea id="bankDetailsInput" rows="4" placeholder="e.g. Account name, bank, account no., IFSC, UPI ID" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${MESSAGE_TEMPLATES.bank_details || ""}</textarea>
+      <button class="btn-ghost" id="saveBankDetailsBtn" style="margin-top:8px;">Save</button>
+      <span class="muted small" id="bankDetailsSaveStatus"></span>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
       <div class="section-label">Not Interested reasons report</div>
       <p class="muted small" style="margin-top:-4px;">A month-end breakdown of why leads didn't convert, based on the reason picked when a lead is moved to Not Interested.</p>
       <button class="btn-ghost" id="openNotInterestedReportBtn">📊 View report</button>
@@ -6608,6 +6675,22 @@ async function renderSettings(main) {
 
   wireGoogleCalendarSettings(main);
   main.querySelector("#openNotInterestedReportBtn").addEventListener("click", () => openNotInterestedReportModal());
+  main.querySelector("#saveBankDetailsBtn").addEventListener("click", async () => {
+    const btn = main.querySelector("#saveBankDetailsBtn");
+    const status = main.querySelector("#bankDetailsSaveStatus");
+    const value = main.querySelector("#bankDetailsInput").value.trim();
+    if (!value) { status.textContent = "Can't save empty — enter your details first."; return; }
+    btn.disabled = true;
+    try {
+      await api("/api/message-templates/bank_details", { method: "PATCH", body: JSON.stringify({ template: value }) });
+      MESSAGE_TEMPLATES.bank_details = value;
+      status.textContent = "Saved ✓";
+    } catch (err) {
+      status.textContent = "Couldn't save — try again.";
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   container.querySelectorAll("[data-reset-template]").forEach((btn) => {
     btn.addEventListener("click", () => {
