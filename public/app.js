@@ -1872,6 +1872,9 @@ async function renderQuotation(main) {
           ${quotable.map((l) => `<option value="${l.id}" ${l.id === preselect ? "selected" : ""}>${l.name} — ${fmtDate(l.date)}${l.city ? `, ${l.city}` : ""}</option>`).join("")}
         </select>
         <div id="leadContextCard" style="margin:10px 0 4px; padding:10px 12px; background:#F5F0E4; border-radius:6px; font-size:12.5px; display:none;"></div>
+        <label style="margin-top:10px;">Package</label>
+        <select id="qPackage">${CONFIG.packages.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}</select>
+        <p class="muted small" style="margin-top:2px; margin-bottom:0;">Defaults to what they originally asked about — change it if they've since asked for something different (e.g. Bhajan Jamming → Musical Pheras). Sending this quote updates the lead to this package.</p>
         <div class="row-2" style="margin-top:14px;">
           <div><label>Location</label><input id="qLocation" placeholder="e.g. Siliguri" /></div>
           <div><label>Date</label><input id="qDate" placeholder="e.g. 14th September 2026" /></div>
@@ -1922,12 +1925,13 @@ async function renderQuotation(main) {
       return;
     }
     historyTable.innerHTML = `
-      <div class="table-head" style="grid-template-columns:1.4fr 0.9fr 1fr 1fr 0.8fr;">
-        <span>Sent to</span><span>Amount</span><span>Date sent</span><span>Status</span><span></span>
+      <div class="table-head" style="grid-template-columns:1.2fr 1fr 0.8fr 1fr 1fr 0.8fr;">
+        <span>Sent to</span><span>Package</span><span>Amount</span><span>Date sent</span><span>Status</span><span></span>
       </div>
       ${history.map((q) => `
-        <div class="table-row" style="grid-template-columns:1.4fr 0.9fr 1fr 1fr 0.8fr;">
+        <div class="table-row" style="grid-template-columns:1.2fr 1fr 0.8fr 1fr 1fr 0.8fr;">
           <span>${q.lead_name}</span>
+          <span class="muted small">${q.event_type ? packageName(q.event_type) : "—"}</span>
           <span class="mono">${q.amount ? inr(q.amount) : "—"}</span>
           <span class="muted small">${fmtDateTime(q.created_at)}</span>
           <select class="quote-status-select" data-quote-id="${q.id}" style="color:${quoteStatusColor[q.status || "sent"]}; width:auto; font-size:12.5px; padding:4px 6px;">
@@ -1968,11 +1972,20 @@ async function renderQuotation(main) {
   // Looks up the fixed rate for this lead's format + musician count, if one exists,
   // and fills it in — still fully editable by hand for anything non-standard.
   function applyStandardPricing() {
-    const lead = LEADS.find((l) => l.id === leadSelect.value);
+    const selectedPackage = main.querySelector("#qPackage").value;
     const pcs = main.querySelector("#qSet").value;
-    if (!lead || !pcs) return;
-    const rate = CONFIG.pricing?.[lead.event_type]?.[pcs];
+    if (!selectedPackage || !pcs) return;
+    const rate = CONFIG.pricing?.[selectedPackage]?.[pcs];
     if (rate !== undefined) main.querySelector("#qCharges").value = rate;
+  }
+
+  function updatePackageDependentFields() {
+    // A pheras ceremony runs as long as the ceremony itself takes, and doesn't
+    // have a Private/Public distinction the way a jamming session does — so
+    // neither field applies and both are hidden rather than asked for.
+    const isPheras = main.querySelector("#qPackage").value === "pheras";
+    main.querySelector("#qDurationWrap").style.display = isPheras ? "none" : "";
+    main.querySelector("#qFormatTypeWrap").style.display = isPheras ? "none" : "";
   }
 
   function prefillFromLead() {
@@ -1982,16 +1995,15 @@ async function renderQuotation(main) {
     main.querySelector("#qDate").value = fmtDate(lead.date);
     main.querySelector("#qOccasion").value = lead.occasion || "";
     main.querySelector("#qGuests").value = lead.guest_range || "";
+    // Reset to whatever package this lead is currently on — if it was
+    // changed for a re-quote last time, this lead's own record already
+    // reflects that, so this always starts from their latest known ask.
+    main.querySelector("#qPackage").value = lead.event_type;
     main.querySelector("#qSubject").value = `Quotation for ${packageName(lead.event_type)} — Together, Out Loud`;
     main.querySelector("#qSet").value = "";
     main.querySelector("#qCharges").value = "";
     main.querySelector("#qRemarks").value = "";
-    // A pheras ceremony runs as long as the ceremony itself takes, and doesn't
-    // have a Private/Public distinction the way a jamming session does — so
-    // neither field applies and both are hidden rather than asked for.
-    const isPheras = lead.event_type === "pheras";
-    main.querySelector("#qDurationWrap").style.display = isPheras ? "none" : "";
-    main.querySelector("#qFormatTypeWrap").style.display = isPheras ? "none" : "";
+    updatePackageDependentFields();
     applyStandardPricing();
 
     // Everything the client already told us on the enquiry form, surfaced here
@@ -2021,10 +2033,11 @@ async function renderQuotation(main) {
 
   function generateDraft() {
     const lead = LEADS.find((l) => l.id === leadSelect.value);
-    const isPheras = lead && lead.event_type === "pheras";
+    const selectedPackage = main.querySelector("#qPackage").value;
+    const isPheras = selectedPackage === "pheras";
     main.querySelector("#qBody").value = buildQuoteText({
-      eventType: lead ? lead.event_type : "",
-      format: lead ? packageName(lead.event_type) : "",
+      eventType: selectedPackage,
+      format: packageName(selectedPackage),
       location: main.querySelector("#qLocation").value,
       date: main.querySelector("#qDate").value,
       occasion: main.querySelector("#qOccasion").value,
@@ -2039,6 +2052,12 @@ async function renderQuotation(main) {
   }
 
   leadSelect.addEventListener("change", () => { prefillFromLead(); generateDraft(); });
+  main.querySelector("#qPackage").addEventListener("change", (e) => {
+    main.querySelector("#qSubject").value = `Quotation for ${packageName(e.target.value)} — Together, Out Loud`;
+    updatePackageDependentFields();
+    applyStandardPricing();
+    generateDraft();
+  });
   main.querySelector("#qSet").addEventListener("input", () => { applyStandardPricing(); });
   main.querySelector("#generateBtn").addEventListener("click", generateDraft);
   prefillFromLead();
@@ -2049,8 +2068,7 @@ async function renderQuotation(main) {
   }
 
   function validateQuoteFields() {
-    const lead = LEADS.find((l) => l.id === leadSelect.value);
-    const isPheras = lead && lead.event_type === "pheras";
+    const isPheras = main.querySelector("#qPackage").value === "pheras";
     const required = [
       ["#qLocation", "Location"],
       ["#qDate", "Date"],
@@ -2083,7 +2101,8 @@ async function renderQuotation(main) {
         body: JSON.stringify({
           amount: charges || null, subject, body,
           pcs: main.querySelector("#qSet").value || null,
-          duration: (LEADS.find((l) => l.id === leadId)?.event_type === "pheras") ? null : (main.querySelector("#qDuration").value || null),
+          eventType: main.querySelector("#qPackage").value,
+          duration: (main.querySelector("#qPackage").value === "pheras") ? null : (main.querySelector("#qDuration").value || null),
         }),
       });
       await refreshLeads();
@@ -2120,7 +2139,7 @@ async function renderQuotation(main) {
         clientName: lead ? lead.name : "Client",
         date: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }),
         fields: {
-          format: lead ? packageName(lead.event_type) : "",
+          format: packageName(main.querySelector("#qPackage").value),
           location: main.querySelector("#qLocation").value,
           eventDate: main.querySelector("#qDate").value,
           guests: main.querySelector("#qGuests").value,

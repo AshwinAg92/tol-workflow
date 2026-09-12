@@ -238,6 +238,10 @@ async function setup() {
   // Preset reason captured whenever a lead moves to Not Interested — feeds
   // the month-end "why are we losing leads" breakdown.
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS not_interested_reason TEXT`);
+  // Records which package a quote was actually for — needed once a lead can
+  // be re-quoted for a different format than what they originally asked
+  // about (e.g. Bhajan Jamming, then later Musical Pheras for the same lead).
+  await pool.query(`ALTER TABLE quotes ADD COLUMN IF NOT EXISTS event_type TEXT`);
   // Lets a travel leg exist without a lead — for manually-logged trips
   // (scouting a venue, a personal trip, anything not tied to a booked
   // event) shown on the standalone Travel Calendar.

@@ -1244,21 +1244,27 @@ app.post("/api/leads/:id/quote", requireAuth, async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
-  const { amount, subject, body, pcs, duration } = req.body;
+  const { amount, subject, body, pcs, duration, eventType } = req.body;
   if (!body || !body.trim()) return res.status(400).json({ error: "Quote text is required" });
 
   const numericAmount = amount !== undefined && amount !== null && amount !== "" ? Number(amount) : null;
   const finalSubject = subject && subject.trim() ? subject : "Quotation — Together, Out Loud";
+  // A lead can be re-quoted for a different package than it originally came
+  // in for (e.g. Bhajan Jamming, then later Musical Pheras) — when that
+  // happens, the lead's own event_type is updated to match the latest ask,
+  // while the quote record keeps its own event_type so quote history still
+  // shows what each past quote was actually for.
+  const quoteEventType = eventType || lead.event_type;
 
   const newStage = (lead.stage === "New") ? "Follow-up" : lead.stage;
   await pool.query(
-    "UPDATE leads SET quote_amount = $1, stage = $2, pcs = COALESCE($3, pcs), duration = COALESCE($4, duration) WHERE id = $5",
-    [numericAmount, newStage, pcs || null, duration || null, lead.id]
+    "UPDATE leads SET quote_amount = $1, stage = $2, pcs = COALESCE($3, pcs), duration = COALESCE($4, duration), event_type = COALESCE($5, event_type) WHERE id = $6",
+    [numericAmount, newStage, pcs || null, duration || null, eventType || null, lead.id]
   );
   await pool.query(`
-    INSERT INTO quotes (id, lead_id, subject, body, amount, created_at)
-    VALUES ($1, $2, $3, $4, $5, $6)
-  `, [uuid(), lead.id, finalSubject, body, numericAmount, new Date().toISOString()]);
+    INSERT INTO quotes (id, lead_id, subject, body, amount, event_type, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+  `, [uuid(), lead.id, finalSubject, body, numericAmount, quoteEventType, new Date().toISOString()]);
 
   // WhatsApp click-to-chat needs just digits (country code + number, no + or spaces).
   const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
