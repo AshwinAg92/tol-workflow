@@ -432,10 +432,15 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   paymentSums.forEach((p) => (receivedByLead[p.lead_id] = Number(p.total)));
   // So the Leads tab can show "when did I last quote this person" -- helps
   // judge when a follow-up is actually due instead of guessing.
-  const lastQuoted = (await pool.query("SELECT lead_id, MAX(created_at) AS last_quoted_at FROM quotes GROUP BY lead_id")).rows;
+  const lastQuoted = (await pool.query("SELECT lead_id, MAX(created_at) AS last_quoted_at, COUNT(*) AS quote_count FROM quotes GROUP BY lead_id")).rows;
   const lastQuotedByLead = {};
-  lastQuoted.forEach((q) => (lastQuotedByLead[q.lead_id] = q.last_quoted_at));
-  const withReceived = rows.map((l) => ({ ...l, received: receivedByLead[l.id] || 0, last_quoted_at: lastQuotedByLead[l.id] || null }));
+  lastQuoted.forEach((q) => (lastQuotedByLead[q.lead_id] = { last_quoted_at: q.last_quoted_at, quote_count: Number(q.quote_count) }));
+  const withReceived = rows.map((l) => ({
+    ...l,
+    received: receivedByLead[l.id] || 0,
+    last_quoted_at: lastQuotedByLead[l.id]?.last_quoted_at || null,
+    quote_count: lastQuotedByLead[l.id]?.quote_count || 0,
+  }));
 
   let hasLeadsAccess = true;
   if (req.user.access_level === "staff") {

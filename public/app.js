@@ -1380,7 +1380,7 @@ async function renderLeadsLog(main, skipRefresh) {
             return `<div style="background:#FFF4E5; color:#8A5A1F; padding:6px 10px; border-radius:6px; font-size:12.5px; margin-top:6px;">⚠️ ${conflictLead.name} is already ${conflictLead.stage} for this date</div>`;
           })()}
           <div class="muted small">Submitted ${fmtDateTime(l.created_at)}</div>
-          ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}${l.last_quoted_at ? ` <span class="muted">— sent ${fmtDate(l.last_quoted_at.slice(0, 10))}</span>` : ""}</div>` : ""}
+          ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}${l.last_quoted_at ? ` <span class="muted">— sent ${fmtDate(l.last_quoted_at.slice(0, 10))}</span>` : ""}${l.quote_count > 1 ? ` <span class="muted">(${l.quote_count} quotes sent — see history in Quotation)</span>` : ""}</div>` : ""}
           ${hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) ? (() => {
             const todayStr = new Date().toISOString().slice(0, 10);
             const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
