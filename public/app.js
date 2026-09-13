@@ -2659,6 +2659,7 @@ async function renderTeam(main) {
         <div class="team-name">${m.name}</div>
         <div class="muted">${m.role || ""}${m.specialty ? ` · ${m.specialty}` : ""}</div>
         ${m.base_city ? `<div class="muted small">📍 ${m.base_city}</div>` : ""}
+        ${(m.local_fee || m.outstation_fee) ? `<div class="muted small">${m.local_fee ? `Local ${inr(m.local_fee)}` : ""}${m.local_fee && m.outstation_fee ? " · " : ""}${m.outstation_fee ? `Outstation ${inr(m.outstation_fee)}` : ""}</div>` : ""}
         ${m.phone ? `<div class="muted small">${m.phone}</div>` : ""}
         ${m.email ? `<div class="muted small">${m.email}</div>` : ""}
         <div class="team-count mono">${m.activeShows.length} active show${m.activeShows.length === 1 ? "" : "s"}</div>
@@ -2925,6 +2926,11 @@ function openAddMemberModal(onCreated) {
           <label>Base city</label>
           <input id="nmBaseCity" placeholder="e.g. Siliguri" />
           <p class="muted small" style="margin:2px 0 0;">Helps you spot who's already near an outstation event when planning travel.</p>
+          <div class="row-2" style="margin-top:8px;">
+            <div><label>Local fee (₹)</label><input id="nmLocalFee" type="number" placeholder="e.g. 3000" /></div>
+            <div><label>Outstation fee (₹)</label><input id="nmOutstationFee" type="number" placeholder="e.g. 5000" /></div>
+          </div>
+          <p class="muted small" style="margin:2px 0 0;">Auto-suggested when assigning them to an event, based on whether the event city matches their base city.</p>
           <label style="margin-top:8px;">Phone</label>
           <input id="nmPhone" placeholder="e.g. 9876543210" />
           <p class="muted small" style="margin:4px 0 0;">Username and password default to this phone number — change them below if you'd like something else.</p>
@@ -2982,6 +2988,8 @@ function openAddMemberModal(onCreated) {
           name,
           roleTitle: root.querySelector("#nmRole").value,
           baseCity: root.querySelector("#nmBaseCity").value,
+          localFee: root.querySelector("#nmLocalFee").value,
+          outstationFee: root.querySelector("#nmOutstationFee").value,
           phone: root.querySelector("#nmPhone").value,
           username,
           password,
@@ -3094,6 +3102,10 @@ function openEditMemberModal(member, linkedUser) {
           <label>Base city</label>
           <input id="emBaseCity" value="${member.base_city || ""}" placeholder="e.g. Siliguri" />
           <div class="row-2" style="margin-top:8px;">
+            <div><label>Local fee (₹)</label><input id="emLocalFee" type="number" value="${member.local_fee || ""}" placeholder="e.g. 3000" /></div>
+            <div><label>Outstation fee (₹)</label><input id="emOutstationFee" type="number" value="${member.outstation_fee || ""}" placeholder="e.g. 5000" /></div>
+          </div>
+          <div class="row-2" style="margin-top:8px;">
             <div><label>Phone</label><input id="emPhone" value="${member.phone || ""}" /></div>
             <div><label>Email</label><input id="emEmail" value="${member.email || ""}" /></div>
           </div>
@@ -3159,6 +3171,8 @@ function openEditMemberModal(member, linkedUser) {
           role: root.querySelector("#emRole").value,
           specialty: root.querySelector("#emSpecialty").value,
           baseCity: root.querySelector("#emBaseCity").value,
+          localFee: root.querySelector("#emLocalFee").value,
+          outstationFee: root.querySelector("#emOutstationFee").value,
           phone: root.querySelector("#emPhone").value,
           email: root.querySelector("#emEmail").value,
         }),
@@ -3676,6 +3690,8 @@ async function openAssignTeamModal(leadId) {
               soundcheckClause: isManager && lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : "",
               pcsClause: isManager && lead.pcs ? ` Band size for this event: ${lead.pcs} pcs.` : "",
             });
+            const isLocalEvent = m.base_city && lead.city && m.base_city.trim().toLowerCase() === lead.city.trim().toLowerCase();
+            const suggestedFee = isLocalEvent ? m.local_fee : m.outstation_fee;
             return `
               <div class="card" style="margin-bottom:10px; padding:12px 14px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
@@ -3687,7 +3703,10 @@ async function openAssignTeamModal(leadId) {
                     </span>
                   </label>
                   ${isAdmin
-                    ? `<input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : ""}" style="width:100px; flex-shrink:0;" />`
+                    ? `<div style="flex-shrink:0; text-align:right;">
+                        <input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : (suggestedFee || "")}" style="width:100px;" />
+                        ${!existingFee && suggestedFee ? `<div class="muted small" style="margin-top:2px;">${isLocalEvent ? "local" : "outstation"} preset</div>` : ""}
+                      </div>`
                     : (CURRENT_USER?.teamId === m.id && existingFee ? `<span class="muted small" style="flex-shrink:0; white-space:nowrap;">Your fee: ${inr(existingFee.amount)}</span>` : "")}
                 </div>
                 ${a ? `

@@ -161,6 +161,10 @@ async function setup() {
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS advance_date TEXT`);
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS specialty TEXT`);
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS base_city TEXT`);
+  // Preset fees so the Team assignment screen can suggest a rate automatically
+  // based on whether the event's city matches the artist's base city.
+  await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS local_fee INTEGER`);
+  await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS outstation_fee INTEGER`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions TEXT`);
   await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS lead_id TEXT REFERENCES leads(id)`);
   await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS from_team_id TEXT REFERENCES team(id)`);
