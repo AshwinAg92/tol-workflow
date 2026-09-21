@@ -3,6 +3,7 @@ let CURRENT_USER = null;
 let CONFIG = { stages: [], packages: [], addons: [] };
 let MESSAGE_TEMPLATES = {};
 let LEADS = [];
+let BLOCKED_DATES = [];
 let TEAM = [];
 let TASKS = [];
 let currentTab = "dashboard";
@@ -687,12 +688,13 @@ async function api(path, opts) {
 }
 
 async function loadAll() {
-  [CONFIG, LEADS, TEAM, TASKS, MESSAGE_TEMPLATES] = await Promise.all([
+  [CONFIG, LEADS, TEAM, TASKS, MESSAGE_TEMPLATES, BLOCKED_DATES] = await Promise.all([
     api("/api/config"),
     api("/api/leads"),
     api("/api/team"),
     api("/api/tasks"),
     api("/api/message-templates"),
+    api("/api/blocked-dates").catch(() => []),
   ]);
 }
 
@@ -2171,6 +2173,9 @@ function calendarGridMarkup() {
 // page — used so month navigation doesn't force a full-page re-render (which
 // was resetting scroll position back to the top every time).
 function wireCalendarGrid(container) {
+  function isDateBlocked(dateStr) {
+    return BLOCKED_DATES.find((b) => dateStr >= b.start_date && dateStr <= b.end_date);
+  }
   function redraw() {
     const confirmed = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed" || l.stage === "Tentative");
     const first = new Date(calYear, calMonth - 1, 1);
@@ -2191,9 +2196,12 @@ function wireCalendarGrid(container) {
     calCells.innerHTML = "";
     cells.forEach((d) => {
       const evs = d ? (eventsByDay[d] || []) : [];
+      const dateStr = d ? `${calYear}-${String(calMonth).padStart(2, "0")}-${String(d).padStart(2, "0")}` : null;
+      const blocked = dateStr ? isDateBlocked(dateStr) : null;
       calCells.appendChild(el(`
-        <div class="cal-cell${d ? "" : " cal-cell-empty"}">
+        <div class="cal-cell${d ? "" : " cal-cell-empty"}"${blocked ? ` style="background:repeating-linear-gradient(45deg, #E5DFD1, #E5DFD1 6px, #DCD4C0 6px, #DCD4C0 12px);"` : ""}>
           ${d ? `<div class="cal-day">${d}</div>` : ""}
+          ${blocked ? `<div class="cal-event cal-event-blocked" data-blocked-date="${dateStr}" style="cursor:pointer; background:#8A8578;" title="Blocked${blocked.reason ? `: ${blocked.reason}` : ""}">🚫 Blocked</div>` : ""}
           ${evs.map((ev) => {
             const isTentative = ev.stage === "Tentative";
             // Siliguri stays the default brand terracotta (from the .cal-event
@@ -2211,7 +2219,7 @@ function wireCalendarGrid(container) {
         </div>
       `));
     });
-    calCells.querySelectorAll(".cal-event").forEach((pill) => {
+    calCells.querySelectorAll(".cal-event[data-lead-id]").forEach((pill) => {
       pill.addEventListener("click", () => {
         const lead = LEADS.find((l) => l.id === pill.dataset.leadId);
         if (!lead) return;
@@ -2229,6 +2237,11 @@ function wireCalendarGrid(container) {
         }
       });
     });
+    calCells.querySelectorAll(".cal-event-blocked").forEach((pill) => {
+      pill.addEventListener("click", () => {
+        if (CURRENT_USER?.accessLevel === "admin") openBlockedDatesModal(redraw);
+      });
+    });
   }
 
   redraw();
@@ -2236,21 +2249,92 @@ function wireCalendarGrid(container) {
   container.querySelector("#nextMonth").addEventListener("click", () => { calMonth++; if (calMonth > 12) { calMonth = 1; calYear++; } redraw(); });
 }
 
+// Personal/off-limits dates (a vacation, etc.) — blocks new public enquiries
+// for that range and shows on the Calendar as a striped, "🚫 Blocked" cell.
+function openBlockedDatesModal(onChange) {
+  const root = document.getElementById("modalRoot");
+  function render() {
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay">
+        <div class="modal-card" style="width:480px; max-width:96vw;">
+          <div class="modal-head"><h3>Blocked dates</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+          <div class="modal-body">
+            <p class="muted small" style="margin-top:0;">Dates you block here can't be booked through the public enquiry form, and show up on the Calendar so nothing gets scheduled over them by mistake.</p>
+            ${BLOCKED_DATES.length === 0 ? `<p class="muted small">Nothing blocked right now.</p>` : BLOCKED_DATES.map((b) => `
+              <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                <div>
+                  <div>${fmtDate(b.start_date)}${b.end_date !== b.start_date ? ` – ${fmtDate(b.end_date)}` : ""}</div>
+                  ${b.reason ? `<div class="muted small">${b.reason}</div>` : ""}
+                </div>
+                <button class="btn-ghost" data-remove-block="${b.id}" style="font-size:12px; padding:4px 8px; color:#A64B3C;">Remove</button>
+              </div>
+            `).join("")}
+            <div class="section-label" style="margin-top:16px;">Block new dates</div>
+            <div class="row-2">
+              <div><label>From</label><input id="bdStart" type="date" /></div>
+              <div><label>To (optional)</label><input id="bdEnd" type="date" /></div>
+            </div>
+            <label style="margin-top:8px;">Reason (optional, kept private — not shown to clients)</label>
+            <input id="bdReason" placeholder="e.g. Family vacation" />
+            <button class="btn-primary full" id="bdAddBtn" style="margin-top:10px;">Block</button>
+          </div>
+          <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
+        </div>
+      </div>
+    `;
+    const close = () => { root.innerHTML = ""; if (onChange) onChange(); };
+    root.querySelector("#closeModal").addEventListener("click", close);
+    root.querySelector("#cancelModal").addEventListener("click", close);
+    root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+    root.querySelectorAll("[data-remove-block]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await api(`/api/blocked-dates/${btn.dataset.removeBlock}`, { method: "DELETE" });
+        BLOCKED_DATES = BLOCKED_DATES.filter((b) => b.id !== btn.dataset.removeBlock);
+        render();
+      });
+    });
+    root.querySelector("#bdAddBtn").addEventListener("click", async () => {
+      const startDate = root.querySelector("#bdStart").value;
+      const endDate = root.querySelector("#bdEnd").value;
+      const reason = root.querySelector("#bdReason").value.trim();
+      if (!startDate) return alert("Pick a start date first.");
+      const btn = root.querySelector("#bdAddBtn");
+      btn.disabled = true;
+      try {
+        const created = await api("/api/blocked-dates", { method: "POST", body: JSON.stringify({ startDate, endDate: endDate || null, reason: reason || null }) });
+        BLOCKED_DATES.push(created);
+        BLOCKED_DATES.sort((a, b) => a.start_date.localeCompare(b.start_date));
+        render();
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+      }
+    });
+  }
+  render();
+}
+
 async function renderCalendar(main) {
   main.innerHTML = `<div class="view-head"><div><h2>Calendar</h2></div></div><p class="muted">Loading…</p>`;
   await refreshLeads();
+  BLOCKED_DATES = await api("/api/blocked-dates").catch(() => BLOCKED_DATES);
   const today = new Date().toISOString().slice(0, 10);
   const upcoming = LEADS
     .filter((l) => (l.stage === "Confirmed" || l.stage === "Completed" || l.stage === "Tentative") && l.date >= today)
     .slice()
     .sort((a, b) => new Date(a.date) - new Date(b.date));
   main.innerHTML = `
-    <div class="view-head"><div><h2>Calendar</h2><p class="muted">Confirmed, tentative, and completed events — spot clashes before you quote.</p></div></div>
+    <div class="view-head">
+      <div><h2>Calendar</h2><p class="muted">Confirmed, tentative, and completed events — spot clashes before you quote.</p></div>
+      ${CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost" id="manageBlockedDatesBtn">🚫 Block dates</button>` : ""}
+    </div>
     <div class="card">${calendarGridMarkup()}</div>
     <div class="section-label" style="margin-top:20px;">Upcoming confirmed events</div>
     <div class="list" id="calList"></div>
   `;
   wireCalendarGrid(main);
+  const blockBtn = main.querySelector("#manageBlockedDatesBtn");
+  if (blockBtn) blockBtn.addEventListener("click", () => openBlockedDatesModal(() => renderCalendar(main)));
 
   const calList = main.querySelector("#calList");
   if (upcoming.length === 0) calList.innerHTML = `<div class="board-empty">Nothing upcoming right now</div>`;

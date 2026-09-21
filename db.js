@@ -246,6 +246,20 @@ async function setup() {
   // be re-quoted for a different format than what they originally asked
   // about (e.g. Bhajan Jamming, then later Musical Pheras for the same lead).
   await pool.query(`ALTER TABLE quotes ADD COLUMN IF NOT EXISTS event_type TEXT`);
+
+  // Personal/off-limits date ranges (vacations, etc.) — blocks new public
+  // enquiries for those dates and shows on the Calendar so nothing gets
+  // booked over them by mistake.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS blocked_dates (
+      id TEXT PRIMARY KEY,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      reason TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
   // Lets a travel leg exist without a lead — for manually-logged trips
   // (scouting a venue, a personal trip, anything not tied to a booked
   // event) shown on the standalone Travel Calendar.

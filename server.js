@@ -467,7 +467,33 @@ app.get("/api/availability", async (req, res) => {
   const { date } = req.query;
   if (!date) return res.status(400).json({ error: "date is required" });
   const row = (await pool.query("SELECT name FROM leads WHERE date = $1 AND stage = 'Confirmed' LIMIT 1", [date])).rows[0];
-  res.json({ booked: !!row });
+  const blocked = (await pool.query("SELECT 1 FROM blocked_dates WHERE $1 BETWEEN start_date AND end_date LIMIT 1", [date])).rows[0];
+  res.json({ booked: !!row || !!blocked });
+});
+
+// ---------- Blocked dates (personal/off-limits — vacations, etc.) ----------
+app.get("/api/blocked-dates", requireAuth, async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM blocked_dates ORDER BY start_date ASC");
+  res.json(rows);
+});
+
+app.post("/api/blocked-dates", requireAuth, requireAdmin, async (req, res) => {
+  const { startDate, endDate, reason } = req.body;
+  if (!startDate) return res.status(400).json({ error: "startDate is required" });
+  const finalEnd = endDate || startDate;
+  if (finalEnd < startDate) return res.status(400).json({ error: "End date can't be before the start date" });
+  const id = uuid();
+  await pool.query(`
+    INSERT INTO blocked_dates (id, start_date, end_date, reason, created_by, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6)
+  `, [id, startDate, finalEnd, reason || null, await actorName(req.user), new Date().toISOString()]);
+  logActivity(req, `Blocked ${startDate}${finalEnd !== startDate ? ` – ${finalEnd}` : ""}${reason ? ` (${reason})` : ""}`, null);
+  res.status(201).json((await pool.query("SELECT * FROM blocked_dates WHERE id = $1", [id])).rows[0]);
+});
+
+app.delete("/api/blocked-dates/:id", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM blocked_dates WHERE id = $1", [req.params.id]);
+  res.status(204).end();
 });
 
 app.post("/api/leads", async (req, res) => {
@@ -488,17 +514,20 @@ app.post("/api/leads", async (req, res) => {
   if (altDate && altDate < today) {
     return res.status(400).json({ error: "The alternative date has already passed. Please choose today's date or a future date." });
   }
-  // Don't accept a new enquiry for a date we're already Confirmed for — unless
-  // they've also given a valid (not-also-booked) alternative date, matching the
-  // flexibility the form itself offers. Blocking outright even when a good
-  // alternative was given would make that field pointless.
-  const dateTaken = (await pool.query(
-    "SELECT 1 FROM leads WHERE stage = 'Confirmed' AND date = $1 LIMIT 1", [date]
-  )).rows[0];
-  if (dateTaken) {
-    const altTaken = altDate ? (await pool.query(
-      "SELECT 1 FROM leads WHERE stage = 'Confirmed' AND date = $1 LIMIT 1", [altDate]
-    )).rows[0] : null;
+  // Don't accept a new enquiry for a date we're already Confirmed for, or a
+  // date deliberately blocked off (e.g. a personal trip) — unless they've
+  // also given a valid alternative date, matching the flexibility the form
+  // itself offers. Blocking outright even when a good alternative was given
+  // would make that field pointless. The rejection message is the same
+  // either way — no need to explain why a date isn't available.
+  const isDateUnavailable = async (d) => {
+    const taken = (await pool.query("SELECT 1 FROM leads WHERE stage = 'Confirmed' AND date = $1 LIMIT 1", [d])).rows[0];
+    if (taken) return true;
+    const blocked = (await pool.query("SELECT 1 FROM blocked_dates WHERE $1 BETWEEN start_date AND end_date LIMIT 1", [d])).rows[0];
+    return !!blocked;
+  };
+  if (await isDateUnavailable(date)) {
+    const altTaken = altDate ? await isDateUnavailable(altDate) : true;
     if (!altDate || altTaken) {
       return res.status(409).json({
         error: altDate
