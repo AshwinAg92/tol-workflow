@@ -474,7 +474,7 @@ function pdfWarmClosing(doc, pageWidth, text, y) {
   doc.text("Instagram: instagram.com/togetheroutloudclub", pageWidth / 2, y, { align: "center" });
 }
 
-async function downloadLedgerPDF(booking, payments) {
+async function downloadLedgerPDF(booking, payments, reimbursements = []) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   const { pageWidth, marginX } = await pdfLetterhead(doc, "PAYMENT LEDGER", "Together, Out Loud");
@@ -556,6 +556,42 @@ async function downloadLedgerPDF(booking, payments) {
     });
   }
   y += 6;
+
+  if (reimbursements.length > 0) {
+    const totalReimbursed = reimbursements.reduce((s, p) => s + p.amount, 0);
+    y = pdfHeaderBar(doc, `Reimbursements — ${inrPdf(totalReimbursed)} total`, marginX, y, contentW, PDF_COLORS.rust);
+    doc.setFillColor(...PDF_COLORS.card);
+    doc.rect(marginX, y - 5, contentW, 7, "F");
+    doc.setDrawColor(...PDF_COLORS.rust);
+    doc.setLineWidth(0.4);
+    doc.line(marginX, y + 3, pageWidth - marginX, y + 3);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(...PDF_COLORS.muted);
+    doc.text("DATE", marginX + 4, y);
+    doc.text("AMOUNT", marginX + contentW * 0.3, y);
+    doc.text("FOR", marginX + contentW * 0.55, y);
+    y += 8;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.3);
+    reimbursements.forEach((p, i) => {
+      if (i % 2 === 1) { doc.setFillColor(248, 240, 230); doc.rect(marginX, y - 5, contentW, 7, "F"); }
+      doc.setTextColor(...PDF_COLORS.dark);
+      doc.text(fmtDate(p.payment_date), marginX + 4, y);
+      doc.text(inrPdf(p.amount), marginX + contentW * 0.3, y);
+      const note = doc.splitTextToSize(p.notes || "—", contentW * 0.42);
+      doc.text(note, marginX + contentW * 0.55, y);
+      y += 7 * note.length;
+    });
+    y += 3;
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(8);
+    doc.setTextColor(...PDF_COLORS.muted);
+    const reimbNote = doc.splitTextToSize("These are separate from the performance fee above — travel or other costs paid upfront and billed back to you.", contentW);
+    doc.text(reimbNote, marginX, y);
+    y += reimbNote.length * 5 + 6;
+  }
+
   doc.setFont("helvetica", "italic");
   doc.setFontSize(8.3);
   doc.setTextColor(...PDF_COLORS.muted);
@@ -3514,7 +3550,10 @@ async function openLeadPaymentsModal(leadId) {
     const body = root.querySelector(".modal-body");
     if (!body) return; // modal was closed while loading — nothing to update
     const total = lead.final_amount || lead.quote_amount || 0;
-    const received = payments.reduce((s, p) => s + p.amount, 0);
+    const feePayments = payments.filter((p) => p.type !== "client_reimbursement");
+    const reimbursements = payments.filter((p) => p.type === "client_reimbursement");
+    const received = feePayments.reduce((s, p) => s + p.amount, 0);
+    const totalReimbursed = reimbursements.reduce((s, p) => s + p.amount, 0);
     const balance = total - received;
     const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
     const pendingExpenses = expenses.filter((e) => !e.paid);
@@ -3525,11 +3564,12 @@ async function openLeadPaymentsModal(leadId) {
         <div class="card summary-card summary-card-compact"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
         <div class="card summary-card summary-card-compact"><div class="muted">Profit</div><div class="mono big" style="color:${(total - totalExpenses) >= 0 ? "#5C8A6B" : "#A64B3C"};">${inr(total - totalExpenses)}</div></div>
       </div>
+      ${totalReimbursed > 0 ? `<p class="muted small" style="margin-top:-8px; margin-bottom:14px;">Balance above is for the performance fee only — ${inr(totalReimbursed)} in reimbursements (travel/other pass-through costs) is tracked separately below and doesn't count against it.</p>` : ""}
       ${hasAccountsAccess() ? `<button class="btn-ghost full" id="lpShareLedgerBtn" style="margin-bottom:14px;">📄 Share ledger PDF on WhatsApp</button>` : ""}
 
-      <div class="section-label">Client payments</div>
+      <div class="section-label">Client payments (toward fee)</div>
       <div style="margin-bottom:10px;">
-        ${payments.length === 0 ? `<p class="muted small">No payments recorded yet.</p>` : payments.map((p) => `
+        ${feePayments.length === 0 ? `<p class="muted small">No payments recorded yet.</p>` : feePayments.map((p) => `
           <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
             <div>
               <div class="mono">${inr(p.amount)}</div>
@@ -3539,15 +3579,37 @@ async function openLeadPaymentsModal(leadId) {
           </div>
         `).join("")}
       </div>
+
+      <div class="section-label">Reimbursements from client${totalReimbursed ? ` — ${inr(totalReimbursed)} total` : ""}</div>
+      <p class="muted small" style="margin-top:-6px;">For travel or other costs paid upfront and billed back to the client, on top of the performance fee.</p>
+      <div style="margin-bottom:10px;">
+        ${reimbursements.length === 0 ? `<p class="muted small">None recorded yet.</p>` : reimbursements.map((p) => `
+          <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <div class="mono">${inr(p.amount)}</div>
+              <div class="muted small">${fmtDate(p.payment_date)}${p.payment_mode ? ` · ${p.payment_mode}` : ""}${p.notes ? ` · ${p.notes}` : ""}</div>
+            </div>
+            <button class="icon-btn" data-delete-payment="${p.id}">${ICON_X}</button>
+          </div>
+        `).join("")}
+      </div>
+
       <div class="row-2">
         <input id="lpAmount" type="number" placeholder="Amount ₹" />
         <input id="lpDate" type="date" value="${new Date().toISOString().slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" />
       </div>
-      <select id="lpMode" style="margin-top:8px;">
-        <option value="">Mode —</option>
-        <option value="Cash">Cash</option>
-        <option value="UPI">UPI</option>
-      </select>
+      <div class="row-2" style="margin-top:8px;">
+        <select id="lpType">
+          <option value="payment">Payment (toward fee)</option>
+          <option value="client_reimbursement">Reimbursement (travel/other costs)</option>
+        </select>
+        <select id="lpMode">
+          <option value="">Mode —</option>
+          <option value="Cash">Cash</option>
+          <option value="UPI">UPI</option>
+        </select>
+      </div>
+      <input id="lpNotes" placeholder="What's this reimbursement for? (optional)" style="margin-top:8px; display:none;" />
       <button class="btn-primary full" id="lpAddBtn" style="margin-top:10px;">Add payment</button>
 
       <div class="section-label" style="margin-top:20px;">Artist payments${totalExpenses ? ` — ${inr(totalExpenses)} total${pendingExpenses.length ? `, ${inr(pendingExpenses.reduce((s, e) => s + e.amount, 0))} pending` : ""}` : ""}</div>
@@ -3569,13 +3631,19 @@ async function openLeadPaymentsModal(leadId) {
       </div>
     `;
 
+    const typeSelect = body.querySelector("#lpType");
+    const notesInput = body.querySelector("#lpNotes");
+    typeSelect.addEventListener("change", () => {
+      notesInput.style.display = typeSelect.value === "client_reimbursement" ? "block" : "none";
+    });
+
     const shareLedgerBtn = body.querySelector("#lpShareLedgerBtn");
     if (shareLedgerBtn) {
       shareLedgerBtn.addEventListener("click", async () => {
         shareLedgerBtn.disabled = true;
         shareLedgerBtn.textContent = "Preparing PDF…";
         try {
-          await downloadLedgerPDF(lead, payments);
+          await downloadLedgerPDF(lead, feePayments, reimbursements);
           const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
           if (digitsOnly) {
             const msg = `Hi ${(lead.name || "").split(" ")[0] || "there"}, sharing your payment ledger with Together, Out Loud. Please find the PDF attached.`;
@@ -3635,7 +3703,11 @@ async function openLeadPaymentsModal(leadId) {
       try {
         await api(`/api/leads/${leadId}/payments`, {
           method: "POST",
-          body: JSON.stringify({ amount: Number(amount), date, mode: body.querySelector("#lpMode").value || null }),
+          body: JSON.stringify({
+            amount: Number(amount), date, mode: body.querySelector("#lpMode").value || null,
+            type: body.querySelector("#lpType").value,
+            notes: body.querySelector("#lpNotes").value.trim() || null,
+          }),
         });
         await refreshLeads();
         const [freshPayments, freshExpenses] = await Promise.all([

@@ -264,6 +264,11 @@ async function setup() {
   // (scouting a venue, a personal trip, anything not tied to a booked
   // event) shown on the standalone Travel Calendar.
   await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS label TEXT`);
+  // Distinguishes a reimbursement (client paying back a pass-through cost —
+  // travel, accommodation, etc. — on top of the quoted fee) from a regular
+  // payment toward the fee itself, so they can be shown separately on the
+  // ledger instead of blurring into one "received" total.
+  await pool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'payment'`);
 
   // ---------- AI Assistant (manager-style chat, admin only) ----------
   await pool.query(`

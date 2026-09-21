@@ -429,7 +429,7 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   // Real payments live in the payments table (recorded via Accounts, the
   // Confirm-event flow, or combo bookings). Compute the true received total
   // per lead here so every screen shows accurate figures, not a stale ₹0.
-  const paymentSums = (await pool.query("SELECT lead_id, COALESCE(SUM(amount), 0) AS total FROM payments GROUP BY lead_id")).rows;
+  const paymentSums = (await pool.query("SELECT lead_id, COALESCE(SUM(amount), 0) AS total FROM payments WHERE type = 'payment' GROUP BY lead_id")).rows;
   const receivedByLead = {};
   paymentSums.forEach((p) => (receivedByLead[p.lead_id] = Number(p.total)));
   // So the Leads tab can show "when did I last quote this person" -- helps
@@ -2018,7 +2018,7 @@ app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, re
   const rows = (await pool.query("SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed')")).rows;
   const paymentSums = (await pool.query(`
     SELECT lead_id, COALESCE(SUM(amount), 0) AS total
-    FROM payments WHERE lead_id = ANY($1::text[]) GROUP BY lead_id
+    FROM payments WHERE lead_id = ANY($1::text[]) AND type = 'payment' GROUP BY lead_id
   `, [rows.map((r) => r.id)])).rows;
   const receivedByLead = {};
   paymentSums.forEach((p) => (receivedByLead[p.lead_id] = Number(p.total)));
@@ -2143,18 +2143,23 @@ app.get("/api/leads/:id/payments", requireAuth, requireSection("accounts"), asyn
 app.post("/api/leads/:id/payments", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
-  const { amount, date, mode, notes } = req.body;
+  const { amount, date, mode, notes, type } = req.body;
   if (!amount || Number(amount) <= 0) return res.status(400).json({ error: "Enter a valid amount" });
   if (!date) return res.status(400).json({ error: "Payment date is required" });
   const today = new Date().toISOString().slice(0, 10);
   if (date > today) return res.status(400).json({ error: "Payment date can't be in the future" });
+  // Named "client_reimbursement" (not just "reimbursement") to stay distinct
+  // from the existing artist-expense reimbursement system in the expenses
+  // table — this is the client paying TOL back, the other is TOL paying an
+  // artist back. Same word, opposite direction of money.
+  const finalType = type === "client_reimbursement" ? "client_reimbursement" : "payment";
   const id = uuid();
   await pool.query(`
-    INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, created_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
-  `, [id, req.params.id, Number(amount), date, mode || null, notes || null, new Date().toISOString()]);
+    INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, type, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+  `, [id, req.params.id, Number(amount), date, mode || null, notes || null, finalType, new Date().toISOString()]);
   res.status(201).json((await pool.query("SELECT * FROM payments WHERE id = $1", [id])).rows[0]);
-  logActivity(req, `Payment recorded for ${lead.name}: ₹${Number(amount).toLocaleString("en-IN")}${mode ? ` via ${mode}` : ""}`, lead.id);
+  logActivity(req, `${finalType === "client_reimbursement" ? "Reimbursement" : "Payment"} recorded for ${lead.name}: ₹${Number(amount).toLocaleString("en-IN")}${mode ? ` via ${mode}` : ""}`, lead.id);
 });
 
 app.delete("/api/payments/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
@@ -2202,7 +2207,7 @@ app.get("/api/transactions", requireAuth, requireSection("accounts"), async (req
       p.payment_date AS date,
       p.payment_mode AS mode,
       l.name AS party_name,
-      'Payment received' AS description
+      (CASE WHEN p.type = 'client_reimbursement' THEN 'Reimbursement received' ELSE 'Payment received' END) AS description
     FROM payments p
     JOIN leads l ON l.id = p.lead_id
 
@@ -2551,7 +2556,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1`, [today]),
     pool.query(`SELECT * FROM leads WHERE stage = 'Follow-up' AND (snooze_until IS NULL OR snooze_until <= $1) ORDER BY last_followup_at ASC NULLS FIRST, created_at ASC`, [today]),
     pool.query(`SELECT id, final_amount, quote_amount FROM leads WHERE stage IN ('Confirmed', 'Completed')`),
-    pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments`),
+    pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE type = 'payment'`),
     pool.query(`SELECT * FROM tasks WHERE done = 0 AND (due_date <= $1 OR due_date IS NULL) ORDER BY due_date ASC LIMIT 8`, [weekAhead]),
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage = 'New'`),
     pool.query(`SELECT * FROM leads WHERE stage = 'Tentative' ORDER BY date ASC`),
