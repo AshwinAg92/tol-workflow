@@ -482,8 +482,10 @@ async function downloadLedgerPDF(booking, payments, reimbursements = []) {
   let y = 40;
 
   const total = booking.final_amount || booking.quote_amount || 0;
-  const received = payments.reduce((s, p) => s + p.amount, 0) + reimbursements.reduce((s, p) => s + p.amount, 0);
-  const balance = total - received;
+  const reimbursementsReceived = reimbursements.filter((p) => p.status !== "due");
+  const reimbursementsDue = reimbursements.filter((p) => p.status === "due");
+  const received = payments.reduce((s, p) => s + p.amount, 0) + reimbursementsReceived.reduce((s, p) => s + p.amount, 0);
+  const balance = (total - received) + reimbursementsDue.reduce((s, p) => s + p.amount, 0);
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
@@ -558,8 +560,9 @@ async function downloadLedgerPDF(booking, payments, reimbursements = []) {
   y += 6;
 
   if (reimbursements.length > 0) {
-    const totalReimbursed = reimbursements.reduce((s, p) => s + p.amount, 0);
-    y = pdfHeaderBar(doc, `Reimbursements — ${inrPdf(totalReimbursed)} total`, marginX, y, contentW, PDF_COLORS.rust);
+    const totalReimbReceived = reimbursementsReceived.reduce((s, p) => s + p.amount, 0);
+    const totalReimbDue = reimbursementsDue.reduce((s, p) => s + p.amount, 0);
+    y = pdfHeaderBar(doc, `Reimbursements — ${inrPdf(totalReimbReceived)} received${totalReimbDue ? `, ${inrPdf(totalReimbDue)} due` : ""}`, marginX, y, contentW, PDF_COLORS.rust);
     doc.setFillColor(...PDF_COLORS.card);
     doc.rect(marginX, y - 5, contentW, 7, "F");
     doc.setDrawColor(...PDF_COLORS.rust);
@@ -568,26 +571,27 @@ async function downloadLedgerPDF(booking, payments, reimbursements = []) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8);
     doc.setTextColor(...PDF_COLORS.muted);
-    doc.text("DATE", marginX + 4, y);
-    doc.text("AMOUNT", marginX + contentW * 0.3, y);
-    doc.text("FOR", marginX + contentW * 0.55, y);
+    doc.text("STATUS", marginX + 4, y);
+    doc.text("AMOUNT", marginX + contentW * 0.24, y);
+    doc.text("FOR", marginX + contentW * 0.46, y);
     y += 8;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9.3);
     reimbursements.forEach((p, i) => {
       if (i % 2 === 1) { doc.setFillColor(248, 240, 230); doc.rect(marginX, y - 5, contentW, 7, "F"); }
+      doc.setTextColor(p.status === "due" ? PDF_COLORS.rustDark[0] : PDF_COLORS.dark[0], p.status === "due" ? PDF_COLORS.rustDark[1] : PDF_COLORS.dark[1], p.status === "due" ? PDF_COLORS.rustDark[2] : PDF_COLORS.dark[2]);
+      doc.text(p.status === "due" ? "Due" : `Received ${fmtDate(p.payment_date)}`, marginX + 4, y);
       doc.setTextColor(...PDF_COLORS.dark);
-      doc.text(fmtDate(p.payment_date), marginX + 4, y);
-      doc.text(inrPdf(p.amount), marginX + contentW * 0.3, y);
-      const note = doc.splitTextToSize(p.notes || "—", contentW * 0.42);
-      doc.text(note, marginX + contentW * 0.55, y);
+      doc.text(inrPdf(p.amount), marginX + contentW * 0.24, y);
+      const note = doc.splitTextToSize(p.notes || "—", contentW * 0.5);
+      doc.text(note, marginX + contentW * 0.46, y);
       y += 7 * note.length;
     });
     y += 3;
     doc.setFont("helvetica", "italic");
     doc.setFontSize(8);
     doc.setTextColor(...PDF_COLORS.muted);
-    const reimbNote = doc.splitTextToSize("Already included in the Received/Balance above — itemized here for transparency, since these are travel or other costs paid upfront and billed back to you rather than the performance fee itself.", contentW);
+    const reimbNote = doc.splitTextToSize("These are travel or other costs paid upfront and billed back to you, on top of the performance fee. Received ones are already reflected in the Received/Balance above; due ones are counted as outstanding until paid.", contentW);
     doc.text(reimbNote, marginX, y);
     y += reimbNote.length * 5 + 6;
   }
@@ -1045,7 +1049,7 @@ function openBulkWhatsappFollowupModal(leadIds, main) {
 async function openLeadDetailModal(lead) {
   const root = document.getElementById("modalRoot");
   const isConfirmedOrDone = lead.stage === "Confirmed" || lead.stage === "Completed";
-  const balance = (lead.final_amount || lead.quote_amount || 0) - (lead.received || 0);
+  const balance = (lead.final_amount || lead.quote_amount || 0) - (lead.received || 0) + (lead.reimbursement_due || 0);
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
@@ -1100,6 +1104,7 @@ async function openLeadDetailModal(lead) {
               </div>
               ${rateInclusionsSummaryText(lead) ? `<div class="muted small" style="margin-top:8px;">${rateInclusionsSummaryText(lead)}</div>` : ""}
               ${lead.rate_note ? `<div class="muted small" style="margin-top:2px;">📝 ${lead.rate_note}</div>` : ""}
+              ${lead.reimbursement_due ? `<div class="muted small" style="margin-top:2px;">Balance includes ${inr(lead.reimbursement_due)} in reimbursements still due — see Payments.</div>` : ""}
               ${lead.stage === "Tentative" ? `<p class="muted small" style="margin-top:6px;">This is a tentative hold, not a locked-in rate yet.</p>` : ""}
             </div>
           ` : ""}
@@ -1386,7 +1391,8 @@ async function renderLeadsLog(main, skipRefresh) {
       const isConfirmedOrDone = l.stage === "Confirmed" || l.stage === "Completed";
       const hasRateInfo = ["Tentative", "Confirmed", "Completed"].includes(l.stage);
       const displayReceived = comboPrimary ? comboPrimary.received : l.received;
-      const balance = (displayFinal || displayQuote || 0) - (displayReceived || 0);
+      const displayReimbursementDue = comboPrimary ? comboPrimary.reimbursement_due : l.reimbursement_due;
+      const balance = (displayFinal || displayQuote || 0) - (displayReceived || 0) + (displayReimbursementDue || 0);
       const canBulkSelect = hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage);
       const card = el(`
         <div class="card lead-card" style="margin-bottom:12px;">
@@ -3552,12 +3558,16 @@ async function openLeadPaymentsModal(leadId) {
     const total = lead.final_amount || lead.quote_amount || 0;
     const feePayments = payments.filter((p) => p.type !== "client_reimbursement");
     const reimbursements = payments.filter((p) => p.type === "client_reimbursement");
-    const totalReimbursed = reimbursements.reduce((s, p) => s + p.amount, 0);
-    // Received/Balance count every rupee collected from the client, fee or
-    // reimbursement alike — the itemized breakdown below is what keeps the
-    // two distinguishable, not a separate running total.
-    const received = payments.reduce((s, p) => s + p.amount, 0);
-    const balance = total - received;
+    const reimbursementsDue = reimbursements.filter((p) => p.status === "due");
+    const reimbursementsReceived = reimbursements.filter((p) => p.status === "received");
+    const totalReimbursementDue = reimbursementsDue.reduce((s, p) => s + p.amount, 0);
+    const totalReimbursementReceived = reimbursementsReceived.reduce((s, p) => s + p.amount, 0);
+    // Received is only money actually in hand — a reimbursement still marked
+    // 'due' hasn't been collected yet, so it stays out of this until it is.
+    const received = feePayments.reduce((s, p) => s + p.amount, 0) + totalReimbursementReceived;
+    // Balance is everything still outstanding — the fee shortfall, plus
+    // whatever reimbursement hasn't been paid back yet.
+    const balance = (total - received) + totalReimbursementDue;
     const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
     const pendingExpenses = expenses.filter((e) => !e.paid);
     body.innerHTML = `
@@ -3567,7 +3577,7 @@ async function openLeadPaymentsModal(leadId) {
         <div class="card summary-card summary-card-compact"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
         <div class="card summary-card summary-card-compact"><div class="muted">Profit</div><div class="mono big" style="color:${(total - totalExpenses) >= 0 ? "#5C8A6B" : "#A64B3C"};">${inr(total - totalExpenses)}</div></div>
       </div>
-      ${totalReimbursed > 0 ? `<p class="muted small" style="margin-top:-8px; margin-bottom:14px;">Received/Balance above already include ${inr(totalReimbursed)} in reimbursements — itemized separately below so it's still clear what's fee vs. reimbursement.</p>` : ""}
+      ${totalReimbursementDue > 0 ? `<p class="muted small" style="margin-top:-8px; margin-bottom:14px;">Balance includes ${inr(totalReimbursementDue)} in reimbursements still due from the client (see below) — it moves into Received once collected.</p>` : ""}
       ${hasAccountsAccess() ? `<button class="btn-ghost full" id="lpShareLedgerBtn" style="margin-bottom:14px;">📄 Share ledger PDF on WhatsApp</button>` : ""}
 
       <div class="section-label">Client payments (toward fee)</div>
@@ -3583,16 +3593,21 @@ async function openLeadPaymentsModal(leadId) {
         `).join("")}
       </div>
 
-      <div class="section-label">Reimbursements from client${totalReimbursed ? ` — ${inr(totalReimbursed)} total` : ""}</div>
-      <p class="muted small" style="margin-top:-6px;">For travel or other costs paid upfront and billed back to the client, on top of the performance fee.</p>
+      <div class="section-label">Reimbursements from client${reimbursements.length ? ` — ${inr(totalReimbursementReceived)} received${totalReimbursementDue ? `, ${inr(totalReimbursementDue)} due` : ""}` : ""}</div>
+      <p class="muted small" style="margin-top:-6px;">For travel or other costs paid upfront and billed back to the client, on top of the performance fee. Logged as due until the client actually pays it back.</p>
       <div style="margin-bottom:10px;">
         ${reimbursements.length === 0 ? `<p class="muted small">None recorded yet.</p>` : reimbursements.map((p) => `
-          <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
+          <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
             <div>
               <div class="mono">${inr(p.amount)}</div>
-              <div class="muted small">${fmtDate(p.payment_date)}${p.payment_mode ? ` · ${p.payment_mode}` : ""}${p.notes ? ` · ${p.notes}` : ""}</div>
+              <div class="muted small">${p.status === "due" ? "Due" : `${fmtDate(p.payment_date)}${p.payment_mode ? ` · ${p.payment_mode}` : ""}`}${p.notes ? ` · ${p.notes}` : ""}</div>
             </div>
-            <button class="icon-btn" data-delete-payment="${p.id}">${ICON_X}</button>
+            <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+              ${p.status === "due"
+                ? `<button class="btn-ghost mark-reimbursement-btn" data-payment-id="${p.id}" data-mark-status="received" style="font-size:12px; padding:4px 8px;">Mark received</button>`
+                : `<span class="tag" style="color:#5C8A6B;">Received</span><button class="btn-ghost mark-reimbursement-btn" data-payment-id="${p.id}" data-mark-status="due" style="font-size:11px; padding:3px 6px;">Undo</button>`}
+              <button class="icon-btn" data-delete-payment="${p.id}">${ICON_X}</button>
+            </div>
           </div>
         `).join("")}
       </div>
@@ -3606,13 +3621,16 @@ async function openLeadPaymentsModal(leadId) {
           <option value="payment">Payment (toward fee)</option>
           <option value="client_reimbursement">Reimbursement (travel/other costs)</option>
         </select>
-        <select id="lpMode">
+        <select id="lpMode" style="display:none;">
           <option value="">Mode —</option>
           <option value="Cash">Cash</option>
           <option value="UPI">UPI</option>
         </select>
       </div>
       <input id="lpNotes" placeholder="What's this reimbursement for? (optional)" style="margin-top:8px; display:none;" />
+      <label id="lpReceivedWrap" style="display:none; align-items:center; gap:6px; margin-top:8px; font-size:13px; cursor:pointer;">
+        <input type="checkbox" id="lpAlreadyReceived" /> Client already paid this back
+      </label>
       <button class="btn-primary full" id="lpAddBtn" style="margin-top:10px;">Add payment</button>
 
       <div class="section-label" style="margin-top:20px;">Artist payments${totalExpenses ? ` — ${inr(totalExpenses)} total${pendingExpenses.length ? `, ${inr(pendingExpenses.reduce((s, e) => s + e.amount, 0))} pending` : ""}` : ""}</div>
@@ -3636,8 +3654,37 @@ async function openLeadPaymentsModal(leadId) {
 
     const typeSelect = body.querySelector("#lpType");
     const notesInput = body.querySelector("#lpNotes");
-    typeSelect.addEventListener("change", () => {
-      notesInput.style.display = typeSelect.value === "client_reimbursement" ? "block" : "none";
+    const receivedWrap = body.querySelector("#lpReceivedWrap");
+    const receivedCheckbox = body.querySelector("#lpAlreadyReceived");
+    const modeSelect = body.querySelector("#lpMode");
+    function refreshPaymentFormFields() {
+      const isReimbursement = typeSelect.value === "client_reimbursement";
+      notesInput.style.display = isReimbursement ? "block" : "none";
+      receivedWrap.style.display = isReimbursement ? "flex" : "none";
+      // A fee payment is always already-received by definition, so its mode
+      // is always relevant. A reimbursement's mode only matters once it's
+      // actually been collected, matching the checkbox above.
+      modeSelect.style.display = (!isReimbursement || receivedCheckbox.checked) ? "" : "none";
+    }
+    typeSelect.addEventListener("change", refreshPaymentFormFields);
+    receivedCheckbox.addEventListener("change", refreshPaymentFormFields);
+    refreshPaymentFormFields();
+
+    body.querySelectorAll(".mark-reimbursement-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await api(`/api/payments/${btn.dataset.paymentId}`, { method: "PATCH", body: JSON.stringify({ status: btn.dataset.markStatus }) });
+          await refreshLeads();
+          const [freshPayments, freshExpenses] = await Promise.all([
+            api(`/api/leads/${leadId}/payments`), api(`/api/expenses?leadId=${leadId}`),
+          ]);
+          draw(freshPayments, freshExpenses);
+        } catch (err) {
+          alert(err.message);
+          btn.disabled = false;
+        }
+      });
     });
 
     const shareLedgerBtn = body.querySelector("#lpShareLedgerBtn");
@@ -3701,6 +3748,8 @@ async function openLeadPaymentsModal(leadId) {
       const date = body.querySelector("#lpDate").value;
       if (!amount || Number(amount) <= 0) return alert("Enter a valid amount.");
       if (!date) return alert("Pick a date.");
+      const type = body.querySelector("#lpType").value;
+      const status = type === "client_reimbursement" ? (receivedCheckbox.checked ? "received" : "due") : "received";
       const btn = body.querySelector("#lpAddBtn");
       btn.disabled = true;
       try {
@@ -3708,7 +3757,7 @@ async function openLeadPaymentsModal(leadId) {
           method: "POST",
           body: JSON.stringify({
             amount: Number(amount), date, mode: body.querySelector("#lpMode").value || null,
-            type: body.querySelector("#lpType").value,
+            type, status,
             notes: body.querySelector("#lpNotes").value.trim() || null,
           }),
         });
@@ -4727,10 +4776,11 @@ async function renderAccounts(main) {
         const revenue = l.final_amount || l.quote_amount || 0;
         acc.quoted += revenue;
         acc.received += l.received || 0;
+        acc.reimbursementDue += l.reimbursement_due || 0;
         acc.profit += l.profit || 0;
         return acc;
       },
-      { quoted: 0, received: 0, profit: 0 }
+      { quoted: 0, received: 0, reimbursementDue: 0, profit: 0 }
     );
   }
   function renderAcctCards() {
@@ -4747,7 +4797,7 @@ async function renderAccounts(main) {
     const filteredTotals = computeFilteredTotals(filtered);
     main.querySelector("#acctSumConfirmed").textContent = inr(filteredTotals.quoted);
     main.querySelector("#acctSumReceived").textContent = inr(filteredTotals.received);
-    main.querySelector("#acctSumOutstanding").textContent = inr(filteredTotals.quoted - filteredTotals.received);
+    main.querySelector("#acctSumOutstanding").textContent = inr(filteredTotals.quoted - filteredTotals.received + filteredTotals.reimbursementDue);
     main.querySelector("#acctSumProfit").textContent = inr(filteredTotals.profit);
     main.querySelector("#acctSumFilterNote").textContent = anyFilterActive ? `Showing totals for ${filtered.length} matching event${filtered.length === 1 ? "" : "s"} — clear filters for the full picture.` : "";
 
@@ -4758,7 +4808,7 @@ async function renderAccounts(main) {
     acctCards.innerHTML = "";
     filtered.forEach((l) => {
       const total = l.final_amount || l.quote_amount || 0;
-      const balance = total - l.received;
+      const balance = total - l.received + (l.reimbursement_due || 0);
       const card = el(`
         <div class="card lead-card" style="margin-bottom:10px; cursor:pointer;">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">

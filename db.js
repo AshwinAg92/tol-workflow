@@ -269,6 +269,13 @@ async function setup() {
   // payment toward the fee itself, so they can be shown separately on the
   // ledger instead of blurring into one "received" total.
   await pool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'payment'`);
+  // A reimbursement needs to exist as a liability the client owes from the
+  // moment it's logged (increasing what's outstanding), separate from
+  // whether it's actually been paid back yet — same "due, then marked paid"
+  // pattern the expenses table already uses for artist fees. A regular fee
+  // payment is inherently already-received by definition, so it's always
+  // 'received' and this only ever varies for reimbursements.
+  await pool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'received'`);
 
   // ---------- AI Assistant (manager-style chat, admin only) ----------
   await pool.query(`

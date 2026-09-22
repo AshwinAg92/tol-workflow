@@ -429,9 +429,16 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   // Real payments live in the payments table (recorded via Accounts, the
   // Confirm-event flow, or combo bookings). Compute the true received total
   // per lead here so every screen shows accurate figures, not a stale ₹0.
-  const paymentSums = (await pool.query("SELECT lead_id, COALESCE(SUM(amount), 0) AS total FROM payments GROUP BY lead_id")).rows;
+  // "received" only counts money actually in hand (fee payments + reimbursements
+  // marked received); a reimbursement still logged as 'due' is exposed
+  // separately so Balance can count it as outstanding without it looking
+  // like money already collected.
+  const paymentSums = (await pool.query("SELECT lead_id, COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'received' GROUP BY lead_id")).rows;
   const receivedByLead = {};
   paymentSums.forEach((p) => (receivedByLead[p.lead_id] = Number(p.total)));
+  const dueReimbursementSums = (await pool.query("SELECT lead_id, COALESCE(SUM(amount), 0) AS total FROM payments WHERE type = 'client_reimbursement' AND status = 'due' GROUP BY lead_id")).rows;
+  const dueReimbursementByLead = {};
+  dueReimbursementSums.forEach((p) => (dueReimbursementByLead[p.lead_id] = Number(p.total)));
   // So the Leads tab can show "when did I last quote this person" -- helps
   // judge when a follow-up is actually due instead of guessing.
   const lastQuoted = (await pool.query("SELECT lead_id, MAX(created_at) AS last_quoted_at, COUNT(*) AS quote_count FROM quotes GROUP BY lead_id")).rows;
@@ -440,6 +447,7 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   const withReceived = rows.map((l) => ({
     ...l,
     received: receivedByLead[l.id] || 0,
+    reimbursement_due: dueReimbursementByLead[l.id] || 0,
     last_quoted_at: lastQuotedByLead[l.id]?.last_quoted_at || null,
     quote_count: lastQuotedByLead[l.id]?.quote_count || 0,
   }));
@@ -2018,10 +2026,16 @@ app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, re
   const rows = (await pool.query("SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed')")).rows;
   const paymentSums = (await pool.query(`
     SELECT lead_id, COALESCE(SUM(amount), 0) AS total
-    FROM payments WHERE lead_id = ANY($1::text[]) GROUP BY lead_id
+    FROM payments WHERE lead_id = ANY($1::text[]) AND status = 'received' GROUP BY lead_id
   `, [rows.map((r) => r.id)])).rows;
   const receivedByLead = {};
   paymentSums.forEach((p) => (receivedByLead[p.lead_id] = Number(p.total)));
+  const dueReimbursementSums = (await pool.query(`
+    SELECT lead_id, COALESCE(SUM(amount), 0) AS total
+    FROM payments WHERE lead_id = ANY($1::text[]) AND type = 'client_reimbursement' AND status = 'due' GROUP BY lead_id
+  `, [rows.map((r) => r.id)])).rows;
+  const dueReimbursementByLead = {};
+  dueReimbursementSums.forEach((p) => (dueReimbursementByLead[p.lead_id] = Number(p.total)));
 
   // Expenses committed to an event (artist fees + any other head) count against
   // its profit whether or not they've actually been paid out yet — the cost is
@@ -2038,6 +2052,7 @@ app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, re
   const perLead = rows.map((l) => {
     const revenue = l.final_amount || l.quote_amount || 0;
     const expenses = expensesByLead[l.id] || 0;
+    const reimbursement_due = dueReimbursementByLead[l.id] || 0;
     if (l.combo_group_id) {
       const groupLeadIds = rows.filter((r) => r.combo_group_id === l.combo_group_id).map((r) => r.id);
       const groupExpenses = groupLeadIds.reduce((sum, id) => sum + (expensesByLead[id] || 0), 0);
@@ -2045,15 +2060,15 @@ app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, re
         // Primary carries the combined price — its profit accounts for every
         // linked event's expenses, not just its own, so the group nets out
         // correctly instead of splitting oddly across rows.
-        return { ...l, received: receivedByLead[l.id] || 0, expenses, profit: revenue - groupExpenses };
+        return { ...l, received: receivedByLead[l.id] || 0, reimbursement_due, expenses, profit: revenue - groupExpenses };
       }
       // Non-primary combo events have no revenue of their own by design (the
       // price lives on the primary) — show their own expenses for visibility,
       // but skip a per-row profit figure since it would misleadingly look
       // negative even though the group as a whole may be profitable.
-      return { ...l, received: receivedByLead[l.id] || 0, expenses, profit: null };
+      return { ...l, received: receivedByLead[l.id] || 0, reimbursement_due, expenses, profit: null };
     }
-    return { ...l, received: receivedByLead[l.id] || 0, expenses, profit: revenue - expenses };
+    return { ...l, received: receivedByLead[l.id] || 0, reimbursement_due, expenses, profit: revenue - expenses };
   });
 
   // Collapse each combo group into one row for display — Disha's Bhajan
@@ -2071,6 +2086,7 @@ app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, re
       ...primary,
       comboEvents: group.map((x) => ({ id: x.id, event_type: x.event_type, date: x.date })),
       received: group.reduce((s, x) => s + x.received, 0),
+      reimbursement_due: group.reduce((s, x) => s + x.reimbursement_due, 0),
       expenses: group.reduce((s, x) => s + x.expenses, 0),
       profit: primary.profit,
     });
@@ -2079,13 +2095,14 @@ app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, re
     (acc, l) => {
       acc.quoted += l.final_amount || l.quote_amount || 0;
       acc.received += l.received;
+      acc.reimbursementDue += l.reimbursement_due;
       acc.expenses += l.expenses;
       acc.profit += l.profit || 0;
       return acc;
     },
-    { quoted: 0, received: 0, expenses: 0, profit: 0 }
+    { quoted: 0, received: 0, reimbursementDue: 0, expenses: 0, profit: 0 }
   );
-  res.json({ bookings, totals: { ...totals, outstanding: totals.quoted - totals.received } });
+  res.json({ bookings, totals: { ...totals, outstanding: totals.quoted - totals.received + totals.reimbursementDue } });
 });
 
 // ---------- Payments ledger — supports multiple partial payments per booking ----------
@@ -2143,23 +2160,48 @@ app.get("/api/leads/:id/payments", requireAuth, requireSection("accounts"), asyn
 app.post("/api/leads/:id/payments", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
-  const { amount, date, mode, notes, type } = req.body;
+  const { amount, date, mode, notes, type, status } = req.body;
   if (!amount || Number(amount) <= 0) return res.status(400).json({ error: "Enter a valid amount" });
-  if (!date) return res.status(400).json({ error: "Payment date is required" });
+  if (!date) return res.status(400).json({ error: "Date is required" });
   const today = new Date().toISOString().slice(0, 10);
-  if (date > today) return res.status(400).json({ error: "Payment date can't be in the future" });
+  if (date > today) return res.status(400).json({ error: "Date can't be in the future" });
   // Named "client_reimbursement" (not just "reimbursement") to stay distinct
   // from the existing artist-expense reimbursement system in the expenses
   // table — this is the client paying TOL back, the other is TOL paying an
   // artist back. Same word, opposite direction of money.
   const finalType = type === "client_reimbursement" ? "client_reimbursement" : "payment";
+  // A fee payment is inherently already-received by definition. A
+  // reimbursement defaults to 'due' — logged as owed the moment the cost is
+  // incurred, same as an artist expense — unless explicitly marked already
+  // received (e.g. the client paid it back on the spot).
+  const finalStatus = finalType === "payment" ? "received" : (status === "received" ? "received" : "due");
   const id = uuid();
   await pool.query(`
-    INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, type, created_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-  `, [id, req.params.id, Number(amount), date, mode || null, notes || null, finalType, new Date().toISOString()]);
+    INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, type, status, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+  `, [id, req.params.id, Number(amount), date, finalStatus === "received" ? (mode || null) : null, notes || null, finalType, finalStatus, new Date().toISOString()]);
   res.status(201).json((await pool.query("SELECT * FROM payments WHERE id = $1", [id])).rows[0]);
-  logActivity(req, `${finalType === "client_reimbursement" ? "Reimbursement" : "Payment"} recorded for ${lead.name}: ₹${Number(amount).toLocaleString("en-IN")}${mode ? ` via ${mode}` : ""}`, lead.id);
+  logActivity(req, `${finalType === "client_reimbursement" ? `Reimbursement ${finalStatus === "due" ? "logged as due" : "recorded"}` : "Payment recorded"} for ${lead.name}: ₹${Number(amount).toLocaleString("en-IN")}${finalStatus === "received" && mode ? ` via ${mode}` : ""}`, lead.id);
+});
+
+// Marks a due reimbursement as actually received from the client (or
+// reverts a received one back to due, if it was marked by mistake) — the
+// same "due → paid" transition the expenses table already has for artist fees.
+app.patch("/api/payments/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const payment = (await pool.query("SELECT * FROM payments WHERE id = $1", [req.params.id])).rows[0];
+  if (!payment) return res.status(404).json({ error: "Payment not found" });
+  if (payment.type !== "client_reimbursement") return res.status(400).json({ error: "Only reimbursements can change status" });
+  const { status, date, mode } = req.body;
+  if (status !== "received" && status !== "due") return res.status(400).json({ error: "status must be 'received' or 'due'" });
+  if (status === "received") {
+    const receivedDate = date || new Date().toISOString().slice(0, 10);
+    await pool.query("UPDATE payments SET status = 'received', payment_date = $1, payment_mode = $2 WHERE id = $3", [receivedDate, mode || null, payment.id]);
+  } else {
+    await pool.query("UPDATE payments SET status = 'due', payment_mode = NULL WHERE id = $1", [payment.id]);
+  }
+  const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [payment.lead_id])).rows[0];
+  logActivity(req, `Reimbursement marked ${status} for ${lead?.name || "a lead"}: ₹${Number(payment.amount).toLocaleString("en-IN")}`, payment.lead_id);
+  res.json((await pool.query("SELECT * FROM payments WHERE id = $1", [req.params.id])).rows[0]);
 });
 
 app.delete("/api/payments/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
@@ -2551,12 +2593,13 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const weekAhead = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
-  const [upcomingRes, upcomingCountRes, followUpsRes, accountsRes, paymentsRes, tasksRes, newLeadsRes, tentativeRes, interestedRes, stageCountsRes] = await Promise.all([
+  const [upcomingRes, upcomingCountRes, followUpsRes, accountsRes, paymentsRes, dueReimbursementRes, tasksRes, newLeadsRes, tentativeRes, interestedRes, stageCountsRes] = await Promise.all([
     pool.query(`SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1 ORDER BY date ASC LIMIT 5`, [today]),
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1`, [today]),
     pool.query(`SELECT * FROM leads WHERE stage = 'Follow-up' AND (snooze_until IS NULL OR snooze_until <= $1) ORDER BY last_followup_at ASC NULLS FIRST, created_at ASC`, [today]),
     pool.query(`SELECT id, final_amount, quote_amount FROM leads WHERE stage IN ('Confirmed', 'Completed')`),
-    pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments`),
+    pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'received'`),
+    pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE type = 'client_reimbursement' AND status = 'due'`),
     pool.query(`SELECT * FROM tasks WHERE done = 0 AND (due_date <= $1 OR due_date IS NULL) ORDER BY due_date ASC LIMIT 8`, [weekAhead]),
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage = 'New'`),
     pool.query(`SELECT * FROM leads WHERE stage = 'Tentative' ORDER BY date ASC`),
@@ -2568,6 +2611,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
 
   const totalQuoted = accountsRes.rows.reduce((s, l) => s + (l.final_amount || l.quote_amount || 0), 0);
   const totalReceived = Number(paymentsRes.rows[0].total);
+  const totalReimbursementDue = Number(dueReimbursementRes.rows[0].total);
   const stageCounts = {};
   stageCountsRes.rows.forEach((r) => { stageCounts[r.stage] = Number(r.c); });
 
@@ -2579,7 +2623,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
     newLeadsCount: Number(newLeadsRes.rows[0].c),
     tentativeBookings: tentativeRes.rows,
     interestedLeads: interestedRes.rows,
-    outstanding: totalQuoted - totalReceived,
+    outstanding: totalQuoted - totalReceived + totalReimbursementDue,
     stageCounts,
   });
 });
