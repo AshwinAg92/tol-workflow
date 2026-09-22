@@ -429,7 +429,7 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   // Real payments live in the payments table (recorded via Accounts, the
   // Confirm-event flow, or combo bookings). Compute the true received total
   // per lead here so every screen shows accurate figures, not a stale ₹0.
-  const paymentSums = (await pool.query("SELECT lead_id, COALESCE(SUM(amount), 0) AS total FROM payments WHERE type = 'payment' GROUP BY lead_id")).rows;
+  const paymentSums = (await pool.query("SELECT lead_id, COALESCE(SUM(amount), 0) AS total FROM payments GROUP BY lead_id")).rows;
   const receivedByLead = {};
   paymentSums.forEach((p) => (receivedByLead[p.lead_id] = Number(p.total)));
   // So the Leads tab can show "when did I last quote this person" -- helps
@@ -2018,7 +2018,7 @@ app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, re
   const rows = (await pool.query("SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed')")).rows;
   const paymentSums = (await pool.query(`
     SELECT lead_id, COALESCE(SUM(amount), 0) AS total
-    FROM payments WHERE lead_id = ANY($1::text[]) AND type = 'payment' GROUP BY lead_id
+    FROM payments WHERE lead_id = ANY($1::text[]) GROUP BY lead_id
   `, [rows.map((r) => r.id)])).rows;
   const receivedByLead = {};
   paymentSums.forEach((p) => (receivedByLead[p.lead_id] = Number(p.total)));
@@ -2556,7 +2556,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1`, [today]),
     pool.query(`SELECT * FROM leads WHERE stage = 'Follow-up' AND (snooze_until IS NULL OR snooze_until <= $1) ORDER BY last_followup_at ASC NULLS FIRST, created_at ASC`, [today]),
     pool.query(`SELECT id, final_amount, quote_amount FROM leads WHERE stage IN ('Confirmed', 'Completed')`),
-    pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE type = 'payment'`),
+    pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments`),
     pool.query(`SELECT * FROM tasks WHERE done = 0 AND (due_date <= $1 OR due_date IS NULL) ORDER BY due_date ASC LIMIT 8`, [weekAhead]),
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage = 'New'`),
     pool.query(`SELECT * FROM leads WHERE stage = 'Tentative' ORDER BY date ASC`),

@@ -482,7 +482,7 @@ async function downloadLedgerPDF(booking, payments, reimbursements = []) {
   let y = 40;
 
   const total = booking.final_amount || booking.quote_amount || 0;
-  const received = payments.reduce((s, p) => s + p.amount, 0);
+  const received = payments.reduce((s, p) => s + p.amount, 0) + reimbursements.reduce((s, p) => s + p.amount, 0);
   const balance = total - received;
 
   doc.setFont("helvetica", "bold");
@@ -587,7 +587,7 @@ async function downloadLedgerPDF(booking, payments, reimbursements = []) {
     doc.setFont("helvetica", "italic");
     doc.setFontSize(8);
     doc.setTextColor(...PDF_COLORS.muted);
-    const reimbNote = doc.splitTextToSize("These are separate from the performance fee above — travel or other costs paid upfront and billed back to you.", contentW);
+    const reimbNote = doc.splitTextToSize("Already included in the Received/Balance above — itemized here for transparency, since these are travel or other costs paid upfront and billed back to you rather than the performance fee itself.", contentW);
     doc.text(reimbNote, marginX, y);
     y += reimbNote.length * 5 + 6;
   }
@@ -3552,8 +3552,11 @@ async function openLeadPaymentsModal(leadId) {
     const total = lead.final_amount || lead.quote_amount || 0;
     const feePayments = payments.filter((p) => p.type !== "client_reimbursement");
     const reimbursements = payments.filter((p) => p.type === "client_reimbursement");
-    const received = feePayments.reduce((s, p) => s + p.amount, 0);
     const totalReimbursed = reimbursements.reduce((s, p) => s + p.amount, 0);
+    // Received/Balance count every rupee collected from the client, fee or
+    // reimbursement alike — the itemized breakdown below is what keeps the
+    // two distinguishable, not a separate running total.
+    const received = payments.reduce((s, p) => s + p.amount, 0);
     const balance = total - received;
     const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
     const pendingExpenses = expenses.filter((e) => !e.paid);
@@ -3564,7 +3567,7 @@ async function openLeadPaymentsModal(leadId) {
         <div class="card summary-card summary-card-compact"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
         <div class="card summary-card summary-card-compact"><div class="muted">Profit</div><div class="mono big" style="color:${(total - totalExpenses) >= 0 ? "#5C8A6B" : "#A64B3C"};">${inr(total - totalExpenses)}</div></div>
       </div>
-      ${totalReimbursed > 0 ? `<p class="muted small" style="margin-top:-8px; margin-bottom:14px;">Balance above is for the performance fee only — ${inr(totalReimbursed)} in reimbursements (travel/other pass-through costs) is tracked separately below and doesn't count against it.</p>` : ""}
+      ${totalReimbursed > 0 ? `<p class="muted small" style="margin-top:-8px; margin-bottom:14px;">Received/Balance above already include ${inr(totalReimbursed)} in reimbursements — itemized separately below so it's still clear what's fee vs. reimbursement.</p>` : ""}
       ${hasAccountsAccess() ? `<button class="btn-ghost full" id="lpShareLedgerBtn" style="margin-bottom:14px;">📄 Share ledger PDF on WhatsApp</button>` : ""}
 
       <div class="section-label">Client payments (toward fee)</div>
@@ -5057,7 +5060,10 @@ async function renderDashboard(main) {
   main.innerHTML = `
     <div class="view-head">
       <div><h2>Dashboard</h2><p class="muted">The three things that matter today — click any card to see the list.</p></div>
-      <button class="btn-ghost" id="dashExportBtn">⬇ Export to Excel</button>
+      <div style="display:flex; gap:8px;">
+        <button class="btn-ghost" id="dashRefreshBtn" title="Refresh">🔄 Refresh</button>
+        <button class="btn-ghost" id="dashExportBtn">⬇ Export to Excel</button>
+      </div>
     </div>
     <div class="card" id="stickyNoteCard" style="margin-bottom:16px; background:#FBF3D9; border-color:#E8D488;">
       <div class="section-label" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
@@ -5316,6 +5322,22 @@ async function renderDashboard(main) {
       }
     });
   }
+
+  main.querySelector("#dashRefreshBtn").addEventListener("click", async () => {
+    const btn = main.querySelector("#dashRefreshBtn");
+    btn.disabled = true;
+    btn.textContent = "🔄 Refreshing…";
+    try {
+      await refreshLeads();
+      await renderDashboard(main);
+    } finally {
+      // On success renderDashboard already replaced this button with a fresh
+      // one, so resetting this detached reference is a harmless no-op; on
+      // failure it's still in the DOM and this restores it properly.
+      btn.disabled = false;
+      btn.textContent = "🔄 Refresh";
+    }
+  });
 
   main.querySelector("#dashExportBtn").addEventListener("click", async () => {
     const [{ bookings }, expenses] = await Promise.all([api("/api/accounts"), api("/api/expenses")]);
