@@ -1097,14 +1097,14 @@ async function openLeadDetailModal(lead) {
           ${["Tentative", "Confirmed", "Completed"].includes(lead.stage) ? `
             <div class="lead-detail-section">
               <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Financials</div>
-              <div class="lead-card-financials" style="margin-top:0;">
+              <div class="lead-card-financials" style="margin-top:0; ${lead.reimbursement_due ? "grid-template-columns:repeat(2,1fr);" : ""}">
                 <div><span class="muted small">${lead.stage === "Tentative" ? "Rate held" : "Final"}</span><div class="mono">${lead.final_amount || lead.quote_amount ? inr(lead.final_amount || lead.quote_amount) : "—"}</div></div>
                 <div><span class="muted small">Received</span><div class="mono">${inr(lead.received || 0)}</div></div>
+                ${lead.reimbursement_due ? `<div><span class="muted small">Reimbursement due</span><div class="mono" style="color:#B6752C;">+ ${inr(lead.reimbursement_due)}</div></div>` : ""}
                 <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
               </div>
               ${rateInclusionsSummaryText(lead) ? `<div class="muted small" style="margin-top:8px;">${rateInclusionsSummaryText(lead)}</div>` : ""}
               ${lead.rate_note ? `<div class="muted small" style="margin-top:2px;">📝 ${lead.rate_note}</div>` : ""}
-              ${lead.reimbursement_due ? `<div class="muted small" style="margin-top:2px;">Balance includes ${inr(lead.reimbursement_due)} in reimbursements still due — see Payments.</div>` : ""}
               ${lead.stage === "Tentative" ? `<p class="muted small" style="margin-top:6px;">This is a tentative hold, not a locked-in rate yet.</p>` : ""}
             </div>
           ` : ""}
@@ -1469,9 +1469,10 @@ async function renderLeadsLog(main, skipRefresh) {
           ` : (l.notes ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#F5F0E4; border-radius:4px;">📝 ${l.notes}</div>` : "")}
           ${l.stage === "Cancelled" && l.cancellation_reason ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#FBEAE7; border-radius:4px; color:#A64B3C;">❌ Cancelled: ${l.cancellation_reason}</div>` : ""}
           ${hasRateInfo ? `
-            <div class="lead-card-financials">
+            <div class="lead-card-financials" style="${displayReimbursementDue ? "grid-template-columns:repeat(2,1fr);" : ""}">
               <div><span class="muted small">${l.stage === "Tentative" ? "Rate held" : "Final"}</span><div class="mono">${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
               <div><span class="muted small">Received</span><div class="mono">${inr(displayReceived || 0)}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
+              ${displayReimbursementDue ? `<div><span class="muted small">Reimbursement due</span><div class="mono" style="color:#B6752C;">+ ${inr(displayReimbursementDue)}</div></div>` : ""}
               <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
             </div>
           ` : ""}
@@ -3574,10 +3575,11 @@ async function openLeadPaymentsModal(leadId) {
       <div class="dash-stats" style="grid-template-columns:repeat(2,1fr); margin-bottom:16px; gap:8px;">
         <div class="card summary-card summary-card-compact"><div class="muted">Final rate</div><div class="mono big">${inr(total)}</div></div>
         <div class="card summary-card summary-card-compact"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
+        ${totalReimbursementDue > 0 ? `<div class="card summary-card summary-card-compact"><div class="muted">Reimbursement due</div><div class="mono big" style="color:#B6752C;">+ ${inr(totalReimbursementDue)}</div></div>` : ""}
         <div class="card summary-card summary-card-compact"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
         <div class="card summary-card summary-card-compact"><div class="muted">Profit</div><div class="mono big" style="color:${(total - totalExpenses) >= 0 ? "#5C8A6B" : "#A64B3C"};">${inr(total - totalExpenses)}</div></div>
       </div>
-      ${totalReimbursementDue > 0 ? `<p class="muted small" style="margin-top:-8px; margin-bottom:14px;">Balance includes ${inr(totalReimbursementDue)} in reimbursements still due from the client (see below) — it moves into Received once collected.</p>` : ""}
+      ${totalReimbursementDue > 0 ? `<p class="muted small" style="margin-top:-8px; margin-bottom:14px;">Balance = Final − Received + Reimbursement due (${inr(total)} − ${inr(received)} + ${inr(totalReimbursementDue)}).</p>` : ""}
       ${hasAccountsAccess() ? `<button class="btn-ghost full" id="lpShareLedgerBtn" style="margin-bottom:14px;">📄 Share ledger PDF on WhatsApp</button>` : ""}
 
       <div class="section-label">Client payments (toward fee)</div>
@@ -4818,9 +4820,10 @@ async function renderAccounts(main) {
             </div>
             <span class="tag" style="color:${STAGE_COLOR[l.stage]}; flex-shrink:0;">${l.stage}</span>
           </div>
-          <div class="lead-card-financials acct-financials">
+          <div class="lead-card-financials acct-financials" style="${l.reimbursement_due ? "grid-template-columns:repeat(3,1fr);" : ""}">
             <div><span class="muted small">Final</span><div class="mono">${total ? inr(total) : "—"}</div></div>
             <div><span class="muted small">Received</span><div class="mono">${inr(l.received)}</div></div>
+            ${l.reimbursement_due ? `<div><span class="muted small">Reimb. due</span><div class="mono" style="color:#B6752C;">+ ${inr(l.reimbursement_due)}</div></div>` : ""}
             <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
             <div><span class="muted small">Expenses</span><div class="mono">${l.expenses ? inr(l.expenses) : "—"}</div></div>
             <div><span class="muted small">Profit</span><div class="mono" style="color:${l.profit == null ? "inherit" : l.profit >= 0 ? "#5C8A6B" : "#A64B3C"};">${l.profit == null ? "See combo" : inr(l.profit)}</div></div>
