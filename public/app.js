@@ -5113,9 +5113,9 @@ async function renderDashboard(main) {
   main.innerHTML = `
     <div class="view-head">
       <div><h2>Dashboard</h2><p class="muted">The three things that matter today — click any card to see the list.</p></div>
-      <div style="display:flex; gap:8px;">
-        <button class="btn-ghost" id="dashRefreshBtn" title="Refresh">🔄 Refresh</button>
-        <button class="btn-ghost" id="dashExportBtn">⬇ Export to Excel</button>
+      <div class="dash-head-actions" style="display:flex; gap:8px;">
+        <button class="btn-ghost dash-head-btn" id="dashRefreshBtn" title="Refresh">🔄 Refresh</button>
+        <button class="btn-ghost dash-head-btn" id="dashExportBtn">⬇ Export to Excel</button>
       </div>
     </div>
     <div class="card" id="stickyNoteCard" style="margin-bottom:16px; background:#FBF3D9; border-color:#E8D488;">

@@ -266,6 +266,9 @@ select.stage-select { width:auto; padding:4px 6px; font-size:12px; border-radius
   .dash-stat .big { font-size:20px; }
   .dash-stats > *:last-child:nth-child(odd) { grid-column:1 / -1; }
   .dash-grid { grid-template-columns:1fr; }
+  .view-head { flex-wrap:wrap; gap:10px; }
+  .dash-head-actions { gap:6px !important; }
+  .dash-head-btn { font-size:12px; padding:6px 10px; }
   .quote-grid { grid-template-columns:1fr; }
   .leads-table-row { grid-template-columns:1.6fr 1fr 0.9fr 1fr 0.7fr; }
   .leads-table-row span:nth-child(3), .leads-table-row span:nth-child(5) { display:none; }
