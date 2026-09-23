@@ -3829,20 +3829,16 @@ function openTempArtistDirectoryModal(directory, onBack) {
 async function openAssignTeamModal(leadId) {
   const lead = LEADS.find((l) => l.id === leadId);
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
-  const [assignments, tempArtists, leadExpenses, myReimbursements, allDocuments, myOwnFee, tempArtistDirectory] = await Promise.all([
+  const [assignments, tempArtists, leadExpenses, myReimbursements, myOwnFee, tempArtistDirectory] = await Promise.all([
     api(`/api/leads/${leadId}/assignments`),
     api(`/api/leads/${leadId}/temp-artists`),
     isAdmin ? api(`/api/expenses?leadId=${leadId}`) : Promise.resolve([]),
     api(`/api/my/reimbursements`).catch(() => []),
-    api(`/api/documents`).catch(() => []),
     !isAdmin ? api(`/api/my/artist-fee?leadId=${leadId}`).catch(() => null) : Promise.resolve(null),
     api(`/api/temp-artists`).catch(() => []),
   ]);
-  const leadDocuments = allDocuments.filter((d) => d.lead_id === leadId);
-  const generalDocuments = allDocuments.filter((d) => !d.lead_id);
   const leadReimbursements = myReimbursements.filter((r) => r.lead_id === leadId);
   const reimbStatusLabel = { 0: "Pending approval", 1: "Approved" };
-  const waClientPhone = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
   const byTeamId = {};
   assignments.forEach((a) => (byTeamId[a.team_id] = a));
   // One artist-fee expense per team member per event is the normal case (the
@@ -4025,61 +4021,6 @@ async function openAssignTeamModal(leadId) {
           <input id="reimbNotes" placeholder="What was this for? (e.g. cab fare, travel)" style="margin-top:8px;" />
           <button class="btn-ghost full" id="addReimbursementBtn" style="margin-top:8px;">+ Submit reimbursement</button>
           <p class="muted small" style="margin-top:4px;">Sent to admin for approval and payment — this is separate from the artist's performance fee.</p>
-
-          <div class="section-label" style="margin-top:16px;">Documents</div>
-          ${leadDocuments.length === 0 ? `<p class="muted small">No documents uploaded for this event yet.</p>` : `
-            <div id="eventDocList" style="margin-bottom:8px;">
-              ${leadDocuments.map((d) => {
-                const fullUrl = window.location.origin + d.url;
-                const waText = encodeURIComponent(fillTemplate(MESSAGE_TEMPLATES.document_share || TEMPLATE_META.document_share.default, { label: d.notes || "document", link: fullUrl }));
-                return `
-                <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-                  <div>
-                    <div>${d.notes ? `<strong>${d.notes}</strong> — ` : ""}<a href="${d.url}" target="_blank">${d.original_name}</a></div>
-                    <div class="muted small">${fmtDate(d.uploaded_at.slice(0, 10))}</div>
-                  </div>
-                  <div style="display:flex; gap:4px; flex-shrink:0;">
-                    ${waClientPhone ? `<a class="btn-ghost" href="https://wa.me/${waClientPhone}?text=${waText}" style="font-size:12px; padding:3px 8px;">Send to client</a>` : ""}
-                    <button class="icon-btn" data-delete-event-doc="${d.id}">${ICON_X}</button>
-                  </div>
-                </div>
-              `;
-              }).join("")}
-            </div>
-          `}
-
-          ${generalDocuments.length > 0 ? `
-            <div class="muted small" style="margin-top:10px; margin-bottom:4px;">From your document library — attach any of these to this event, or send straight to the client:</div>
-            <div id="libraryDocList" style="margin-bottom:8px; border:1px solid #EFE9DC; border-radius:8px; max-height:180px; overflow-y:auto;">
-              ${generalDocuments.map((d) => {
-                const fullUrl = window.location.origin + d.url;
-                const waText = encodeURIComponent(fillTemplate(MESSAGE_TEMPLATES.document_share || TEMPLATE_META.document_share.default, { label: d.notes || "document", link: fullUrl }));
-                return `
-                <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px; border-bottom:1px solid #EFE9DC;">
-                  <div style="min-width:0;">
-                    <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${d.notes ? `<strong>${d.notes}</strong> — ` : ""}${d.original_name}</div>
-                  </div>
-                  <div style="display:flex; gap:4px; flex-shrink:0;">
-                    <button class="btn-ghost attach-library-doc-btn" data-doc-id="${d.id}" style="font-size:12px; padding:3px 8px;">+ Attach to event</button>
-                    ${waClientPhone ? `<a class="btn-ghost" href="https://wa.me/${waClientPhone}?text=${waText}" style="font-size:12px; padding:3px 8px;">Send to client</a>` : ""}
-                  </div>
-                </div>
-              `;
-              }).join("")}
-            </div>
-          ` : ""}
-
-          <div class="row-2" style="margin-top:8px;">
-            <input type="text" id="eventDocLabel" list="eventDocLabelOptions" placeholder="Label (e.g. Tech Rider, Contract)" />
-            <input type="file" id="eventDocFile" />
-          </div>
-          <datalist id="eventDocLabelOptions">
-            <option value="Tech Rider"></option>
-            <option value="Hospitality Rider"></option>
-            <option value="Contract"></option>
-            <option value="Invoice"></option>
-          </datalist>
-          <button class="btn-ghost full" id="uploadEventDocBtn" style="margin-top:8px;">+ Upload document</button>
         </div>
         <div class="modal-foot">
           <button class="btn-ghost" id="openChatBtn">💬 Event chat</button>
@@ -4149,51 +4090,6 @@ async function openAssignTeamModal(leadId) {
     } catch (err) {
       alert(err.message);
       btn.disabled = false;
-    }
-  });
-  root.querySelectorAll("[data-delete-event-doc]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      if (!confirm("Delete this document?")) return;
-      await fetch(`/api/documents/${btn.dataset.deleteEventDoc}`, { method: "DELETE" });
-      openAssignTeamModal(leadId);
-    });
-  });
-  root.querySelectorAll(".attach-library-doc-btn").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const original = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = "Attaching…";
-      try {
-        await api(`/api/documents/${btn.dataset.docId}/attach`, {
-          method: "POST",
-          body: JSON.stringify({ leadId }),
-        });
-        openAssignTeamModal(leadId);
-      } catch (err) {
-        alert(err.message);
-        btn.disabled = false;
-        btn.textContent = original;
-      }
-    });
-  });
-  root.querySelector("#uploadEventDocBtn").addEventListener("click", async (e) => {
-    const btn = e.currentTarget;
-    if (btn.disabled) return;
-    const fileInput = root.querySelector("#eventDocFile");
-    if (!fileInput.files[0]) return alert("Choose a file first.");
-    const formData = new FormData();
-    formData.append("file", fileInput.files[0]);
-    formData.append("leadId", leadId);
-    formData.append("notes", root.querySelector("#eventDocLabel").value || "");
-    btn.disabled = true;
-    btn.textContent = "Uploading…";
-    try {
-      await fetch("/api/documents", { method: "POST", body: formData });
-      openAssignTeamModal(leadId);
-    } catch (err) {
-      alert(err.message);
-      btn.disabled = false;
-      btn.textContent = "+ Upload document";
     }
   });
   root.querySelectorAll(".mark-response-select").forEach((sel) => {
@@ -5114,8 +5010,8 @@ async function renderDashboard(main) {
     <div class="view-head">
       <div><h2>Dashboard</h2><p class="muted">The three things that matter today — click any card to see the list.</p></div>
       <div class="dash-head-actions" style="display:flex; gap:8px;">
-        <button class="btn-ghost dash-head-btn" id="dashRefreshBtn" title="Refresh">🔄 Refresh</button>
-        <button class="btn-ghost dash-head-btn" id="dashExportBtn">⬇ Export to Excel</button>
+        <button class="btn-ghost dash-head-btn" id="dashRefreshBtn" title="Refresh">🔄 <span class="btn-label">Refresh</span></button>
+        <button class="btn-ghost dash-head-btn" id="dashExportBtn" title="Export to Excel">⬇ <span class="btn-label">Export to Excel</span></button>
       </div>
     </div>
     <div class="card" id="stickyNoteCard" style="margin-bottom:16px; background:#FBF3D9; border-color:#E8D488;">
