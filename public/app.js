@@ -332,6 +332,27 @@ const fmtTimeHM = (hm) => {
 };
 const packageName = (id) => id === "both" ? "Bhajan Jamming & Musical Pheras (Both)" : (CONFIG.packages.find((p) => p.id === id)?.name || id);
 
+// Every (package, band size) combination worth a line on a rate card —
+// pcs-tiered packages get one row per tier from CONFIG.pricing, packages with
+// only a flat rate (no pcs tiers, e.g. the combo) get a single "flat" row.
+// Shared by the Settings B2B editor and the Documents rate-card generator so
+// the two never drift out of sync on which rows exist.
+function rateCardRows() {
+  return CONFIG.packages.flatMap((p) => {
+    const tiers = CONFIG.pricing[p.id];
+    if (tiers && Object.keys(tiers).length > 0) {
+      return Object.entries(tiers).map(([pcs, rate]) => ({ packageId: p.id, packageName: p.name, tierKey: pcs, tierLabel: `${pcs} pcs`, b2cRate: rate }));
+    }
+    return [{ packageId: p.id, packageName: p.name, tierKey: "flat", tierLabel: "—", b2cRate: p.rate }];
+  });
+}
+function getB2bRate(row) {
+  try {
+    const b2b = JSON.parse(MESSAGE_TEMPLATES.b2b_pricing || "{}");
+    return b2b[row.packageId]?.[row.tierKey];
+  } catch { return undefined; }
+}
+
 const el = (html) => { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstChild; };
 
 // ---------- PDF generation (logo + letterhead, used by both Ledger and Quotation) ----------
@@ -605,6 +626,72 @@ async function downloadLedgerPDF(booking, payments, reimbursements = []) {
   pdfWarmClosing(doc, pageWidth, "We look forward to creating a memorable, soul-stirring experience with you.", y);
 
   const filename = `Ledger-${booking.name.replace(/[^a-z0-9]/gi, "-")}.pdf`;
+  doc.save(filename);
+  return filename;
+}
+
+// A general price list (not tied to any specific event) for contacts who
+// haven't submitted an enquiry — event planners wanting rates on file for
+// whenever they next need to book. Groups by package, one row per band size.
+async function downloadRateCardPDF(name, rateType) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const isB2b = rateType === "b2b";
+  const { pageWidth, marginX } = await pdfLetterhead(doc, "RATE CARD", `Together, Out Loud — ${isB2b ? "B2B rates" : "Standard rates"}`);
+  const contentW = pageWidth - marginX * 2;
+  let y = 40;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.setTextColor(...PDF_COLORS.dark);
+  doc.text(`Prepared for ${name}`, marginX, y);
+  doc.setTextColor(...PDF_COLORS.muted);
+  doc.text(fmtDate(new Date().toISOString().slice(0, 10)), pageWidth - marginX, y, { align: "right" });
+  y += 10;
+
+  const rows = rateCardRows();
+  const byPackage = {};
+  rows.forEach((r) => { (byPackage[r.packageId] = byPackage[r.packageId] || []).push(r); });
+
+  Object.values(byPackage).forEach((packageRows) => {
+    if (y > 260) { doc.addPage(); y = 20; }
+    y = pdfHeaderBar(doc, packageRows[0].packageName, marginX, y, contentW, PDF_COLORS.rust);
+    doc.setFillColor(...PDF_COLORS.card);
+    doc.rect(marginX, y - 5, contentW, 7, "F");
+    doc.setDrawColor(...PDF_COLORS.rust);
+    doc.setLineWidth(0.4);
+    doc.line(marginX, y + 3, pageWidth - marginX, y + 3);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(...PDF_COLORS.muted);
+    doc.text("BAND SIZE", marginX + 4, y);
+    doc.text("RATE", marginX + contentW * 0.55, y);
+    y += 8;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.3);
+    packageRows.forEach((row, i) => {
+      const rate = isB2b ? (getB2bRate(row) ?? row.b2cRate) : row.b2cRate;
+      if (i % 2 === 1) { doc.setFillColor(248, 240, 230); doc.rect(marginX, y - 5, contentW, 7, "F"); }
+      doc.setTextColor(...PDF_COLORS.dark);
+      doc.text(row.tierLabel, marginX + 4, y);
+      doc.setFont("helvetica", "bold");
+      doc.text(inrPdf(rate), marginX + contentW * 0.55, y);
+      doc.setFont("helvetica", "normal");
+      y += 7;
+    });
+    y += 6;
+  });
+
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(8);
+  doc.setTextColor(...PDF_COLORS.muted);
+  const note = doc.splitTextToSize("Rates shown are indicative and exclude travel, accommodation, and any add-ons unless stated otherwise. Final pricing is confirmed at the time of booking.", contentW);
+  doc.text(note, marginX, y);
+  y += note.length * 5 + 8;
+
+  pdfWarmClosing(doc, pageWidth, "We'd love to make your next event a truly memorable, soul-stirring experience.", y);
+
+  const filename = `Rate-Card-${(isB2b ? "B2B" : "B2C")}-${name.replace(/[^a-z0-9]/gi, "-")}.pdf`;
   doc.save(filename);
   return filename;
 }
@@ -5445,6 +5532,20 @@ async function renderDocuments(main) {
   main.innerHTML = `
     <div class="view-head"><div><h2>Documents</h2><p class="muted">General files, plus files kept against a specific confirmed event — tag riders/contracts and send them straight to the client.</p></div></div>
     <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">Send a rate card</div>
+      <p class="muted small" style="margin-top:-4px;">For contacts who haven't submitted an enquiry — event planners, agencies, or anyone wanting your rates for future reference. No lead is created; this just builds a PDF and opens WhatsApp.</p>
+      <div class="row-2">
+        <input type="text" id="rcName" placeholder="Name" />
+        <input type="tel" id="rcPhone" placeholder="WhatsApp number" />
+      </div>
+      <select id="rcType" style="margin-top:8px;">
+        <option value="b2c">Standard (B2C) rates</option>
+        <option value="b2b">B2B rates</option>
+      </select>
+      <button class="btn-primary full" id="rcSendBtn" style="margin-top:10px;">📄 Generate & send on WhatsApp</button>
+      <p class="muted small" id="rcStatus" style="margin-top:6px;"></p>
+    </div>
+    <div class="card" style="margin-bottom:16px;">
       <div class="section-label">Upload a file</div>
       <div class="upload-form">
         <select id="docLead">
@@ -5552,6 +5653,30 @@ async function renderDocuments(main) {
       await fetch(`/api/documents/${btn.dataset.deleteDoc}`, { method: "DELETE" });
       renderMain();
     });
+  });
+
+  main.querySelector("#rcSendBtn").addEventListener("click", async () => {
+    const name = main.querySelector("#rcName").value.trim();
+    const phone = main.querySelector("#rcPhone").value.trim();
+    const digitsOnly = phone.replace(/\D/g, "");
+    const rateType = main.querySelector("#rcType").value;
+    const status = main.querySelector("#rcStatus");
+    if (!name) return alert("Enter a name first.");
+    if (!digitsOnly) return alert("Enter a WhatsApp number first.");
+    const btn = main.querySelector("#rcSendBtn");
+    btn.disabled = true;
+    status.textContent = "Preparing PDF…";
+    try {
+      await downloadRateCardPDF(name, rateType);
+      const label = rateType === "b2b" ? "B2B" : "standard";
+      const msg = `Hi ${name.split(" ")[0]}, sharing our ${label} rate card with Together, Out Loud for future reference. Please find the PDF attached.`;
+      window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
+      status.textContent = "PDF downloaded, and WhatsApp is opening — attach the downloaded PDF file to that chat to send it.";
+    } catch (err) {
+      status.textContent = `Couldn't generate the PDF — ${err.message}`;
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   main.querySelector("#uploadBtn").addEventListener("click", async () => {
@@ -6769,6 +6894,26 @@ async function renderSettings(main) {
     </div>
 
     <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">B2B rate card</div>
+      <p class="muted small" style="margin-top:-4px;">Rates shown to event planners/agencies on a B2B rate card (sent from the Documents tab). Your standard rates (below, for reference) come from Pricing in config.js — this only sets the B2B side.</p>
+      <div class="table" style="margin-top:10px;">
+        <div class="table-head" style="grid-template-columns:2fr 1fr 1fr 1fr;">
+          <span>Package</span><span>Band size</span><span>Standard (B2C)</span><span>B2B</span>
+        </div>
+        ${rateCardRows().map((row, i) => `
+          <div class="table-row" style="grid-template-columns:2fr 1fr 1fr 1fr;">
+            <span>${row.packageName}</span>
+            <span class="muted small">${row.tierLabel}</span>
+            <span class="mono muted">${inr(row.b2cRate)}</span>
+            <input type="number" class="b2b-rate-input" data-package-id="${row.packageId}" data-tier-key="${row.tierKey}" value="${getB2bRate(row) ?? ""}" placeholder="e.g. ${row.b2cRate}" style="font-size:13px; padding:6px 8px;" />
+          </div>
+        `).join("")}
+      </div>
+      <button class="btn-ghost" id="saveB2bRatesBtn" style="margin-top:10px;">Save B2B rates</button>
+      <span class="muted small" id="b2bRatesSaveStatus"></span>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
       <div class="section-label">Not Interested reasons report</div>
       <p class="muted small" style="margin-top:-4px;">A month-end breakdown of why leads didn't convert, based on the reason picked when a lead is moved to Not Interested.</p>
       <button class="btn-ghost" id="openNotInterestedReportBtn">📊 View report</button>
@@ -6847,6 +6992,30 @@ async function renderSettings(main) {
     try {
       await api("/api/message-templates/bank_details", { method: "PATCH", body: JSON.stringify({ template: value }) });
       MESSAGE_TEMPLATES.bank_details = value;
+      status.textContent = "Saved ✓";
+    } catch (err) {
+      status.textContent = "Couldn't save — try again.";
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  main.querySelector("#saveB2bRatesBtn").addEventListener("click", async () => {
+    const btn = main.querySelector("#saveB2bRatesBtn");
+    const status = main.querySelector("#b2bRatesSaveStatus");
+    const b2b = {};
+    main.querySelectorAll(".b2b-rate-input").forEach((input) => {
+      const value = input.value.trim();
+      if (!value) return;
+      const pkg = input.dataset.packageId;
+      b2b[pkg] = b2b[pkg] || {};
+      b2b[pkg][input.dataset.tierKey] = Number(value);
+    });
+    btn.disabled = true;
+    try {
+      const json = JSON.stringify(b2b);
+      await api("/api/message-templates/b2b_pricing", { method: "PATCH", body: JSON.stringify({ template: json }) });
+      MESSAGE_TEMPLATES.b2b_pricing = json;
       status.textContent = "Saved ✓";
     } catch (err) {
       status.textContent = "Couldn't save — try again.";
