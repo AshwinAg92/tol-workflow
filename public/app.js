@@ -119,6 +119,7 @@ const NAV = [
   { id: "calendar", label: "Calendar" },
   { id: "travelcal", label: "Travel Calendar" },
   { id: "documents", label: "Documents" },
+  { id: "b2b", label: "B2B Contacts" },
   { id: "team", label: "Team" },
   { id: "website", label: "Website" },
   { id: "settings", label: "Settings" },
@@ -137,6 +138,7 @@ const NAV_GROUPS = {
   calendar: "Operations",
   travelcal: "Operations",
   documents: "Operations",
+  b2b: "Operations",
   team: "Operations",
   website: "Admin",
   settings: "Admin",
@@ -5544,6 +5546,163 @@ async function renderTasks(main) {
 }
 
 // ---------- Documents ----------
+// ---------- B2B Contacts (event managers, agencies, etc.) ----------
+async function renderB2bContacts(main) {
+  main.innerHTML = `<div class="view-head"><div><h2>B2B Contacts</h2></div></div><p class="muted">Loading…</p>`;
+  let contacts;
+  try {
+    contacts = await api("/api/b2b-contacts");
+  } catch (err) {
+    main.innerHTML = `<div class="view-head"><div><h2>B2B Contacts</h2></div></div><p class="muted small">Couldn't load contacts.</p>`;
+    return;
+  }
+
+  function renderList() {
+    const listEl = main.querySelector("#b2bContactList");
+    if (contacts.length === 0) {
+      listEl.innerHTML = `<p class="muted small">No contacts saved yet — add an event manager or agency above.</p>`;
+      return;
+    }
+    listEl.innerHTML = "";
+    contacts.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach((c) => {
+      const digitsOnly = (c.phone || "").replace(/\D/g, "");
+      const card = el(`
+        <div class="card" style="margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+            <div>
+              <div style="font-weight:600;">${c.name}${c.company ? ` <span class="muted small">— ${c.company}</span>` : ""}</div>
+              <div class="muted small">${[c.phone, c.email, c.city].filter(Boolean).join(" · ") || "No contact details on file"}</div>
+              ${c.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${c.notes}</div>` : ""}
+              <div class="muted small" style="margin-top:2px;">${c.last_contacted_at ? `Last contacted ${fmtDate(c.last_contacted_at.slice(0, 10))}` : "Not contacted yet"}</div>
+            </div>
+          </div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">
+            ${digitsOnly ? `<button class="btn-ghost send-rate-card-btn" data-contact-id="${c.id}" style="font-size:12px; padding:4px 9px;">📄 Send rate card</button>` : ""}
+            <button class="btn-ghost mark-contacted-btn" data-contact-id="${c.id}" style="font-size:12px; padding:4px 9px;">✓ Mark contacted today</button>
+            <button class="btn-ghost edit-contact-btn" data-contact-id="${c.id}" style="font-size:12px; padding:4px 9px;">Edit</button>
+            <button class="btn-ghost delete-contact-btn" data-contact-id="${c.id}" style="font-size:12px; padding:4px 9px; color:#A64B3C;">Delete</button>
+          </div>
+        </div>
+      `);
+      listEl.appendChild(card);
+    });
+
+    listEl.querySelectorAll(".send-rate-card-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const c = contacts.find((x) => x.id === btn.dataset.contactId);
+        const digitsOnly = (c.phone || "").replace(/\D/g, "");
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = "Preparing…";
+        try {
+          await downloadRateCardPDF(c.name);
+          const msg = `Hi ${c.name.split(" ")[0]}, sharing our rate card with Together, Out Loud for future reference. Please find the PDF attached.`;
+          window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
+          await api(`/api/b2b-contacts/${c.id}`, { method: "PATCH", body: JSON.stringify({ lastContactedAt: new Date().toISOString().slice(0, 10) }) });
+          c.last_contacted_at = new Date().toISOString().slice(0, 10);
+          renderList();
+        } catch (err) {
+          alert(err.message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = original;
+        }
+      });
+    });
+    listEl.querySelectorAll(".mark-contacted-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const c = contacts.find((x) => x.id === btn.dataset.contactId);
+        btn.disabled = true;
+        try {
+          await api(`/api/b2b-contacts/${c.id}`, { method: "PATCH", body: JSON.stringify({ lastContactedAt: new Date().toISOString().slice(0, 10) }) });
+          c.last_contacted_at = new Date().toISOString().slice(0, 10);
+          renderList();
+        } catch (err) {
+          alert(err.message);
+          btn.disabled = false;
+        }
+      });
+    });
+    listEl.querySelectorAll(".edit-contact-btn").forEach((btn) => {
+      btn.addEventListener("click", () => openB2bContactModal(contacts.find((x) => x.id === btn.dataset.contactId), () => renderB2bContacts(main)));
+    });
+    listEl.querySelectorAll(".delete-contact-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this contact?")) return;
+        await api(`/api/b2b-contacts/${btn.dataset.contactId}`, { method: "DELETE" });
+        contacts = contacts.filter((x) => x.id !== btn.dataset.contactId);
+        renderList();
+      });
+    });
+  }
+
+  main.innerHTML = `
+    <div class="view-head">
+      <div><h2>B2B Contacts</h2><p class="muted">Event managers, agencies, and other B2B relationships — separate from Leads, since these aren't tied to a specific event enquiry.</p></div>
+      <button class="btn-primary" id="addB2bContactBtn">+ Add contact</button>
+    </div>
+    <div id="b2bContactList"></div>
+  `;
+  main.querySelector("#addB2bContactBtn").addEventListener("click", () => openB2bContactModal(null, () => renderB2bContacts(main)));
+  renderList();
+}
+
+function openB2bContactModal(contact, onDone) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card" style="width:440px; max-width:96vw;">
+        <div class="modal-head"><h3>${contact ? "Edit contact" : "Add B2B contact"}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body">
+          <label>Name</label>
+          <input id="bcName" value="${contact?.name || ""}" placeholder="e.g. Rohit Sharma" />
+          <label style="margin-top:8px;">Company / Agency (optional)</label>
+          <input id="bcCompany" value="${contact?.company || ""}" placeholder="e.g. Shaadi Squad Events" />
+          <div class="row-2" style="margin-top:8px;">
+            <div><label>Phone / WhatsApp</label><input id="bcPhone" value="${contact?.phone || ""}" /></div>
+            <div><label>Email (optional)</label><input id="bcEmail" value="${contact?.email || ""}" /></div>
+          </div>
+          <label style="margin-top:8px;">City (optional)</label>
+          <input id="bcCity" value="${contact?.city || ""}" />
+          <label style="margin-top:8px;">Notes (optional)</label>
+          <input id="bcNotes" value="${contact?.notes || ""}" placeholder="How you know them, what they usually book, etc." />
+        </div>
+        <div class="modal-foot">
+          <button class="btn-ghost" id="cancelModal">Cancel</button>
+          <button class="btn-primary" id="bcSaveBtn">Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#bcSaveBtn").addEventListener("click", async () => {
+    const name = root.querySelector("#bcName").value.trim();
+    if (!name) return alert("Enter a name first.");
+    const payload = {
+      name,
+      company: root.querySelector("#bcCompany").value.trim() || null,
+      phone: root.querySelector("#bcPhone").value.trim() || null,
+      email: root.querySelector("#bcEmail").value.trim() || null,
+      city: root.querySelector("#bcCity").value.trim() || null,
+      notes: root.querySelector("#bcNotes").value.trim() || null,
+    };
+    const btn = root.querySelector("#bcSaveBtn");
+    btn.disabled = true;
+    try {
+      if (contact) await api(`/api/b2b-contacts/${contact.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+      else await api("/api/b2b-contacts", { method: "POST", body: JSON.stringify(payload) });
+      close();
+      if (onDone) onDone();
+    } catch (err) {
+      alert(err.message);
+      btn.disabled = false;
+    }
+  });
+}
+
 async function renderDocuments(main) {
   // Confirmed and Completed events both get a card here — Completed clients
   // still need to receive documents sometimes (invoices, thank-you notes,
@@ -7212,6 +7371,7 @@ function renderMain() {
   else if (currentTab === "quotation") renderQuotation(main);
   else if (currentTab === "tasks") renderTasks(main);
   else if (currentTab === "documents") renderDocuments(main);
+  else if (currentTab === "b2b") renderB2bContacts(main);
   else if (currentTab === "calendar") renderCalendar(main);
   else if (currentTab === "team") renderTeam(main);
   else if (currentTab === "accounts") renderAccounts(main);

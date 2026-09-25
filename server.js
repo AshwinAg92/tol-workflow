@@ -504,6 +504,48 @@ app.delete("/api/blocked-dates/:id", requireAuth, requireAdmin, async (req, res)
   res.status(204).end();
 });
 
+// ---------- B2B contacts (event managers, agencies, etc.) ----------
+app.get("/api/b2b-contacts", requireAuth, requireSection("b2b"), async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM b2b_contacts ORDER BY name ASC");
+  res.json(rows);
+});
+
+app.post("/api/b2b-contacts", requireAuth, requireSection("b2b"), async (req, res) => {
+  const { name, company, phone, email, city, notes } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: "Name is required" });
+  const id = uuid();
+  await pool.query(`
+    INSERT INTO b2b_contacts (id, name, company, phone, email, city, notes, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+  `, [id, name.trim(), company || null, phone || null, email || null, city || null, notes || null, new Date().toISOString()]);
+  logActivity(req, `Added B2B contact: ${name.trim()}${company ? ` (${company})` : ""}`, null);
+  res.status(201).json((await pool.query("SELECT * FROM b2b_contacts WHERE id = $1", [id])).rows[0]);
+});
+
+app.patch("/api/b2b-contacts/:id", requireAuth, requireSection("b2b"), async (req, res) => {
+  const contact = (await pool.query("SELECT * FROM b2b_contacts WHERE id = $1", [req.params.id])).rows[0];
+  if (!contact) return res.status(404).json({ error: "Contact not found" });
+  const fields = ["name", "company", "phone", "email", "city", "notes", "last_contacted_at"];
+  const updates = [];
+  const values = [];
+  fields.forEach((f) => {
+    const bodyKey = f === "last_contacted_at" ? "lastContactedAt" : f;
+    if (req.body[bodyKey] !== undefined) {
+      values.push(req.body[bodyKey] || null);
+      updates.push(`${f} = $${values.length}`);
+    }
+  });
+  if (updates.length === 0) return res.json(contact);
+  values.push(req.params.id);
+  await pool.query(`UPDATE b2b_contacts SET ${updates.join(", ")} WHERE id = $${values.length}`, values);
+  res.json((await pool.query("SELECT * FROM b2b_contacts WHERE id = $1", [req.params.id])).rows[0]);
+});
+
+app.delete("/api/b2b-contacts/:id", requireAuth, requireSection("b2b"), async (req, res) => {
+  await pool.query("DELETE FROM b2b_contacts WHERE id = $1", [req.params.id]);
+  res.status(204).end();
+});
+
 app.post("/api/leads", async (req, res) => {
   const {
     name, phone, email, eventType, city, state, date, budget, notes,

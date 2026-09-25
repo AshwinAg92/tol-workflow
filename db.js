@@ -260,6 +260,22 @@ async function setup() {
       created_at TEXT NOT NULL
     );
   `);
+  // A saved directory of event managers, agencies, and other B2B contacts —
+  // separate from Leads, since these are relationships to keep in touch with
+  // (send rate cards, etc.) rather than a specific event enquiry.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS b2b_contacts (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      company TEXT,
+      phone TEXT,
+      email TEXT,
+      city TEXT,
+      notes TEXT,
+      last_contacted_at TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
   // Lets a travel leg exist without a lead — for manually-logged trips
   // (scouting a venue, a personal trip, anything not tied to a booked
   // event) shown on the standalone Travel Calendar.
