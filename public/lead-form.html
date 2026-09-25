@@ -129,6 +129,21 @@
         </div>
 
         <div class="q">
+          <label class="qlabel">Are you booking directly, or on someone else's behalf?</label>
+          <label class="radio-row"><input type="radio" name="bookingType" value="direct" checked /> I'm the client, booking for my own event</label>
+          <label class="radio-row"><input type="radio" name="bookingType" value="event_manager" /> I'm an Event Manager / Artist Manager, booking for a client</label>
+        </div>
+
+        <div class="q" id="managerFieldsWrap" style="display:none;">
+          <label class="qlabel">Company / Agency name</label>
+          <input id="managerCompany" placeholder="e.g. Shaadi Squad Events" />
+          <label class="qlabel" style="margin-top:14px;">Your city <span class="opt">(where you're based)</span></label>
+          <input id="managerCity" placeholder="e.g. Mumbai" />
+          <label class="qlabel" style="margin-top:14px;">Instagram profile <span class="opt">(optional)</span></label>
+          <input id="managerInstagram" placeholder="@yourhandle or profile link" />
+        </div>
+
+        <div class="q">
           <label class="qlabel">Email Address <span class="opt">(optional)</span></label>
           <input id="email" type="email" placeholder="name@example.com" />
         </div>
@@ -335,6 +350,14 @@
       });
     });
 
+    const managerFieldsWrap = document.getElementById("managerFieldsWrap");
+    document.querySelectorAll('input[name="bookingType"]').forEach(radio => {
+      radio.addEventListener("change", () => {
+        const isManager = document.querySelector('input[name="bookingType"]:checked').value === "event_manager";
+        managerFieldsWrap.style.display = isManager ? "" : "none";
+      });
+    });
+
     // Pulls just the "+xx" number out of whatever the person typed or picked —
     // works whether they selected a suggestion or typed a code/country directly.
     function extractCountryCode(text) {
@@ -372,6 +395,7 @@
       const fullPhone = `${countryCode} ${document.getElementById("phone").value}`.trim();
       const waCode = extractCountryCode(waCountryCodeInput.value);
       const waFullPhone = `${waCode} ${document.getElementById("waPhone").value}`.trim();
+      const isEventManager = document.querySelector('input[name="bookingType"]:checked').value === "event_manager";
 
       const payload = {
         name: document.getElementById("name").value,
@@ -388,6 +412,10 @@
         whatsappOptin: true,
         whatsappNumber: whatsappSame ? fullPhone : waFullPhone,
         altDate: document.getElementById("altDate").value || null,
+        isEventManager,
+        managerCompany: isEventManager ? document.getElementById("managerCompany").value : null,
+        managerCity: isEventManager ? document.getElementById("managerCity").value : null,
+        managerInstagram: isEventManager ? document.getElementById("managerInstagram").value : null,
       };
 
       try {

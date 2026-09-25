@@ -550,6 +550,7 @@ app.post("/api/leads", async (req, res) => {
   const {
     name, phone, email, eventType, city, state, date, budget, notes,
     venue, occasion, guestRange, details, howHeard, whatsappOptin, altDate, whatsappNumber, pcs,
+    isEventManager, managerCompany, managerCity, managerInstagram,
   } = req.body;
   if (!name || !eventType || !date) {
     return res.status(400).json({ error: "name, eventType, and date are required" });
@@ -587,6 +588,9 @@ app.post("/api/leads", async (req, res) => {
     }
   }
   const id = uuid();
+  const autoNote = isEventManager
+    ? `📇 Submitted via Event Manager/Artist Manager: ${name}${managerCompany ? ` (${managerCompany})` : ""}${managerInstagram ? ` — IG: ${managerInstagram}` : ""}`
+    : null;
   await pool.query(`
     INSERT INTO leads (
       id, name, phone, email, event_type, city, state, date, budget, stage, advance, notes, created_at,
@@ -594,13 +598,34 @@ app.post("/api/leads", async (req, res) => {
     )
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'New', 0, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
   `, [
-    id, name, phone || null, email || null, eventType, city || null, state || null, date, budget || null, notes || null, new Date().toISOString(),
+    id, name, phone || null, email || null, eventType, city || null, state || null, date, budget || null, autoNote || notes || null, new Date().toISOString(),
     venue || null, occasion || null, guestRange || null,
     details || null, howHeard || null, whatsappOptin ? 1 : 0, altDate || null, whatsappNumber || null, pcs || null,
   ]);
   const created = (await pool.query("SELECT * FROM leads WHERE id = $1", [id])).rows[0];
   res.status(201).json(created);
   logActivity({ user: null }, `New query received: ${name} — ${packageName(eventType)}${city ? ` in ${city}` : ""}`, id);
+
+  // Submitted by an Event Manager / Artist Manager on a client's behalf —
+  // save them to the B2B directory so future outreach (rate cards, etc.)
+  // doesn't need them re-entered by hand. Matched on phone number so the
+  // same manager submitting again updates their existing record instead of
+  // piling up duplicates.
+  if (isEventManager && phone) {
+    pool.query("SELECT id FROM b2b_contacts WHERE phone = $1 LIMIT 1", [phone]).then(async ({ rows }) => {
+      if (rows[0]) {
+        await pool.query(
+          `UPDATE b2b_contacts SET name = $1, company = COALESCE($2, company), city = COALESCE($3, city), instagram = COALESCE($4, instagram) WHERE id = $5`,
+          [name, managerCompany || null, managerCity || null, managerInstagram || null, rows[0].id]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO b2b_contacts (id, name, company, phone, city, instagram, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [uuid(), name, managerCompany || null, phone, managerCity || null, managerInstagram || null, new Date().toISOString()]
+        );
+      }
+    }).catch((err) => console.error("B2B contact upsert failed:", err.message));
+  }
 
   // Flashing in-app alert (same feed used for team responses) plus an email —
   // so a new query is hard to miss whether you're in the app or not.

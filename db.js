@@ -276,6 +276,9 @@ async function setup() {
       created_at TEXT NOT NULL
     );
   `);
+  // Instagram profile, captured when an Event Manager/Artist Manager submits
+  // the public enquiry form and gets auto-saved to the B2B directory.
+  await pool.query(`ALTER TABLE b2b_contacts ADD COLUMN IF NOT EXISTS instagram TEXT`);
   // Lets a travel leg exist without a lead — for manually-logged trips
   // (scouting a venue, a personal trip, anything not tied to a booked
   // event) shown on the standalone Travel Calendar.

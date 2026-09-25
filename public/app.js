@@ -5571,7 +5571,7 @@ async function renderB2bContacts(main) {
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
             <div>
               <div style="font-weight:600;">${c.name}${c.company ? ` <span class="muted small">— ${c.company}</span>` : ""}</div>
-              <div class="muted small">${[c.phone, c.email, c.city].filter(Boolean).join(" · ") || "No contact details on file"}</div>
+              <div class="muted small">${[c.phone, c.email, c.city, c.instagram].filter(Boolean).join(" · ") || "No contact details on file"}</div>
               ${c.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${c.notes}</div>` : ""}
               <div class="muted small" style="margin-top:2px;">${c.last_contacted_at ? `Last contacted ${fmtDate(c.last_contacted_at.slice(0, 10))}` : "Not contacted yet"}</div>
             </div>
@@ -5664,6 +5664,8 @@ function openB2bContactModal(contact, onDone) {
           </div>
           <label style="margin-top:8px;">City (optional)</label>
           <input id="bcCity" value="${contact?.city || ""}" />
+          <label style="margin-top:8px;">Instagram profile (optional)</label>
+          <input id="bcInstagram" value="${contact?.instagram || ""}" placeholder="@handle or profile link" />
           <label style="margin-top:8px;">Notes (optional)</label>
           <input id="bcNotes" value="${contact?.notes || ""}" placeholder="How you know them, what they usually book, etc." />
         </div>
@@ -5687,6 +5689,7 @@ function openB2bContactModal(contact, onDone) {
       phone: root.querySelector("#bcPhone").value.trim() || null,
       email: root.querySelector("#bcEmail").value.trim() || null,
       city: root.querySelector("#bcCity").value.trim() || null,
+      instagram: root.querySelector("#bcInstagram").value.trim() || null,
       notes: root.querySelector("#bcNotes").value.trim() || null,
     };
     const btn = root.querySelector("#bcSaveBtn");
