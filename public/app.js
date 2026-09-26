@@ -759,19 +759,35 @@ async function downloadQuotePDF({ clientName, date, fields }) {
   }
   y += 6;
 
+  const boxH = fields.isB2b && fields.charges ? 25 : 13;
   doc.setFillColor(...PDF_COLORS.card);
   doc.setDrawColor(...PDF_COLORS.rust);
   doc.setLineWidth(0.5);
-  doc.roundedRect(marginX, y, contentW, 13, 2, 2, "FD");
+  doc.roundedRect(marginX, y, contentW, boxH, 2, 2, "FD");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9.5);
   doc.setTextColor(...PDF_COLORS.muted);
   doc.text("PERFORMANCE CHARGES", marginX + 6, y + 8.5);
-  doc.setFontSize(13.5);
-  doc.setTextColor(...PDF_COLORS.rustDark);
-  doc.text(fields.charges ? inrPdf(fields.charges) + "/-" : "To be confirmed", pageWidth - marginX - 6, y + 8.5, { align: "right" });
+  if (fields.isB2b && fields.charges) {
+    doc.setFontSize(8.5);
+    doc.setTextColor(...PDF_COLORS.muted);
+    doc.text("B2C RATE", pageWidth - marginX - 6, y + 8.5, { align: "right" });
+    doc.setFontSize(11.5);
+    doc.setTextColor(...PDF_COLORS.rustDark);
+    doc.text(inrPdf(fields.charges) + "/-", pageWidth - marginX - 6, y + 13.5, { align: "right" });
+    doc.setFontSize(8.5);
+    doc.setTextColor(...PDF_COLORS.muted);
+    doc.text("B2B RATE", pageWidth - marginX - 6, y + 16.5, { align: "right" });
+    doc.setFontSize(11.5);
+    doc.setTextColor(...PDF_COLORS.rustDark);
+    doc.text(inrPdf(fields.charges - B2B_DISCOUNT) + "/-", pageWidth - marginX - 6, y + 21.5, { align: "right" });
+  } else {
+    doc.setFontSize(13.5);
+    doc.setTextColor(...PDF_COLORS.rustDark);
+    doc.text(fields.charges ? inrPdf(fields.charges) + "/-" : "To be confirmed", pageWidth - marginX - 6, y + 8.5, { align: "right" });
+  }
   doc.setTextColor(...PDF_COLORS.dark);
-  y += 22;
+  y += boxH + 9;
 
   y = pdfHeaderBar(doc, "Session Conditions", marginX, y, contentW, PDF_COLORS.brown);
   const sessionConditionItems = ["No food, alcohol, or beverages to be consumed or served during the session."];
@@ -1164,7 +1180,7 @@ async function openLeadDetailModal(lead) {
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
         <div class="modal-head">
-          <h3>${lead.name}</h3>
+          <h3>${lead.name}${lead.is_b2b ? ` <span class="mono small" style="background:#8A5FA8; color:#fff; border-radius:4px; padding:1px 6px; font-size:10.5px; font-weight:600; vertical-align:middle;">B2B</span>` : ""}</h3>
           <button class="icon-btn" id="closeModal">${ICON_X}</button>
         </div>
         <div class="modal-body">
@@ -1510,7 +1526,7 @@ async function renderLeadsLog(main, skipRefresh) {
             <div style="display:flex; gap:10px; align-items:flex-start;">
               ${canBulkSelect ? `<input type="checkbox" class="lead-bulk-checkbox" data-lead-id="${l.id}" ${leadsSelected.has(l.id) ? "checked" : ""} style="margin-top:4px; width:18px; height:18px; flex-shrink:0;" />` : ""}
               <div>
-                <div class="lead-name">${l.name}</div>
+                <div class="lead-name">${l.name}${l.is_b2b ? ` <span class="mono small" style="background:#8A5FA8; color:#fff; border-radius:4px; padding:1px 6px; font-size:10.5px; font-weight:600; vertical-align:middle;">B2B</span>` : ""}</div>
                 <div class="muted small">${l.phone ? `<a href="tel:${l.phone.replace(/\s+/g, "")}" style="color:inherit; text-decoration:underline;">${l.phone}</a>` : ""}</div>
                 ${l.combo_group_id ? `<div class="muted small" style="color:#8A5FA8;" title="Linked bookings share one client — pricing and payments live on the primary event.">🔗 Combo with ${comboSiblings.map((s) => `${packageName(s.event_type)} (${fmtDate(s.date)})`).join(", ")}</div>` : ""}
                 ${l.occasion && isConfirmedOrDone ? `<div class="muted small">${l.occasion}</div>` : ""}
@@ -1904,8 +1920,12 @@ async function renderLeadsLog(main, skipRefresh) {
 // editable draft in the exact wording he uses, tweaks anything he wants,
 // then sends via WhatsApp/email. No code change ever needed to adjust
 // wording, amount, or format — the textarea is the source of truth.
-function buildQuoteText({ eventType, format, location, date, occasion, guests, duration, setPieces, formatType, charges, firstName, remarks }) {
-  const amountLine = charges ? `₹${Number(charges).toLocaleString("en-IN")}/-` : "________";
+function buildQuoteText({ eventType, format, location, date, occasion, guests, duration, setPieces, formatType, charges, firstName, remarks, isB2b }) {
+  const amountLine = !charges
+    ? "________"
+    : isB2b
+    ? `₹${Number(charges).toLocaleString("en-IN")}/- (B2C) · ₹${Number(charges - B2B_DISCOUNT).toLocaleString("en-IN")}/- (B2B)`
+    : `₹${Number(charges).toLocaleString("en-IN")}/-`;
   const isPheras = (format || "").trim().toLowerCase() === "musical pheras";
   const sessionConditions = isPheras
     ? `1️⃣ No food, alcohol, or beverages to be consumed or served during the session.`
@@ -2022,8 +2042,9 @@ async function renderQuotation(main) {
       <div class="card">
         <label>Lead</label>
         <select id="leadSelect">
-          ${quotable.map((l) => `<option value="${l.id}" ${l.id === preselect ? "selected" : ""}>${l.name} — ${fmtDate(l.date)}${l.city ? `, ${l.city}` : ""}</option>`).join("")}
+          ${quotable.map((l) => `<option value="${l.id}" ${l.id === preselect ? "selected" : ""}>${l.name}${l.is_b2b ? " [B2B]" : ""} — ${fmtDate(l.date)}${l.city ? `, ${l.city}` : ""}</option>`).join("")}
         </select>
+        <div id="leadB2bBadge" style="display:none; margin-top:6px;"><span class="mono small" style="background:#8A5FA8; color:#fff; border-radius:4px; padding:2px 8px; font-size:11px; font-weight:600;">B2B lead — quote will show both rates</span></div>
         <div id="leadContextCard" style="margin:10px 0 4px; padding:10px 12px; background:#F5F0E4; border-radius:6px; font-size:12.5px; display:none;"></div>
         <label style="margin-top:10px;">Package</label>
         <select id="qPackage">${CONFIG.packages.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}</select>
@@ -2144,6 +2165,7 @@ async function renderQuotation(main) {
   function prefillFromLead() {
     const lead = LEADS.find((l) => l.id === leadSelect.value);
     if (!lead) return;
+    main.querySelector("#leadB2bBadge").style.display = lead.is_b2b ? "block" : "none";
     main.querySelector("#qLocation").value = lead.city || "";
     main.querySelector("#qDate").value = fmtDate(lead.date);
     main.querySelector("#qOccasion").value = lead.occasion || "";
@@ -2201,6 +2223,7 @@ async function renderQuotation(main) {
       charges: main.querySelector("#qCharges").value,
       remarks: main.querySelector("#qRemarks").value,
       firstName: lead ? (lead.name || "").trim().split(" ")[0] : "",
+      isB2b: !!(lead && lead.is_b2b),
     });
   }
 
@@ -2300,6 +2323,7 @@ async function renderQuotation(main) {
           pcs: main.querySelector("#qSet").value,
           formatType: main.querySelector("#qFormatType").value,
           charges: main.querySelector("#qCharges").value,
+          isB2b: !!(lead && lead.is_b2b),
         },
       });
     } finally {
@@ -6349,6 +6373,12 @@ function openEditLeadModal(leadId) {
         <div class="modal-body">
           <label>Name / organisation</label>
           <input id="mName" value="${lead.name || ""}" />
+          <label>Booking type</label>
+          <select id="mIsB2b">
+            <option value="0" ${!lead.is_b2b ? "selected" : ""}>Direct client (B2C)</option>
+            <option value="1" ${lead.is_b2b ? "selected" : ""}>Event Manager / Artist Manager (B2B)</option>
+          </select>
+          <p class="muted small" style="margin-top:2px;">Set automatically when they check "Event Manager" on the enquiry form — override here for phone/walk-in enquiries. Quotes for a B2B lead show both the B2B and B2C rate.</p>
           <div class="row-2">
             <div><label>Phone</label><input id="mPhone" value="${lead.phone || ""}" placeholder="+91 ..." /></div>
             <div><label>Email</label><input id="mEmail" value="${lead.email || ""}" placeholder="name@example.com" /></div>
@@ -6408,6 +6438,7 @@ function openEditLeadModal(leadId) {
         method: "PATCH",
         body: JSON.stringify({
           name,
+          isB2b: root.querySelector("#mIsB2b").value === "1",
           phone: root.querySelector("#mPhone").value.trim() || null,
           email: root.querySelector("#mEmail").value.trim() || null,
           whatsappNumber: root.querySelector("#mWhatsapp").value.trim() || null,

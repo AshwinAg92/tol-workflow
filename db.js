@@ -279,6 +279,11 @@ async function setup() {
   // Instagram profile, captured when an Event Manager/Artist Manager submits
   // the public enquiry form and gets auto-saved to the B2B directory.
   await pool.query(`ALTER TABLE b2b_contacts ADD COLUMN IF NOT EXISTS instagram TEXT`);
+  // Structured B2B flag on the lead itself — auto-set when submitted via the
+  // Event Manager/Artist Manager path on the public form, and manually
+  // toggleable from Edit lead (e.g. a phone/walk-in enquiry from a known
+  // manager). Drives the B2B badge and the dual B2C/B2B rate quote.
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS is_b2b INTEGER NOT NULL DEFAULT 0`);
   // Lets a travel leg exist without a lead — for manually-logged trips
   // (scouting a venue, a personal trip, anything not tied to a booked
   // event) shown on the standalone Travel Calendar.
