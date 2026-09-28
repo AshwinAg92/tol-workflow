@@ -284,6 +284,15 @@ async function setup() {
   // toggleable from Edit lead (e.g. a phone/walk-in enquiry from a known
   // manager). Drives the B2B badge and the dual B2C/B2B rate quote.
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS is_b2b INTEGER NOT NULL DEFAULT 0`);
+  // Backfill for leads submitted before is_b2b existed — the auto-generated
+  // sticky note is a reliable, self-contained signal that they came via the
+  // Event Manager/Artist Manager path, so retroactively flag those. Only
+  // touches rows still at the default (0), so a manual override done after
+  // this runs is never clobbered on a later restart.
+  await pool.query(`
+    UPDATE leads SET is_b2b = 1
+    WHERE is_b2b = 0 AND notes ILIKE '%Submitted via Event Manager/Artist Manager%'
+  `);
   // Lets a travel leg exist without a lead — for manually-logged trips
   // (scouting a venue, a personal trip, anything not tied to a booked
   // event) shown on the standalone Travel Calendar.
