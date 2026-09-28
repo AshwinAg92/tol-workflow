@@ -494,7 +494,35 @@ function pdfWarmClosing(doc, pageWidth, text, y) {
   doc.text("instagram.com/togetheroutloudclub  ·  togetheroutloud.in", pageWidth / 2, y, { align: "center" });
 }
 
-async function downloadLedgerPDF(booking, payments, reimbursements = []) {
+// wa.me links can only pre-fill text — there's no way to attach a file to
+// one, which is why every "send on WhatsApp" flow used to download the PDF
+// and open a chat with just the message, leaving the file to be attached by
+// hand. Where the browser supports the native Share sheet (iOS Safari,
+// Android Chrome) and can share a file, this hands the PDF straight to
+// WhatsApp pre-attached — the one trade-off is the recipient has to be
+// picked in the share sheet rather than the chat opening pre-selected.
+// Falls back to the old download-and-attach-manually flow everywhere else
+// (mainly desktop browsers), or when the person cancels/it fails.
+async function sharePdfOrDownload(doc, filename, { text, digitsOnly } = {}) {
+  try {
+    const blob = doc.output("blob");
+    const file = new File([blob], filename, { type: "application/pdf" });
+    if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+      await navigator.share({ files: [file], text: text || undefined });
+      return { method: "share" };
+    }
+  } catch (err) {
+    if (err && err.name === "AbortError") return { method: "cancelled" };
+    // Fall through to the download fallback for any other failure.
+  }
+  doc.save(filename);
+  if (digitsOnly && text) {
+    window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(text)}`;
+  }
+  return { method: "download" };
+}
+
+async function downloadLedgerPDF(booking, payments, reimbursements = [], shareOptions = null) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   const { pageWidth, marginX } = await pdfLetterhead(doc, "PAYMENT LEDGER", "Together, Out Loud");
@@ -633,8 +661,9 @@ async function downloadLedgerPDF(booking, payments, reimbursements = []) {
   pdfWarmClosing(doc, pageWidth, "We look forward to creating a memorable, soul-stirring experience with you.", y);
 
   const filename = `Ledger-${booking.name.replace(/[^a-z0-9]/gi, "-")}.pdf`;
+  if (shareOptions) return sharePdfOrDownload(doc, filename, shareOptions);
   doc.save(filename);
-  return filename;
+  return { method: "download" };
 }
 
 // A general price list (not tied to any specific event) for contacts who
@@ -642,7 +671,7 @@ async function downloadLedgerPDF(booking, payments, reimbursements = []) {
 // whenever they next need to book. Groups by package, one row per band size,
 // B2C and B2B side by side, plus the same terms/exclusions sent with a
 // regular quote so it stands alone as a complete reference document.
-async function downloadRateCardPDF(name) {
+async function downloadRateCardPDF(name, shareOptions = null) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   const { pageWidth, marginX } = await pdfLetterhead(doc, "RATE CARD", "Together, Out Loud — B2C & B2B rates");
@@ -724,12 +753,13 @@ async function downloadRateCardPDF(name) {
   pdfWarmClosing(doc, pageWidth, "We'd love to make your next event a truly memorable, soul-stirring experience.", y);
 
   const filename = `Rate-Card-${name.replace(/[^a-z0-9]/gi, "-")}.pdf`;
+  if (shareOptions) return sharePdfOrDownload(doc, filename, shareOptions);
   doc.save(filename);
-  return filename;
+  return { method: "download" };
 }
 
 // fields: { format, location, eventDate, guests, duration, pcs, formatType, charges }
-async function downloadQuotePDF({ clientName, date, fields }) {
+async function downloadQuotePDF({ clientName, date, fields, shareOptions = null }) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   const isPheras = (fields.format || "").trim().toLowerCase() === "musical pheras";
@@ -841,8 +871,9 @@ async function downloadQuotePDF({ clientName, date, fields }) {
   pdfWarmClosing(doc, pageWidth, "We'd love to make your event a truly memorable, soul-stirring experience.", y);
 
   const filename = `Quotation-${(clientName || "client").replace(/[^a-z0-9]/gi, "-")}.pdf`;
+  if (shareOptions) return sharePdfOrDownload(doc, filename, shareOptions);
   doc.save(filename);
-  return filename;
+  return { method: "download" };
 }
 
 
@@ -3905,11 +3936,14 @@ async function openLeadPaymentsModal(leadId) {
         shareLedgerBtn.disabled = true;
         shareLedgerBtn.textContent = "Preparing PDF…";
         try {
-          await downloadLedgerPDF(lead, feePayments, reimbursements);
           const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
-          if (digitsOnly) {
-            const msg = `Hi ${(lead.name || "").split(" ")[0] || "there"}, sharing your payment ledger with Together, Out Loud. Please find the PDF attached.`;
-            window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
+          const msg = `Hi ${(lead.name || "").split(" ")[0] || "there"}, sharing your payment ledger with Together, Out Loud. Please find the PDF attached.`;
+          const result = await downloadLedgerPDF(lead, feePayments, reimbursements, { text: msg, digitsOnly });
+          if (result.method === "share") {
+            // Native share sheet already handled attaching the file — nothing more to do.
+          } else if (result.method === "cancelled") {
+            // They backed out of the share sheet — no PDF was downloaded, nothing to tell them.
+          } else if (digitsOnly) {
             alert("PDF downloaded, and WhatsApp is opening in a new tab — attach the downloaded PDF file to that chat to send it.");
           } else {
             alert("PDF downloaded — this client has no phone number on file, so WhatsApp couldn't be opened automatically.");
@@ -5718,9 +5752,8 @@ async function renderB2bContacts(main) {
         const original = btn.textContent;
         btn.textContent = "Preparing…";
         try {
-          await downloadRateCardPDF(c.name);
           const msg = `Hi ${c.name.split(" ")[0]}, sharing our rate card with Together, Out Loud for future reference. Please find the PDF attached.\n\n📷 instagram.com/togetheroutloudclub\n🌐 togetheroutloud.in`;
-          window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
+          await downloadRateCardPDF(c.name, { text: msg, digitsOnly });
           const today = new Date().toISOString().slice(0, 10);
           await api(`/api/b2b-contacts/${c.id}`, {
             method: "PATCH",
@@ -6034,10 +6067,13 @@ async function renderDocuments(main) {
     btn.disabled = true;
     status.textContent = "Preparing PDF…";
     try {
-      await downloadRateCardPDF(name);
       const msg = `Hi ${name.split(" ")[0]}, sharing our rate card with Together, Out Loud for future reference. Please find the PDF attached.\n\n📷 instagram.com/togetheroutloudclub\n🌐 togetheroutloud.in`;
-      window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
-      status.textContent = "PDF downloaded, and WhatsApp is opening — attach the downloaded PDF file to that chat to send it.";
+      const result = await downloadRateCardPDF(name, { text: msg, digitsOnly });
+      status.textContent = result.method === "share"
+        ? "Shared — pick WhatsApp and the contact in the share sheet."
+        : result.method === "cancelled"
+        ? ""
+        : "PDF downloaded, and WhatsApp is opening — attach the downloaded PDF file to that chat to send it.";
     } catch (err) {
       status.textContent = `Couldn't generate the PDF — ${err.message}`;
     } finally {
