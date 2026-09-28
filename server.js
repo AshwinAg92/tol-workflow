@@ -1344,6 +1344,89 @@ async function geocodeCityCached(cityRaw) {
 let eventLocationsCache = { data: null, fetchedAt: 0 };
 const EVENT_LOCATIONS_TTL_MS = 60 * 60 * 1000; // 1 hour
 
+// Builds the map data from scratch (real bookings + manual cities/countries,
+// each city geocoded and cached). This is slow the first time any given city
+// needs geocoding — serially rate-limited to ~1/1.1s against Nominatim — so
+// it's called both by the public route below (cache-first) and once at
+// server startup (see ready.then(...) further down) to pre-warm the cache in
+// the background. Without that warm-up, a cold cache (e.g. right after a
+// migration clears it) means the first visitor's browser can time out
+// waiting on this and the map silently never appears, even though the data
+// finishes resolving successfully moments later.
+async function buildEventLocationsData() {
+  const { rows } = await pool.query(`
+    SELECT city, COUNT(*) AS count FROM leads
+    WHERE stage IN ('Confirmed', 'Completed') AND city IS NOT NULL AND TRIM(city) != ''
+    GROUP BY city
+  `);
+  const markers = [];
+  const countries = new Set();
+  const existingCities = new Set();
+  for (const r of rows) {
+    const geo = await geocodeCityCached(r.city);
+    if (!geo) continue; // unresolved city — will retry on the next cache miss, doesn't block the rest
+    markers.push({ city: r.city, lat: geo.lat, lng: geo.lng, country: geo.country, count: Number(r.count) });
+    existingCities.add(r.city.trim().toLowerCase());
+    if (geo.country) countries.add(geo.country);
+  }
+  // Manual additional cities (events that happened but have no confirmed-
+  // lead record with that city on file, e.g. Surat) — admin-editable via
+  // the "Additional cities" card in Settings. Entries may be a plain
+  // string or a legacy { name, lat, lng } object from before this reused
+  // an older editor; either way the name is re-geocoded here for a
+  // consistent, cached source of truth rather than trusting stored coords.
+  const manualCitiesRow = (await pool.query("SELECT value FROM site_content WHERE key = 'cities'")).rows[0];
+  const manualCities = Array.isArray(manualCitiesRow?.value) ? manualCitiesRow.value : [];
+  for (const entry of manualCities) {
+    const name = typeof entry === "string" ? entry : entry?.name;
+    if (!name || existingCities.has(name.trim().toLowerCase())) continue; // don't double-plot a city already covered by real bookings
+    const geo = await geocodeCityCached(name);
+    if (!geo) continue;
+    markers.push({ city: name, lat: geo.lat, lng: geo.lng, country: geo.country, count: 0 });
+    existingCities.add(name.trim().toLowerCase());
+    if (geo.country) countries.add(geo.country);
+  }
+  // Manual international highlights (e.g. shows that predate the CRM and
+  // have no confirmed-lead record with a city) — admin-editable via the
+  // "International highlights" card in Settings, plotted at country level
+  // since there's no specific city on file for these.
+  const manualCountriesRow = (await pool.query("SELECT value FROM site_content WHERE key = 'countries'")).rows[0];
+  const manualCountries = Array.isArray(manualCountriesRow?.value) ? manualCountriesRow.value : [];
+  const existingCountries = new Set(markers.map((m) => (m.country || "").trim().toLowerCase()).filter(Boolean));
+  for (const name of manualCountries) {
+    if (!name || existingCountries.has(name.trim().toLowerCase())) continue; // don't double-plot a country already covered by real bookings
+    const geo = await geocodeCityCached(name);
+    if (!geo) continue;
+    markers.push({ city: name, lat: geo.lat, lng: geo.lng, country: geo.country || name, count: 0 });
+    countries.add(geo.country || name);
+  }
+  // Collapse near-duplicate markers that are really the same place but got
+  // there under different spellings (e.g. the same city typed with extra
+  // whitespace across two leads, or "Jorhat" vs "Jorhat, Assam") — grouped
+  // by rounded coordinates (~1km) rather than by the raw text, since that
+  // text is whatever each lead happened to have typed.
+  const mergedByLocation = new Map();
+  for (const m of markers) {
+    const roundKey = `${m.lat.toFixed(2)},${m.lng.toFixed(2)}`;
+    const existing = mergedByLocation.get(roundKey);
+    if (!existing) {
+      mergedByLocation.set(roundKey, { ...m });
+    } else {
+      existing.count += m.count;
+      if (m.city.length < existing.city.length) existing.city = m.city; // prefer the plainer label
+      if (!existing.country && m.country) existing.country = m.country;
+    }
+  }
+  const mergedMarkers = [...mergedByLocation.values()];
+  const intlCountries = [...countries].filter((c) => c !== "India").sort();
+  return {
+    markers: mergedMarkers,
+    distinctCities: mergedMarkers.length,
+    distinctCountries: countries.size,
+    internationalCountries: intlCountries,
+  };
+}
+
 // Public — drives the global map on the marketing site with real booking
 // data (confirmed/completed events), not a manually-curated list, so it
 // updates itself as events close and never goes stale.
@@ -1351,77 +1434,7 @@ app.get("/api/public/event-locations", async (req, res) => {
   const isFresh = eventLocationsCache.data && (Date.now() - eventLocationsCache.fetchedAt) < EVENT_LOCATIONS_TTL_MS;
   if (isFresh) return res.json(eventLocationsCache.data);
   try {
-    const { rows } = await pool.query(`
-      SELECT city, COUNT(*) AS count FROM leads
-      WHERE stage IN ('Confirmed', 'Completed') AND city IS NOT NULL AND TRIM(city) != ''
-      GROUP BY city
-    `);
-    const markers = [];
-    const countries = new Set();
-    const existingCities = new Set();
-    for (const r of rows) {
-      const geo = await geocodeCityCached(r.city);
-      if (!geo) continue; // unresolved city — will retry on the next cache miss, doesn't block the rest
-      markers.push({ city: r.city, lat: geo.lat, lng: geo.lng, country: geo.country, count: Number(r.count) });
-      existingCities.add(r.city.trim().toLowerCase());
-      if (geo.country) countries.add(geo.country);
-    }
-    // Manual additional cities (events that happened but have no confirmed-
-    // lead record with that city on file, e.g. Surat) — admin-editable via
-    // the "Additional cities" card in Settings. Entries may be a plain
-    // string or a legacy { name, lat, lng } object from before this reused
-    // an older editor; either way the name is re-geocoded here for a
-    // consistent, cached source of truth rather than trusting stored coords.
-    const manualCitiesRow = (await pool.query("SELECT value FROM site_content WHERE key = 'cities'")).rows[0];
-    const manualCities = Array.isArray(manualCitiesRow?.value) ? manualCitiesRow.value : [];
-    for (const entry of manualCities) {
-      const name = typeof entry === "string" ? entry : entry?.name;
-      if (!name || existingCities.has(name.trim().toLowerCase())) continue; // don't double-plot a city already covered by real bookings
-      const geo = await geocodeCityCached(name);
-      if (!geo) continue;
-      markers.push({ city: name, lat: geo.lat, lng: geo.lng, country: geo.country, count: 0 });
-      existingCities.add(name.trim().toLowerCase());
-      if (geo.country) countries.add(geo.country);
-    }
-    // Manual international highlights (e.g. shows that predate the CRM and
-    // have no confirmed-lead record with a city) — admin-editable via the
-    // "International highlights" card in Settings, plotted at country level
-    // since there's no specific city on file for these.
-    const manualCountriesRow = (await pool.query("SELECT value FROM site_content WHERE key = 'countries'")).rows[0];
-    const manualCountries = Array.isArray(manualCountriesRow?.value) ? manualCountriesRow.value : [];
-    const existingCountries = new Set(markers.map((m) => (m.country || "").trim().toLowerCase()).filter(Boolean));
-    for (const name of manualCountries) {
-      if (!name || existingCountries.has(name.trim().toLowerCase())) continue; // don't double-plot a country already covered by real bookings
-      const geo = await geocodeCityCached(name);
-      if (!geo) continue;
-      markers.push({ city: name, lat: geo.lat, lng: geo.lng, country: geo.country || name, count: 0 });
-      countries.add(geo.country || name);
-    }
-    // Collapse near-duplicate markers that are really the same place but got
-    // there under different spellings (e.g. the same city typed with extra
-    // whitespace across two leads, or "Jorhat" vs "Jorhat, Assam") — grouped
-    // by rounded coordinates (~1km) rather than by the raw text, since that
-    // text is whatever each lead happened to have typed.
-    const mergedByLocation = new Map();
-    for (const m of markers) {
-      const roundKey = `${m.lat.toFixed(2)},${m.lng.toFixed(2)}`;
-      const existing = mergedByLocation.get(roundKey);
-      if (!existing) {
-        mergedByLocation.set(roundKey, { ...m });
-      } else {
-        existing.count += m.count;
-        if (m.city.length < existing.city.length) existing.city = m.city; // prefer the plainer label
-        if (!existing.country && m.country) existing.country = m.country;
-      }
-    }
-    const mergedMarkers = [...mergedByLocation.values()];
-    const intlCountries = [...countries].filter((c) => c !== "India").sort();
-    const data = {
-      markers: mergedMarkers,
-      distinctCities: mergedMarkers.length,
-      distinctCountries: countries.size,
-      internationalCountries: intlCountries,
-    };
+    const data = await buildEventLocationsData();
     eventLocationsCache = { data, fetchedAt: Date.now() };
     res.json(data);
   } catch (err) {
@@ -3286,4 +3299,13 @@ ready.then(() => {
   setInterval(autoCloseNearDateLeads, 60 * 60 * 1000);
   runMonthlyBackupCheck();
   setInterval(runMonthlyBackupCheck, 60 * 60 * 1000);
+  // Pre-warm the map's geocode cache in the background right after startup,
+  // rather than waiting for the first visitor to trigger it. A cold cache
+  // (e.g. right after a migration clears it) can take 20-30s+ to resolve
+  // serially against Nominatim's rate limit — long enough that a visitor's
+  // browser gives up before it finishes, and the map silently never
+  // appears even though the data resolves fine moments later.
+  buildEventLocationsData()
+    .then((data) => { eventLocationsCache = { data, fetchedAt: Date.now() }; })
+    .catch((err) => console.error("Startup map cache warm-up failed (will retry on first request):", err.message));
 });
