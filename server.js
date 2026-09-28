@@ -1312,13 +1312,22 @@ async function geocodeCityCached(cityRaw) {
   geocodeQueue = geocodeQueue.then(() => new Promise((r) => setTimeout(r, 1100)));
   await geocodeQueue;
   try {
-    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(cityRaw)}&format=jsonv2&addressdetails=1&limit=1`;
+    // accept-language=en so the country name always comes back in English
+    // (e.g. "Nepal" not "नेपाल") — without it Nominatim's language depends on
+    // server config, which was silently breaking country-based dedup/flagging
+    // for at least one city.
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(cityRaw)}&format=jsonv2&addressdetails=1&accept-language=en&limit=1`;
     const resp = await fetch(url, { headers: { "User-Agent": "TogetherOutLoudWebsite/1.0 (togetheroutloudclub@gmail.com)" } });
     if (!resp.ok) throw new Error(`Nominatim returned ${resp.status}`);
     const results = await resp.json();
     const hit = results[0];
+    // Fall back to the last comma-separated part of display_name on the rare
+    // result that has no structured address.country (e.g. some admin-area
+    // matches) — better than silently dropping the country and breaking
+    // dedup against a manually-added country highlight.
+    const fallbackCountry = hit?.display_name ? hit.display_name.split(",").pop().trim() : null;
     const row = hit
-      ? { lat: Number(hit.lat), lng: Number(hit.lon), country: hit.address?.country || null, display_name: hit.display_name, found: 1 }
+      ? { lat: Number(hit.lat), lng: Number(hit.lon), country: hit.address?.country || fallbackCountry || null, display_name: hit.display_name, found: 1 }
       : { lat: null, lng: null, country: null, display_name: null, found: 0 };
     await pool.query(`
       INSERT INTO city_geocode_cache (city_key, lat, lng, country, display_name, found, resolved_at)
@@ -1380,18 +1389,36 @@ app.get("/api/public/event-locations", async (req, res) => {
     // since there's no specific city on file for these.
     const manualCountriesRow = (await pool.query("SELECT value FROM site_content WHERE key = 'countries'")).rows[0];
     const manualCountries = Array.isArray(manualCountriesRow?.value) ? manualCountriesRow.value : [];
-    const existingCountries = new Set(markers.map((m) => m.country).filter(Boolean));
+    const existingCountries = new Set(markers.map((m) => (m.country || "").trim().toLowerCase()).filter(Boolean));
     for (const name of manualCountries) {
-      if (!name || existingCountries.has(name)) continue; // don't double-plot a country already covered by real bookings
+      if (!name || existingCountries.has(name.trim().toLowerCase())) continue; // don't double-plot a country already covered by real bookings
       const geo = await geocodeCityCached(name);
       if (!geo) continue;
       markers.push({ city: name, lat: geo.lat, lng: geo.lng, country: geo.country || name, count: 0 });
       countries.add(geo.country || name);
     }
+    // Collapse near-duplicate markers that are really the same place but got
+    // there under different spellings (e.g. the same city typed with extra
+    // whitespace across two leads, or "Jorhat" vs "Jorhat, Assam") — grouped
+    // by rounded coordinates (~1km) rather than by the raw text, since that
+    // text is whatever each lead happened to have typed.
+    const mergedByLocation = new Map();
+    for (const m of markers) {
+      const roundKey = `${m.lat.toFixed(2)},${m.lng.toFixed(2)}`;
+      const existing = mergedByLocation.get(roundKey);
+      if (!existing) {
+        mergedByLocation.set(roundKey, { ...m });
+      } else {
+        existing.count += m.count;
+        if (m.city.length < existing.city.length) existing.city = m.city; // prefer the plainer label
+        if (!existing.country && m.country) existing.country = m.country;
+      }
+    }
+    const mergedMarkers = [...mergedByLocation.values()];
     const intlCountries = [...countries].filter((c) => c !== "India").sort();
     const data = {
-      markers,
-      distinctCities: markers.length,
+      markers: mergedMarkers,
+      distinctCities: mergedMarkers.length,
       distinctCountries: countries.size,
       internationalCountries: intlCountries,
     };

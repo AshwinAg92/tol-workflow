@@ -522,6 +522,21 @@ async function setup() {
   await backfillSiteContentList("countries", ["Croatia", "Bhutan", "Nepal"]);
   await backfillSiteContentList("cities", ["Surat"]);
 
+  // One-time: clear the geocode cache so every city re-resolves with
+  // accept-language=en and the display_name country fallback (added after
+  // some entries — notably Kathmandu — had already been cached with a
+  // missing/non-English country, which silently broke both the 🌍
+  // international flag and dedup against a manually-added country
+  // highlight). Flagged so this only ever runs once.
+  const geocodeCacheClearedFlag = (await pool.query("SELECT 1 FROM site_content WHERE key = 'geocode_cache_cleared_v1'")).rows[0];
+  if (!geocodeCacheClearedFlag) {
+    await pool.query("DELETE FROM city_geocode_cache");
+    await pool.query(`
+      INSERT INTO site_content (key, value, updated_at) VALUES ('geocode_cache_cleared_v1', 'true', $1)
+      ON CONFLICT (key) DO NOTHING
+    `, [new Date().toISOString()]);
+  }
+
   // Clean up orphaned artist-fee expenses — a bug meant that unassigning an
   // artist from an event deleted their assignment but left their fee record
   // behind, so it kept quietly showing up in Accounts for someone no longer
