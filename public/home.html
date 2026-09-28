@@ -1380,6 +1380,13 @@
         onMarkerTooltipShow(event, tooltip, index) {
           tooltip.text(markers[index] ? `${markers[index].city}${markers[index].count > 1 ? ` — ${markers[index].count} events` : ''}` : '', false);
         },
+        // Kill the library's default "hovering over a country shows its
+        // name" tooltip — that's generic map behavior, not our event data,
+        // and it was confusingly showing things like "China" for a hover
+        // nowhere near an actual pin. Only real event markers get tooltips.
+        onRegionTooltipShow(event) {
+          event.preventDefault();
+        },
       });
     });
   }).catch(() => {});
