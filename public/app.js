@@ -6762,9 +6762,9 @@ async function renderWebsiteContent(main) {
       </div>
     </div>
 
-    <div class="card" style="margin-bottom:20px; opacity:0.7;">
-      <div class="section-label">Countries performed (legacy — no longer shown on site)</div>
-      <p class="muted small" style="margin-top:-4px;">Same as above — the map now detects international events automatically. Kept here only so nothing is lost — safe to ignore.</p>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="section-label">International highlights (shown on the map)</div>
+      <p class="muted small" style="margin-top:-4px;">The map plots real bookings automatically — this list is only for international shows that predate the CRM and have no confirmed-lead record to derive a city from. Add a country and it gets a pin at the country level.</p>
       <div id="countriesList"></div>
       <div class="row-2" style="margin-top:10px;">
         <input id="newCountryInput" placeholder="Add a country…" />

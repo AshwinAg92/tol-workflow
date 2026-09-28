@@ -1362,7 +1362,7 @@
     }
 
     waitFor(() => window.jsVectorMap, () => {
-      new window.jsVectorMap({
+      const mapConfig = {
         selector: '#worldMap',
         map: 'world',
         zoomButtons: true,
@@ -1374,8 +1374,8 @@
         },
         markers: markers.map((m) => ({ name: `${m.city}${m.count > 1 ? ` — ${m.count} events` : ''}`, coords: [m.lat, m.lng] })),
         markerStyle: {
-          initial: { fill: '#C1602B', stroke: '#fff', 'stroke-width': 2, r: 6 },
-          hover: { fill: '#B6752C', r: 8 },
+          initial: { fill: '#C1602B', stroke: '#fff', 'stroke-width': 1.5, r: 3.5 },
+          hover: { fill: '#B6752C', r: 5.5 },
         },
         onMarkerTooltipShow(event, tooltip, index) {
           tooltip.text(markers[index] ? `${markers[index].city}${markers[index].count > 1 ? ` — ${markers[index].count} events` : ''}` : '', false);
@@ -1389,7 +1389,18 @@
         onRegionTooltipShow(event, tooltip) {
           tooltip.hide();
         },
-      });
+      };
+      // Fits the view to wherever TOL actually performs instead of showing
+      // the whole world (mostly empty ocean/continents). Uses region codes
+      // so it auto-adjusts as new countries are added. Wrapped in try/catch
+      // and retried without it, since an unknown/renamed ISO code here
+      // should never be able to break the whole map.
+      try {
+        new window.jsVectorMap({ ...mapConfig, focusOn: { regions: ['IN', 'NP', 'BT', 'HR'], animate: false } });
+      } catch (err) {
+        document.getElementById('worldMap').innerHTML = '';
+        new window.jsVectorMap(mapConfig);
+      }
     });
   }).catch(() => {});
 

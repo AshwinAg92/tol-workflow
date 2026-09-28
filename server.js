@@ -1355,6 +1355,20 @@ app.get("/api/public/event-locations", async (req, res) => {
       markers.push({ city: r.city, lat: geo.lat, lng: geo.lng, country: geo.country, count: Number(r.count) });
       if (geo.country) countries.add(geo.country);
     }
+    // Manual international highlights (e.g. shows that predate the CRM and
+    // have no confirmed-lead record with a city) — admin-editable via the
+    // "Countries performed" card in Settings, plotted at country level
+    // since there's no specific city on file for these.
+    const manualCountriesRow = (await pool.query("SELECT value FROM site_content WHERE key = 'countries'", )).rows[0];
+    const manualCountries = Array.isArray(manualCountriesRow?.value) ? manualCountriesRow.value : [];
+    const existingCountries = new Set(markers.map((m) => m.country).filter(Boolean));
+    for (const name of manualCountries) {
+      if (!name || existingCountries.has(name)) continue; // don't double-plot a country already covered by real bookings
+      const geo = await geocodeCityCached(name);
+      if (!geo) continue;
+      markers.push({ city: name, lat: geo.lat, lng: geo.lng, country: geo.country || name, count: 0 });
+      countries.add(geo.country || name);
+    }
     const intlCountries = [...countries].filter((c) => c !== "India").sort();
     const data = {
       markers,

@@ -493,6 +493,16 @@ async function setup() {
     `, [new Date().toISOString()]);
   }
 
+  // Seed known international shows that predate the CRM (so there's no
+  // confirmed-lead record to derive them from automatically) as the default
+  // "countries performed" list, which now feeds highlight pins on the
+  // public map. ON CONFLICT DO NOTHING so this never overwrites Ashwin's
+  // own edits once the key exists — it only fills a truly empty value.
+  await pool.query(`
+    INSERT INTO site_content (key, value, updated_at) VALUES ('countries', '["Croatia", "Bhutan", "Nepal"]', $1)
+    ON CONFLICT (key) DO NOTHING
+  `, [new Date().toISOString()]);
+
   // Clean up orphaned artist-fee expenses — a bug meant that unassigning an
   // artist from an event deleted their assignment but left their fee record
   // behind, so it kept quietly showing up in Accounts for someone no longer
