@@ -3874,6 +3874,12 @@ async function openLeadPaymentsModal(leadId) {
       <label id="lpReceivedWrap" style="display:none; align-items:center; gap:6px; margin-top:8px; font-size:13px; cursor:pointer;">
         <input type="checkbox" id="lpAlreadyReceived" /> Client already paid this back
       </label>
+      ${totalReimbursementDue > 0 ? `
+        <label id="lpSettleWrap" style="display:none; align-items:center; gap:6px; margin-top:8px; font-size:13px; cursor:pointer;">
+          <input type="checkbox" id="lpSettleReimbursement" />
+          This amount also settles the ${inr(totalReimbursementDue)} reimbursement due — split it automatically
+        </label>
+      ` : ""}
       <button class="btn-primary full" id="lpAddBtn" style="margin-top:10px;">Add payment</button>
 
       <div class="section-label" style="margin-top:20px;">Artist payments${totalExpenses ? ` — ${inr(totalExpenses)} total${pendingExpenses.length ? `, ${inr(pendingExpenses.reduce((s, e) => s + e.amount, 0))} pending` : ""}` : ""}</div>
@@ -3900,6 +3906,8 @@ async function openLeadPaymentsModal(leadId) {
     const receivedWrap = body.querySelector("#lpReceivedWrap");
     const receivedCheckbox = body.querySelector("#lpAlreadyReceived");
     const modeSelect = body.querySelector("#lpMode");
+    const settleWrap = body.querySelector("#lpSettleWrap");
+    const settleCheckbox = body.querySelector("#lpSettleReimbursement");
     function refreshPaymentFormFields() {
       const isReimbursement = typeSelect.value === "client_reimbursement";
       notesInput.style.display = isReimbursement ? "block" : "none";
@@ -3908,6 +3916,9 @@ async function openLeadPaymentsModal(leadId) {
       // is always relevant. A reimbursement's mode only matters once it's
       // actually been collected, matching the checkbox above.
       modeSelect.style.display = (!isReimbursement || receivedCheckbox.checked) ? "" : "none";
+      // The "settle both at once" option only makes sense while logging a fee
+      // payment — a reimbursement entry is already its own thing.
+      if (settleWrap) settleWrap.style.display = isReimbursement ? "none" : "flex";
     }
     typeSelect.addEventListener("change", refreshPaymentFormFields);
     receivedCheckbox.addEventListener("change", refreshPaymentFormFields);
@@ -3996,17 +4007,44 @@ async function openLeadPaymentsModal(leadId) {
       if (!date) return alert("Pick a date.");
       const type = body.querySelector("#lpType").value;
       const status = type === "client_reimbursement" ? (receivedCheckbox.checked ? "received" : "due") : "received";
+      const mode = body.querySelector("#lpMode").value || null;
+      // One combined amount covering both the fee and an already-logged due
+      // reimbursement (e.g. "received ₹1,20,000 total, ₹10,000 of which is
+      // the taxi reimbursement") — split it into the right two ledger
+      // entries instead of making the person do this as two separate visits
+      // to the form. Only offered while logging a fee payment, and only when
+      // there's something due to settle.
+      const settling = type === "payment" && settleCheckbox && settleCheckbox.checked && totalReimbursementDue > 0;
+      if (settling && Number(amount) < totalReimbursementDue) {
+        return alert(`This amount is less than the ${inr(totalReimbursementDue)} reimbursement due — either enter the full combined total, or uncheck the settle option and log this as a partial payment instead.`);
+      }
       const btn = body.querySelector("#lpAddBtn");
       btn.disabled = true;
       try {
-        await api(`/api/leads/${leadId}/payments`, {
-          method: "POST",
-          body: JSON.stringify({
-            amount: Number(amount), date, mode: body.querySelector("#lpMode").value || null,
-            type, status,
-            notes: body.querySelector("#lpNotes").value.trim() || null,
-          }),
-        });
+        if (settling) {
+          // Mark every currently-due reimbursement as received first (same
+          // date/mode as this payment — it's all part of the one amount the
+          // client actually handed over).
+          for (const r of reimbursementsDue) {
+            await api(`/api/payments/${r.id}`, { method: "PATCH", body: JSON.stringify({ status: "received", date, mode }) });
+          }
+          const feePortion = Number(amount) - totalReimbursementDue;
+          if (feePortion > 0) {
+            await api(`/api/leads/${leadId}/payments`, {
+              method: "POST",
+              body: JSON.stringify({ amount: feePortion, date, mode, type: "payment", status: "received" }),
+            });
+          }
+        } else {
+          await api(`/api/leads/${leadId}/payments`, {
+            method: "POST",
+            body: JSON.stringify({
+              amount: Number(amount), date, mode,
+              type, status,
+              notes: body.querySelector("#lpNotes").value.trim() || null,
+            }),
+          });
+        }
         await refreshLeads();
         const [freshPayments, freshExpenses] = await Promise.all([
           api(`/api/leads/${leadId}/payments`), api(`/api/expenses?leadId=${leadId}`),
