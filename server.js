@@ -928,6 +928,25 @@ app.post("/api/google-analytics/disconnect", requireAuth, requireAdmin, async (r
   res.json({ ok: true });
 });
 
+// Manual fallback for when auto-discovery (via the Analytics Admin API)
+// comes back empty — usually because that API isn't enabled yet on the
+// Google Cloud project, which is a separate switch from OAuth login working.
+// The property ID is visible in Google Analytics itself (Admin > Property
+// Settings) or, in this case, was already visible via Windsor's account picker.
+app.patch("/api/google-analytics/property", requireAuth, requireAdmin, async (req, res) => {
+  const { propertyId } = req.body;
+  if (!propertyId || !/^\d+$/.test(String(propertyId).trim())) {
+    return res.status(400).json({ error: "propertyId must be a numeric GA4 property ID" });
+  }
+  const result = await pool.query(
+    "UPDATE google_analytics_auth SET property_id = $1 WHERE id = $2",
+    [String(propertyId).trim(), GOOGLE_ANALYTICS_AUTH_ROW_ID]
+  );
+  if (result.rowCount === 0) return res.status(400).json({ error: "Not connected yet — connect first, then set the property ID." });
+  websiteTrafficCache = { data: null, fetchedAt: 0 }; // force a fresh fetch with the new property
+  res.json({ ok: true });
+});
+
 async function getGoogleAnalyticsAuth() {
   const row = (await pool.query("SELECT * FROM google_analytics_auth WHERE id = $1", [GOOGLE_ANALYTICS_AUTH_ROW_ID])).rows[0];
   if (!row) return null;

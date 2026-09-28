@@ -7265,8 +7265,29 @@ function wireGoogleAnalyticsSettings(main) {
     if (status.connected) {
       statusEl.innerHTML = `
         <p class="muted small">✅ Connected${status.connectedBy ? ` by ${status.connectedBy}` : ""}${status.connectedAt ? ` on ${fmtDate(status.connectedAt.slice(0, 10))}` : ""}.${status.propertyId ? ` (GA4 property ${status.propertyId})` : " — no GA4 property found yet."}</p>
-        <button class="btn-ghost" id="disconnectGABtn">Disconnect</button>
+        ${!status.propertyId ? `
+          <p class="muted small" style="margin-top:8px;">Auto-detect came up empty (usually the Analytics Admin API isn't enabled yet) — you can set the GA4 property ID by hand instead. Find it in Google Analytics under Admin → Property Settings.</p>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+            <input id="gaPropertyIdInput" placeholder="e.g. 549584865" style="max-width:180px;" />
+            <button class="btn-ghost" id="saveGAPropertyBtn">Save property ID</button>
+            <span class="muted small" id="gaPropertySavedNote" style="display:none; color:#5C8A6B;">Saved ✓</span>
+          </div>
+        ` : ""}
+        <button class="btn-ghost" id="disconnectGABtn" style="margin-top:8px;">Disconnect</button>
       `;
+      const savePropBtn = statusEl.querySelector("#saveGAPropertyBtn");
+      if (savePropBtn) {
+        savePropBtn.addEventListener("click", async () => {
+          const val = statusEl.querySelector("#gaPropertyIdInput").value.trim();
+          if (!val) return;
+          try {
+            await api("/api/google-analytics/property", { method: "PATCH", body: JSON.stringify({ propertyId: val }) });
+            wireGoogleAnalyticsSettings(main);
+          } catch (err) {
+            alert(`Couldn't save: ${err.message}`);
+          }
+        });
+      }
       statusEl.querySelector("#disconnectGABtn").addEventListener("click", async () => {
         if (!confirm("Disconnect Google Analytics? The Dashboard traffic card will stop updating until you reconnect.")) return;
         await api("/api/google-analytics/disconnect", { method: "POST" });
