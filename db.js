@@ -502,6 +502,30 @@ async function setup() {
     INSERT INTO site_content (key, value, updated_at) VALUES ('countries', '["Croatia", "Bhutan", "Nepal"]', $1)
     ON CONFLICT (key) DO NOTHING
   `, [new Date().toISOString()]);
+  // A 'countries' row already existed from before this feature shipped (an
+  // empty [] from the old, unused CMS editor), so the seed above no-opped
+  // and Bhutan/Croatia/Nepal never actually made it in. Backfill each one in
+  // directly, ONCE — guarded by a flag row so this never fights a later,
+  // deliberate removal of one of these from the CRM's own editor.
+  const countriesBackfillDone = (await pool.query("SELECT 1 FROM site_content WHERE key = 'countries_intl_backfilled'")).rows[0];
+  if (!countriesBackfillDone) {
+    const countriesRow = (await pool.query("SELECT value FROM site_content WHERE key = 'countries'")).rows[0];
+    if (countriesRow && Array.isArray(countriesRow.value)) {
+      const existing = countriesRow.value;
+      const existingLower = existing.map((c) => String(c).toLowerCase());
+      const missing = ["Croatia", "Bhutan", "Nepal"].filter((c) => !existingLower.includes(c.toLowerCase()));
+      if (missing.length) {
+        await pool.query(
+          "UPDATE site_content SET value = $1, updated_at = $2 WHERE key = 'countries'",
+          [JSON.stringify([...existing, ...missing]), new Date().toISOString()]
+        );
+      }
+    }
+    await pool.query(`
+      INSERT INTO site_content (key, value, updated_at) VALUES ('countries_intl_backfilled', 'true', $1)
+      ON CONFLICT (key) DO NOTHING
+    `, [new Date().toISOString()]);
+  }
 
   // Clean up orphaned artist-fee expenses — a bug meant that unassigning an
   // artist from an event deleted their assignment but left their fee record

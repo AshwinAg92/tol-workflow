@@ -1349,9 +1349,13 @@
     document.getElementById('citiesSection').classList.remove('hidden');
 
     const colors = ['#C1602B', '#4A8FA6', '#B6752C', '#9B6EA8'];
+    const isIntl = (m) => m.country && m.country !== 'India';
     document.getElementById('citiesGrid').innerHTML = markers
-      .slice().sort((a, b) => b.count - a.count)
-      .map((m, i) => `<span class="chip" style="border-color:${colors[i % colors.length]};">${m.country && m.country !== 'India' ? '🌍 ' : ''}${escapeHtml(m.city)}${m.count > 1 ? ` (${m.count})` : ''}</span>`)
+      .slice()
+      // International highlights surface first so they're never buried at
+      // the end of a long city list — within each group, alphabetical.
+      .sort((a, b) => (isIntl(b) - isIntl(a)) || a.city.localeCompare(b.city))
+      .map((m, i) => `<span class="chip" style="border-color:${colors[i % colors.length]};">${isIntl(m) ? '🌍 ' : ''}${escapeHtml(m.city)}</span>`)
       .join('');
 
     const statCities = document.getElementById('statCitiesNum');
