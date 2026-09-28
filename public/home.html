@@ -1384,8 +1384,10 @@
         // name" tooltip — that's generic map behavior, not our event data,
         // and it was confusingly showing things like "China" for a hover
         // nowhere near an actual pin. Only real event markers get tooltips.
-        onRegionTooltipShow(event) {
-          event.preventDefault();
+        // Note: the library shows the tooltip BEFORE this callback fires and
+        // ignores preventDefault(), so it has to be hidden explicitly here.
+        onRegionTooltipShow(event, tooltip) {
+          tooltip.hide();
         },
       });
     });
