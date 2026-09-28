@@ -165,6 +165,31 @@ async function logActivity(req, message, leadId) {
   }
 }
 
+// Adds/updates a B2B directory entry for a phone number — matched on phone
+// so re-marking the same person never creates a duplicate. Used both when a
+// lead comes in via the public form's Event Manager path, and when a lead is
+// retroactively marked B2B from Edit lead (name/city/phone come from the
+// lead itself in that case, since there's no separate manager-only form).
+async function upsertB2bContact({ name, phone, company, city, instagram }) {
+  if (!phone) return;
+  try {
+    const { rows } = await pool.query("SELECT id FROM b2b_contacts WHERE phone = $1 LIMIT 1", [phone]);
+    if (rows[0]) {
+      await pool.query(
+        `UPDATE b2b_contacts SET name = $1, company = COALESCE($2, company), city = COALESCE($3, city), instagram = COALESCE($4, instagram) WHERE id = $5`,
+        [name, company || null, city || null, instagram || null, rows[0].id]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO b2b_contacts (id, name, company, phone, city, instagram, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [uuid(), name, company || null, phone, city || null, instagram || null, new Date().toISOString()]
+      );
+    }
+  } catch (err) {
+    console.error("B2B contact upsert failed:", err.message);
+  }
+}
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -650,19 +675,7 @@ app.post("/api/leads", async (req, res) => {
   // same manager submitting again updates their existing record instead of
   // piling up duplicates.
   if (isEventManager && phone) {
-    pool.query("SELECT id FROM b2b_contacts WHERE phone = $1 LIMIT 1", [phone]).then(async ({ rows }) => {
-      if (rows[0]) {
-        await pool.query(
-          `UPDATE b2b_contacts SET name = $1, company = COALESCE($2, company), city = COALESCE($3, city), instagram = COALESCE($4, instagram) WHERE id = $5`,
-          [name, managerCompany || null, managerCity || null, managerInstagram || null, rows[0].id]
-        );
-      } else {
-        await pool.query(
-          `INSERT INTO b2b_contacts (id, name, company, phone, city, instagram, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [uuid(), name, managerCompany || null, phone, managerCity || null, managerInstagram || null, new Date().toISOString()]
-        );
-      }
-    }).catch((err) => console.error("B2B contact upsert failed:", err.message));
+    upsertB2bContact({ name, phone, company: managerCompany, city: managerCity, instagram: managerInstagram });
   }
 
   // Flashing in-app alert (same feed used for team responses) plus an email —
@@ -1315,6 +1328,17 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
 
   values.push(req.params.id);
   await pool.query(`UPDATE leads SET ${updates.join(", ")} WHERE id = $${values.length}`, values);
+
+  // Retroactively marking a past lead as B2B (e.g. from Edit lead) should
+  // bring them into the B2B directory too, same as a fresh Event Manager
+  // submission does — using whatever name/phone/city the lead already has,
+  // since there's no separate manager-only form filled out for this path.
+  if (req.body.isB2b === true && !lead.is_b2b) {
+    const effectivePhone = req.body.phone !== undefined ? req.body.phone : lead.phone;
+    const effectiveName = req.body.name !== undefined ? req.body.name : lead.name;
+    const effectiveCity = req.body.city !== undefined ? req.body.city : lead.city;
+    upsertB2bContact({ name: effectiveName, phone: effectivePhone, city: effectiveCity });
+  }
 
   // If this event just got cancelled, tell everyone who was assigned to it.
   if (req.body.stage === "Cancelled" && lead.stage !== "Cancelled") {

@@ -6530,11 +6530,12 @@ function openEditLeadModal(leadId) {
           <label>Name / organisation</label>
           <input id="mName" value="${lead.name || ""}" />
           <label>Booking type</label>
-          <select id="mIsB2b">
-            <option value="0" ${!lead.is_b2b ? "selected" : ""}>Direct client (B2C)</option>
-            <option value="1" ${lead.is_b2b ? "selected" : ""}>Event Manager / Artist Manager (B2B)</option>
-          </select>
-          <p class="muted small" style="margin-top:2px;">Set automatically when they check "Event Manager" on the enquiry form — override here for phone/walk-in enquiries. Quotes for a B2B lead show both the B2B and B2C rate.</p>
+          <div style="display:flex; align-items:center; gap:10px; margin-top:2px;">
+            ${lead.is_b2b
+              ? `<span class="mono small" style="background:#8A5FA8; color:#fff; border-radius:4px; padding:3px 9px; font-weight:600;">B2B</span><button class="btn-ghost" id="unmarkB2bBtn" type="button" style="font-size:12px; padding:4px 9px;">Remove B2B flag</button>`
+              : `<button class="btn-ghost" id="markB2bBtn" type="button" style="font-size:12px; padding:4px 9px;">🏢 Mark as B2B</button>`}
+          </div>
+          <p class="muted small" style="margin-top:4px;">Set automatically when they check "Event Manager" on the enquiry form — override here for a phone/walk-in enquiry. Marking as B2B also adds them to B2B Contacts (matched by phone), and their quotes will show both the B2B and B2C rate. Takes effect immediately — no need to hit Save.</p>
           <div class="row-2">
             <div><label>Phone</label><input id="mPhone" value="${lead.phone || ""}" placeholder="+91 ..." /></div>
             <div><label>Email</label><input id="mEmail" value="${lead.email || ""}" placeholder="name@example.com" /></div>
@@ -6584,6 +6585,36 @@ function openEditLeadModal(leadId) {
   root.querySelector("#mOccasion").addEventListener("change", (e) => {
     root.querySelector("#mOccasionOtherWrap").style.display = e.target.value === "Other" ? "block" : "none";
   });
+  const markB2bBtn = root.querySelector("#markB2bBtn");
+  if (markB2bBtn) markB2bBtn.addEventListener("click", async () => {
+    markB2bBtn.disabled = true;
+    markB2bBtn.textContent = "Marking…";
+    try {
+      await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ isB2b: true }) });
+      await refreshLeads();
+      close();
+      renderMain();
+    } catch (err) {
+      alert(err.message);
+      markB2bBtn.disabled = false;
+      markB2bBtn.textContent = "🏢 Mark as B2B";
+    }
+  });
+  const unmarkB2bBtn = root.querySelector("#unmarkB2bBtn");
+  if (unmarkB2bBtn) unmarkB2bBtn.addEventListener("click", async () => {
+    unmarkB2bBtn.disabled = true;
+    unmarkB2bBtn.textContent = "Removing…";
+    try {
+      await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ isB2b: false }) });
+      await refreshLeads();
+      close();
+      renderMain();
+    } catch (err) {
+      alert(err.message);
+      unmarkB2bBtn.disabled = false;
+      unmarkB2bBtn.textContent = "Remove B2B flag";
+    }
+  });
   root.querySelector("#submitModal").addEventListener("click", async () => {
     const name = root.querySelector("#mName").value.trim();
     if (!name) return alert("Name is required.");
@@ -6594,7 +6625,6 @@ function openEditLeadModal(leadId) {
         method: "PATCH",
         body: JSON.stringify({
           name,
-          isB2b: root.querySelector("#mIsB2b").value === "1",
           phone: root.querySelector("#mPhone").value.trim() || null,
           email: root.querySelector("#mEmail").value.trim() || null,
           whatsappNumber: root.querySelector("#mWhatsapp").value.trim() || null,
