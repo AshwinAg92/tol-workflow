@@ -6752,9 +6752,9 @@ async function renderWebsiteContent(main) {
       <button class="btn-primary" id="saveStatsBtn" style="margin-top:12px;">Save stats override</button>
     </div>
 
-    <div class="card" style="margin-bottom:20px; opacity:0.7;">
-      <div class="section-label">Cities performed (legacy — no longer shown on site)</div>
-      <p class="muted small" style="margin-top:-4px;">The site's map now plots itself live from confirmed bookings, so this manual list isn't used anymore. Kept here only so nothing is lost — safe to ignore.</p>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="section-label">Additional cities (shown on the map)</div>
+      <p class="muted small" style="margin-top:-4px;">The map plots real bookings automatically — use this for events that happened but have no confirmed-lead record with that city on file (e.g. Surat). Add a city and it gets pinned too.</p>
       <div id="citiesList"></div>
       <div class="row-2" style="margin-top:10px;">
         <input id="newCityInput" placeholder="Add a city…" />

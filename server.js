@@ -1349,17 +1349,36 @@ app.get("/api/public/event-locations", async (req, res) => {
     `);
     const markers = [];
     const countries = new Set();
+    const existingCities = new Set();
     for (const r of rows) {
       const geo = await geocodeCityCached(r.city);
       if (!geo) continue; // unresolved city — will retry on the next cache miss, doesn't block the rest
       markers.push({ city: r.city, lat: geo.lat, lng: geo.lng, country: geo.country, count: Number(r.count) });
+      existingCities.add(r.city.trim().toLowerCase());
+      if (geo.country) countries.add(geo.country);
+    }
+    // Manual additional cities (events that happened but have no confirmed-
+    // lead record with that city on file, e.g. Surat) — admin-editable via
+    // the "Additional cities" card in Settings. Entries may be a plain
+    // string or a legacy { name, lat, lng } object from before this reused
+    // an older editor; either way the name is re-geocoded here for a
+    // consistent, cached source of truth rather than trusting stored coords.
+    const manualCitiesRow = (await pool.query("SELECT value FROM site_content WHERE key = 'cities'")).rows[0];
+    const manualCities = Array.isArray(manualCitiesRow?.value) ? manualCitiesRow.value : [];
+    for (const entry of manualCities) {
+      const name = typeof entry === "string" ? entry : entry?.name;
+      if (!name || existingCities.has(name.trim().toLowerCase())) continue; // don't double-plot a city already covered by real bookings
+      const geo = await geocodeCityCached(name);
+      if (!geo) continue;
+      markers.push({ city: name, lat: geo.lat, lng: geo.lng, country: geo.country, count: 0 });
+      existingCities.add(name.trim().toLowerCase());
       if (geo.country) countries.add(geo.country);
     }
     // Manual international highlights (e.g. shows that predate the CRM and
     // have no confirmed-lead record with a city) — admin-editable via the
-    // "Countries performed" card in Settings, plotted at country level
+    // "International highlights" card in Settings, plotted at country level
     // since there's no specific city on file for these.
-    const manualCountriesRow = (await pool.query("SELECT value FROM site_content WHERE key = 'countries'", )).rows[0];
+    const manualCountriesRow = (await pool.query("SELECT value FROM site_content WHERE key = 'countries'")).rows[0];
     const manualCountries = Array.isArray(manualCountriesRow?.value) ? manualCountriesRow.value : [];
     const existingCountries = new Set(markers.map((m) => m.country).filter(Boolean));
     for (const name of manualCountries) {

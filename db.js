@@ -493,39 +493,34 @@ async function setup() {
     `, [new Date().toISOString()]);
   }
 
-  // Seed known international shows that predate the CRM (so there's no
-  // confirmed-lead record to derive them from automatically) as the default
-  // "countries performed" list, which now feeds highlight pins on the
-  // public map. ON CONFLICT DO NOTHING so this never overwrites Ashwin's
-  // own edits once the key exists — it only fills a truly empty value.
-  await pool.query(`
-    INSERT INTO site_content (key, value, updated_at) VALUES ('countries', '["Croatia", "Bhutan", "Nepal"]', $1)
-    ON CONFLICT (key) DO NOTHING
-  `, [new Date().toISOString()]);
-  // A 'countries' row already existed from before this feature shipped (an
-  // empty [] from the old, unused CMS editor), so the seed above no-opped
-  // and Bhutan/Croatia/Nepal never actually made it in. Backfill each one in
-  // directly, ONCE — guarded by a flag row so this never fights a later,
-  // deliberate removal of one of these from the CRM's own editor.
-  const countriesBackfillDone = (await pool.query("SELECT 1 FROM site_content WHERE key = 'countries_intl_backfilled'")).rows[0];
-  if (!countriesBackfillDone) {
-    const countriesRow = (await pool.query("SELECT value FROM site_content WHERE key = 'countries'")).rows[0];
-    if (countriesRow && Array.isArray(countriesRow.value)) {
-      const existing = countriesRow.value;
-      const existingLower = existing.map((c) => String(c).toLowerCase());
-      const missing = ["Croatia", "Bhutan", "Nepal"].filter((c) => !existingLower.includes(c.toLowerCase()));
-      if (missing.length) {
-        await pool.query(
-          "UPDATE site_content SET value = $1, updated_at = $2 WHERE key = 'countries'",
-          [JSON.stringify([...existing, ...missing]), new Date().toISOString()]
-        );
+  // Seed/backfill known events that predate the CRM (so there's no
+  // confirmed-lead record to derive them from automatically) into a
+  // site_content list, feeding highlight pins on the public map. Each name
+  // is added under its own one-time flag row, so a later run only backfills
+  // whatever's new — it never re-adds something Ashwin's deliberately
+  // removed from the CRM's own editor since.
+  async function backfillSiteContentList(key, names) {
+    for (const name of names) {
+      const flagKey = `${key}_backfilled_${name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
+      const done = (await pool.query("SELECT 1 FROM site_content WHERE key = $1", [flagKey])).rows[0];
+      if (done) continue;
+      const row = (await pool.query("SELECT value FROM site_content WHERE key = $1", [key])).rows[0];
+      const existing = Array.isArray(row?.value) ? row.value : [];
+      const existingLower = existing.map((c) => String(typeof c === "string" ? c : c?.name || "").toLowerCase());
+      if (!existingLower.includes(name.toLowerCase())) {
+        await pool.query(`
+          INSERT INTO site_content (key, value, updated_at) VALUES ($1, $2, $3)
+          ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = $3
+        `, [key, JSON.stringify([...existing, name]), new Date().toISOString()]);
       }
+      await pool.query(`
+        INSERT INTO site_content (key, value, updated_at) VALUES ($1, 'true', $2)
+        ON CONFLICT (key) DO NOTHING
+      `, [flagKey, new Date().toISOString()]);
     }
-    await pool.query(`
-      INSERT INTO site_content (key, value, updated_at) VALUES ('countries_intl_backfilled', 'true', $1)
-      ON CONFLICT (key) DO NOTHING
-    `, [new Date().toISOString()]);
   }
+  await backfillSiteContentList("countries", ["Croatia", "Bhutan", "Nepal"]);
+  await backfillSiteContentList("cities", ["Surat"]);
 
   // Clean up orphaned artist-fee expenses — a bug meant that unassigning an
   // artist from an event deleted their assignment but left their fee record
