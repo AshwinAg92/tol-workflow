@@ -5648,6 +5648,12 @@ async function renderB2bContacts(main) {
     return;
   }
 
+  // Snapshot of today's rate card, to compare against what was recorded the
+  // last time a contact was sent one — flags "rates changed since" so a
+  // stale rate card doesn't go out unnoticed.
+  const currentRateCardSnapshot = JSON.stringify(rateCardRows().map((r) => [r.packageId, r.tierKey, r.b2cRate, getB2bRate(r)]));
+  const msPerDay = 24 * 60 * 60 * 1000;
+
   function renderList() {
     const listEl = main.querySelector("#b2bContactList");
     if (contacts.length === 0) {
@@ -5657,6 +5663,10 @@ async function renderB2bContacts(main) {
     listEl.innerHTML = "";
     contacts.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach((c) => {
       const digitsOnly = (c.phone || "").replace(/\D/g, "");
+      const conversionPct = c.lead_count > 0 ? Math.round((c.confirmed_count / c.lead_count) * 100) : null;
+      const daysSinceEnquiry = c.last_enquiry_at ? Math.floor((Date.now() - new Date(c.last_enquiry_at).getTime()) / msPerDay) : null;
+      const isQuiet = c.lead_count > 0 && daysSinceEnquiry !== null && daysSinceEnquiry >= 90;
+      const rateCardStale = c.last_rate_card_sent_at && c.last_rate_card_snapshot && c.last_rate_card_snapshot !== currentRateCardSnapshot;
       const card = el(`
         <div class="card" style="margin-bottom:10px;">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
@@ -5665,10 +5675,13 @@ async function renderB2bContacts(main) {
               <div class="muted small">${[c.phone, c.email, c.city, c.instagram].filter(Boolean).join(" · ") || "No contact details on file"}</div>
               ${c.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${c.notes}</div>` : ""}
               <div class="muted small" style="margin-top:2px;">${c.last_contacted_at ? `Last contacted ${fmtDate(c.last_contacted_at.slice(0, 10))}` : "Not contacted yet"}</div>
+              <div class="muted small">${c.last_rate_card_sent_at ? `Rate card last sent ${fmtDate(c.last_rate_card_sent_at.slice(0, 10))}` : ""}</div>
               <div style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap;">
                 <span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:2px 8px;">${c.lead_count || 0} lead${c.lead_count == 1 ? "" : "s"}</span>
-                <span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:2px 8px;">${c.confirmed_count || 0} confirmed</span>
+                <span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:2px 8px;">${c.confirmed_count || 0} confirmed${conversionPct !== null ? ` (${conversionPct}%)` : ""}</span>
                 <span class="mono small" style="background:${c.total_revenue > 0 ? "#E8F0E9" : "#F5F0E4"}; color:${c.total_revenue > 0 ? "#5C8A6B" : "inherit"}; border-radius:4px; padding:2px 8px; font-weight:600;">${inr(c.total_revenue || 0)} generated</span>
+                ${isQuiet ? `<span class="mono small" style="background:#FBEAE7; color:#A64B3C; border-radius:4px; padding:2px 8px;" title="No new enquiry from them in ${daysSinceEnquiry} days">⏰ Quiet ${daysSinceEnquiry}d — reach out?</span>` : ""}
+                ${rateCardStale ? `<span class="mono small" style="background:#FBF3D9; color:#8A6A1F; border-radius:4px; padding:2px 8px;" title="Our rates have changed since the rate card we last sent them">⚠️ Rates changed since last sent</span>` : ""}
               </div>
             </div>
           </div>
@@ -5699,8 +5712,14 @@ async function renderB2bContacts(main) {
           await downloadRateCardPDF(c.name);
           const msg = `Hi ${c.name.split(" ")[0]}, sharing our rate card with Together, Out Loud for future reference. Please find the PDF attached.`;
           window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
-          await api(`/api/b2b-contacts/${c.id}`, { method: "PATCH", body: JSON.stringify({ lastContactedAt: new Date().toISOString().slice(0, 10) }) });
-          c.last_contacted_at = new Date().toISOString().slice(0, 10);
+          const today = new Date().toISOString().slice(0, 10);
+          await api(`/api/b2b-contacts/${c.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ lastContactedAt: today, lastRateCardSentAt: today, lastRateCardSnapshot: currentRateCardSnapshot }),
+          });
+          c.last_contacted_at = today;
+          c.last_rate_card_sent_at = today;
+          c.last_rate_card_snapshot = currentRateCardSnapshot;
           renderList();
         } catch (err) {
           alert(err.message);
@@ -5775,12 +5794,19 @@ async function openB2bHistoryModal(contact) {
     }
     const totalRevenue = leads.filter((l) => ["Confirmed", "Completed"].includes(l.stage))
       .reduce((sum, l) => sum + (l.final_amount || l.quote_amount || 0), 0);
+    // Which formats this contact tends to book — useful for tailoring
+    // outreach (e.g. bundled rates for whatever they book most).
+    const packageCounts = {};
+    leads.forEach((l) => { packageCounts[l.event_type] = (packageCounts[l.event_type] || 0) + 1; });
+    const packageBreakdown = Object.entries(packageCounts).sort((a, b) => b[1] - a[1])
+      .map(([id, count]) => `${packageName(id)} ×${count}`).join(", ");
     body.innerHTML = `
-      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
         <span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:3px 9px;">${leads.length} lead${leads.length === 1 ? "" : "s"}</span>
         <span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:3px 9px;">${quotes.length} quote${quotes.length === 1 ? "" : "s"} sent</span>
         <span class="mono small" style="background:#E8F0E9; color:#5C8A6B; font-weight:600; border-radius:4px; padding:3px 9px;">${inr(totalRevenue)} generated</span>
       </div>
+      <p class="muted small" style="margin-bottom:14px;">Books: ${packageBreakdown}</p>
       ${leads.map((l) => {
         const leadQuotes = quotes.filter((q) => q.lead_id === l.id);
         return `

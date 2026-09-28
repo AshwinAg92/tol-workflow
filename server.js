@@ -515,14 +515,16 @@ app.get("/api/b2b-contacts", requireAuth, requireSection("b2b"), async (req, res
       COALESCE(s.lead_count, 0) AS lead_count,
       COALESCE(s.confirmed_count, 0) AS confirmed_count,
       COALESCE(s.total_revenue, 0) AS total_revenue,
-      s.last_event_date
+      s.last_event_date,
+      s.last_enquiry_at
     FROM b2b_contacts c
     LEFT JOIN (
       SELECT phone,
         COUNT(*) AS lead_count,
         COUNT(*) FILTER (WHERE stage IN ('Confirmed', 'Completed')) AS confirmed_count,
         SUM(CASE WHEN stage IN ('Confirmed', 'Completed') THEN COALESCE(final_amount, quote_amount, 0) ELSE 0 END) AS total_revenue,
-        MAX(date) AS last_event_date
+        MAX(date) AS last_event_date,
+        MAX(created_at) AS last_enquiry_at
       FROM leads
       WHERE phone IS NOT NULL
       GROUP BY phone
@@ -561,11 +563,11 @@ app.post("/api/b2b-contacts", requireAuth, requireSection("b2b"), async (req, re
 app.patch("/api/b2b-contacts/:id", requireAuth, requireSection("b2b"), async (req, res) => {
   const contact = (await pool.query("SELECT * FROM b2b_contacts WHERE id = $1", [req.params.id])).rows[0];
   if (!contact) return res.status(404).json({ error: "Contact not found" });
-  const fields = ["name", "company", "phone", "email", "city", "notes", "last_contacted_at"];
+  const fields = ["name", "company", "phone", "email", "city", "notes", "last_contacted_at", "last_rate_card_sent_at", "last_rate_card_snapshot"];
   const updates = [];
   const values = [];
   fields.forEach((f) => {
-    const bodyKey = f === "last_contacted_at" ? "lastContactedAt" : f;
+    const bodyKey = f === "last_contacted_at" ? "lastContactedAt" : f === "last_rate_card_sent_at" ? "lastRateCardSentAt" : f === "last_rate_card_snapshot" ? "lastRateCardSnapshot" : f;
     if (req.body[bodyKey] !== undefined) {
       values.push(req.body[bodyKey] || null);
       updates.push(`${f} = $${values.length}`);

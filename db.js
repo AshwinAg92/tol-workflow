@@ -293,6 +293,11 @@ async function setup() {
     UPDATE leads SET is_b2b = 1
     WHERE is_b2b = 0 AND notes ILIKE '%Submitted via Event Manager/Artist Manager%'
   `);
+  // Tracks when a rate card was last sent to a B2B contact, and a snapshot
+  // of the rates at that time — lets the UI flag "rates changed since you
+  // last sent this" so a stale quote doesn't go out unnoticed.
+  await pool.query(`ALTER TABLE b2b_contacts ADD COLUMN IF NOT EXISTS last_rate_card_sent_at TEXT`);
+  await pool.query(`ALTER TABLE b2b_contacts ADD COLUMN IF NOT EXISTS last_rate_card_snapshot TEXT`);
   // Lets a travel leg exist without a lead — for manually-logged trips
   // (scouting a venue, a personal trip, anything not tied to a booked
   // event) shown on the standalone Travel Calendar.
