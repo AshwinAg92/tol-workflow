@@ -703,6 +703,15 @@ app.post("/api/leads", async (req, res) => {
 let instagramStatsCache = { data: null, fetchedAt: 0 };
 const INSTAGRAM_STATS_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
+// Windsor.ai's free plan caps out at 1 connected source — GA4 now reads
+// directly from Google instead (see fetchWebsiteTraffic below) precisely so
+// Instagram keeps that one free Windsor slot to itself. Still worth
+// detecting the plan-limit error text here in case that ever changes, so a
+// billing message never gets parsed as if it were a real stat.
+function isWindsorPlanLimitError(json) {
+  return /free plan|upgrade|onboard\.windsor\.ai/i.test(JSON.stringify(json));
+}
+
 async function fetchLiveInstagramStats() {
   const apiKey = process.env.WINDSOR_API_KEY;
   if (!apiKey) return null;
@@ -710,6 +719,7 @@ async function fetchLiveInstagramStats() {
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`Windsor.ai returned ${resp.status}`);
   const json = await resp.json();
+  if (isWindsorPlanLimitError(json)) throw new Error("Windsor.ai account/plan limit reached");
   const rows = Array.isArray(json) ? json : (json.data || []);
   if (!rows.length) return null;
   const totalLikes = rows.reduce((sum, r) => sum + (Number(r.media_like_count) || 0), 0);
@@ -735,11 +745,57 @@ app.get("/api/public/live-instagram-stats", async (req, res) => {
   }
 });
 
+// ---------- Live reels (Windsor.ai) — auto-refreshing, replaces the hardcoded embed list ----------
+let reelsCache = { data: null, fetchedAt: 0 };
+const REELS_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours, same cadence as the stats above
+
+async function fetchLatestReels() {
+  const apiKey = process.env.WINDSOR_API_KEY;
+  if (!apiKey) return null;
+  const fields = "media_id,media_permalink,media_type,media_timestamp,media_caption,media_thumbnail_url,media_like_count";
+  const url = `https://connectors.windsor.ai/instagram_public?api_key=${apiKey}&fields=${fields}&date_preset=last_2years&_renderer=json`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Windsor.ai returned ${resp.status}`);
+  const json = await resp.json();
+  if (isWindsorPlanLimitError(json)) throw new Error("Windsor.ai account/plan limit reached");
+  const rows = Array.isArray(json) ? json : (json.data || []);
+  return rows
+    .filter((r) => r.media_type === "REEL" && r.media_permalink)
+    .sort((a, b) => new Date(b.media_timestamp) - new Date(a.media_timestamp))
+    .slice(0, 12)
+    .map((r) => ({
+      id: r.media_id,
+      permalink: r.media_permalink,
+      caption: r.media_caption || "",
+      thumbnailUrl: r.media_thumbnail_url || null,
+      timestamp: r.media_timestamp || null,
+      likeCount: Number(r.media_like_count) || 0,
+    }));
+}
+
+app.get("/api/public/reels", async (req, res) => {
+  const isFresh = reelsCache.data && (Date.now() - reelsCache.fetchedAt) < REELS_TTL_MS;
+  if (isFresh) return res.json({ reels: reelsCache.data });
+  try {
+    const reels = await fetchLatestReels();
+    if (reels && reels.length) {
+      reelsCache = { data: reels, fetchedAt: Date.now() };
+      return res.json({ reels });
+    }
+    return res.json({ reels: reelsCache.data || [] });
+  } catch (err) {
+    console.error("Live reels fetch failed:", err.message);
+    return res.json({ reels: reelsCache.data || [] });
+  }
+});
+
 // ---------- Google Calendar sync (Confirmed/Completed events) ----------
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || "https://www.togetheroutloud.in/api/google-calendar/callback";
 const GOOGLE_CALENDAR_AUTH_ROW_ID = "singleton";
+const GOOGLE_ANALYTICS_REDIRECT_URI = process.env.GOOGLE_ANALYTICS_REDIRECT_URI || "https://www.togetheroutloud.in/api/google-analytics/callback";
+const GOOGLE_ANALYTICS_AUTH_ROW_ID = "singleton";
 
 app.get("/api/google-calendar/status", requireAuth, requireAdmin, async (req, res) => {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) return res.json({ configured: false, connected: false });
@@ -798,6 +854,101 @@ app.post("/api/google-calendar/disconnect", requireAuth, requireAdmin, async (re
   await pool.query("DELETE FROM google_calendar_auth WHERE id = $1", [GOOGLE_CALENDAR_AUTH_ROW_ID]);
   res.json({ ok: true });
 });
+
+// ---------- Google Analytics (GA4) — direct, free API access ----------
+// Deliberately NOT routed through Windsor.ai (see fetchWebsiteTraffic below):
+// this reuses the same Google Cloud OAuth app as Calendar above, just a
+// different scope + its own token row, so it costs nothing.
+app.get("/api/google-analytics/status", requireAuth, requireAdmin, async (req, res) => {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) return res.json({ configured: false, connected: false });
+  const row = (await pool.query("SELECT connected_by, connected_at, property_id FROM google_analytics_auth WHERE id = $1", [GOOGLE_ANALYTICS_AUTH_ROW_ID])).rows[0];
+  res.json({ configured: true, connected: !!row, connectedBy: row?.connected_by || null, connectedAt: row?.connected_at || null, propertyId: row?.property_id || null });
+});
+
+app.get("/api/google-analytics/connect", requireAuth, requireAdmin, (req, res) => {
+  if (!GOOGLE_CLIENT_ID) return res.status(500).send("Google Analytics isn't configured yet — GOOGLE_CLIENT_ID is missing.");
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_ANALYTICS_REDIRECT_URI,
+    response_type: "code",
+    scope: "https://www.googleapis.com/auth/analytics.readonly",
+    access_type: "offline",
+    prompt: "consent",
+  });
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+});
+
+app.get("/api/google-analytics/callback", requireAuth, requireAdmin, async (req, res) => {
+  const { code, error } = req.query;
+  if (error) return res.redirect(`/?googleAnalytics=error&reason=${encodeURIComponent(error)}`);
+  if (!code) return res.redirect(`/?googleAnalytics=error&reason=no_code`);
+  try {
+    const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code, client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri: GOOGLE_ANALYTICS_REDIRECT_URI, grant_type: "authorization_code",
+      }),
+    });
+    const tokenJson = await tokenResp.json();
+    if (!tokenResp.ok || !tokenJson.refresh_token) {
+      return res.redirect(`/?googleAnalytics=error&reason=${encodeURIComponent(tokenJson.error || "no_refresh_token")}`);
+    }
+    // Auto-discover the GA4 property so Ashwin doesn't have to hunt for the
+    // numeric property ID himself — take the first property Google returns,
+    // since togetheroutloud.in is the only site being tracked.
+    let propertyId = null;
+    try {
+      const summaryResp = await fetch("https://analyticsadmin.googleapis.com/v1beta/accountSummaries", {
+        headers: { Authorization: `Bearer ${tokenJson.access_token}` },
+      });
+      const summaryJson = await summaryResp.json();
+      const firstProperty = (summaryJson.accountSummaries || []).flatMap((a) => a.propertySummaries || [])[0];
+      if (firstProperty) propertyId = firstProperty.property.replace("properties/", "");
+    } catch (err) {
+      console.error("GA4 property auto-discovery failed:", err.message);
+    }
+    const actor = await actorName(req.user);
+    await pool.query(`
+      INSERT INTO google_analytics_auth (id, access_token, refresh_token, expires_at, property_id, connected_by, connected_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (id) DO UPDATE SET access_token = $2, refresh_token = $3, expires_at = $4,
+        property_id = COALESCE($5, google_analytics_auth.property_id), connected_by = $6, connected_at = $7
+    `, [GOOGLE_ANALYTICS_AUTH_ROW_ID, tokenJson.access_token, tokenJson.refresh_token, Date.now() + tokenJson.expires_in * 1000, propertyId, actor, new Date().toISOString()]);
+    res.redirect(propertyId ? `/?googleAnalytics=connected` : `/?googleAnalytics=connected_no_property`);
+  } catch (err) {
+    console.error("Google Analytics connect failed:", err.message);
+    res.redirect(`/?googleAnalytics=error&reason=${encodeURIComponent(err.message)}`);
+  }
+});
+
+app.post("/api/google-analytics/disconnect", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM google_analytics_auth WHERE id = $1", [GOOGLE_ANALYTICS_AUTH_ROW_ID]);
+  res.json({ ok: true });
+});
+
+async function getGoogleAnalyticsAuth() {
+  const row = (await pool.query("SELECT * FROM google_analytics_auth WHERE id = $1", [GOOGLE_ANALYTICS_AUTH_ROW_ID])).rows[0];
+  if (!row) return null;
+  if (row.expires_at > Date.now() + 60000) return { accessToken: row.access_token, propertyId: row.property_id };
+  const resp = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      refresh_token: row.refresh_token, client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+      grant_type: "refresh_token",
+    }),
+  });
+  const json = await resp.json();
+  if (!resp.ok) {
+    if (json.error === "invalid_grant") await pool.query("DELETE FROM google_analytics_auth WHERE id = $1", [GOOGLE_ANALYTICS_AUTH_ROW_ID]);
+    throw new Error(`Google Analytics token refresh failed: ${json.error || resp.status}`);
+  }
+  await pool.query("UPDATE google_analytics_auth SET access_token = $1, expires_at = $2 WHERE id = $3",
+    [json.access_token, Date.now() + json.expires_in * 1000, GOOGLE_ANALYTICS_AUTH_ROW_ID]);
+  return { accessToken: json.access_token, propertyId: row.property_id };
+}
 
 // One-off backfill for events that were Confirmed/Completed before the sync
 // was connected — normal syncing only fires on a stage change going forward,
@@ -1003,35 +1154,48 @@ function normalizeTrafficDate(d) {
   return s;
 }
 
+// Reads GA4 directly via Google's own free Analytics Data API — not through
+// Windsor.ai. Windsor's free plan caps out at 1 connected source, and
+// Instagram already uses that slot for the live site stats, so GA4 needed
+// its own free path rather than competing for that slot (or paying Windsor).
 async function fetchWebsiteTraffic() {
-  const apiKey = process.env.WINDSOR_API_KEY;
-  if (!apiKey) return null;
+  const auth = await getGoogleAnalyticsAuth();
+  if (!auth) return { notConnected: true };
+  if (!auth.propertyId) return { notConnected: true, noProperty: true };
+  const { accessToken, propertyId } = auth;
+  const runReport = (body) => fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   const [byDayResp, byChannelResp] = await Promise.all([
-    fetch(`https://connectors.windsor.ai/googleanalytics4?api_key=${apiKey}&fields=date,sessions,active_users,screen_page_views&date_preset=last_30d&_renderer=json`),
-    fetch(`https://connectors.windsor.ai/googleanalytics4?api_key=${apiKey}&fields=session_default_channel_group,sessions&date_preset=last_30d&_renderer=json`),
+    runReport({
+      dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
+      dimensions: [{ name: "date" }],
+      metrics: [{ name: "sessions" }, { name: "activeUsers" }, { name: "screenPageViews" }],
+      orderBys: [{ dimension: { dimensionName: "date" } }],
+    }),
+    runReport({
+      dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
+      dimensions: [{ name: "sessionDefaultChannelGroup" }],
+      metrics: [{ name: "sessions" }],
+      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+    }),
   ]);
-  if (!byDayResp.ok) throw new Error(`Windsor.ai returned ${byDayResp.status}`);
-  if (!byChannelResp.ok) throw new Error(`Windsor.ai returned ${byChannelResp.status}`);
+  if (!byDayResp.ok) throw new Error(`GA4 returned ${byDayResp.status}`);
+  if (!byChannelResp.ok) throw new Error(`GA4 returned ${byChannelResp.status}`);
   const byDayJson = await byDayResp.json();
   const byChannelJson = await byChannelResp.json();
-  // Windsor.ai sometimes responds with HTTP 200 but an account/plan error
-  // message baked into the payload instead of real rows (e.g. hitting the
-  // Free plan's connected-account limit) — catch that here so it never gets
-  // parsed as a fake data row and shown to Ashwin as if it were a channel.
-  const rawText = JSON.stringify(byDayJson) + JSON.stringify(byChannelJson);
-  if (/free plan|upgrade|onboard\.windsor\.ai/i.test(rawText)) {
-    throw new Error("Windsor.ai account/plan limit reached");
-  }
-  const byDay = (Array.isArray(byDayJson) ? byDayJson : (byDayJson.data || []))
+  const byDay = (byDayJson.rows || [])
     .map((r) => ({
-      date: normalizeTrafficDate(r.date),
-      sessions: Number(r.sessions) || 0,
-      activeUsers: Number(r.active_users) || 0,
-      pageViews: Number(r.screen_page_views) || 0,
+      date: normalizeTrafficDate(r.dimensionValues[0].value),
+      sessions: Number(r.metricValues[0].value) || 0,
+      activeUsers: Number(r.metricValues[1].value) || 0,
+      pageViews: Number(r.metricValues[2].value) || 0,
     }))
     .sort((a, b) => (a.date > b.date ? 1 : -1));
-  const byChannel = (Array.isArray(byChannelJson) ? byChannelJson : (byChannelJson.data || []))
-    .map((r) => ({ channel: r.session_default_channel_group || "Unassigned", sessions: Number(r.sessions) || 0 }))
+  const byChannel = (byChannelJson.rows || [])
+    .map((r) => ({ channel: r.dimensionValues[0].value || "Unassigned", sessions: Number(r.metricValues[0].value) || 0 }))
     .sort((a, b) => b.sessions - a.sessions);
   const totalSessions = byDay.reduce((s, d) => s + d.sessions, 0);
   const totalUsers = byDay.reduce((s, d) => s + d.activeUsers, 0);
@@ -1044,10 +1208,11 @@ app.get("/api/website-traffic", requireAuth, requireAdmin, async (req, res) => {
   if (isFresh) return res.json(websiteTrafficCache.data);
   try {
     const traffic = await fetchWebsiteTraffic();
-    if (traffic) {
+    if (traffic && !traffic.notConnected) {
       websiteTrafficCache = { data: traffic, fetchedAt: Date.now() };
       return res.json(traffic);
     }
+    if (traffic && traffic.notConnected) return res.json(traffic);
     return res.json(websiteTrafficCache.data || { byDay: [], byChannel: [], totalSessions: 0, totalUsers: 0, totalPageViews: 0, unavailable: true });
   } catch (err) {
     console.error("Website traffic fetch failed:", err.message);
@@ -1111,6 +1276,78 @@ app.get("/api/geocode-city", requireAuth, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("Geocoding failed for", name, ":", err.message);
     res.json({ found: false });
+  }
+});
+
+// ---------- Real event locations (feeds the public global map — free, self-hosted) ----------
+// Nominatim's usage policy caps free requests at ~1/sec, so lookups for new
+// city names are serialized through this single promise chain rather than
+// fired in parallel; already-cached cities (the common case after the first
+// run) skip the network call entirely and cost nothing.
+let geocodeQueue = Promise.resolve();
+async function geocodeCityCached(cityRaw) {
+  const key = String(cityRaw || "").trim().toLowerCase();
+  if (!key) return null;
+  const cached = (await pool.query("SELECT * FROM city_geocode_cache WHERE city_key = $1", [key])).rows[0];
+  if (cached) return cached.found ? cached : null;
+  geocodeQueue = geocodeQueue.then(() => new Promise((r) => setTimeout(r, 1100)));
+  await geocodeQueue;
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(cityRaw)}&format=jsonv2&addressdetails=1&limit=1`;
+    const resp = await fetch(url, { headers: { "User-Agent": "TogetherOutLoudWebsite/1.0 (togetheroutloudclub@gmail.com)" } });
+    if (!resp.ok) throw new Error(`Nominatim returned ${resp.status}`);
+    const results = await resp.json();
+    const hit = results[0];
+    const row = hit
+      ? { lat: Number(hit.lat), lng: Number(hit.lon), country: hit.address?.country || null, display_name: hit.display_name, found: 1 }
+      : { lat: null, lng: null, country: null, display_name: null, found: 0 };
+    await pool.query(`
+      INSERT INTO city_geocode_cache (city_key, lat, lng, country, display_name, found, resolved_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (city_key) DO UPDATE SET lat = $2, lng = $3, country = $4, display_name = $5, found = $6, resolved_at = $7
+    `, [key, row.lat, row.lng, row.country, row.display_name, row.found, new Date().toISOString()]);
+    return row.found ? row : null;
+  } catch (err) {
+    console.error("Geocoding failed for", cityRaw, ":", err.message);
+    return null; // leave uncached so it's retried on a future call, not stuck as a permanent miss
+  }
+}
+
+let eventLocationsCache = { data: null, fetchedAt: 0 };
+const EVENT_LOCATIONS_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+// Public — drives the global map on the marketing site with real booking
+// data (confirmed/completed events), not a manually-curated list, so it
+// updates itself as events close and never goes stale.
+app.get("/api/public/event-locations", async (req, res) => {
+  const isFresh = eventLocationsCache.data && (Date.now() - eventLocationsCache.fetchedAt) < EVENT_LOCATIONS_TTL_MS;
+  if (isFresh) return res.json(eventLocationsCache.data);
+  try {
+    const { rows } = await pool.query(`
+      SELECT city, COUNT(*) AS count FROM leads
+      WHERE stage IN ('Confirmed', 'Completed') AND city IS NOT NULL AND TRIM(city) != ''
+      GROUP BY city
+    `);
+    const markers = [];
+    const countries = new Set();
+    for (const r of rows) {
+      const geo = await geocodeCityCached(r.city);
+      if (!geo) continue; // unresolved city — will retry on the next cache miss, doesn't block the rest
+      markers.push({ city: r.city, lat: geo.lat, lng: geo.lng, country: geo.country, count: Number(r.count) });
+      if (geo.country) countries.add(geo.country);
+    }
+    const intlCountries = [...countries].filter((c) => c !== "India").sort();
+    const data = {
+      markers,
+      distinctCities: markers.length,
+      distinctCountries: countries.size,
+      internationalCountries: intlCountries,
+    };
+    eventLocationsCache = { data, fetchedAt: Date.now() };
+    res.json(data);
+  } catch (err) {
+    console.error("Event locations fetch failed:", err.message);
+    res.json(eventLocationsCache.data || { markers: [], distinctCities: 0, distinctCountries: 0 });
   }
 });
 

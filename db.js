@@ -230,6 +230,40 @@ async function setup() {
     );
   `);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_event_id TEXT`);
+
+  // ---------- Google Analytics (GA4) — direct, free API access ----------
+  // Deliberately NOT routed through Windsor.ai: Windsor's free plan only
+  // allows 1 connected source, and Instagram already uses that slot. GA4
+  // is read directly with Google's own free Analytics Data API instead,
+  // reusing the same OAuth app as Google Calendar above (just a different
+  // scope + token row), so this costs nothing.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS google_analytics_auth (
+      id TEXT PRIMARY KEY,
+      access_token TEXT,
+      refresh_token TEXT NOT NULL,
+      expires_at BIGINT NOT NULL,
+      property_id TEXT,
+      connected_by TEXT,
+      connected_at TEXT NOT NULL
+    );
+  `);
+
+  // Caches Nominatim (OpenStreetMap, free) lookups for lead city names, so
+  // the public map endpoint never has to geocode live — it just reads
+  // whatever's cached, and new/unrecognized cities get resolved once in the
+  // background and cached from then on.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS city_geocode_cache (
+      city_key TEXT PRIMARY KEY,
+      lat DOUBLE PRECISION,
+      lng DOUBLE PRECISION,
+      country TEXT,
+      display_name TEXT,
+      found INTEGER NOT NULL DEFAULT 1,
+      resolved_at TEXT NOT NULL
+    );
+  `);
   // JSON array of inclusion keys (travel/local_transfers/hotel/food) — replaces
   // the old binary rate_type dropdown with explicit, tickable line items so
   // there's no ambiguity about what a quoted rate actually covers. rate_type

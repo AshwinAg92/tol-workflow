@@ -5354,6 +5354,17 @@ async function renderDashboard(main) {
     })()}
     ${isAdmin ? (() => {
       const hasTraffic = websiteTraffic && websiteTraffic.byDay && websiteTraffic.byDay.length > 0;
+      if (websiteTraffic && websiteTraffic.notConnected) {
+        return `
+        <div class="card" style="margin-bottom:16px;">
+          <div class="section-label">🌐 Website traffic (last 30 days)</div>
+          <p class="muted small">${websiteTraffic.noProperty
+            ? "Connected, but no GA4 property was found on that Google account."
+            : "Not connected yet — this reads directly and for free from Google's own Analytics API."}
+            Connect it in <a href="#" data-goto-settings="1">Settings</a> to see numbers here.</p>
+        </div>
+        `;
+      }
       if (!hasTraffic) {
         return `
         <div class="card" style="margin-bottom:16px;">
@@ -5575,6 +5586,15 @@ async function renderDashboard(main) {
     seeTravelCalBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       currentTab = "travelcal";
+      renderNav();
+      renderMain();
+    });
+  }
+  const gotoSettingsLink = main.querySelector("[data-goto-settings]");
+  if (gotoSettingsLink) {
+    gotoSettingsLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      currentTab = "settings";
       renderNav();
       renderMain();
     });
@@ -6729,15 +6749,12 @@ async function renderWebsiteContent(main) {
         <div><label>Instagram followers</label><input id="statFollowers" placeholder="e.g. 12000" value="${content.stats_override.followers || ""}" /></div>
         <div><label>Likes on reels</label><input id="statLikes" placeholder="e.g. 600000" value="${content.stats_override.likes || ""}" /></div>
       </div>
-      <div class="row-2" style="margin-top:10px;">
-        <div><label>Cities across India</label><input id="statCities" placeholder="e.g. 15" value="${content.stats_override.cities || ""}" /></div>
-        <div><label>International shows</label><input id="statIntl" placeholder="e.g. Europe & Thailand" value="${content.stats_override.international || ""}" /></div>
-      </div>
       <button class="btn-primary" id="saveStatsBtn" style="margin-top:12px;">Save stats override</button>
     </div>
 
-    <div class="card" style="margin-bottom:20px;">
-      <div class="section-label">Cities performed</div>
+    <div class="card" style="margin-bottom:20px; opacity:0.7;">
+      <div class="section-label">Cities performed (legacy — no longer shown on site)</div>
+      <p class="muted small" style="margin-top:-4px;">The site's map now plots itself live from confirmed bookings, so this manual list isn't used anymore. Kept here only so nothing is lost — safe to ignore.</p>
       <div id="citiesList"></div>
       <div class="row-2" style="margin-top:10px;">
         <input id="newCityInput" placeholder="Add a city…" />
@@ -6745,9 +6762,9 @@ async function renderWebsiteContent(main) {
       </div>
     </div>
 
-    <div class="card" style="margin-bottom:20px;">
-      <div class="section-label">Countries performed</div>
-      <p class="muted small" style="margin-top:-4px;">Shown as its own row below the India map, for international shows.</p>
+    <div class="card" style="margin-bottom:20px; opacity:0.7;">
+      <div class="section-label">Countries performed (legacy — no longer shown on site)</div>
+      <p class="muted small" style="margin-top:-4px;">Same as above — the map now detects international events automatically. Kept here only so nothing is lost — safe to ignore.</p>
       <div id="countriesList"></div>
       <div class="row-2" style="margin-top:10px;">
         <input id="newCountryInput" placeholder="Add a country…" />
@@ -6827,8 +6844,6 @@ async function renderWebsiteContent(main) {
     const value = {
       followers: main.querySelector("#statFollowers").value.trim() || null,
       likes: main.querySelector("#statLikes").value.trim() || null,
-      cities: main.querySelector("#statCities").value.trim() || null,
-      international: main.querySelector("#statIntl").value.trim() || null,
     };
     try {
       await api("/api/site-content/stats_override", { method: "PUT", body: JSON.stringify({ value }) });
@@ -7224,6 +7239,50 @@ function wireGoogleCalendarSettings(main) {
   });
 }
 
+function wireGoogleAnalyticsSettings(main) {
+  const statusEl = main.querySelector("#googleAnalyticsStatus");
+  if (!statusEl) return;
+
+  const params = new URLSearchParams(window.location.search);
+  const gaResult = params.get("googleAnalytics");
+  if (gaResult) {
+    const reason = params.get("reason");
+    window.history.replaceState({}, "", window.location.pathname);
+    if (gaResult === "connected") {
+      setTimeout(() => alert("Google Analytics connected ✓"), 100);
+    } else if (gaResult === "connected_no_property") {
+      setTimeout(() => alert("Connected, but no GA4 property was found on that Google account. Make sure you signed in with the account that has togetheroutloud.in's GA4 property, then reconnect."), 100);
+    } else if (gaResult === "error") {
+      setTimeout(() => alert(`Couldn't connect Google Analytics${reason ? `: ${reason}` : ""}`), 100);
+    }
+  }
+
+  api("/api/google-analytics/status").then((status) => {
+    if (!status.configured) {
+      statusEl.innerHTML = `<p class="muted small">Not set up yet — this needs a one-time Google Cloud setup on the server side first.</p>`;
+      return;
+    }
+    if (status.connected) {
+      statusEl.innerHTML = `
+        <p class="muted small">✅ Connected${status.connectedBy ? ` by ${status.connectedBy}` : ""}${status.connectedAt ? ` on ${fmtDate(status.connectedAt.slice(0, 10))}` : ""}.${status.propertyId ? ` (GA4 property ${status.propertyId})` : " — no GA4 property found yet."}</p>
+        <button class="btn-ghost" id="disconnectGABtn">Disconnect</button>
+      `;
+      statusEl.querySelector("#disconnectGABtn").addEventListener("click", async () => {
+        if (!confirm("Disconnect Google Analytics? The Dashboard traffic card will stop updating until you reconnect.")) return;
+        await api("/api/google-analytics/disconnect", { method: "POST" });
+        wireGoogleAnalyticsSettings(main);
+      });
+    } else {
+      statusEl.innerHTML = `<button class="btn-primary" id="connectGABtn">Connect Google Analytics</button>`;
+      statusEl.querySelector("#connectGABtn").addEventListener("click", () => {
+        window.location.href = "/api/google-analytics/connect";
+      });
+    }
+  }).catch(() => {
+    statusEl.innerHTML = `<p class="muted small">Couldn't load Google Analytics status.</p>`;
+  });
+}
+
 // A month-end breakdown of why leads went Not Interested, grouped by the
 // preset reason picked at the time. Grouped by the lead's created_at month
 // (when it came in), since that's the only date consistently on record —
@@ -7333,6 +7392,12 @@ async function renderSettings(main) {
     </div>
 
     <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">Google Analytics (website traffic)</div>
+      <p class="muted small" style="margin-top:-4px;">Reads your site's traffic directly and for free from Google's own Analytics API, so it doesn't need a paid third-party plan. Powers the "Website traffic" card on the Dashboard.</p>
+      <div id="googleAnalyticsStatus"><p class="muted small">Loading…</p></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
       <div class="section-label">Data backup</div>
       <p class="muted small" style="margin-top:-4px;">A full export of every lead, payment, expense, quote, team assignment, and task is emailed to togetheroutloudclub@gmail.com automatically on the 1st of each month. You can also get one right now:</p>
       <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px;">
@@ -7389,6 +7454,7 @@ async function renderSettings(main) {
   `).join("");
 
   wireGoogleCalendarSettings(main);
+  wireGoogleAnalyticsSettings(main);
   main.querySelector("#openNotInterestedReportBtn").addEventListener("click", () => openNotInterestedReportModal());
   main.querySelector("#saveBankDetailsBtn").addEventListener("click", async () => {
     const btn = main.querySelector("#saveBankDetailsBtn");

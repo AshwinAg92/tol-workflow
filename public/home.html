@@ -93,6 +93,7 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/css/jsvectormap.min.css">
 <style>
   :root{
     --cream:#FEF6ED;
@@ -339,15 +340,14 @@
   }
   .cities-chip-row{display:flex; flex-wrap:wrap; gap:10px; margin-top:20px;}
 
-  .india-map-wrap{position:relative; max-width:340px; margin:30px auto 0;}
-  #indiaMap{width:100%; height:auto; display:block;}
-  .india-map-dot{cursor:pointer; transition:r .15s;}
-  .india-map-dot:hover{r:9;}
-  .india-map-tooltip{
-    position:absolute; display:none; background:var(--ink); color:var(--cream); font-family:'Space Grotesk';
-    font-weight:700; font-size:12px; padding:5px 10px; border-radius:6px; pointer-events:none; white-space:nowrap;
-    transform:translate(-50%,-130%); z-index:5;
+  #worldMap .jvm-region{fill:var(--paper); stroke:var(--hairline); stroke-width:0.6;}
+  #worldMap .jvm-marker{cursor:pointer;}
+  #worldMap .jvm-zoom-btn{background:var(--ink); color:var(--cream); border-radius:4px;}
+  .jvm-tooltip{
+    background:var(--ink) !important; color:var(--cream) !important; font-family:'Space Grotesk',sans-serif !important;
+    font-weight:700 !important; font-size:12px !important; padding:6px 11px !important; border-radius:6px !important; border:none !important;
   }
+  @media (max-width:760px){ #worldMap{height:320px !important;} }
   @media (max-width:760px){
     .gallery-grid{grid-template-columns:repeat(3,1fr); gap:8px;}
     .gallery-grid img{height:110px; border-radius:8px;}
@@ -772,8 +772,8 @@
     <div class="stats-grid">
       <div class="stat"><div class="num" id="statFollowersNum" style="color:var(--terracotta);" data-count="10500" data-suffix="+">0</div><div class="lbl">Instagram Family</div></div>
       <div class="stat"><div class="num" id="statLikesNum" style="color:var(--peacock);" data-count="537000" data-suffix="+" data-indian="1">0</div><div class="lbl">Likes On Our Reels</div></div>
-      <div class="stat"><div class="num" id="statCitiesNum" style="color:var(--gulal);" data-count="12" data-suffix="+">0</div><div class="lbl">Cities Across India</div></div>
-      <div class="stat"><div class="num" id="statIntlNum" style="color:var(--marigold); font-size:clamp(22px,3.2vw,34px);">Europe &amp; Thailand</div><div class="lbl">International Shows, and counting</div></div>
+      <div class="stat"><div class="num" id="statCitiesNum" style="color:var(--gulal);" data-count="12" data-suffix="+">0</div><div class="lbl">Cities Played, Live</div></div>
+      <div class="stat"><div class="num" id="statIntlNum" style="color:var(--marigold); font-size:clamp(22px,3.2vw,34px);">Growing internationally</div><div class="lbl">International Shows, and counting</div></div>
       <div class="stat"><div class="num" style="color:var(--terracotta);" data-count="100" data-suffix="%">0</div><div class="lbl">Live Music, No Backing Tracks</div></div>
       <div class="stat"><div class="num" id="statReelsNum" style="color:var(--peacock);" data-count="268" data-suffix="+">0</div><div class="lbl">Reels &amp; Moments Shared</div></div>
     </div>
@@ -782,20 +782,13 @@
 
 <section class="dyn-section hidden reveal" id="citiesSection" style="background:var(--paper); border-top:1px solid var(--hairline); border-bottom:1px solid var(--hairline);">
   <div class="wrap">
-    <span class="tag">CITIES WE'VE PLAYED</span>
-    <h2 style="margin-top:14px; font-size:clamp(26px,3.6vw,36px);">Across India, and beyond.</h2>
-    <div class="india-map-wrap" id="indiaMapWrap" style="display:none;">
-      <svg id="indiaMap" viewBox="-15 -15 430 505" xmlns="http://www.w3.org/2000/svg">
-        <path d="M122,9 L81,34 L95,69 L136,86 L163,120 L271,154 L285,137 L373,146 L393,171 L339,206 L332,240 L278,249 L255,274 L194,326 L167,394 L153,446 L122,473 L109,446 L81,360 L68,291 L65,257 L7,223 L41,197 L27,137 L88,69 Z" fill="var(--cream)" stroke="var(--hairline)" stroke-width="3" stroke-linejoin="round" />
-        <g id="indiaMapDots"></g>
-      </svg>
-      <div id="indiaMapTooltip" class="india-map-tooltip"></div>
+    <span class="tag">EVERYWHERE WE'VE PLAYED</span>
+    <h2 style="margin-top:14px; font-size:clamp(26px,3.6vw,36px);">Real shows, real places.</h2>
+    <p class="stats-note">Every pin is a confirmed Together, Out Loud event — pulled straight from our booking calendar.</p>
+    <div id="worldMapWrap" style="margin-top:22px; position:relative;">
+      <div id="worldMap" style="width:100%; height:440px; background:var(--cream); border-radius:16px; overflow:hidden;"></div>
     </div>
     <div class="cities-chip-row" id="citiesGrid" style="margin-top:18px;"></div>
-    <div id="countriesRow" style="display:none; margin-top:22px;">
-      <div class="finder-step-label" style="margin-bottom:10px;">INTERNATIONAL</div>
-      <div class="cities-chip-row" id="countriesGrid"></div>
-    </div>
     <div class="inline-cta">
       <p>Not on this list yet? That's exactly why we travel.</p>
       <a class="btn-primary" href="/lead-form.html">Bring Together, Out Loud to Your City →</a>
@@ -829,14 +822,7 @@
     <p class="stats-note">Real reels, straight from @togetheroutloudclub.</p>
     <div class="scroll-row-wrap">
       <div class="reel-track" id="reelTrack">
-        <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DanSi_NT5-I/" data-instgrm-version="14"></blockquote>
-        <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DYH74-azZdI/" data-instgrm-version="14"></blockquote>
-        <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DaqIL6fTOY6/" data-instgrm-version="14"></blockquote>
-        <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/Da8eXoYzqRl/" data-instgrm-version="14"></blockquote>
-        <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DRZBxRuDICS/" data-instgrm-version="14"></blockquote>
-        <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DaDkS-3TgnN/" data-instgrm-version="14"></blockquote>
-        <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/DX7GRM9T4ea/" data-instgrm-version="14"></blockquote>
-        <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/reel/Dbn6DNBTH6F/" data-instgrm-version="14"></blockquote>
+        <p style="color:var(--muted); margin-top:16px;">Loading…</p>
       </div>
       <button class="scroll-arrow prev" id="reelPrev" aria-label="Scroll left">←</button>
       <button class="scroll-arrow next" id="reelNext" aria-label="Scroll right">→</button>
@@ -1046,9 +1032,39 @@
     window.addEventListener('resize', updateArrowVisibility);
     updateArrowVisibility();
   }
-  wireScrollArrows('reelTrack', 'reelPrev', 'reelNext');
   wireScrollArrows('testimonialsGrid', 'testimonialPrev', 'testimonialNext');
   wireScrollArrows('tixGrid', 'tixPrev', 'tixNext');
+
+  // Reels — pulled live from Instagram (via the CRM's backend) instead of a
+  // hardcoded list, so this row is never the same set of 8 reels for long.
+  fetch('/api/public/reels').then((r) => r.json()).then((data) => {
+    const reels = Array.isArray(data.reels) ? data.reels : [];
+    const track = document.getElementById('reelTrack');
+    if (!track) return;
+    if (!reels.length) {
+      track.innerHTML = '<p style="color:var(--muted); margin-top:16px;">Couldn\'t load reels right now — check our Instagram for the latest.</p>';
+      return;
+    }
+    track.innerHTML = reels.map((r) => `<blockquote class="instagram-media" data-instgrm-permalink="${escapeHtml(r.permalink)}" data-instgrm-version="14"></blockquote>`).join('');
+    wireScrollArrows('reelTrack', 'reelPrev', 'reelNext');
+    if (window.instgrm && window.instgrm.Embeds) {
+      window.instgrm.Embeds.process();
+    } else {
+      let tries = 0;
+      const waitForInstgrmReels = setInterval(() => {
+        tries++;
+        if (window.instgrm && window.instgrm.Embeds) {
+          window.instgrm.Embeds.process();
+          clearInterval(waitForInstgrmReels);
+        } else if (tries > 20) {
+          clearInterval(waitForInstgrmReels);
+        }
+      }, 250);
+    }
+  }).catch(() => {
+    const track = document.getElementById('reelTrack');
+    if (track) track.innerHTML = '<p style="color:var(--muted); margin-top:16px;">Couldn\'t load reels right now — check our Instagram for the latest.</p>';
+  });
 
   // Format Finder — a tiny decision tree that always resolves to one of the
   // real, bookable experience IDs (so "Enquire Now" pre-fills a valid option
@@ -1228,8 +1244,8 @@
     if (live && live.mediaCount) document.getElementById('statReelsNum') && (document.getElementById('statReelsNum').dataset.count = String(live.mediaCount));
     if (ov && ov.followers) document.getElementById('statFollowersNum').dataset.count = String(ov.followers).replace(/\D/g, '');
     if (ov && ov.likes) document.getElementById('statLikesNum').dataset.count = String(ov.likes).replace(/\D/g, '');
-    if (ov && ov.cities) document.getElementById('statCitiesNum').dataset.count = String(ov.cities).replace(/\D/g, '');
-    if (ov && ov.international) document.getElementById('statIntlNum').textContent = ov.international;
+    // Cities/international are no longer manual overrides — they're set
+    // live from real bookings by the event-locations fetch further below.
   }).finally(setupCounters);
 
   // Upcoming events — pulled live from the booking calendar.
@@ -1316,75 +1332,56 @@
     document.getElementById('galleryGrid').innerHTML = renderGalleryItems(all);
   }).catch(() => {});
 
-  // Approximate India-relative positions (derived from real lat/long, mapped
-  // Cities are now geocoded server-side (via OpenStreetMap) when added in the
-  // CRM, so each one carries real lat/lng — converted here to map coordinates
-  // using the same projection used to build the outline above. Legacy plain-
-  // string entries (added before geocoding existed) fall back to a small
-  // known-city table, then to a plain text chip if truly unrecognized.
-  const LEGACY_CITY_COORDS = {
-    'guwahati': [322, 169], 'siliguri': [277, 159], 'shillong': [324, 179],
-    'jorhat': [356, 159], 'nagaon': [335, 166], 'dibrugarh': [365, 146],
-    'tinsukia': [371, 146], 'sivasagar': [361, 155], 'barpeta': [312, 166],
-    'barpetta': [312, 166], 'golaghat': [352, 163], 'kolkata': [276, 230],
-    'durgapur': [262, 213], 'puri': [242, 278], 'gangtok': [280, 149],
-    'pushkar': [89, 163], 'vrindavan': [132, 144], 'lucknow': [176, 157],
-    'indore': [107, 228], 'begusarai': [246, 181], 'jaigaon': [277, 155],
-  };
-  function latLngToMapXY(lat, lng) {
-    const x = (lng - 68) / (97.5 - 68) * 400;
-    const y = (36 - lat) / (36 - 8) * 480;
-    return [x, y];
+  // Global map — driven entirely by real confirmed bookings (see
+  // /api/public/event-locations), not a manually-curated list, so it stays
+  // accurate on its own as new events close. jsVectorMap loads as a
+  // deferred <script> near the end of the page, so this waits for it the
+  // same way the Instagram embed waiting pattern above does.
+  function waitFor(check, cb, tries) {
+    tries = tries || 0;
+    if (check()) return cb();
+    if (tries > 60) return; // ~15s — give up quietly rather than error
+    setTimeout(() => waitFor(check, cb, tries + 1), 250);
   }
-  fetch('/api/public/site-content/cities').then((r) => r.json()).then((items) => {
-    if (!Array.isArray(items) || !items.length) return;
+  fetch('/api/public/event-locations').then((r) => r.json()).then((data) => {
+    const markers = Array.isArray(data.markers) ? data.markers : [];
+    if (!markers.length) return;
     document.getElementById('citiesSection').classList.remove('hidden');
-    document.getElementById('indiaMapWrap').style.display = 'block';
-    const colors = ['var(--terracotta)', 'var(--peacock)', 'var(--gulal)', 'var(--marigold)'];
-    const dotsGroup = document.getElementById('indiaMapDots');
-    const tooltip = document.getElementById('indiaMapTooltip');
-    const mapWrap = document.querySelector('.india-map-wrap');
-    const unmapped = [];
-    dotsGroup.innerHTML = '';
-    items.forEach((item, i) => {
-      const name = typeof item === 'string' ? item : item.name;
-      let coords = null;
-      if (typeof item === 'object' && item.lat != null && item.lng != null) {
-        coords = latLngToMapXY(item.lat, item.lng);
-      } else {
-        coords = LEGACY_CITY_COORDS[name.trim().toLowerCase()] || null;
-      }
-      if (!coords) { unmapped.push(name); return; }
-      const color = colors[i % colors.length];
-      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      circle.setAttribute('cx', coords[0]);
-      circle.setAttribute('cy', coords[1]);
-      circle.setAttribute('r', 7);
-      circle.setAttribute('class', 'india-map-dot');
-      circle.style.fill = color;
-      circle.style.stroke = 'var(--cream)';
-      circle.style.strokeWidth = '2';
-      circle.addEventListener('mouseenter', (e) => {
-        const rect = mapWrap.getBoundingClientRect();
-        const svgRect = document.getElementById('indiaMap').getBoundingClientRect();
-        const scale = svgRect.width / 400;
-        tooltip.textContent = name;
-        tooltip.style.left = (svgRect.left - rect.left + coords[0] * scale) + 'px';
-        tooltip.style.top = (svgRect.top - rect.top + coords[1] * scale) + 'px';
-        tooltip.style.display = 'block';
-      });
-      circle.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
-      dotsGroup.appendChild(circle);
-    });
-    document.getElementById('citiesGrid').innerHTML = unmapped.map((c, i) => `<span class="chip" style="border-color:${colors[i % colors.length]};">${escapeHtml(c)}</span>`).join('');
-  }).catch(() => {});
 
-  fetch('/api/public/site-content/countries').then((r) => r.json()).then((items) => {
-    if (!Array.isArray(items) || !items.length) return;
-    document.getElementById('citiesSection').classList.remove('hidden');
-    document.getElementById('countriesRow').style.display = 'block';
-    const colors = ['var(--terracotta)', 'var(--peacock)', 'var(--gulal)', 'var(--marigold)'];
-    document.getElementById('countriesGrid').innerHTML = items.map((c, i) => `<span class="chip" style="border-color:${colors[i % colors.length]};">🌍 ${escapeHtml(c)}</span>`).join('');
+    const colors = ['#C1602B', '#4A8FA6', '#B6752C', '#9B6EA8'];
+    document.getElementById('citiesGrid').innerHTML = markers
+      .slice().sort((a, b) => b.count - a.count)
+      .map((m, i) => `<span class="chip" style="border-color:${colors[i % colors.length]};">${m.country && m.country !== 'India' ? '🌍 ' : ''}${escapeHtml(m.city)}${m.count > 1 ? ` (${m.count})` : ''}</span>`)
+      .join('');
+
+    const statCities = document.getElementById('statCitiesNum');
+    if (statCities && data.distinctCities) statCities.dataset.count = String(data.distinctCities);
+    const statIntl = document.getElementById('statIntlNum');
+    if (statIntl && Array.isArray(data.internationalCountries)) {
+      statIntl.textContent = data.internationalCountries.length ? data.internationalCountries.join(' & ') : 'Growing internationally';
+    }
+
+    waitFor(() => window.jsVectorMap, () => {
+      new window.jsVectorMap({
+        selector: '#worldMap',
+        map: 'world',
+        zoomButtons: true,
+        zoomOnScroll: false,
+        backgroundColor: 'transparent',
+        regionStyle: {
+          initial: { fill: '#EDE3D0', stroke: '#D8C9AE', strokeWidth: 0.6 },
+          hover: { fill: '#E0CFAE' },
+        },
+        markers: markers.map((m) => ({ name: `${m.city}${m.count > 1 ? ` — ${m.count} events` : ''}`, coords: [m.lat, m.lng] })),
+        markerStyle: {
+          initial: { fill: '#C1602B', stroke: '#fff', 'stroke-width': 2, r: 6 },
+          hover: { fill: '#B6752C', r: 8 },
+        },
+        onMarkerTooltipShow(event, tooltip, index) {
+          tooltip.text(markers[index] ? `${markers[index].city}${markers[index].count > 1 ? ` — ${markers[index].count} events` : ''}` : '', false);
+        },
+      });
+    });
   }).catch(() => {});
 
   Promise.all([
@@ -1421,5 +1418,7 @@
 </script>
 
 <script async src="//www.instagram.com/embed.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/js/jsvectormap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/maps/world.js"></script>
 </body>
 </html>
