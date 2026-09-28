@@ -1445,12 +1445,43 @@ app.get("/api/quotes", requireAuth, async (req, res) => {
 
 // Tracks a quote through to accepted/rejected instead of leaving it as just
 // "sent" forever — purely informational, doesn't touch the lead's stage.
+// Also lets a quote sent by mistake (wrong amount, typo, etc.) be corrected
+// in place rather than living on in the history forever.
 app.patch("/api/quotes/:id", requireAuth, async (req, res) => {
-  const { status } = req.body;
-  if (!["sent", "accepted", "rejected"].includes(status)) return res.status(400).json({ error: "Invalid status" });
-  const { rows } = await pool.query("UPDATE quotes SET status = $1 WHERE id = $2 RETURNING *", [status, req.params.id]);
+  const { status, amount, subject, body } = req.body;
+  const updates = [];
+  const values = [];
+  if (status !== undefined) {
+    if (!["sent", "accepted", "rejected"].includes(status)) return res.status(400).json({ error: "Invalid status" });
+    values.push(status);
+    updates.push(`status = $${values.length}`);
+  }
+  if (amount !== undefined) {
+    values.push(amount || null);
+    updates.push(`amount = $${values.length}`);
+  }
+  if (subject !== undefined) {
+    values.push(subject || null);
+    updates.push(`subject = $${values.length}`);
+  }
+  if (body !== undefined) {
+    if (!body.trim()) return res.status(400).json({ error: "Quote text can't be empty" });
+    values.push(body);
+    updates.push(`body = $${values.length}`);
+  }
+  if (updates.length === 0) return res.status(400).json({ error: "Nothing to update" });
+  values.push(req.params.id);
+  const { rows } = await pool.query(`UPDATE quotes SET ${updates.join(", ")} WHERE id = $${values.length} RETURNING *`, values);
   if (!rows[0]) return res.status(404).json({ error: "Quote not found" });
   res.json(rows[0]);
+});
+
+// Removes a quote sent by mistake (duplicate send, wrong lead, testing) —
+// doesn't touch the lead itself, just its quote history.
+app.delete("/api/quotes/:id", requireAuth, async (req, res) => {
+  const { rows } = await pool.query("DELETE FROM quotes WHERE id = $1 RETURNING id", [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: "Quote not found" });
+  res.status(204).end();
 });
 
 // ---------- Event assignments (staffing a Confirmed event) ----------

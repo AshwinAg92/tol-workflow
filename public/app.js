@@ -1992,43 +1992,106 @@ Warmly,
 function openQuoteViewModal(q) {
   const root = document.getElementById("modalRoot");
   const digits = (q.lead_phone || "").replace(/\D/g, "");
-  root.innerHTML = `
-    <div class="modal-overlay" id="overlay">
-      <div class="modal-card">
-        <div class="modal-head"><h3>Quote for ${q.lead_name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
-        <div class="modal-body">
-          <p class="muted small">Sent ${fmtDateTime(q.created_at)}${q.amount ? ` · ${inr(q.amount)}` : ""}</p>
-          <textarea readonly rows="14" style="width:100%; font-family:'JetBrains Mono',monospace; font-size:12.5px; padding:10px; border:1px solid #DDD5C4; border-radius:6px; background:#FAFAF8;">${q.body}</textarea>
-        </div>
-        <div class="modal-foot">
-          <button class="btn-ghost" id="cancelModal">Close</button>
-          <button class="btn-ghost" id="copyQuoteBtn">Copy text</button>
-          ${digits ? `<button class="btn-ghost" id="resendWaBtn">💬 Resend via WhatsApp</button>` : ""}
-          <button class="btn-primary" id="reopenQuoteBtn">Reopen for editing</button>
+  let editing = false;
+
+  function draw() {
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay">
+        <div class="modal-card">
+          <div class="modal-head"><h3>Quote for ${q.lead_name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+          <div class="modal-body">
+            <p class="muted small">Sent ${fmtDateTime(q.created_at)}</p>
+            ${editing ? `
+              <label>Amount (₹)</label>
+              <input id="editQuoteAmount" type="number" value="${q.amount || ""}" style="margin-bottom:10px;" />
+              <label>Message</label>
+              <textarea id="editQuoteBody" rows="14" style="width:100%; font-family:'JetBrains Mono',monospace; font-size:12.5px; padding:10px; border:1px solid #DDD5C4; border-radius:6px;">${q.body}</textarea>
+            ` : `
+              ${q.amount ? `<p class="muted small" style="margin-top:-6px;">${inr(q.amount)}</p>` : ""}
+              <textarea readonly rows="14" style="width:100%; font-family:'JetBrains Mono',monospace; font-size:12.5px; padding:10px; border:1px solid #DDD5C4; border-radius:6px; background:#FAFAF8;">${q.body}</textarea>
+            `}
+          </div>
+          <div class="modal-foot">
+            <button class="btn-ghost" id="cancelModal">Close</button>
+            ${editing ? `
+              <button class="btn-primary" id="saveEditBtn">Save changes</button>
+            ` : `
+              <button class="btn-ghost" id="deleteQuoteBtn" style="color:#A64B3C;">Delete — sent by mistake</button>
+              <button class="btn-ghost" id="copyQuoteBtn">Copy text</button>
+              ${digits ? `<button class="btn-ghost" id="resendWaBtn">💬 Resend via WhatsApp</button>` : ""}
+              <button class="btn-ghost" id="editQuoteBtn">Edit</button>
+              <button class="btn-primary" id="reopenQuoteBtn">Reopen for editing</button>
+            `}
+          </div>
         </div>
       </div>
-    </div>
-  `;
-  const close = () => (root.innerHTML = "");
-  root.querySelector("#closeModal").addEventListener("click", close);
-  root.querySelector("#cancelModal").addEventListener("click", close);
-  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
-  root.querySelector("#copyQuoteBtn").addEventListener("click", () => {
-    navigator.clipboard.writeText(q.body);
-    const btn = root.querySelector("#copyQuoteBtn");
-    btn.textContent = "Copied ✓";
-    setTimeout(() => { if (btn) btn.textContent = "Copy text"; }, 1500);
-  });
-  const waBtn = root.querySelector("#resendWaBtn");
-  if (waBtn) waBtn.addEventListener("click", () => window.location.href = `https://wa.me/${digits}?text=${encodeURIComponent(q.body)}`);
-  root.querySelector("#reopenQuoteBtn").addEventListener("click", () => {
-    quotationLeadId = q.lead_id;
-    reopenQuoteDraft = q.body;
-    currentTab = "quotation";
-    close();
-    renderNav();
-    renderMain();
-  });
+    `;
+    const close = () => (root.innerHTML = "");
+    root.querySelector("#closeModal").addEventListener("click", close);
+    root.querySelector("#cancelModal").addEventListener("click", close);
+    root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+
+    if (editing) {
+      root.querySelector("#saveEditBtn").addEventListener("click", async () => {
+        const body = root.querySelector("#editQuoteBody").value;
+        if (!body.trim()) return alert("Quote text can't be empty.");
+        const amount = root.querySelector("#editQuoteAmount").value;
+        const btn = root.querySelector("#saveEditBtn");
+        btn.disabled = true;
+        btn.textContent = "Saving…";
+        try {
+          const updated = await api(`/api/quotes/${q.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ body, amount: amount || null }),
+          });
+          q = { ...q, ...updated };
+          editing = false;
+          draw();
+          renderMain();
+        } catch (err) {
+          alert(err.message);
+          btn.disabled = false;
+          btn.textContent = "Save changes";
+        }
+      });
+      return;
+    }
+
+    root.querySelector("#copyQuoteBtn").addEventListener("click", () => {
+      navigator.clipboard.writeText(q.body);
+      const btn = root.querySelector("#copyQuoteBtn");
+      btn.textContent = "Copied ✓";
+      setTimeout(() => { if (btn) btn.textContent = "Copy text"; }, 1500);
+    });
+    const waBtn = root.querySelector("#resendWaBtn");
+    if (waBtn) waBtn.addEventListener("click", () => window.location.href = `https://wa.me/${digits}?text=${encodeURIComponent(q.body)}`);
+    root.querySelector("#editQuoteBtn").addEventListener("click", () => { editing = true; draw(); });
+    root.querySelector("#deleteQuoteBtn").addEventListener("click", async () => {
+      if (!confirm("Delete this quote? This can't be undone.")) return;
+      const btn = root.querySelector("#deleteQuoteBtn");
+      btn.disabled = true;
+      btn.textContent = "Deleting…";
+      try {
+        await api(`/api/quotes/${q.id}`, { method: "DELETE" });
+        close();
+        renderMain();
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+        btn.textContent = "Delete — sent by mistake";
+      }
+    });
+    root.querySelector("#reopenQuoteBtn").addEventListener("click", () => {
+      quotationLeadId = q.lead_id;
+      reopenQuoteDraft = q.body;
+      currentTab = "quotation";
+      close();
+      renderNav();
+      renderMain();
+    });
+  }
+
+  draw();
 }
 
 async function renderQuotation(main) {
