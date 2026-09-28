@@ -458,7 +458,12 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   // marked received); a reimbursement still logged as 'due' is exposed
   // separately so Balance can count it as outstanding without it looking
   // like money already collected.
-  const paymentSums = (await pool.query("SELECT lead_id, COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'received' GROUP BY lead_id")).rows;
+  // Fee payments only — a reimbursement, once received, is money that was
+  // never part of Final in the first place (it's a cost pass-through, not
+  // revenue), so mixing it in here would make Balance (Final − Received +
+  // Reimbursement due) go permanently negative by the reimbursed amount the
+  // moment a reimbursement is settled, even though nothing is actually owed.
+  const paymentSums = (await pool.query("SELECT lead_id, COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'received' AND type = 'payment' GROUP BY lead_id")).rows;
   const receivedByLead = {};
   paymentSums.forEach((p) => (receivedByLead[p.lead_id] = Number(p.total)));
   const dueReimbursementSums = (await pool.query("SELECT lead_id, COALESCE(SUM(amount), 0) AS total FROM payments WHERE type = 'client_reimbursement' AND status = 'due' GROUP BY lead_id")).rows;
@@ -2513,9 +2518,12 @@ app.get("/api/calendar", requireAuth, async (req, res) => {
 // ---------- Accounts ----------
 app.get("/api/accounts", requireAuth, requireSection("accounts"), async (req, res) => {
   const rows = (await pool.query("SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed')")).rows;
+  // Fee payments only — see the matching comment in /api/leads. Reimbursement
+  // money, once received, must stay out of this or Outstanding goes
+  // negative by the reimbursed amount even though nothing is actually owed.
   const paymentSums = (await pool.query(`
     SELECT lead_id, COALESCE(SUM(amount), 0) AS total
-    FROM payments WHERE lead_id = ANY($1::text[]) AND status = 'received' GROUP BY lead_id
+    FROM payments WHERE lead_id = ANY($1::text[]) AND status = 'received' AND type = 'payment' GROUP BY lead_id
   `, [rows.map((r) => r.id)])).rows;
   const receivedByLead = {};
   paymentSums.forEach((p) => (receivedByLead[p.lead_id] = Number(p.total)));
@@ -2607,7 +2615,11 @@ app.get("/api/ledger", requireAuth, requireSection("accounts"), async (req, res)
   const perLead = leads.map((l) => {
     const leadPayments = payments.filter((p) => p.lead_id === l.id);
     const leadExpenses = expenses.filter((e) => e.lead_id === l.id);
-    const totalReceived = leadPayments.reduce((s, p) => s + p.amount, 0);
+    // Fee payments actually received only — excludes reimbursements (a cost
+    // pass-through, never part of Final) and anything still 'due' (not
+    // actually collected yet), so Balance doesn't go negative once a
+    // reimbursement is settled or count a due amount as already in hand.
+    const totalReceived = leadPayments.filter((p) => p.type === "payment" && p.status === "received").reduce((s, p) => s + p.amount, 0);
     const totalExpenses = leadExpenses.reduce((s, e) => s + e.amount, 0);
     const total = l.final_amount || l.quote_amount || 0;
     return { ...l, payments: leadPayments, expenses: leadExpenses, totalReceived, totalExpenses, profit: total - totalExpenses, balance: total - totalReceived };
@@ -3087,7 +3099,10 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1`, [today]),
     pool.query(`SELECT * FROM leads WHERE stage = 'Follow-up' AND (snooze_until IS NULL OR snooze_until <= $1) ORDER BY last_followup_at ASC NULLS FIRST, created_at ASC`, [today]),
     pool.query(`SELECT id, final_amount, quote_amount FROM leads WHERE stage IN ('Confirmed', 'Completed')`),
-    pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'received'`),
+    // Fee payments only — see the matching comment in /api/leads. Reimbursement
+    // money, once received, must stay out of this or Outstanding goes
+    // negative by the reimbursed amount even though nothing is actually owed.
+    pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'received' AND type = 'payment'`),
     pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE type = 'client_reimbursement' AND status = 'due'`),
     pool.query(`SELECT * FROM tasks WHERE done = 0 AND (due_date <= $1 OR due_date IS NULL) ORDER BY due_date ASC LIMIT 8`, [weekAhead]),
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage = 'New'`),

@@ -3804,11 +3804,13 @@ async function openLeadPaymentsModal(leadId) {
     const reimbursementsReceived = reimbursements.filter((p) => p.status === "received");
     const totalReimbursementDue = reimbursementsDue.reduce((s, p) => s + p.amount, 0);
     const totalReimbursementReceived = reimbursementsReceived.reduce((s, p) => s + p.amount, 0);
-    // Received is only money actually in hand — a reimbursement still marked
-    // 'due' hasn't been collected yet, so it stays out of this until it is.
-    const received = feePayments.reduce((s, p) => s + p.amount, 0) + totalReimbursementReceived;
-    // Balance is everything still outstanding — the fee shortfall, plus
-    // whatever reimbursement hasn't been paid back yet.
+    // Received/Balance track the fee only, matching Final — a reimbursement
+    // was never part of Final to begin with (it's a cost pass-through, not
+    // revenue), so folding a received one in here would make Balance go
+    // permanently negative by that amount the moment it's settled, even
+    // though nothing is actually owed either way. Reimbursement money in
+    // hand is shown separately, just below, instead.
+    const received = feePayments.reduce((s, p) => s + p.amount, 0);
     const balance = (total - received) + totalReimbursementDue;
     const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
     const pendingExpenses = expenses.filter((e) => !e.paid);
