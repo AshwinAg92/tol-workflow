@@ -507,10 +507,10 @@ async function setup() {
     );
   `);
   const defaultTemplates = {
-    followup: "Hi {firstName}, just following up on your enquiry with Together, Out Loud for {experience}{dateClause}. Let us know if you have any questions or would like to go ahead — happy to help!",
-    tentative_followup: "Hi {firstName}, following up on your {experience}{dateClause} — we've tentatively held this date for you with Together, Out Loud. Let us know if you'd like to go ahead so we can lock it in for you!",
-    confirmed: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe look forward to creating a memorable experience with you. — Together, Out Loud",
-    document_share: "Hi! Sharing the {label} for your event with Together, Out Loud: {link}",
+    followup: "Hi {firstName}, just following up on your enquiry with Together, Out Loud for {experience}{dateClause}. Let us know if you have any questions or would like to go ahead — happy to help!\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
+    tentative_followup: "Hi {firstName}, following up on your {experience}{dateClause} — we've tentatively held this date for you with Together, Out Loud. Let us know if you'd like to go ahead so we can lock it in for you!\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
+    confirmed: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe look forward to creating a memorable experience with you. — Together, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
+    document_share: "Hi! Sharing the {label} for your event with Together, Out Loud: {link}\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
     bank_details: "Company name: Next Generation Group\nAccount number: 10189214106\nIFSC: IDFB0060384\nSWIFT code: IDFBINBBMUM\nBank name: IDFC FIRST\nBranch: SILIGURI-SEVOKE ROAD BRANCH",
   };
   for (const [key, template] of Object.entries(defaultTemplates)) {
@@ -554,7 +554,8 @@ We'd love to make your event a truly memorable, soul-stirring experience. 🎶�
 
 Warmly,
 *Together, Out Loud*
-📷 Instagram: https://www.instagram.com/togetheroutloudclub`;
+📷 Instagram: https://www.instagram.com/togetheroutloudclub
+🌐 togetheroutloud.in`;
   const onePheraCondition = `1️⃣ No food, alcohol, or beverages to be consumed or served during the session.`;
   const twoConditions = `1️⃣ No food, alcohol, or beverages to be consumed or served during the session.\n2️⃣ Session duration will be 75 to 90 minutes.`;
   for (const pkg of PACKAGES) {
@@ -619,6 +620,19 @@ Warmly,
     `INSERT INTO message_templates (key, template, updated_at) VALUES ('pricing_matrix', $1, $2) ON CONFLICT (key) DO NOTHING`,
     [JSON.stringify(PRICING), new Date().toISOString()]
   );
+
+  // One-time upgrade: append Instagram + website links to every client-facing
+  // message template already saved (including anything Ashwin customized
+  // further), so every outgoing quote/follow-up/confirmation carries them —
+  // not just newly-seeded ones. Guarded by NOT ILIKE so it's idempotent and
+  // never doubles up if run again, and never touches internal-only keys
+  // (bank_details, pricing_matrix, the one-time-fix flags above).
+  await pool.query(`
+    UPDATE message_templates
+    SET template = template || E'\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in', updated_at = $1
+    WHERE (key IN ('followup', 'tentative_followup', 'confirmed', 'document_share', 'tentative_confirm_info') OR key LIKE 'quotation_%')
+      AND template NOT ILIKE '%togetheroutloud.in%'
+  `, [new Date().toISOString()]);
 
   // One-time cleanup: activity_log had no lead_id link before this column
   // existed, so entries logged against the demo leads were never removed by

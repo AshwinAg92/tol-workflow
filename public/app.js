@@ -491,7 +491,7 @@ function pdfWarmClosing(doc, pageWidth, text, y) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
   doc.setTextColor(...PDF_COLORS.muted);
-  doc.text("Instagram: instagram.com/togetheroutloudclub", pageWidth / 2, y, { align: "center" });
+  doc.text("instagram.com/togetheroutloudclub  ·  togetheroutloud.in", pageWidth / 2, y, { align: "center" });
 }
 
 async function downloadLedgerPDF(booking, payments, reimbursements = []) {
@@ -1967,7 +1967,8 @@ We'd love to make your event a truly memorable, soul-stirring experience. 🎶�
 
 Warmly,
 *Together, Out Loud*
-📷 Instagram: https://www.instagram.com/togetheroutloudclub`;
+📷 Instagram: https://www.instagram.com/togetheroutloudclub
+🌐 togetheroutloud.in`;
   const tpl = MESSAGE_TEMPLATES[`quotation_${eventType}`] || fallback;
   return fillTemplate(tpl, {
     formatUpper: (format || "").toUpperCase(),
@@ -5710,7 +5711,7 @@ async function renderB2bContacts(main) {
         btn.textContent = "Preparing…";
         try {
           await downloadRateCardPDF(c.name);
-          const msg = `Hi ${c.name.split(" ")[0]}, sharing our rate card with Together, Out Loud for future reference. Please find the PDF attached.`;
+          const msg = `Hi ${c.name.split(" ")[0]}, sharing our rate card with Together, Out Loud for future reference. Please find the PDF attached.\n\n📷 instagram.com/togetheroutloudclub\n🌐 togetheroutloud.in`;
           window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
           const today = new Date().toISOString().slice(0, 10);
           await api(`/api/b2b-contacts/${c.id}`, {
@@ -6026,7 +6027,7 @@ async function renderDocuments(main) {
     status.textContent = "Preparing PDF…";
     try {
       await downloadRateCardPDF(name);
-      const msg = `Hi ${name.split(" ")[0]}, sharing our rate card with Together, Out Loud for future reference. Please find the PDF attached.`;
+      const msg = `Hi ${name.split(" ")[0]}, sharing our rate card with Together, Out Loud for future reference. Please find the PDF attached.\n\n📷 instagram.com/togetheroutloudclub\n🌐 togetheroutloud.in`;
       window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
       status.textContent = "PDF downloaded, and WhatsApp is opening — attach the downloaded PDF file to that chat to send it.";
     } catch (err) {
@@ -6530,12 +6531,11 @@ function openEditLeadModal(leadId) {
           <label>Name / organisation</label>
           <input id="mName" value="${lead.name || ""}" />
           <label>Booking type</label>
-          <div style="display:flex; align-items:center; gap:10px; margin-top:2px;">
-            ${lead.is_b2b
-              ? `<span class="mono small" style="background:#8A5FA8; color:#fff; border-radius:4px; padding:3px 9px; font-weight:600;">B2B</span><button class="btn-ghost" id="unmarkB2bBtn" type="button" style="font-size:12px; padding:4px 9px;">Remove B2B flag</button>`
-              : `<button class="btn-ghost" id="markB2bBtn" type="button" style="font-size:12px; padding:4px 9px;">🏢 Mark as B2B</button>`}
-          </div>
-          <p class="muted small" style="margin-top:4px;">Set automatically when they check "Event Manager" on the enquiry form — override here for a phone/walk-in enquiry. Marking as B2B also adds them to B2B Contacts (matched by phone), and their quotes will show both the B2B and B2C rate. Takes effect immediately — no need to hit Save.</p>
+          <select id="mIsB2b">
+            <option value="0" ${!lead.is_b2b ? "selected" : ""}>Direct client (B2C)</option>
+            <option value="1" ${lead.is_b2b ? "selected" : ""}>Event Manager / Artist Manager (B2B)</option>
+          </select>
+          <p class="muted small" style="margin-top:2px;">Set automatically when they check "Event Manager" on the enquiry form — override here for a phone/walk-in enquiry. Marking as B2B also adds them to B2B Contacts (matched by phone), and their quotes will show both the B2B and B2C rate. Applies when you hit Save changes below.</p>
           <div class="row-2">
             <div><label>Phone</label><input id="mPhone" value="${lead.phone || ""}" placeholder="+91 ..." /></div>
             <div><label>Email</label><input id="mEmail" value="${lead.email || ""}" placeholder="name@example.com" /></div>
@@ -6585,36 +6585,6 @@ function openEditLeadModal(leadId) {
   root.querySelector("#mOccasion").addEventListener("change", (e) => {
     root.querySelector("#mOccasionOtherWrap").style.display = e.target.value === "Other" ? "block" : "none";
   });
-  const markB2bBtn = root.querySelector("#markB2bBtn");
-  if (markB2bBtn) markB2bBtn.addEventListener("click", async () => {
-    markB2bBtn.disabled = true;
-    markB2bBtn.textContent = "Marking…";
-    try {
-      await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ isB2b: true }) });
-      await refreshLeads();
-      close();
-      renderMain();
-    } catch (err) {
-      alert(err.message);
-      markB2bBtn.disabled = false;
-      markB2bBtn.textContent = "🏢 Mark as B2B";
-    }
-  });
-  const unmarkB2bBtn = root.querySelector("#unmarkB2bBtn");
-  if (unmarkB2bBtn) unmarkB2bBtn.addEventListener("click", async () => {
-    unmarkB2bBtn.disabled = true;
-    unmarkB2bBtn.textContent = "Removing…";
-    try {
-      await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ isB2b: false }) });
-      await refreshLeads();
-      close();
-      renderMain();
-    } catch (err) {
-      alert(err.message);
-      unmarkB2bBtn.disabled = false;
-      unmarkB2bBtn.textContent = "Remove B2B flag";
-    }
-  });
   root.querySelector("#submitModal").addEventListener("click", async () => {
     const name = root.querySelector("#mName").value.trim();
     if (!name) return alert("Name is required.");
@@ -6625,6 +6595,7 @@ function openEditLeadModal(leadId) {
         method: "PATCH",
         body: JSON.stringify({
           name,
+          isB2b: root.querySelector("#mIsB2b").value === "1",
           phone: root.querySelector("#mPhone").value.trim() || null,
           email: root.querySelector("#mEmail").value.trim() || null,
           whatsappNumber: root.querySelector("#mWhatsapp").value.trim() || null,
@@ -6658,25 +6629,25 @@ const TEMPLATE_META = {
     label: "Follow-up message",
     description: "Sent from the Leads tab's \"💬 Follow up\" button, for New/Follow-up leads.",
     placeholders: ["firstName", "experience", "dateClause"],
-    default: "Hi {firstName}, just following up on your enquiry with Together, Out Loud for {experience}{dateClause}. Let us know if you have any questions or would like to go ahead — happy to help!",
+    default: "Hi {firstName}, just following up on your enquiry with Together, Out Loud for {experience}{dateClause}. Let us know if you have any questions or would like to go ahead — happy to help!\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
   tentative_followup: {
     label: "Tentative client follow-up",
     description: "Sent from the same \"💬 Follow up\" button, but for Tentative leads instead.",
     placeholders: ["firstName", "experience", "dateClause"],
-    default: "Hi {firstName}, following up on your {experience}{dateClause} — we've tentatively held this date for you with Together, Out Loud. Let us know if you'd like to go ahead so we can lock it in for you!",
+    default: "Hi {firstName}, following up on your {experience}{dateClause} — we've tentatively held this date for you with Together, Out Loud. Let us know if you'd like to go ahead so we can lock it in for you!\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
   confirmed: {
     label: "Confirmed client message",
     description: "Starting text shown when you confirm an event — you can still tweak it per-send before it goes out. Location, Set, Duration, Fee, Advance, Outstanding, and what the client needs to arrange are pulled automatically from the lead.",
     placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "amountLine", "location", "occasion", "pieces", "duration", "performanceFee", "advance", "outstanding", "clientArrangements"],
-    default: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe are pleased to confirm our booking for: {clientName}\nLocation: {location}\nDate: {date}\nOccasion: {occasion}\nSet: {pieces} Pieces\nDuration: {duration}\nPerformance Fee: ₹{performanceFee}/-\nAdvance: ₹{advance}/-\nOutstanding: ₹{outstanding}\n\nAs discussed, we request your support in arranging {clientArrangements}.\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud",
+    default: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe are pleased to confirm our booking for: {clientName}\nLocation: {location}\nDate: {date}\nOccasion: {occasion}\nSet: {pieces} Pieces\nDuration: {duration}\nPerformance Fee: ₹{performanceFee}/-\nAdvance: ₹{advance}/-\nOutstanding: ₹{outstanding}\n\nAs discussed, we request your support in arranging {clientArrangements}.\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
   document_share: {
     label: "Document share message",
     description: "Sent with \"Send to client\" / \"Send to…\" on the Documents tab.",
     placeholders: ["label", "link"],
-    default: "Hi! Sharing the {label} for your event with Together, Out Loud: {link}",
+    default: "Hi! Sharing the {label} for your event with Together, Out Loud: {link}\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
   artist_confirmation: {
     label: "Artist confirmation message",
@@ -6688,7 +6659,7 @@ const TEMPLATE_META = {
     label: "Tentative → what happens next",
     description: "Sent from a Tentative lead's \"Send confirm details\" button — tells the client what's needed to lock the date in and what they'll get once confirmed (tech rider, etc.), with your bank/UPI details for the advance.",
     placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "bankDetails"],
-    default: "Hi {firstName}, to go ahead and lock in your {experience} on {date}{cityClause}, here's what happens next:\n\n1. An advance payment secures the date.\n2. Once confirmed, we'll share the tech rider, hospitality rider, and all other event-day details.\n\n{bankDetails}\n\nLet us know once you're ready and we'll get everything moving!",
+    default: "Hi {firstName}, to go ahead and lock in your {experience} on {date}{cityClause}, here's what happens next:\n\n1. An advance payment secures the date.\n2. Once confirmed, we'll share the tech rider, hospitality rider, and all other event-day details.\n\n{bankDetails}\n\nLet us know once you're ready and we'll get everything moving!\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
 };
 
