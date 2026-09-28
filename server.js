@@ -505,9 +505,45 @@ app.delete("/api/blocked-dates/:id", requireAuth, requireAdmin, async (req, res)
 });
 
 // ---------- B2B contacts (event managers, agencies, etc.) ----------
+// Business generated per contact is tracked by matching leads.phone to the
+// contact's phone — a manager submitting via the "Event Manager" path on the
+// public form has their own name/phone on the lead itself (see /api/leads),
+// so this join needs no separate linking field.
 app.get("/api/b2b-contacts", requireAuth, requireSection("b2b"), async (req, res) => {
-  const { rows } = await pool.query("SELECT * FROM b2b_contacts ORDER BY name ASC");
+  const { rows } = await pool.query(`
+    SELECT c.*,
+      COALESCE(s.lead_count, 0) AS lead_count,
+      COALESCE(s.confirmed_count, 0) AS confirmed_count,
+      COALESCE(s.total_revenue, 0) AS total_revenue,
+      s.last_event_date
+    FROM b2b_contacts c
+    LEFT JOIN (
+      SELECT phone,
+        COUNT(*) AS lead_count,
+        COUNT(*) FILTER (WHERE stage IN ('Confirmed', 'Completed')) AS confirmed_count,
+        SUM(CASE WHEN stage IN ('Confirmed', 'Completed') THEN COALESCE(final_amount, quote_amount, 0) ELSE 0 END) AS total_revenue,
+        MAX(date) AS last_event_date
+      FROM leads
+      WHERE phone IS NOT NULL
+      GROUP BY phone
+    ) s ON s.phone = c.phone
+    ORDER BY c.name ASC
+  `);
   res.json(rows);
+});
+
+// Every lead + quote tied to this contact (matched by phone) — what's
+// generated the "how much business has this manager brought us" view.
+app.get("/api/b2b-contacts/:id/history", requireAuth, requireSection("b2b"), async (req, res) => {
+  const contact = (await pool.query("SELECT * FROM b2b_contacts WHERE id = $1", [req.params.id])).rows[0];
+  if (!contact) return res.status(404).json({ error: "Contact not found" });
+  if (!contact.phone) return res.json({ leads: [], quotes: [] });
+  const leads = (await pool.query("SELECT * FROM leads WHERE phone = $1 ORDER BY date DESC", [contact.phone])).rows;
+  const leadIds = leads.map((l) => l.id);
+  const quotes = leadIds.length
+    ? (await pool.query("SELECT * FROM quotes WHERE lead_id = ANY($1::text[]) ORDER BY created_at DESC", [leadIds])).rows
+    : [];
+  res.json({ leads, quotes });
 });
 
 app.post("/api/b2b-contacts", requireAuth, requireSection("b2b"), async (req, res) => {

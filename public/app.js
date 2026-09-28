@@ -14,6 +14,7 @@ let leadsCityFilter = "";
 let leadsDateFilter = "";
 let leadsQuoteDateFilter = "";
 let leadsSortBy = "date";
+let leadsB2bOnly = false;
 let leadsSelected = new Set();
 let dashActivityPage = 1;
 let dashActivityActorFilter = "all";
@@ -1355,7 +1356,8 @@ async function renderLeadsLog(main, skipRefresh) {
     .filter((l) => !leadsSearch || l.name.toLowerCase().includes(leadsSearch.toLowerCase()))
     .filter((l) => !leadsCityFilter || (l.city || "").toLowerCase().includes(leadsCityFilter.toLowerCase()))
     .filter((l) => !leadsDateFilter || l.date === leadsDateFilter)
-    .filter((l) => !leadsQuoteDateFilter || (l.last_quoted_at || "").slice(0, 10) === leadsQuoteDateFilter);
+    .filter((l) => !leadsQuoteDateFilter || (l.last_quoted_at || "").slice(0, 10) === leadsQuoteDateFilter)
+    .filter((l) => !leadsB2bOnly || l.is_b2b);
   const filtered = leadsFilter === "all" ? baseFiltered : baseFiltered.filter((l) => l.event_type === leadsFilter);
   const countFor = (id) => baseFiltered.filter((l) => l.event_type === id).length;
   const shareLink = `${window.location.origin}/lead-form.html`;
@@ -1405,7 +1407,8 @@ async function renderLeadsLog(main, skipRefresh) {
           <option value="followup" ${leadsSortBy === "followup" ? "selected" : ""}>Sort: Longest without follow-up</option>
           <option value="newest" ${leadsSortBy === "newest" ? "selected" : ""}>Sort: Newest submitted</option>
         </select>
-        ${(leadsSearch || leadsCityFilter || leadsDateFilter || leadsQuoteDateFilter || leadsStageFilter !== "all") ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
+        <button class="btn-ghost${leadsB2bOnly ? " filter-chip-active" : ""}" id="leadsB2bToggle" style="${leadsB2bOnly ? "background:#8A5FA8; color:#fff; border-color:#8A5FA8;" : ""}">🏢 B2B only</button>
+        ${(leadsSearch || leadsCityFilter || leadsDateFilter || leadsQuoteDateFilter || leadsStageFilter !== "all" || leadsB2bOnly) ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
       </div>
     </div>
 
@@ -1447,8 +1450,9 @@ async function renderLeadsLog(main, skipRefresh) {
   if (clearQuoteDateBtn) clearQuoteDateBtn.addEventListener("click", () => { leadsQuoteDateFilter = ""; renderLeadsLog(main, true); });
   main.querySelector("#leadsStageSelect").addEventListener("change", (e) => { leadsStageFilter = e.target.value; renderLeadsLog(main, true); });
   main.querySelector("#leadsSortSelect").addEventListener("change", (e) => { leadsSortBy = e.target.value; renderLeadsLog(main, true); });
+  main.querySelector("#leadsB2bToggle").addEventListener("click", () => { leadsB2bOnly = !leadsB2bOnly; renderLeadsLog(main, true); });
   const clearAllBtn = main.querySelector("#clearAllFilters");
-  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsCityFilter = ""; leadsDateFilter = ""; leadsQuoteDateFilter = ""; leadsStageFilter = "all"; renderLeadsLog(main, true); });
+  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsCityFilter = ""; leadsDateFilter = ""; leadsQuoteDateFilter = ""; leadsStageFilter = "all"; leadsB2bOnly = false; renderLeadsLog(main, true); });
 
   const filterRow = main.querySelector("#filterRow");
   const allChip = el(`<button class="filter-chip${leadsFilter === "all" ? " filter-chip-active" : ""}">All <span class="mono">${baseFiltered.length}</span></button>`);
@@ -5598,17 +5602,27 @@ async function renderB2bContacts(main) {
               <div class="muted small">${[c.phone, c.email, c.city, c.instagram].filter(Boolean).join(" · ") || "No contact details on file"}</div>
               ${c.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${c.notes}</div>` : ""}
               <div class="muted small" style="margin-top:2px;">${c.last_contacted_at ? `Last contacted ${fmtDate(c.last_contacted_at.slice(0, 10))}` : "Not contacted yet"}</div>
+              <div style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap;">
+                <span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:2px 8px;">${c.lead_count || 0} lead${c.lead_count == 1 ? "" : "s"}</span>
+                <span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:2px 8px;">${c.confirmed_count || 0} confirmed</span>
+                <span class="mono small" style="background:${c.total_revenue > 0 ? "#E8F0E9" : "#F5F0E4"}; color:${c.total_revenue > 0 ? "#5C8A6B" : "inherit"}; border-radius:4px; padding:2px 8px; font-weight:600;">${inr(c.total_revenue || 0)} generated</span>
+              </div>
             </div>
           </div>
           <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">
             ${digitsOnly ? `<button class="btn-ghost send-rate-card-btn" data-contact-id="${c.id}" style="font-size:12px; padding:4px 9px;">📄 Send rate card</button>` : ""}
             <button class="btn-ghost mark-contacted-btn" data-contact-id="${c.id}" style="font-size:12px; padding:4px 9px;">✓ Mark contacted today</button>
+            ${c.lead_count > 0 ? `<button class="btn-ghost view-history-btn" data-contact-id="${c.id}" style="font-size:12px; padding:4px 9px;">📊 History</button>` : ""}
             <button class="btn-ghost edit-contact-btn" data-contact-id="${c.id}" style="font-size:12px; padding:4px 9px;">Edit</button>
             <button class="btn-ghost delete-contact-btn" data-contact-id="${c.id}" style="font-size:12px; padding:4px 9px; color:#A64B3C;">Delete</button>
           </div>
         </div>
       `);
       listEl.appendChild(card);
+    });
+
+    listEl.querySelectorAll(".view-history-btn").forEach((btn) => {
+      btn.addEventListener("click", () => openB2bHistoryModal(contacts.find((x) => x.id === btn.dataset.contactId)));
     });
 
     listEl.querySelectorAll(".send-rate-card-btn").forEach((btn) => {
@@ -5669,6 +5683,59 @@ async function renderB2bContacts(main) {
   `;
   main.querySelector("#addB2bContactBtn").addEventListener("click", () => openB2bContactModal(null, () => renderB2bContacts(main)));
   renderList();
+}
+
+// Shows every lead and quote tied to this B2B contact (matched by phone) —
+// the "how much business has this manager brought us" view.
+async function openB2bHistoryModal(contact) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card" style="width:560px; max-width:96vw;">
+        <div class="modal-head"><h3>History — ${contact.name}${contact.company ? ` (${contact.company})` : ""}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body"><p class="muted small">Loading…</p></div>
+        <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
+      </div>
+    </div>
+  `;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+
+  try {
+    const { leads, quotes } = await api(`/api/b2b-contacts/${contact.id}/history`);
+    const body = root.querySelector(".modal-body");
+    if (leads.length === 0) {
+      body.innerHTML = `<p class="muted small">No leads from this contact yet.</p>`;
+      return;
+    }
+    const totalRevenue = leads.filter((l) => ["Confirmed", "Completed"].includes(l.stage))
+      .reduce((sum, l) => sum + (l.final_amount || l.quote_amount || 0), 0);
+    body.innerHTML = `
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+        <span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:3px 9px;">${leads.length} lead${leads.length === 1 ? "" : "s"}</span>
+        <span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:3px 9px;">${quotes.length} quote${quotes.length === 1 ? "" : "s"} sent</span>
+        <span class="mono small" style="background:#E8F0E9; color:#5C8A6B; font-weight:600; border-radius:4px; padding:3px 9px;">${inr(totalRevenue)} generated</span>
+      </div>
+      ${leads.map((l) => {
+        const leadQuotes = quotes.filter((q) => q.lead_id === l.id);
+        return `
+        <div style="border:1px solid #E8E2D4; border-radius:6px; padding:8px 10px; margin-bottom:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:baseline;">
+            <span style="font-weight:600;">${packageName(l.event_type)}${l.city ? ` — ${l.city}` : ""}</span>
+            <span class="tag" style="color:${STAGE_COLOR[l.stage]}; font-size:11px;">${l.stage}</span>
+          </div>
+          <div class="muted small">${fmtDate(l.date)}${l.occasion ? ` · ${l.occasion}` : ""}</div>
+          ${["Confirmed", "Completed"].includes(l.stage) ? `<div class="muted small mono">${inr(l.final_amount || l.quote_amount || 0)}</div>` : ""}
+          ${leadQuotes.length > 0 ? `<div class="muted small" style="margin-top:4px;">${leadQuotes.map((q) => `📄 Quoted ${inr(q.amount || 0)} on ${fmtDate(q.created_at.slice(0, 10))} — ${q.status || "sent"}`).join("<br/>")}</div>` : ""}
+        </div>
+      `;
+      }).join("")}
+    `;
+  } catch (err) {
+    root.querySelector(".modal-body").innerHTML = `<p class="muted small">Couldn't load history.</p>`;
+  }
 }
 
 function openB2bContactModal(contact, onDone) {
