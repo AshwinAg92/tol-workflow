@@ -527,13 +527,21 @@ async function downloadLedgerPDF(booking, payments, reimbursements = []) {
   doc.line(marginX, y, pageWidth - marginX, y);
   y += 9;
 
-  const boxW = (contentW - 8) / 3;
-  [
+  // Reimbursement due sits right after "Amount confirmed" — not between
+  // Received and Balance — so it's clear *before* Balance Due why that
+  // number can be higher than the confirmed amount, instead of looking like
+  // a mistake.
+  const reimbursementDueTotal = reimbursementsDue.reduce((s, p) => s + p.amount, 0);
+  const boxes = [
     ["AMOUNT CONFIRMED", inrPdf(total), PDF_COLORS.dark, PDF_COLORS.line],
+    ...(reimbursementDueTotal > 0 ? [["REIMBURSEMENT DUE", "+ " + inrPdf(reimbursementDueTotal), PDF_COLORS.rustDark, PDF_COLORS.line]] : []),
     ["RECEIVED", inrPdf(received), PDF_COLORS.green, PDF_COLORS.line],
     ["BALANCE DUE", inrPdf(balance), PDF_COLORS.rustDark, balance > 0 ? PDF_COLORS.rust : PDF_COLORS.line],
-  ].forEach(([label, value, color, borderColor], i) => {
-    const bx = marginX + i * (boxW + 4);
+  ];
+  const boxGap = 4;
+  const boxW = (contentW - boxGap * (boxes.length - 1)) / boxes.length;
+  boxes.forEach(([label, value, color, borderColor], i) => {
+    const bx = marginX + i * (boxW + boxGap);
     doc.setFillColor(...PDF_COLORS.card);
     doc.setDrawColor(...borderColor);
     doc.setLineWidth(0.5);
@@ -542,7 +550,7 @@ async function downloadLedgerPDF(booking, payments, reimbursements = []) {
     doc.setFontSize(7.6);
     doc.setTextColor(...PDF_COLORS.muted);
     doc.text(label, bx + 5, y + 9);
-    doc.setFontSize(14);
+    doc.setFontSize(boxes.length > 3 ? 12 : 14);
     doc.setTextColor(...color);
     doc.text(value, bx + 5, y + 19);
   });
@@ -1226,8 +1234,8 @@ async function openLeadDetailModal(lead) {
               <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Financials</div>
               <div class="lead-card-financials" style="margin-top:0; ${lead.reimbursement_due ? "grid-template-columns:repeat(2,1fr);" : ""}">
                 <div><span class="muted small">${lead.stage === "Tentative" ? "Rate held" : "Final"}</span><div class="mono">${lead.final_amount || lead.quote_amount ? inr(lead.final_amount || lead.quote_amount) : "—"}</div></div>
-                <div><span class="muted small">Received</span><div class="mono">${inr(lead.received || 0)}</div></div>
                 ${lead.reimbursement_due ? `<div><span class="muted small">Reimbursement due</span><div class="mono" style="color:#B6752C;">+ ${inr(lead.reimbursement_due)}</div></div>` : ""}
+                <div><span class="muted small">Received</span><div class="mono">${inr(lead.received || 0)}</div></div>
                 <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
               </div>
               ${rateInclusionsSummaryText(lead) ? `<div class="muted small" style="margin-top:8px;">${rateInclusionsSummaryText(lead)}</div>` : ""}
@@ -1601,8 +1609,8 @@ async function renderLeadsLog(main, skipRefresh) {
           ${hasRateInfo ? `
             <div class="lead-card-financials" style="${displayReimbursementDue ? "grid-template-columns:repeat(2,1fr);" : ""}">
               <div><span class="muted small">${l.stage === "Tentative" ? "Rate held" : "Final"}</span><div class="mono">${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
-              <div><span class="muted small">Received</span><div class="mono">${inr(displayReceived || 0)}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
               ${displayReimbursementDue ? `<div><span class="muted small">Reimbursement due</span><div class="mono" style="color:#B6752C;">+ ${inr(displayReimbursementDue)}</div></div>` : ""}
+              <div><span class="muted small">Received</span><div class="mono">${inr(displayReceived || 0)}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
               <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
             </div>
           ` : ""}
@@ -3776,8 +3784,8 @@ async function openLeadPaymentsModal(leadId) {
     body.innerHTML = `
       <div class="dash-stats" style="grid-template-columns:repeat(2,1fr); margin-bottom:16px; gap:8px;">
         <div class="card summary-card summary-card-compact"><div class="muted">Final rate</div><div class="mono big">${inr(total)}</div></div>
-        <div class="card summary-card summary-card-compact"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
         ${totalReimbursementDue > 0 ? `<div class="card summary-card summary-card-compact"><div class="muted">Reimbursement due</div><div class="mono big" style="color:#B6752C;">+ ${inr(totalReimbursementDue)}</div></div>` : ""}
+        <div class="card summary-card summary-card-compact"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
         <div class="card summary-card summary-card-compact"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
         <div class="card summary-card summary-card-compact"><div class="muted">Profit</div><div class="mono big" style="color:${(total - totalExpenses) >= 0 ? "#5C8A6B" : "#A64B3C"};">${inr(total - totalExpenses)}</div></div>
       </div>
@@ -4920,8 +4928,8 @@ async function renderAccounts(main) {
           </div>
           <div class="lead-card-financials acct-financials" style="${l.reimbursement_due ? "grid-template-columns:repeat(3,1fr);" : ""}">
             <div><span class="muted small">Final</span><div class="mono">${total ? inr(total) : "—"}</div></div>
-            <div><span class="muted small">Received</span><div class="mono">${inr(l.received)}</div></div>
             ${l.reimbursement_due ? `<div><span class="muted small">Reimb. due</span><div class="mono" style="color:#B6752C;">+ ${inr(l.reimbursement_due)}</div></div>` : ""}
+            <div><span class="muted small">Received</span><div class="mono">${inr(l.received)}</div></div>
             <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
             <div><span class="muted small">Expenses</span><div class="mono">${l.expenses ? inr(l.expenses) : "—"}</div></div>
             <div><span class="muted small">Profit</span><div class="mono" style="color:${l.profit == null ? "inherit" : l.profit >= 0 ? "#5C8A6B" : "#A64B3C"};">${l.profit == null ? "See combo" : inr(l.profit)}</div></div>
