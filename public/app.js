@@ -819,7 +819,7 @@ async function downloadQuotePDF({ clientName, date, fields, shareOptions = null 
     doc.text("B2B RATE", pageWidth - marginX - 6, y + 16.5, { align: "right" });
     doc.setFontSize(11.5);
     doc.setTextColor(...PDF_COLORS.rustDark);
-    doc.text(inrPdf(fields.charges - B2B_DISCOUNT) + "/-", pageWidth - marginX - 6, y + 21.5, { align: "right" });
+    doc.text(inrPdf(fields.b2bCharges ?? (fields.charges - B2B_DISCOUNT)) + "/-", pageWidth - marginX - 6, y + 21.5, { align: "right" });
   } else {
     doc.setFontSize(13.5);
     doc.setTextColor(...PDF_COLORS.rustDark);
@@ -1963,11 +1963,11 @@ async function renderLeadsLog(main, skipRefresh) {
 // editable draft in the exact wording he uses, tweaks anything he wants,
 // then sends via WhatsApp/email. No code change ever needed to adjust
 // wording, amount, or format — the textarea is the source of truth.
-function buildQuoteText({ eventType, format, location, date, occasion, guests, duration, setPieces, formatType, charges, firstName, remarks, isB2b }) {
+function buildQuoteText({ eventType, format, location, date, occasion, guests, duration, setPieces, formatType, charges, firstName, remarks, isB2b, b2bCharges }) {
   const amountLine = !charges
     ? "________"
     : isB2b
-    ? `₹${Number(charges).toLocaleString("en-IN")}/- (B2C) · ₹${Number(charges - B2B_DISCOUNT).toLocaleString("en-IN")}/- (B2B)`
+    ? `₹${Number(charges).toLocaleString("en-IN")}/- (B2C) · ₹${Number(b2bCharges ?? (charges - B2B_DISCOUNT)).toLocaleString("en-IN")}/- (B2B)`
     : `₹${Number(charges).toLocaleString("en-IN")}/-`;
   const isPheras = (format || "").trim().toLowerCase() === "musical pheras";
   const sessionConditions = isPheras
@@ -2177,6 +2177,10 @@ async function renderQuotation(main) {
         </div>
         <label>Performance charges (₹)</label>
         <input id="qCharges" type="number" placeholder="e.g. 50000" />
+        <div id="qB2bChargesWrap" style="display:none;">
+          <label>B2B charges (₹) <span class="muted small">— shown to the event/artist manager instead of the B2C rate</span></label>
+          <input id="qB2bCharges" type="number" placeholder="e.g. 40000" />
+        </div>
         <label>Special remarks (optional)</label>
         <textarea id="qRemarks" rows="2" placeholder="e.g. This is an all-inclusive lump sum covering performance, travel, and accommodation — no separate charges apply."></textarea>
         <button class="btn-ghost full" id="generateBtn" style="margin-top:12px;">Generate quote draft ↓</button>
@@ -2250,6 +2254,11 @@ async function renderQuotation(main) {
   const leadSelect = main.querySelector("#leadSelect");
   const fields = ["qLocation", "qDate", "qGuests", "qDuration", "qSet", "qFormatType", "qCharges"].map((id) => main.querySelector(`#${id}`));
 
+  // Tracks whether the user has manually typed into the B2B charges field —
+  // once they have, auto-pricing stops overwriting it. Reset on lead/package change.
+  let b2bChargesTouched = false;
+  main.querySelector("#qB2bCharges").addEventListener("input", () => { b2bChargesTouched = true; });
+
   // Looks up the fixed rate for this lead's format + musician count, if one exists,
   // and fills it in — still fully editable by hand for anything non-standard.
   function applyStandardPricing() {
@@ -2258,6 +2267,7 @@ async function renderQuotation(main) {
     if (!selectedPackage || !pcs) return;
     const rate = CONFIG.pricing?.[selectedPackage]?.[pcs];
     if (rate !== undefined) main.querySelector("#qCharges").value = rate;
+    if (rate !== undefined && !b2bChargesTouched) main.querySelector("#qB2bCharges").value = rate - B2B_DISCOUNT;
   }
 
   function updatePackageDependentFields() {
@@ -2273,6 +2283,7 @@ async function renderQuotation(main) {
     const lead = LEADS.find((l) => l.id === leadSelect.value);
     if (!lead) return;
     main.querySelector("#leadB2bBadge").style.display = lead.is_b2b ? "block" : "none";
+    main.querySelector("#qB2bChargesWrap").style.display = lead.is_b2b ? "block" : "none";
     main.querySelector("#qLocation").value = lead.city || "";
     main.querySelector("#qDate").value = fmtDate(lead.date);
     main.querySelector("#qOccasion").value = lead.occasion || "";
@@ -2284,6 +2295,8 @@ async function renderQuotation(main) {
     main.querySelector("#qSubject").value = `Quotation for ${packageName(lead.event_type)} — Together, Out Loud`;
     main.querySelector("#qSet").value = "";
     main.querySelector("#qCharges").value = "";
+    main.querySelector("#qB2bCharges").value = "";
+    b2bChargesTouched = false;
     main.querySelector("#qRemarks").value = "";
     updatePackageDependentFields();
     applyStandardPricing();
@@ -2331,6 +2344,7 @@ async function renderQuotation(main) {
       remarks: main.querySelector("#qRemarks").value,
       firstName: lead ? (lead.name || "").trim().split(" ")[0] : "",
       isB2b: !!(lead && lead.is_b2b),
+      b2bCharges: main.querySelector("#qB2bCharges").value,
     });
   }
 
@@ -2342,6 +2356,7 @@ async function renderQuotation(main) {
     generateDraft();
   });
   main.querySelector("#qSet").addEventListener("input", () => { applyStandardPricing(); });
+  main.querySelector("#qB2bCharges").addEventListener("input", () => { generateDraft(); });
   main.querySelector("#generateBtn").addEventListener("click", generateDraft);
   prefillFromLead();
   generateDraft();
@@ -2351,6 +2366,7 @@ async function renderQuotation(main) {
   }
 
   function validateQuoteFields() {
+    const lead = LEADS.find((l) => l.id === leadSelect.value);
     const isPheras = main.querySelector("#qPackage").value === "pheras";
     const required = [
       ["#qLocation", "Location"],
@@ -2359,6 +2375,7 @@ async function renderQuotation(main) {
       ...(isPheras ? [] : [["#qDuration", "Duration"], ["#qFormatType", "Format"]]),
       ["#qSet", "Pcs (No. of Musicians)"],
       ["#qCharges", "Performance charges"],
+      ...(lead && lead.is_b2b ? [["#qB2bCharges", "B2B charges"]] : []),
     ];
     const missing = required.filter(([sel]) => !main.querySelector(sel).value.toString().trim());
     if (missing.length > 0) {
@@ -2431,6 +2448,7 @@ async function renderQuotation(main) {
           formatType: main.querySelector("#qFormatType").value,
           charges: main.querySelector("#qCharges").value,
           isB2b: !!(lead && lead.is_b2b),
+          b2bCharges: main.querySelector("#qB2bCharges").value,
         },
       });
     } finally {
