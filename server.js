@@ -1521,7 +1521,7 @@ app.delete("/api/gallery/:id", requireAuth, requireAdmin, async (req, res) => {
 // amount, so Accounts/profit totals aren't double-counted across the group —
 // the others just point back to it for display.
 app.post("/api/leads/combo", requireAuth, async (req, res) => {
-  const { name, phone, email, city, occasion, guestRange, events, budget, finalAmount, alreadyConfirmed, advanceAmount, advanceDate, advanceMode } = req.body;
+  const { name, phone, email, city, occasion, guestRange, events, budget, finalAmount, alreadyConfirmed, advanceAmount, advanceDate, advanceMode, isB2b } = req.body;
   if (!name) return res.status(400).json({ error: "Name is required" });
   if (!Array.isArray(events) || events.length < 2) return res.status(400).json({ error: "Provide at least two format/date combinations for a combo booking" });
   for (const e of events) {
@@ -1536,16 +1536,16 @@ app.post("/api/leads/combo", requireAuth, async (req, res) => {
     await pool.query(`
       INSERT INTO leads (
         id, name, phone, email, event_type, city, date, budget, stage, advance,
-        quote_amount, final_amount, occasion, guest_range, combo_group_id, is_combo_primary, created_at
+        quote_amount, final_amount, occasion, guest_range, combo_group_id, is_combo_primary, created_at, is_b2b
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,$12,$13,$14,$15,$16)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,$12,$13,$14,$15,$16,$17)
     `, [
       id, name, phone || null, email || null, events[i].eventType, city || null, events[i].date,
       isPrimary ? (budget || null) : null,
       alreadyConfirmed ? "Confirmed" : "New",
       isPrimary ? (budget || null) : null,
       isPrimary && alreadyConfirmed ? (finalAmount || null) : null,
-      occasion || null, guestRange || null, comboGroupId, isPrimary ? 1 : 0, now,
+      occasion || null, guestRange || null, comboGroupId, isPrimary ? 1 : 0, now, isB2b ? 1 : 0,
     ]);
     createdIds.push(id);
   }
@@ -1558,6 +1558,12 @@ app.post("/api/leads/combo", requireAuth, async (req, res) => {
   const rows = (await pool.query("SELECT * FROM leads WHERE id = ANY($1::text[]) ORDER BY date ASC", [createdIds])).rows;
   res.status(201).json(rows);
   logActivity(req, `Combo booking added for ${name}: ${events.map((e) => packageName(e.eventType)).join(" + ")}${alreadyConfirmed && finalAmount ? ` — ₹${Number(finalAmount).toLocaleString("en-IN")}` : ""}`, createdIds[0]);
+
+  // Same B2B directory upsert as the single-event path below — logged
+  // straight away instead of needing a follow-up Edit + Mark as B2B.
+  if (isB2b && phone) {
+    upsertB2bContact({ name, phone, city });
+  }
 });
 
 app.patch("/api/leads/:id", requireAuth, async (req, res) => {

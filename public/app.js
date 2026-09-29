@@ -6457,6 +6457,12 @@ function openNewLeadModal() {
         <div class="modal-body">
           <label>Name / organisation</label>
           <input id="mName" placeholder="e.g. Priya & Raj Sharma" />
+          <label>Booking type</label>
+          <select id="mIsB2b">
+            <option value="0" selected>Direct client (B2C)</option>
+            <option value="1">Event Manager / Artist Manager (B2B)</option>
+          </select>
+          <p class="muted small" style="margin-top:2px;">Marking as B2B also adds them to B2B Contacts (matched by phone), and their quotes will show both the B2B and B2C rate.</p>
           <div class="row-2">
             <div><label>Phone</label><input id="mPhone" placeholder="+91 ..." /></div>
             <div><label>Email</label><input id="mEmail" placeholder="name@example.com" /></div>
@@ -6560,6 +6566,7 @@ function openNewLeadModal() {
     if (!name) return alert("Name is required.");
     const alreadyConfirmed = root.querySelector("#mAlreadyConfirmed").checked;
     const isCombo = root.querySelector("#mIsCombo").checked;
+    const isB2b = root.querySelector("#mIsB2b").value === "1";
 
     if (isCombo) {
       const events = [...comboRowsEl.querySelectorAll(".combo-row")].map((row) => ({
@@ -6583,6 +6590,7 @@ function openNewLeadModal() {
           advanceAmount: root.querySelector("#mComboAdvanceAmount").value ? Number(root.querySelector("#mComboAdvanceAmount").value) : null,
           advanceDate: root.querySelector("#mComboAdvanceDate").value || null,
           advanceMode: root.querySelector("#mComboAdvanceMode").value || null,
+          isB2b,
         }),
       });
       await refreshLeads();
@@ -6608,6 +6616,7 @@ function openNewLeadModal() {
         occasion: root.querySelector("#mOccasion").value || null,
         venue: root.querySelector("#mVenue").value || null,
         pcs: root.querySelector("#mPcs").value || null,
+        isEventManager: isB2b,
       }),
     });
     await refreshLeads();
