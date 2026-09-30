@@ -4941,10 +4941,11 @@ async function openTravelPlanModal(leadId) {
         <div style="font-weight:600; margin-bottom:8px;">Link existing travel</div>
         <select id="linkLegSelect">
           ${unlinkedLegs.map((l) => {
-            const route = [l.from_city, l.to_city].filter(Boolean).join(" → ");
-            const names = l.members.map((m) => m.name).join(", ");
-            const bits = [l.label, route, names, l.departure_at ? fmtDateTime(l.departure_at) : null].filter(Boolean);
-            return `<option value="${l.id}">${bits.join(" · ") || "Untitled travel"}</option>`;
+            const route = [l.from_city, l.to_city].filter(Boolean).join(" → ") || l.label || "Untitled";
+            const date = l.departure_at ? fmtDate(l.departure_at) : null;
+            const mode = TRAVEL_MODE_LABELS[l.mode] || null;
+            const bits = [route, date, mode].filter(Boolean);
+            return `<option value="${l.id}">${bits.join(" · ")}</option>`;
           }).join("")}
         </select>
         <div style="display:flex; gap:8px; margin-top:10px;">
