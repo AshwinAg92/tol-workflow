@@ -216,6 +216,22 @@ async function upsertB2bContact({ name, phone, company, city, instagram }) {
 const app = express();
 app.use(cors());
 app.use(express.json());
+// A dropped DB connection mid-query throws inside a route handler that has
+// no individual try/catch. The global unhandledRejection listener above
+// stops that from crashing the whole process, but it can't send a response
+// either -- so without this, that one request just hangs until the browser
+// or Railway's edge gives up (we saw this as 125-second "Still loading..."
+// hangs in production). This makes any request that doesn't finish in 20s
+// fail fast with a clear error instead of hanging indefinitely.
+app.use((req, res, next) => {
+  res.setTimeout(20000, () => {
+    if (!res.headersSent) {
+      console.error(`Request timed out after 20s: ${req.method} ${req.path}`);
+      res.status(503).json({ error: "Request timed out — please try again." });
+    }
+  });
+  next();
+});
 app.use("/api", (req, res, next) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
   next();

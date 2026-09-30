@@ -14,6 +14,16 @@ const pool = new Pool({
   ssl: process.env.DATABASE_URL && !process.env.DATABASE_URL.includes("localhost")
     ? { rejectUnauthorized: false }
     : false,
+  // Without these, a broken connection can hang a query indefinitely instead
+  // of failing with a clear error -- keepAlive catches a dead connection
+  // sooner, and the timeouts below make sure both "waiting for a free
+  // connection" and "waiting for Postgres to answer" give up in seconds
+  // rather than minutes.
+  keepAlive: true,
+  max: 10,
+  connectionTimeoutMillis: 8000,
+  idleTimeoutMillis: 30000,
+  statement_timeout: 15000,
 });
 // node-postgres emits 'error' on the pool whenever an already-connected,
 // idle client in it hits a background problem (e.g. the network blipping
