@@ -121,7 +121,6 @@ const NAV = [
   { id: "travelcal", label: "Travel Calendar" },
   { id: "documents", label: "Documents" },
   { id: "b2b", label: "B2B Contacts" },
-  { id: "musicians", label: "Musicians" },
   { id: "team", label: "Team" },
   { id: "website", label: "Website" },
   { id: "settings", label: "Settings" },
@@ -141,7 +140,6 @@ const NAV_GROUPS = {
   travelcal: "Operations",
   documents: "Operations",
   b2b: "Operations",
-  musicians: "Operations",
   team: "Operations",
   website: "Admin",
   settings: "Admin",
@@ -3023,19 +3021,44 @@ function openStandaloneTravelLegModal(legId, onDone) {
 }
 
 // ---------- Team ----------
-async function renderTeam(main) {
+// Team has two sub-tabs: "team" (people actively performing/working with
+// you, with logins) and "musicians" (a wider freelance pool, filterable by
+// city/instrument, that can be promoted into Team). They share one nav
+// entry and header so the sidebar stays uncluttered.
+async function renderTeam(main, subTab = "team") {
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
   const canManage = canManageTeam();
-  const users = canManage ? await api("/api/users") : [];
-  const teamIdsWithLogin = new Set(users.map((u) => u.team_id).filter(Boolean));
+
   main.innerHTML = `
     <div class="view-head">
-      <div><h2>Team</h2><p class="muted">Your band's musicians, crew, and staff.</p></div>
+      <div><h2>Team</h2><p class="muted">${subTab === "musicians" ? "Your wider pool of musicians — filterable by city and instrument, so you can quickly find who to reach out to." : "Your band's musicians, crew, and staff."}</p></div>
       <div style="display:flex; gap:8px;">
-        ${canManage ? `<button class="btn-ghost" id="tempArtistDirBtn">📇 Temporary artists</button>` : ""}
-        ${canManage ? `<button class="btn-primary" id="addMemberBtn">+ Add team member</button>` : ""}
+        ${subTab === "team" && canManage ? `<button class="btn-ghost" id="tempArtistDirBtn">📇 Temporary artists</button>` : ""}
+        ${subTab === "team" && canManage ? `<button class="btn-primary" id="addMemberBtn">+ Add team member</button>` : ""}
+        ${subTab === "musicians" && canManage ? `<button class="btn-primary" id="addMusicianBtn">+ Add musician</button>` : ""}
       </div>
     </div>
+    <div style="display:flex; gap:8px; margin-bottom:18px;">
+      <button class="${subTab === "team" ? "btn-primary" : "btn-ghost"}" id="teamTabBtn" style="font-size:13px; padding:6px 14px;">Team</button>
+      <button class="${subTab === "musicians" ? "btn-primary" : "btn-ghost"}" id="musiciansTabBtn" style="font-size:13px; padding:6px 14px;">Musicians</button>
+    </div>
+    <div id="teamSubContent"></div>
+  `;
+  main.querySelector("#teamTabBtn").addEventListener("click", () => renderTeam(main, "team"));
+  main.querySelector("#musiciansTabBtn").addEventListener("click", () => renderTeam(main, "musicians"));
+
+  if (subTab === "musicians") {
+    renderMusicians(main.querySelector("#teamSubContent"));
+    if (canManage) {
+      main.querySelector("#addMusicianBtn").addEventListener("click", () => openMusicianModal(null, () => renderTeam(main, "musicians")));
+    }
+    return;
+  }
+
+  const content = main.querySelector("#teamSubContent");
+  const users = canManage ? await api("/api/users") : [];
+  const teamIdsWithLogin = new Set(users.map((u) => u.team_id).filter(Boolean));
+  content.innerHTML = `
     ${isAdmin && LEADS.some((l) => l.is_seed) ? `
       <div class="card" style="margin-bottom:20px; border-color:#A64B3C;">
         <div class="section-label" style="color:#A64B3C;">Going live</div>
@@ -3088,6 +3111,9 @@ async function renderTeam(main) {
 
   const grid = main.querySelector("#teamGrid");
   TEAM.forEach((m) => {
+    // The active-shows list is collapsed by default (just the count, as a
+    // toggle) so cards stay compact — expand it in place to see which
+    // shows, without leaving the grid or opening the full events modal.
     const card = el(`
       <div class="card team-card" style="cursor:pointer;">
         ${canManage ? `<button class="icon-btn" data-edit-member="${m.id}" style="float:right;">${ICON_EDIT}</button>` : ""}
@@ -3098,13 +3124,26 @@ async function renderTeam(main) {
         ${(m.local_fee || m.outstation_fee) ? `<div class="muted small">${m.local_fee ? `Local ${inr(m.local_fee)}` : ""}${m.local_fee && m.outstation_fee ? " · " : ""}${m.outstation_fee ? `Outstation ${inr(m.outstation_fee)}` : ""}</div>` : ""}
         ${m.phone ? `<div class="muted small">${m.phone}</div>` : ""}
         ${m.email ? `<div class="muted small">${m.email}</div>` : ""}
-        <div class="team-count mono">${m.activeShows.length} active show${m.activeShows.length === 1 ? "" : "s"}</div>
-        ${m.activeShows.map((s) => `<div class="team-lead">› ${s.name}</div>`).join("")}
+        ${m.activeShows.length > 0 ? `
+          <div class="team-count mono" data-toggle-shows="${m.id}" style="cursor:pointer;">▸ ${m.activeShows.length} active show${m.activeShows.length === 1 ? "" : "s"}</div>
+          <div data-shows-list="${m.id}" style="display:none;">
+            ${m.activeShows.map((s) => `<div class="team-lead">› ${s.name}</div>`).join("")}
+          </div>
+        ` : `<div class="team-count mono">0 active shows</div>`}
         ${canManage && !teamIdsWithLogin.has(m.id) ? `<button class="btn-ghost full" data-add-login="${m.id}" style="margin-top:10px;">+ Add login</button>` : ""}
       </div>
     `);
     card.addEventListener("click", (e) => {
       if (e.target.closest("[data-edit-member]") || e.target.closest("[data-add-login]")) return;
+      if (e.target.closest("[data-toggle-shows]")) {
+        const toggle = e.target.closest("[data-toggle-shows]");
+        const list = card.querySelector(`[data-shows-list="${m.id}"]`);
+        const expanded = list.style.display !== "none";
+        list.style.display = expanded ? "none" : "block";
+        toggle.textContent = `${expanded ? "▸" : "▾"} ${m.activeShows.length} active show${m.activeShows.length === 1 ? "" : "s"}`;
+        e.stopPropagation();
+        return;
+      }
       openTeamMemberEventsModal(m);
     });
     grid.appendChild(card);
@@ -6060,13 +6099,16 @@ function openB2bContactModal(contact, onDone) {
 }
 
 // ---------- Musicians directory (freelance pool, filterable by city/instrument) ----------
+// Renders into a container (the "Musicians" sub-tab of Team, see renderTeam)
+// rather than a whole page — no heading of its own, since Team's shared
+// header above already covers that.
 async function renderMusicians(main) {
-  main.innerHTML = `<div class="view-head"><div><h2>Musicians</h2></div></div><p class="muted">Loading…</p>`;
+  main.innerHTML = `<p class="muted">Loading…</p>`;
   let musicians;
   try {
     musicians = await api("/api/musicians");
   } catch (err) {
-    main.innerHTML = `<div class="view-head"><div><h2>Musicians</h2></div></div><p class="muted small">Couldn't load musicians.</p>`;
+    main.innerHTML = `<p class="muted small">Couldn't load musicians.</p>`;
     return;
   }
 
@@ -6102,27 +6144,43 @@ async function renderMusicians(main) {
       return;
     }
     listEl.innerHTML = "";
+    // Compact by default: one summary line per musician (name, in-team
+    // badge, contact, instrument tags all on the header row), with details
+    // and management buttons revealed only on expand — this is what keeps
+    // a directory of 10+ musicians from turning into a wall of cards.
     filtered.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach((m) => {
       const card = el(`
-        <div class="card" style="margin-bottom:10px;">
-          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
-            <div>
-              <div style="font-weight:600;">${m.name}${m.team_id ? ` <span class="mono small" style="background:#E8F0E9; color:#5C8A6B; border-radius:4px; padding:2px 8px; font-weight:600;">✓ In Team</span>` : ""}</div>
-              <div class="muted small">${[m.phone, m.city].filter(Boolean).join(" · ") || "No contact details on file"}</div>
-              ${m.instruments.length > 0 ? `<div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">${m.instruments.map((i) => `<span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:2px 8px;">🎵 ${i}</span>`).join("")}</div>` : `<div class="muted small" style="margin-top:2px;">No instruments tagged</div>`}
-              ${(m.rate_local || m.rate_outstation) ? `<div class="muted small" style="margin-top:4px;">${m.rate_local ? `Local ${inr(m.rate_local)}` : ""}${m.rate_local && m.rate_outstation ? " · " : ""}${m.rate_outstation ? `Outstation ${inr(m.rate_outstation)}` : ""}</div>` : ""}
-              ${m.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${m.notes}</div>` : ""}
+        <div class="card" style="margin-bottom:6px; padding:10px 14px;">
+          <div data-toggle-musician="${m.id}" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0;">
+              <span class="muted small" data-musician-caret="${m.id}">▸</span>
+              <span style="font-weight:600;">${m.name}</span>
+              ${m.team_id ? `<span class="mono small" style="background:#E8F0E9; color:#5C8A6B; border-radius:4px; padding:1px 7px; font-weight:600;">✓ Team</span>` : ""}
+              ${m.instruments.length > 0 ? m.instruments.map((i) => `<span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:1px 7px;">${i}</span>`).join("") : ""}
             </div>
+            <span class="muted small">${[m.phone, m.city].filter(Boolean).join(" · ")}</span>
           </div>
-          ${canManage ? `
-            <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">
-              ${!m.team_id ? `<button class="btn-ghost promote-musician-btn" data-musician-id="${m.id}" style="font-size:12px; padding:4px 9px;">+ Add to Team</button>` : ""}
-              <button class="btn-ghost edit-musician-btn" data-musician-id="${m.id}" style="font-size:12px; padding:4px 9px;">Edit</button>
-              <button class="btn-ghost delete-musician-btn" data-musician-id="${m.id}" style="font-size:12px; padding:4px 9px; color:#A64B3C;">Delete</button>
-            </div>
-          ` : ""}
+          <div data-musician-details="${m.id}" style="display:none; margin-top:10px; padding-top:10px; border-top:1px solid #EEE7D8;">
+            ${m.instruments.length === 0 ? `<div class="muted small">No instruments tagged</div>` : ""}
+            ${(m.rate_local || m.rate_outstation) ? `<div class="muted small">${m.rate_local ? `Local ${inr(m.rate_local)}` : ""}${m.rate_local && m.rate_outstation ? " · " : ""}${m.rate_outstation ? `Outstation ${inr(m.rate_outstation)}` : ""}</div>` : ""}
+            ${m.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${m.notes}</div>` : ""}
+            ${canManage ? `
+              <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">
+                ${!m.team_id ? `<button class="btn-ghost promote-musician-btn" data-musician-id="${m.id}" style="font-size:12px; padding:4px 9px;">+ Add to Team</button>` : ""}
+                <button class="btn-ghost edit-musician-btn" data-musician-id="${m.id}" style="font-size:12px; padding:4px 9px;">Edit</button>
+                <button class="btn-ghost delete-musician-btn" data-musician-id="${m.id}" style="font-size:12px; padding:4px 9px; color:#A64B3C;">Delete</button>
+              </div>
+            ` : ""}
+          </div>
         </div>
       `);
+      card.querySelector(`[data-toggle-musician="${m.id}"]`).addEventListener("click", () => {
+        const details = card.querySelector(`[data-musician-details="${m.id}"]`);
+        const caret = card.querySelector(`[data-musician-caret="${m.id}"]`);
+        const expanded = details.style.display !== "none";
+        details.style.display = expanded ? "none" : "block";
+        caret.textContent = expanded ? "▸" : "▾";
+      });
       listEl.appendChild(card);
     });
 
@@ -6157,11 +6215,7 @@ async function renderMusicians(main) {
   }
 
   main.innerHTML = `
-    <div class="view-head">
-      <div><h2>Musicians</h2><p class="muted">Your wider pool of musicians — filterable by city and instrument, so you can quickly find who to reach out to.</p></div>
-      ${canManage ? `<button class="btn-primary" id="addMusicianBtn">+ Add musician</button>` : ""}
-    </div>
-    <div class="card" style="margin-bottom:18px;">
+    <div class="card" style="margin-bottom:14px; padding:12px 14px;">
       <div class="row-2">
         <div><label>City</label><select id="musCityFilter"></select></div>
         <div><label>Instrument</label><select id="musInstrumentFilter"></select></div>
@@ -6172,9 +6226,6 @@ async function renderMusicians(main) {
 
   main.querySelector("#musCityFilter").addEventListener("change", (e) => { cityFilter = e.target.value; renderList(); });
   main.querySelector("#musInstrumentFilter").addEventListener("change", (e) => { instrumentFilter = e.target.value; renderList(); });
-  if (canManage) {
-    main.querySelector("#addMusicianBtn").addEventListener("click", () => openMusicianModal(null, () => renderMusicians(main)));
-  }
 
   renderList();
 }
@@ -7993,9 +8044,12 @@ function renderMain() {
   else if (currentTab === "tasks") renderTasks(main);
   else if (currentTab === "documents") renderDocuments(main);
   else if (currentTab === "b2b") renderB2bContacts(main);
-  else if (currentTab === "musicians") renderMusicians(main);
   else if (currentTab === "calendar") renderCalendar(main);
-  else if (currentTab === "team") renderTeam(main);
+  // "musicians" used to be its own nav tab; it now lives as a sub-tab inside
+  // Team, but a stale bookmark/localStorage value could still set currentTab
+  // to it, so route that straight into Team's Musicians sub-tab instead of
+  // hitting nothing.
+  else if (currentTab === "team" || currentTab === "musicians") renderTeam(main, currentTab === "musicians" ? "musicians" : "team");
   else if (currentTab === "accounts") renderAccounts(main);
   else if (currentTab === "myevents") renderMyEvents(main);
   else if (currentTab === "settings") renderSettings(main);
