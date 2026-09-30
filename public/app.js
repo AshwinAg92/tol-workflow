@@ -18,6 +18,7 @@ let leadsB2bOnly = false;
 let leadsSelected = new Set();
 let dashActivityPage = 1;
 let dashActivityActorFilter = "all";
+let dashActivityPollInterval = null;
 let quotationLeadId = null;
 let reopenQuoteDraft = null; // one-shot: set when reopening a past quote from history for editing
 let calYear = new Date().getFullYear(), calMonth = new Date().getMonth() + 1; // defaults to the real current month
@@ -5385,7 +5386,32 @@ async function renderAccounts(main) {
 // scroll on the dashboard — redraws only this card, not the whole page, so
 // flipping pages doesn't reset scroll position elsewhere on the dashboard.
 const DASH_ACTIVITY_PAGE_SIZE = 8;
-function renderTodaysActivityCard(main, activity) {
+// Tracks which activity-log entries have already flashed on the Dashboard,
+// in localStorage so it survives refreshes — otherwise every reload would
+// re-flash every acceptance from today instead of just a genuinely new one.
+function getSeenActivityIds() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem("tol_seen_activity_ids") || "[]"));
+  } catch {
+    return new Set();
+  }
+}
+function markActivityIdsSeen(ids) {
+  try {
+    const seen = getSeenActivityIds();
+    ids.forEach((id) => seen.add(id));
+    localStorage.setItem("tol_seen_activity_ids", JSON.stringify([...seen].slice(-300)));
+  } catch {}
+}
+// The one activity-log line worth flashing for — an artist accepting via
+// their no-login confirmation link, since that can happen with nobody at a
+// keyboard to notice it otherwise. Declines aren't flashed the same way;
+// those need a decision (re-book someone), not just an "acknowledged" glance.
+function isFlashWorthyActivity(a) {
+  return /accepted .* via confirmation link/i.test(a.message || "");
+}
+
+function renderTodaysActivityCard(main, activity, flashIds = new Set()) {
   const card = main.querySelector("#todaysActivityCard");
   if (!card) return;
   const actors = Array.from(new Set(activity.map((a) => a.actor).filter((a) => a && a !== "System"))).sort();
@@ -5411,7 +5437,7 @@ function renderTodaysActivityCard(main, activity) {
     ${activity.length === 0 ? `<p class="muted small">Nothing logged yet today.</p>` : filtered.length === 0 ? `<p class="muted small">Nothing from ${dashActivityActorFilter} today.</p>` : `
       <div class="activity-log">
         ${pageItems.map((a) => `
-          <div class="dash-list-item" style="display:flex; gap:10px; justify-content:space-between; align-items:flex-start;">
+          <div class="dash-list-item${flashIds.has(a.id) ? " activity-flash" : ""}" style="display:flex; gap:10px; justify-content:space-between; align-items:flex-start;">
             <div style="display:flex; gap:10px;">
               <span class="muted small mono" style="flex-shrink:0; width:52px;">${fmtTime(a.created_at)}</span>
               <span>${a.message}${a.actor && a.actor !== "System" ? ` <span class="muted small">— ${a.actor}</span>` : ""}</span>
@@ -5734,7 +5760,36 @@ async function renderDashboard(main) {
       renderMain();
     });
   }
-  if (isAdmin) renderTodaysActivityCard(main, activity);
+  if (isAdmin) {
+    const seenActivityIds = getSeenActivityIds();
+    const flashIds = new Set(activity.filter((a) => isFlashWorthyActivity(a) && !seenActivityIds.has(a.id)).map((a) => a.id));
+    renderTodaysActivityCard(main, activity, flashIds);
+    markActivityIdsSeen(activity.map((a) => a.id));
+
+    // Keep checking while the Dashboard stays open, so an artist accepting
+    // via their confirmation link flashes here on its own -- that's the one
+    // activity event that can happen with nobody at a keyboard to notice it.
+    if (dashActivityPollInterval) clearInterval(dashActivityPollInterval);
+    dashActivityPollInterval = setInterval(async () => {
+      if (!document.getElementById("todaysActivityCard")) {
+        clearInterval(dashActivityPollInterval);
+        dashActivityPollInterval = null;
+        return;
+      }
+      let freshActivity;
+      try {
+        freshActivity = await api("/api/activity");
+      } catch {
+        return;
+      }
+      const seen = getSeenActivityIds();
+      const newFlashIds = new Set(freshActivity.filter((a) => isFlashWorthyActivity(a) && !seen.has(a.id)).map((a) => a.id));
+      activity.length = 0;
+      activity.push(...freshActivity);
+      renderTodaysActivityCard(main, activity, newFlashIds);
+      markActivityIdsSeen(freshActivity.map((a) => a.id));
+    }, 20000);
+  }
   const generalMsgBtn = main.querySelector("#sendGeneralMsgBtn");
   if (generalMsgBtn) {
     generalMsgBtn.addEventListener("click", async () => {

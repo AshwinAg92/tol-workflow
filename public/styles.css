@@ -197,6 +197,14 @@ select.stage-select { width:auto; padding:4px 6px; font-size:12px; border-radius
 .dash-list-item .muted { font-size:11.5px; }
 .dash-list-item-click { cursor:pointer; border-radius:6px; margin:0 -8px; padding:9px 8px; }
 .dash-list-item-click:hover { background:#F3EEE2; }
+/* A newly-seen "accepted via confirmation link" activity line pulses green a
+   few times so it catches the eye on the Dashboard -- the one activity event
+   that can happen with nobody at a keyboard to notice it otherwise. */
+.activity-flash { border-radius:6px; margin:0 -8px; padding:9px 8px; animation:activityFlash 1.1s ease-in-out 3; }
+@keyframes activityFlash {
+  0%, 100% { background:transparent; }
+  50% { background:#CDEBD4; }
+}
 
 .task-row { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid #EFE9DC; }
 .task-row:last-child { border-bottom:none; }
