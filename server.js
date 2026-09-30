@@ -620,6 +620,96 @@ app.delete("/api/b2b-contacts/:id", requireAuth, requireSection("b2b"), async (r
   res.status(204).end();
 });
 
+// ---------- Musicians directory (freelance pool, filterable by city/instrument) ----------
+// Separate from Team — a wider roster of musicians you've come across, not
+// just the ones actively performing with you. A musician can be promoted
+// into Team (team_id gets set) without a login being created; a login is
+// added separately, whenever wanted, from the Team tab's existing flow.
+app.get("/api/musicians", requireAuth, requireSection("musicians"), async (req, res) => {
+  const { rows: musicians } = await pool.query(`
+    SELECT musicians.*, team.name AS team_name
+    FROM musicians
+    LEFT JOIN team ON team.id = musicians.team_id
+    ORDER BY musicians.name ASC
+  `);
+  const ids = musicians.map((m) => m.id);
+  const instrumentRows = ids.length > 0
+    ? (await pool.query(`SELECT musician_id, instrument FROM musician_instruments WHERE musician_id = ANY($1) ORDER BY instrument ASC`, [ids])).rows
+    : [];
+  res.json(musicians.map((m) => ({
+    ...m,
+    instruments: instrumentRows.filter((i) => i.musician_id === m.id).map((i) => i.instrument),
+  })));
+});
+
+app.post("/api/musicians", requireAuth, requireSection("musicians"), async (req, res) => {
+  const { name, phone, city, rateLocal, rateOutstation, notes, instruments } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: "Name is required" });
+  const id = uuid();
+  await pool.query(`
+    INSERT INTO musicians (id, name, phone, city, rate_local, rate_outstation, notes, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+  `, [id, name.trim(), phone || null, city || null, rateLocal || null, rateOutstation || null, notes || null, new Date().toISOString()]);
+  const instrumentList = Array.isArray(instruments) ? [...new Set(instruments.map((i) => i.trim()).filter(Boolean))] : [];
+  for (const instrument of instrumentList) {
+    await pool.query(`INSERT INTO musician_instruments (id, musician_id, instrument) VALUES ($1, $2, $3)`, [uuid(), id, instrument]);
+  }
+  logActivity(req, `Added musician: ${name.trim()}${instrumentList.length ? ` (${instrumentList.join(", ")})` : ""}`, null);
+  res.status(201).json({ id });
+});
+
+app.patch("/api/musicians/:id", requireAuth, requireSection("musicians"), async (req, res) => {
+  const musician = (await pool.query("SELECT * FROM musicians WHERE id = $1", [req.params.id])).rows[0];
+  if (!musician) return res.status(404).json({ error: "Musician not found" });
+  const fields = ["name", "phone", "city", "rate_local", "rate_outstation", "notes"];
+  const updates = [];
+  const values = [];
+  fields.forEach((f) => {
+    const bodyKey = f === "rate_local" ? "rateLocal" : f === "rate_outstation" ? "rateOutstation" : f;
+    if (req.body[bodyKey] !== undefined) {
+      values.push(req.body[bodyKey] || null);
+      updates.push(`${f} = $${values.length}`);
+    }
+  });
+  if (updates.length > 0) {
+    values.push(req.params.id);
+    await pool.query(`UPDATE musicians SET ${updates.join(", ")} WHERE id = $${values.length}`, values);
+  }
+  if (Array.isArray(req.body.instruments)) {
+    await pool.query("DELETE FROM musician_instruments WHERE musician_id = $1", [req.params.id]);
+    const instrumentList = [...new Set(req.body.instruments.map((i) => i.trim()).filter(Boolean))];
+    for (const instrument of instrumentList) {
+      await pool.query(`INSERT INTO musician_instruments (id, musician_id, instrument) VALUES ($1, $2, $3)`, [uuid(), req.params.id, instrument]);
+    }
+  }
+  const updated = (await pool.query("SELECT * FROM musicians WHERE id = $1", [req.params.id])).rows[0];
+  const instruments = (await pool.query("SELECT instrument FROM musician_instruments WHERE musician_id = $1 ORDER BY instrument ASC", [req.params.id])).rows.map((r) => r.instrument);
+  res.json({ ...updated, instruments });
+});
+
+app.delete("/api/musicians/:id", requireAuth, requireSection("musicians"), async (req, res) => {
+  await pool.query("DELETE FROM musicians WHERE id = $1", [req.params.id]);
+  res.status(204).end();
+});
+
+// Promotes a musician into Team — creates the team row (no login) and links
+// it back on the musician record. Gated by manage_team (not just the
+// "musicians" section) since it's really a Team-management action.
+app.post("/api/musicians/:id/promote", requireAuth, requireCapability("manage_team"), async (req, res) => {
+  const musician = (await pool.query("SELECT * FROM musicians WHERE id = $1", [req.params.id])).rows[0];
+  if (!musician) return res.status(404).json({ error: "Musician not found" });
+  if (musician.team_id) return res.status(400).json({ error: "Already added to Team" });
+  const instruments = (await pool.query("SELECT instrument FROM musician_instruments WHERE musician_id = $1 ORDER BY instrument ASC", [req.params.id])).rows.map((r) => r.instrument);
+  const teamId = uuid();
+  await pool.query(`
+    INSERT INTO team (id, name, role, phone, specialty, base_city, local_fee, outstation_fee)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+  `, [teamId, musician.name, instruments.length ? `${instruments.join(", ")} player` : "Musician", musician.phone || null, instruments.join(", ") || null, musician.city || null, musician.rate_local || null, musician.rate_outstation || null]);
+  await pool.query("UPDATE musicians SET team_id = $1 WHERE id = $2", [teamId, req.params.id]);
+  logActivity(req, `Added ${musician.name} to Team from the Musicians directory`, null);
+  res.status(201).json({ teamId });
+});
+
 app.post("/api/leads", async (req, res) => {
   const {
     name, phone, email, eventType, city, state, date, budget, notes,

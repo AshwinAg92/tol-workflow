@@ -121,6 +121,7 @@ const NAV = [
   { id: "travelcal", label: "Travel Calendar" },
   { id: "documents", label: "Documents" },
   { id: "b2b", label: "B2B Contacts" },
+  { id: "musicians", label: "Musicians" },
   { id: "team", label: "Team" },
   { id: "website", label: "Website" },
   { id: "settings", label: "Settings" },
@@ -140,6 +141,7 @@ const NAV_GROUPS = {
   travelcal: "Operations",
   documents: "Operations",
   b2b: "Operations",
+  musicians: "Operations",
   team: "Operations",
   website: "Admin",
   settings: "Admin",
@@ -6057,6 +6059,185 @@ function openB2bContactModal(contact, onDone) {
   });
 }
 
+// ---------- Musicians directory (freelance pool, filterable by city/instrument) ----------
+async function renderMusicians(main) {
+  main.innerHTML = `<div class="view-head"><div><h2>Musicians</h2></div></div><p class="muted">Loading…</p>`;
+  let musicians;
+  try {
+    musicians = await api("/api/musicians");
+  } catch (err) {
+    main.innerHTML = `<div class="view-head"><div><h2>Musicians</h2></div></div><p class="muted small">Couldn't load musicians.</p>`;
+    return;
+  }
+
+  let cityFilter = "";
+  let instrumentFilter = "";
+  const canManage = canManageTeam();
+
+  function distinctSorted(values) {
+    return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  }
+
+  function renderList() {
+    const listEl = main.querySelector("#musiciansList");
+    const cities = distinctSorted(musicians.map((m) => m.city));
+    const instruments = distinctSorted(musicians.flatMap((m) => m.instruments));
+
+    const cityFilterEl = main.querySelector("#musCityFilter");
+    const instFilterEl = main.querySelector("#musInstrumentFilter");
+    cityFilterEl.innerHTML = `<option value="">All cities</option>${cities.map((c) => `<option value="${c}" ${cityFilter === c ? "selected" : ""}>${c}</option>`).join("")}`;
+    instFilterEl.innerHTML = `<option value="">All instruments</option>${instruments.map((i) => `<option value="${i}" ${instrumentFilter === i ? "selected" : ""}>${i}</option>`).join("")}`;
+
+    const filtered = musicians.filter((m) =>
+      (!cityFilter || m.city === cityFilter) &&
+      (!instrumentFilter || m.instruments.includes(instrumentFilter))
+    );
+
+    if (musicians.length === 0) {
+      listEl.innerHTML = `<p class="muted small">No musicians added yet — add one above.</p>`;
+      return;
+    }
+    if (filtered.length === 0) {
+      listEl.innerHTML = `<p class="muted small">No musicians match this filter.</p>`;
+      return;
+    }
+    listEl.innerHTML = "";
+    filtered.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach((m) => {
+      const card = el(`
+        <div class="card" style="margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+            <div>
+              <div style="font-weight:600;">${m.name}${m.team_id ? ` <span class="mono small" style="background:#E8F0E9; color:#5C8A6B; border-radius:4px; padding:2px 8px; font-weight:600;">✓ In Team</span>` : ""}</div>
+              <div class="muted small">${[m.phone, m.city].filter(Boolean).join(" · ") || "No contact details on file"}</div>
+              ${m.instruments.length > 0 ? `<div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">${m.instruments.map((i) => `<span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:2px 8px;">🎵 ${i}</span>`).join("")}</div>` : `<div class="muted small" style="margin-top:2px;">No instruments tagged</div>`}
+              ${(m.rate_local || m.rate_outstation) ? `<div class="muted small" style="margin-top:4px;">${m.rate_local ? `Local ${inr(m.rate_local)}` : ""}${m.rate_local && m.rate_outstation ? " · " : ""}${m.rate_outstation ? `Outstation ${inr(m.rate_outstation)}` : ""}</div>` : ""}
+              ${m.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${m.notes}</div>` : ""}
+            </div>
+          </div>
+          ${canManage ? `
+            <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">
+              ${!m.team_id ? `<button class="btn-ghost promote-musician-btn" data-musician-id="${m.id}" style="font-size:12px; padding:4px 9px;">+ Add to Team</button>` : ""}
+              <button class="btn-ghost edit-musician-btn" data-musician-id="${m.id}" style="font-size:12px; padding:4px 9px;">Edit</button>
+              <button class="btn-ghost delete-musician-btn" data-musician-id="${m.id}" style="font-size:12px; padding:4px 9px; color:#A64B3C;">Delete</button>
+            </div>
+          ` : ""}
+        </div>
+      `);
+      listEl.appendChild(card);
+    });
+
+    if (!canManage) return;
+    listEl.querySelectorAll(".promote-musician-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const m = musicians.find((x) => x.id === btn.dataset.musicianId);
+        if (!confirm(`Add ${m.name} to Team? You can give them a login later from the Team tab whenever you'd like.`)) return;
+        btn.disabled = true;
+        try {
+          const result = await api(`/api/musicians/${m.id}/promote`, { method: "POST" });
+          m.team_id = result.teamId;
+          TEAM = await api("/api/team");
+          renderList();
+        } catch (err) {
+          alert(err.message);
+          btn.disabled = false;
+        }
+      });
+    });
+    listEl.querySelectorAll(".edit-musician-btn").forEach((btn) => {
+      btn.addEventListener("click", () => openMusicianModal(musicians.find((x) => x.id === btn.dataset.musicianId), () => renderMusicians(main)));
+    });
+    listEl.querySelectorAll(".delete-musician-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this musician?")) return;
+        await api(`/api/musicians/${btn.dataset.musicianId}`, { method: "DELETE" });
+        musicians = musicians.filter((x) => x.id !== btn.dataset.musicianId);
+        renderList();
+      });
+    });
+  }
+
+  main.innerHTML = `
+    <div class="view-head">
+      <div><h2>Musicians</h2><p class="muted">Your wider pool of musicians — filterable by city and instrument, so you can quickly find who to reach out to.</p></div>
+      ${canManage ? `<button class="btn-primary" id="addMusicianBtn">+ Add musician</button>` : ""}
+    </div>
+    <div class="card" style="margin-bottom:18px;">
+      <div class="row-2">
+        <div><label>City</label><select id="musCityFilter"></select></div>
+        <div><label>Instrument</label><select id="musInstrumentFilter"></select></div>
+      </div>
+    </div>
+    <div id="musiciansList"></div>
+  `;
+
+  main.querySelector("#musCityFilter").addEventListener("change", (e) => { cityFilter = e.target.value; renderList(); });
+  main.querySelector("#musInstrumentFilter").addEventListener("change", (e) => { instrumentFilter = e.target.value; renderList(); });
+  if (canManage) {
+    main.querySelector("#addMusicianBtn").addEventListener("click", () => openMusicianModal(null, () => renderMusicians(main)));
+  }
+
+  renderList();
+}
+
+function openMusicianModal(musician, onDone) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card" style="width:440px; max-width:96vw;">
+        <div class="modal-head"><h3>${musician ? "Edit musician" : "Add musician"}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body">
+          <label>Name</label>
+          <input id="muName" value="${musician?.name || ""}" placeholder="e.g. Rakesh Verma" />
+          <label style="margin-top:8px;">Instruments (comma-separated)</label>
+          <input id="muInstruments" value="${(musician?.instruments || []).join(", ")}" placeholder="e.g. Tabla, Dholak" />
+          <label style="margin-top:8px;">City</label>
+          <input id="muCity" value="${musician?.city || ""}" placeholder="e.g. Siliguri" />
+          <label style="margin-top:8px;">Phone / WhatsApp</label>
+          <input id="muPhone" value="${musician?.phone || ""}" />
+          <div class="row-2" style="margin-top:8px;">
+            <div><label>Local rate (₹)</label><input id="muRateLocal" type="number" value="${musician?.rate_local || ""}" placeholder="e.g. 3000" /></div>
+            <div><label>Outstation rate (₹)</label><input id="muRateOutstation" type="number" value="${musician?.rate_outstation || ""}" placeholder="e.g. 5000" /></div>
+          </div>
+          <label style="margin-top:8px;">Notes (optional)</label>
+          <input id="muNotes" value="${musician?.notes || ""}" placeholder="How you know them, availability, etc." />
+        </div>
+        <div class="modal-foot">
+          <button class="btn-ghost" id="cancelModal">Cancel</button>
+          <button class="btn-primary" id="muSaveBtn">Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#muSaveBtn").addEventListener("click", async () => {
+    const name = root.querySelector("#muName").value.trim();
+    if (!name) return alert("Enter a name first.");
+    const payload = {
+      name,
+      instruments: root.querySelector("#muInstruments").value.split(",").map((i) => i.trim()).filter(Boolean),
+      city: root.querySelector("#muCity").value.trim() || null,
+      phone: root.querySelector("#muPhone").value.trim() || null,
+      rateLocal: root.querySelector("#muRateLocal").value || null,
+      rateOutstation: root.querySelector("#muRateOutstation").value || null,
+      notes: root.querySelector("#muNotes").value.trim() || null,
+    };
+    const btn = root.querySelector("#muSaveBtn");
+    btn.disabled = true;
+    try {
+      if (musician) await api(`/api/musicians/${musician.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+      else await api("/api/musicians", { method: "POST", body: JSON.stringify(payload) });
+      close();
+      if (onDone) onDone();
+    } catch (err) {
+      alert(err.message);
+      btn.disabled = false;
+    }
+  });
+}
+
 async function renderDocuments(main) {
   // Confirmed and Completed events both get a card here — Completed clients
   // still need to receive documents sometimes (invoices, thank-you notes,
@@ -7812,6 +7993,7 @@ function renderMain() {
   else if (currentTab === "tasks") renderTasks(main);
   else if (currentTab === "documents") renderDocuments(main);
   else if (currentTab === "b2b") renderB2bContacts(main);
+  else if (currentTab === "musicians") renderMusicians(main);
   else if (currentTab === "calendar") renderCalendar(main);
   else if (currentTab === "team") renderTeam(main);
   else if (currentTab === "accounts") renderAccounts(main);

@@ -567,6 +567,34 @@ async function setup() {
   // reached again later.
   await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS base_city TEXT`);
 
+  // A directory of musicians (freelance pool + contacts) — separate from
+  // Team, so it can hold anyone you've come across, not just people
+  // actively performing with you. Tagged by city and the instrument(s)
+  // each one plays so they can be filtered when sourcing artists for an
+  // event. team_id is set once a musician is promoted into Team; that
+  // promotion never creates a login by itself — a login is added
+  // separately, whenever wanted, from the Team tab.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS musicians (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      phone TEXT,
+      city TEXT,
+      rate_local INTEGER,
+      rate_outstation INTEGER,
+      notes TEXT,
+      team_id TEXT REFERENCES team(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS musician_instruments (
+      id TEXT PRIMARY KEY,
+      musician_id TEXT NOT NULL REFERENCES musicians(id) ON DELETE CASCADE,
+      instrument TEXT NOT NULL
+    );
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS activity_log (
       id TEXT PRIMARY KEY,
