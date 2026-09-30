@@ -1659,7 +1659,7 @@ async function renderLeadsLog(main, skipRefresh) {
             ${l.phone ? `<button class="btn-ghost contact-lead-btn" data-phone="${l.phone}">📞 Contact</button>` : ""}
             ${isConfirmedOrDone && hasAccountsAccess() ? `<button class="btn-ghost payments-btn" data-lead-id="${l.id}">💰 Payments</button>` : ""}
             ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost confirmation-msg-btn" data-lead-id="${l.id}">✅ Confirmation msg</button>` : ""}
-            ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team</button>` : ""}
+            ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team & Expenses</button>` : ""}
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost travel-plan-btn" data-lead-id="${l.id}">🧳 Travel</button>` : ""}
             ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost lead-documents-btn" data-lead-id="${l.id}">📄 Documents</button>` : ""}
             ${hasLeadsAccess() && l.stage !== "Completed" ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}">✎ Edit</button>` : ""}
@@ -3888,7 +3888,7 @@ async function openLeadPaymentsModal(leadId) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
-        <div class="modal-head"><h3>Payments — ${lead.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-head"><h3>Client Payments — ${lead.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body"><p class="muted small">Loading…</p></div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
       </div>
@@ -3924,7 +3924,6 @@ async function openLeadPaymentsModal(leadId) {
     const received = feePayments.reduce((s, p) => s + p.amount, 0);
     const balance = (total - received) + totalReimbursementDue;
     const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
-    const pendingExpenses = expenses.filter((e) => !e.paid);
     body.innerHTML = `
       <div class="dash-stats" style="grid-template-columns:repeat(2,1fr); margin-bottom:16px; gap:8px;">
         <div class="card summary-card summary-card-compact"><div class="muted">Final rate</div><div class="mono big">${inr(total)}</div></div>
@@ -3994,24 +3993,6 @@ async function openLeadPaymentsModal(leadId) {
         </label>
       ` : ""}
       <button class="btn-primary full" id="lpAddBtn" style="margin-top:10px;">Add payment</button>
-
-      <div class="section-label" style="margin-top:20px;">Artist payments${totalExpenses ? ` — ${inr(totalExpenses)} total${pendingExpenses.length ? `, ${inr(pendingExpenses.reduce((s, e) => s + e.amount, 0))} pending` : ""}` : ""}</div>
-      <div>
-        ${expenses.length === 0 ? `<p class="muted small">No artist fees or other costs logged for this event yet — add them from the Team button.</p>` : expenses.map((e) => {
-          const member = TEAM.find((m) => m.id === e.team_id);
-          return `
-            <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
-              <div>
-                <div>${e.head}${member && !e.head.includes(member.name) ? ` <span class="muted small">— ${member.name}</span>` : ""}</div>
-                <div class="muted small mono">${inr(e.amount)}${e.paid && e.payment_date ? ` · Paid ${fmtDate(e.payment_date)}${e.payment_mode ? ` (${e.payment_mode})` : ""}` : ""}</div>
-              </div>
-              ${e.paid
-                ? `<span class="tag" style="color:#5C8A6B;">Paid</span>`
-                : `<button class="btn-ghost mark-expense-paid-btn" data-expense-id="${e.id}">Mark paid</button>`}
-            </div>
-          `;
-        }).join("")}
-      </div>
     `;
 
     const typeSelect = body.querySelector("#lpType");
@@ -4084,23 +4065,6 @@ async function openLeadPaymentsModal(leadId) {
         btn.disabled = true;
         try {
           await api(`/api/payments/${btn.dataset.deletePayment}`, { method: "DELETE" });
-          await refreshLeads();
-          const [freshPayments, freshExpenses] = await Promise.all([
-            api(`/api/leads/${leadId}/payments`), api(`/api/expenses?leadId=${leadId}`),
-          ]);
-          draw(freshPayments, freshExpenses);
-        } catch (err) {
-          alert(err.message);
-          btn.disabled = false;
-        }
-      });
-    });
-
-    body.querySelectorAll(".mark-expense-paid-btn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        btn.disabled = true;
-        try {
-          await api(`/api/expenses/${btn.dataset.expenseId}`, { method: "PATCH", body: JSON.stringify({ paid: true }) });
           await refreshLeads();
           const [freshPayments, freshExpenses] = await Promise.all([
             api(`/api/leads/${leadId}/payments`), api(`/api/expenses?leadId=${leadId}`),
@@ -4261,7 +4225,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card" style="width:680px; max-width:96vw;">
-        <div class="modal-head"><h3>Team for ${lead.name}${lead.occasion ? ` <span class="muted" style="font-weight:400; font-size:14px;">— ${lead.occasion}</span>` : ""}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-head"><h3>Team & Expenses — ${lead.name}${lead.occasion ? ` <span class="muted" style="font-weight:400; font-size:14px;">— ${lead.occasion}</span>` : ""}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <button class="btn-ghost" id="openTravelPlanFromTeamBtn" style="margin-bottom:12px;">🧳 Travel plan</button>
           <label>Venue</label>
@@ -4319,8 +4283,11 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                       ${isAdmin
                         ? `<div style="flex-shrink:0; text-align:right;">
                             <input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : (suggestedFee || "")}" style="width:88px; font-size:12.5px; padding:4px 6px;" />
+                            ${existingFee ? (existingFee.paid
+                              ? `<div class="muted small" style="margin-top:3px; color:#5C8A6B;">Paid</div>`
+                              : `<button class="btn-ghost mark-fee-paid-btn" data-expense-id="${existingFee.id}" style="margin-top:3px; font-size:11px; padding:2px 7px;">Mark paid</button>`) : ""}
                           </div>`
-                        : (CURRENT_USER?.teamId === m.id && existingFee ? `<span class="muted small" style="flex-shrink:0; white-space:nowrap;">Your fee: ${inr(existingFee.amount)}</span>` : "")}
+                        : (CURRENT_USER?.teamId === m.id && existingFee ? `<span class="muted small" style="flex-shrink:0; white-space:nowrap;">Your fee: ${inr(existingFee.amount)}${existingFee.paid ? " · Paid" : " · Pending"}</span>` : "")}
                     </div>
                     ${a ? `
                       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px; padding-top:6px; border-top:1px solid #EFE9DC;">
@@ -4371,7 +4338,10 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                     <div style="font-weight:600;">${e.head}</div>
                     <div class="muted small">${inr(e.amount)}${e.paid ? " · Paid" : " · Pending"}</div>
                   </div>
-                  <button class="btn-ghost remove-other-expense-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 9px; flex-shrink:0; color:#A64B3C;">🗑</button>
+                  <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+                    ${!e.paid ? `<button class="btn-ghost mark-fee-paid-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 8px;">Mark paid</button>` : ""}
+                    <button class="btn-ghost remove-other-expense-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 9px; color:#A64B3C;">🗑</button>
+                  </div>
                 </div>
               `).join("")}
             </div>
@@ -4520,6 +4490,18 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       if (!confirm("Remove this expense?")) return;
       await api(`/api/expenses/${btn.dataset.expenseId}`, { method: "DELETE" });
       openAssignTeamModal(leadId);
+    });
+  });
+  root.querySelectorAll(".mark-fee-paid-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        await api(`/api/expenses/${btn.dataset.expenseId}`, { method: "PATCH", body: JSON.stringify({ paid: true }) });
+        openAssignTeamModal(leadId);
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+      }
     });
   });
   root.querySelector("#reimbTeamId").addEventListener("change", (e) => {
