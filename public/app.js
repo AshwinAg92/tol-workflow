@@ -4339,6 +4339,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                         ` : `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" style="font-size:11.5px; padding:3px 8px;">💬 WhatsApp</a>`) : ""}
                         <button class="btn-ghost copy-confirm-link-btn" data-confirm-link="${confirmLink}" style="font-size:11.5px; padding:3px 8px;">🔗 Copy link</button>
                       </div>
+                      ${a.note ? `<div class="muted small" style="margin-top:6px;">📝 ${a.note}</div>` : ""}
                     ` : ""}
                   </div>
                 `;

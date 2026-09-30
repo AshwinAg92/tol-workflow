@@ -203,6 +203,10 @@ async function setup() {
   for (const row of assignmentsNeedingToken) {
     await pool.query("UPDATE event_assignments SET confirm_token = $1 WHERE id = $2", [uuid(), row.id]);
   }
+  // A free-text note the artist can leave on their own confirmation link
+  // (e.g. "running late that day, can arrive by 6" or a special request) —
+  // visible back in the Team assignment box, same place their status shows.
+  await pool.query(`ALTER TABLE event_assignments ADD COLUMN IF NOT EXISTS note TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_performer INTEGER NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS event_time TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS soundcheck_time TEXT`);

@@ -2066,7 +2066,7 @@ app.patch("/api/assignments/:id/mark-response", requireAuth, requireCapability("
 // over WhatsApp are exposed here — never the client's phone/email or money.
 app.get("/api/public/assignment/:token", async (req, res) => {
   const row = (await pool.query(`
-    SELECT event_assignments.status, event_assignments.responded_at,
+    SELECT event_assignments.status, event_assignments.responded_at, event_assignments.note,
            team.name AS team_name,
            leads.name AS client_name, leads.event_type, leads.city, leads.date,
            leads.venue, leads.event_time, leads.soundcheck_time, leads.pcs
@@ -2080,6 +2080,7 @@ app.get("/api/public/assignment/:token", async (req, res) => {
     teamName: row.team_name,
     status: row.status,
     respondedAt: row.responded_at,
+    note: row.note,
     clientName: row.client_name,
     experience: packageName(row.event_type),
     city: row.city,
@@ -2092,17 +2093,29 @@ app.get("/api/public/assignment/:token", async (req, res) => {
 });
 
 app.post("/api/public/assignment/:token/respond", async (req, res) => {
-  const { status } = req.body;
+  const { status, note } = req.body;
   if (!["accepted", "declined"].includes(status)) return res.status(400).json({ error: "status must be 'accepted' or 'declined'" });
   const a = (await pool.query("SELECT * FROM event_assignments WHERE confirm_token = $1", [req.params.token])).rows[0];
   if (!a) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
-  await pool.query("UPDATE event_assignments SET status = $1, responded_at = $2 WHERE id = $3", [status, new Date().toISOString(), a.id]);
+  await pool.query("UPDATE event_assignments SET status = $1, responded_at = $2, note = $3 WHERE id = $4", [
+    status, new Date().toISOString(), note !== undefined ? (note || null) : a.note, a.id,
+  ]);
   const lead = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [a.lead_id])).rows[0];
   const member = (await pool.query("SELECT name FROM team WHERE id = $1", [a.team_id])).rows[0];
   if (lead) {
-    logActivity({ user: null }, `${member ? member.name : "An artist"} ${status} ${lead.name} (${lead.date}) via confirmation link`, a.lead_id);
+    logActivity({ user: null }, `${member ? member.name : "An artist"} ${status} ${lead.name} (${lead.date}) via confirmation link${note ? " with a note" : ""}`, a.lead_id);
   }
-  res.json({ status });
+  res.json({ status, note: note !== undefined ? (note || null) : a.note });
+});
+
+// Lets the artist leave/update their note independently of accept/decline —
+// e.g. adding "running late, can arrive by 6" after already accepting.
+app.post("/api/public/assignment/:token/note", async (req, res) => {
+  const { note } = req.body;
+  const a = (await pool.query("SELECT * FROM event_assignments WHERE confirm_token = $1", [req.params.token])).rows[0];
+  if (!a) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
+  await pool.query("UPDATE event_assignments SET note = $1 WHERE id = $2", [(note || "").trim() || null, a.id]);
+  res.json({ note: (note || "").trim() || null });
 });
 
 // ---------- Travel legs (per-artist travel plan for outstation events) ----------

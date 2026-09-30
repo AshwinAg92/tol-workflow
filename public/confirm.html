@@ -53,10 +53,18 @@
       font-family:'Nunito',sans-serif; cursor:pointer; transition:opacity 0.15s;
     }
     button:disabled { opacity:0.5; cursor:default; }
-    .btn-accept { background:#5C8A6B; color:#FFFFFF; }
+    .btn-accept { background:#22C55E; color:#FFFFFF; }
     .btn-decline { background:#FFFFFF; color:#A64B3C; border:1.5px solid #E9C9BE; }
     .msg { text-align:center; font-size:14.5px; margin-top:18px; color:#3A2418; }
     .loading, .error { text-align:center; padding:40px 0; color:#8A6A54; }
+    .note-label { font-size:11.5px; text-transform:uppercase; letter-spacing:0.03em; color:#B29578; margin-top:20px; margin-bottom:6px; display:block; }
+    textarea {
+      width:100%; padding:11px 12px; border:1.5px solid #F0DCC8; border-radius:9px;
+      font-size:14px; font-family:'Nunito',sans-serif; color:#3A2418; background:#FFFDFA;
+      resize:vertical; min-height:64px;
+    }
+    textarea:focus { outline:none; border-color:#C7401E; }
+    .btn-save-note { width:100%; margin-top:8px; background:#F0DCC8; color:#3A2418; }
   </style>
 </head>
 <body>
@@ -91,6 +99,8 @@
         ["🎸", "Band size", data.pcs ? `${data.pcs} pcs` : null],
       ].filter(([, , v]) => v);
 
+      const escapeHtml = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
       card.innerHTML = `
         <div class="greet">Hi ${data.teamName || "there"} 👋</div>
         <div>You've been booked for:</div>
@@ -110,6 +120,9 @@
           <button class="btn-accept" id="acceptBtn" ${data.status === "accepted" ? "disabled" : ""}>✓ Accept</button>
           <button class="btn-decline" id="declineBtn" ${data.status === "declined" ? "disabled" : ""}>✕ Decline</button>
         </div>
+        <label class="note-label" for="noteInput">Note for the organizer (optional)</label>
+        <textarea id="noteInput" placeholder="e.g. running a bit late, can arrive by 6pm">${escapeHtml(data.note)}</textarea>
+        <button class="btn-save-note" id="saveNoteBtn">Save note</button>
         <div class="msg" id="msg"></div>
       `;
 
@@ -117,14 +130,16 @@
         document.getElementById("acceptBtn").disabled = true;
         document.getElementById("declineBtn").disabled = true;
         document.getElementById("msg").textContent = "Saving…";
+        const note = document.getElementById("noteInput").value.trim();
         try {
           const res = await fetch(`/api/public/assignment/${encodeURIComponent(token)}/respond`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ status }),
+            body: JSON.stringify({ status, note }),
           });
           if (!res.ok) throw new Error((await res.json()).error || "Something went wrong");
           data.status = status;
+          data.note = note;
           render(data);
           document.getElementById("msg").textContent = status === "accepted" ? "Thanks — see you there! 🎉" : "Got it — thanks for letting us know.";
         } catch (err) {
@@ -133,8 +148,29 @@
           document.getElementById("declineBtn").disabled = data.status === "declined";
         }
       }
+      async function saveNote() {
+        const btn = document.getElementById("saveNoteBtn");
+        const note = document.getElementById("noteInput").value.trim();
+        btn.disabled = true;
+        document.getElementById("msg").textContent = "Saving note…";
+        try {
+          const res = await fetch(`/api/public/assignment/${encodeURIComponent(token)}/note`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ note }),
+          });
+          if (!res.ok) throw new Error((await res.json()).error || "Something went wrong");
+          data.note = note;
+          document.getElementById("msg").textContent = "Note saved.";
+        } catch (err) {
+          document.getElementById("msg").textContent = err.message;
+        } finally {
+          btn.disabled = false;
+        }
+      }
       document.getElementById("acceptBtn").addEventListener("click", () => respond("accepted"));
       document.getElementById("declineBtn").addEventListener("click", () => respond("declined"));
+      document.getElementById("saveNoteBtn").addEventListener("click", saveNote);
     }
 
     if (!token) {
