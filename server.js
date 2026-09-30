@@ -2113,6 +2113,16 @@ app.post("/api/public/assignment/:token/respond", async (req, res) => {
   const member = (await pool.query("SELECT name FROM team WHERE id = $1", [a.team_id])).rows[0];
   if (lead) {
     logActivity({ user: null }, `${member ? member.name : "An artist"} ${status} ${lead.name} (${lead.date}) via confirmation link${note ? " with a note" : ""}`, a.lead_id);
+    // A Dashboard flash only works if someone happens to be looking at the
+    // Dashboard tab at that exact moment — a real push notification catches
+    // it even when nobody's watching, which is the whole point here.
+    const emoji = status === "accepted" ? "✅" : "❌";
+    await sendPushToAll(
+      `${emoji} ${member ? member.name : "An artist"} ${status}`,
+      `${lead.name} (${lead.date})${note ? " — left a note" : ""}`,
+      "/",
+      { adminOnly: true }
+    );
   }
   res.json({ status, note: note !== undefined ? (note || null) : a.note });
 });
