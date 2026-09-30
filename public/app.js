@@ -4219,17 +4219,21 @@ function openTempArtistDirectoryModal(directory, onBack) {
   render();
 }
 
-async function openAssignTeamModal(leadId) {
+async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   const lead = LEADS.find((l) => l.id === leadId);
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
-  const [assignments, tempArtists, leadExpenses, myReimbursements, myOwnFee, tempArtistDirectory] = await Promise.all([
+  const [assignments, tempArtists, leadExpenses, myReimbursements, myOwnFee, tempArtistDirectory, allMusicians] = await Promise.all([
     api(`/api/leads/${leadId}/assignments`),
     api(`/api/leads/${leadId}/temp-artists`),
     isAdmin ? api(`/api/expenses?leadId=${leadId}`) : Promise.resolve([]),
     api(`/api/my/reimbursements`).catch(() => []),
     !isAdmin ? api(`/api/my/artist-fee?leadId=${leadId}`).catch(() => null) : Promise.resolve(null),
     api(`/api/temp-artists`).catch(() => []),
+    api(`/api/musicians`).catch(() => []),
   ]);
+  // Only musicians not already promoted into Team are offered here — once
+  // promoted they show up in the regular Team checklist below like anyone else.
+  const unpromotedMusicians = allMusicians.filter((m) => !m.team_id);
   const leadReimbursements = myReimbursements.filter((r) => r.lead_id === leadId);
   const reimbStatusLabel = { 0: "Pending approval", 1: "Approved" };
   const byTeamId = {};
@@ -4265,69 +4269,92 @@ async function openAssignTeamModal(leadId) {
           </div>
           <label>Venue</label>
           <input id="venueInput" placeholder="e.g. Radhika Function Hall, MG Road" value="${lead.venue || ""}" style="margin-bottom:14px;" />
-          ${TEAM.map((m) => {
-            const a = byTeamId[m.id];
-            const existingFee = feeExpenseByTeamId[m.id];
-            const waDigits = (m.phone || "").replace(/\D/g, "");
-            // Only the manager needs the full logistics (venue, timings, band
-            // size) so they can plan the other artists — everyone else just
-            // needs to know when and where they're playing.
-            const isManager = /manager/i.test(m.role || "");
-            const waMsg = fillTemplate(MESSAGE_TEMPLATES.artist_confirmation || TEMPLATE_META.artist_confirmation.default, {
-              artistName: m.name,
-              clientName: lead.name,
-              experience: packageName(lead.event_type),
-              date: fmtDate(lead.date),
-              cityClause: lead.city ? ` in ${lead.city}` : "",
-              // Only a manager needs the full logistics (venue, timings, band
-              // size) so they can plan the other artists — everyone else just
-              // needs to know when and where they're playing.
-              venueClause: isManager && lead.venue ? ` at ${lead.venue}` : "",
-              eventTimeClause: isManager && lead.event_time ? ` Event time: ${lead.event_time}.` : "",
-              soundcheckClause: isManager && lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : "",
-              pcsClause: isManager && lead.pcs ? ` Band size for this event: ${lead.pcs} pcs.` : "",
-            });
-            const isLocalEvent = m.base_city && lead.city && m.base_city.trim().toLowerCase() === lead.city.trim().toLowerCase();
-            const suggestedFee = isLocalEvent ? m.local_fee : m.outstation_fee;
+          ${(() => {
+            const assignedCount = TEAM.filter((m) => byTeamId[m.id]).length;
+            // Collapsed by default once the lineup is already set (nothing new
+            // to decide on reopen) — expanded for a fresh event with nobody
+            // assigned yet, or right after adding someone, since those are
+            // exactly the moments you need the full list in view.
+            const startExpanded = assignedCount === 0 || !!autoCheckTeamId;
             return `
-              <div class="card" style="margin-bottom:10px; padding:12px 14px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-                  <label style="display:flex; align-items:center; gap:10px; flex:1; min-width:0; cursor:pointer;">
-                    <input type="checkbox" class="assign-team-checkbox" data-team-id="${m.id}" ${a ? "checked" : ""} style="flex-shrink:0;" />
-                    <span style="min-width:0;">
-                      <div style="font-weight:600;">${m.name}</div>
-                      <div class="muted small">${m.role || ""}${m.base_city ? ` · 📍 ${m.base_city}` : ""}</div>
-                    </span>
-                  </label>
-                  ${isAdmin
-                    ? `<div style="flex-shrink:0; text-align:right;">
-                        <input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : (suggestedFee || "")}" style="width:100px;" />
-                        ${!existingFee && suggestedFee ? `<div class="muted small" style="margin-top:2px;">${isLocalEvent ? "local" : "outstation"} preset</div>` : ""}
-                      </div>`
-                    : (CURRENT_USER?.teamId === m.id && existingFee ? `<span class="muted small" style="flex-shrink:0; white-space:nowrap;">Your fee: ${inr(existingFee.amount)}</span>` : "")}
-                </div>
-                ${a ? `
-                  <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; padding-top:10px; border-top:1px solid #EFE9DC;">
-                    <select class="mark-response-select" data-assignment-id="${a.id}" style="font-size:12.5px; padding:4px 8px; color:${statusColor[a.status]};">
-                      <option value="pending" ${a.status === "pending" ? "selected" : ""}>Pending response</option>
-                      <option value="accepted" ${a.status === "accepted" ? "selected" : ""}>Accepted</option>
-                      <option value="declined" ${a.status === "declined" ? "selected" : ""}>Declined</option>
-                    </select>
-                    ${waDigits ? (isManager ? `
-                      <label style="display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer;">
-                        <input type="checkbox" class="include-client-contact-checkbox" data-team-id="${m.id}" />
-                        Include client contact
+            <div class="section-label" data-toggle-team-list style="cursor:pointer; display:flex; align-items:center; gap:6px;">
+              <span data-team-list-caret>${startExpanded ? "▾" : "▸"}</span> Team members (${assignedCount} of ${TEAM.length} assigned)
+            </div>
+            <div id="teamMembersList" style="display:${startExpanded ? "block" : "none"};">
+              ${TEAM.map((m) => {
+                const a = byTeamId[m.id];
+                const existingFee = feeExpenseByTeamId[m.id];
+                const waDigits = (m.phone || "").replace(/\D/g, "");
+                // Only the manager needs the full logistics (venue, timings, band
+                // size) so they can plan the other artists — everyone else just
+                // needs to know when and where they're playing.
+                const isManager = /manager/i.test(m.role || "");
+                const waMsg = fillTemplate(MESSAGE_TEMPLATES.artist_confirmation || TEMPLATE_META.artist_confirmation.default, {
+                  artistName: m.name,
+                  clientName: lead.name,
+                  experience: packageName(lead.event_type),
+                  date: fmtDate(lead.date),
+                  cityClause: lead.city ? ` in ${lead.city}` : "",
+                  venueClause: isManager && lead.venue ? ` at ${lead.venue}` : "",
+                  eventTimeClause: isManager && lead.event_time ? ` Event time: ${lead.event_time}.` : "",
+                  soundcheckClause: isManager && lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : "",
+                  pcsClause: isManager && lead.pcs ? ` Band size for this event: ${lead.pcs} pcs.` : "",
+                });
+                const isLocalEvent = m.base_city && lead.city && m.base_city.trim().toLowerCase() === lead.city.trim().toLowerCase();
+                const suggestedFee = isLocalEvent ? m.local_fee : m.outstation_fee;
+                return `
+                  <div class="card" style="margin-bottom:6px; padding:8px 12px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                      <label style="display:flex; align-items:center; gap:8px; flex:1; min-width:0; cursor:pointer;">
+                        <input type="checkbox" class="assign-team-checkbox" data-team-id="${m.id}" ${(a || m.id === autoCheckTeamId) ? "checked" : ""} style="flex-shrink:0;" />
+                        <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13.5px;">
+                          <span style="font-weight:600;">${m.name}</span>
+                          <span class="muted">${m.role ? ` · ${m.role}` : ""}${m.base_city ? ` · 📍 ${m.base_city}` : ""}</span>
+                        </span>
                       </label>
-                      <button class="btn-ghost manager-wa-btn" data-team-id="${m.id}" style="font-size:12px; padding:4px 9px;">💬 WhatsApp</button>
-                    ` : `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" style="font-size:12px; padding:4px 9px;">💬 WhatsApp</a>`) : ""}
+                      ${isAdmin
+                        ? `<div style="flex-shrink:0; text-align:right;">
+                            <input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : (suggestedFee || "")}" style="width:88px; font-size:12.5px; padding:4px 6px;" />
+                          </div>`
+                        : (CURRENT_USER?.teamId === m.id && existingFee ? `<span class="muted small" style="flex-shrink:0; white-space:nowrap;">Your fee: ${inr(existingFee.amount)}</span>` : "")}
+                    </div>
+                    ${a ? `
+                      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px; padding-top:6px; border-top:1px solid #EFE9DC;">
+                        <select class="mark-response-select" data-assignment-id="${a.id}" style="font-size:12px; padding:3px 6px; color:${statusColor[a.status]};">
+                          <option value="pending" ${a.status === "pending" ? "selected" : ""}>Pending response</option>
+                          <option value="accepted" ${a.status === "accepted" ? "selected" : ""}>Accepted</option>
+                          <option value="declined" ${a.status === "declined" ? "selected" : ""}>Declined</option>
+                        </select>
+                        ${waDigits ? (isManager ? `
+                          <label style="display:flex; align-items:center; gap:5px; font-size:11.5px; cursor:pointer;">
+                            <input type="checkbox" class="include-client-contact-checkbox" data-team-id="${m.id}" />
+                            Include client contact
+                          </label>
+                          <button class="btn-ghost manager-wa-btn" data-team-id="${m.id}" style="font-size:11.5px; padding:3px 8px;">💬 WhatsApp</button>
+                        ` : `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" style="font-size:11.5px; padding:3px 8px;">💬 WhatsApp</a>`) : ""}
+                      </div>
+                    ` : ""}
                   </div>
-                ` : ""}
-              </div>
-            `;
-          }).join("")}
+                `;
+              }).join("")}
+            </div>
+          `;
+          })()}
           <p class="muted small" style="margin-top:4px;">Not every artist uses their own login — use the status dropdown to record their response yourself.</p>
           ${isAdmin ? `<p class="muted small" style="margin-top:2px;">Enter a fee next to any artist above and it's saved as an expense against this event — no need to add it separately in Accounts.</p>` : ""}
-          <button class="btn-ghost full" id="addMemberInlineBtn" style="margin-top:10px;">+ Add new member</button>
+          <div class="row-2" style="margin-top:10px;">
+            <button class="btn-ghost" id="addMemberInlineBtn">+ Add new member</button>
+            ${unpromotedMusicians.length > 0 ? `<button class="btn-ghost" id="addFromMusicianBtn">🎵 Add from Musicians</button>` : ""}
+          </div>
+          ${unpromotedMusicians.length > 0 ? `
+            <div id="addFromMusicianPanel" style="display:none; margin-top:8px;">
+              <select id="addFromMusicianSelect">
+                <option value="">Choose a musician…</option>
+                ${unpromotedMusicians.map((m) => `<option value="${m.id}">${m.name}${m.instruments.length > 0 ? ` — ${m.instruments.join(", ")}` : ""}</option>`).join("")}
+              </select>
+              <button class="btn-primary full" id="confirmAddFromMusicianBtn" style="margin-top:6px;">Add to Team & assign to this event</button>
+            </div>
+          ` : ""}
 
           ${isAdmin ? `
             <div class="section-label" style="margin-top:20px;">Other event expenses (travel, venue, decor, etc.)</div>
@@ -4432,6 +4459,40 @@ async function openAssignTeamModal(leadId) {
   root.querySelector("#addMemberInlineBtn").addEventListener("click", () => {
     openAddMemberModal(() => openAssignTeamModal(leadId));
   });
+  const teamListToggle = root.querySelector("[data-toggle-team-list]");
+  if (teamListToggle) {
+    teamListToggle.addEventListener("click", () => {
+      const list = root.querySelector("#teamMembersList");
+      const caret = root.querySelector("[data-team-list-caret]");
+      const expanded = list.style.display !== "none";
+      list.style.display = expanded ? "none" : "block";
+      caret.textContent = expanded ? "▸" : "▾";
+    });
+  }
+  const addFromMusicianBtn = root.querySelector("#addFromMusicianBtn");
+  if (addFromMusicianBtn) {
+    addFromMusicianBtn.addEventListener("click", () => {
+      const panel = root.querySelector("#addFromMusicianPanel");
+      panel.style.display = panel.style.display === "none" ? "block" : "none";
+    });
+    root.querySelector("#confirmAddFromMusicianBtn").addEventListener("click", async (e) => {
+      const musicianId = root.querySelector("#addFromMusicianSelect").value;
+      if (!musicianId) return alert("Choose a musician first.");
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        const result = await api(`/api/musicians/${musicianId}/promote`, { method: "POST" });
+        TEAM = await api("/api/team");
+        // Reopen with this member pre-checked -- they were just added
+        // specifically to be on this event, so hitting Save should be the
+        // only thing left to do, not hunting for them in the list again.
+        openAssignTeamModal(leadId, result.teamId);
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+      }
+    });
+  }
   const addOtherExpenseBtn = root.querySelector("#addOtherExpenseBtn");
   if (addOtherExpenseBtn) {
     addOtherExpenseBtn.addEventListener("click", async () => {
