@@ -243,6 +243,15 @@ app.use(["/app.js", "/index.html", "/home.html", "/styles.css"], (req, res, next
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   next();
 });
+// Served explicitly (ahead of express.static) with Range support turned off.
+// WhatsApp's own in-app link-preview crawler was fetching this file with a
+// Range header and getting back 206 Partial Content from express.static's
+// default handling — some WhatsApp builds then refuse to open the link at
+// all ("This link couldn't be opened"). A plain, always-200 response avoids
+// that class of failure entirely.
+app.get("/confirm.html", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "confirm.html"), { acceptRanges: false });
+});
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
 // Document files are served from Postgres now — see /api/documents/:id/file below.
 
