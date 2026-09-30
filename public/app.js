@@ -2815,6 +2815,7 @@ async function renderTravelCalendar(main) {
             </div>
             <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${dateObj ? ` · ${dateObj.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}${leg.arrival_at && leg.departure_at ? ` – ${new Date(leg.arrival_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : ""}` : ""}</div>
             <div class="muted small">${legLabel(leg)} · ${names}</div>
+            ${leg.notes ? `<div style="font-weight:700; margin-top:4px;">📝 ${leg.notes}</div>` : ""}
           </div>
         </div>
       `);
@@ -5556,6 +5557,7 @@ async function renderDashboard(main) {
                 <span class="tag" style="color:${statusColor}; flex-shrink:0; font-size:11px;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
               </div>
               <div class="muted">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${leg.lead_id ? ` · ${label}` : ""}</div>
+              ${leg.notes ? `<div style="font-weight:700; margin-top:3px;">📝 ${leg.notes}</div>` : ""}
             </div>
           `;
         }).join("");
