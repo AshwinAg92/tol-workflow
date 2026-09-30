@@ -617,6 +617,29 @@ async function setup() {
     );
   `);
 
+  // One-time backfill: the Musicians directory launched empty even though
+  // Team already had people in it, so copy every existing Team member
+  // across (pre-linked via team_id, since they're already in Team) --
+  // asked for directly rather than left for someone to re-type by hand.
+  // Idempotent by name (case-insensitive) so this is safe to leave running
+  // on every startup: it only ever does something the first time.
+  const { rows: teamForMusicianBackfill } = await pool.query("SELECT * FROM team");
+  const { rows: existingMusicianRows } = await pool.query("SELECT LOWER(name) AS name FROM musicians");
+  const existingMusicianNames = new Set(existingMusicianRows.map((r) => r.name));
+  for (const t of teamForMusicianBackfill) {
+    if (existingMusicianNames.has(t.name.toLowerCase())) continue;
+    const instrumentSource = t.specialty || t.role || "";
+    const instruments = instrumentSource.split(/,|&| and /i).map((s) => s.trim()).filter(Boolean);
+    const musicianId = uuid();
+    await pool.query(`
+      INSERT INTO musicians (id, name, phone, city, rate_local, rate_outstation, team_id, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `, [musicianId, t.name, t.phone || null, t.base_city || null, t.local_fee || null, t.outstation_fee || null, t.id, new Date().toISOString()]);
+    for (const instrument of instruments) {
+      await pool.query(`INSERT INTO musician_instruments (id, musician_id, instrument) VALUES ($1, $2, $3)`, [uuid(), musicianId, instrument]);
+    }
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS activity_log (
       id TEXT PRIMARY KEY,
