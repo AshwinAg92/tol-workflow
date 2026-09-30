@@ -207,6 +207,19 @@ async function setup() {
   // (e.g. "running late that day, can arrive by 6" or a special request) —
   // visible back in the Team assignment box, same place their status shows.
   await pool.query(`ALTER TABLE event_assignments ADD COLUMN IF NOT EXISTS note TEXT`);
+
+  // One-time correction: Sourav Ghosh's WhatsApp number on file was wrong,
+  // which broke both his WhatsApp button and confirmation-link messages.
+  // Flagged in site_content so this runs exactly once and can never later
+  // clobber a phone number Ashwin has since edited by hand.
+  const souravPhoneFixDone = (await pool.query("SELECT 1 FROM site_content WHERE key = 'sourav_ghosh_phone_fixed_2026_09_30'")).rows[0];
+  if (!souravPhoneFixDone) {
+    await pool.query("UPDATE team SET phone = $1 WHERE name = 'Sourav Ghosh'", ["8981777323"]);
+    await pool.query(
+      `INSERT INTO site_content (key, value, updated_at) VALUES ('sourav_ghosh_phone_fixed_2026_09_30', 'true', $1) ON CONFLICT (key) DO NOTHING`,
+      [new Date().toISOString()]
+    );
+  }
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_performer INTEGER NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS event_time TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS soundcheck_time TEXT`);
