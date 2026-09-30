@@ -1051,6 +1051,7 @@ function initMobileNav() {
     overlay.classList.add("active");
   });
   overlay?.addEventListener("click", closeMobileSidebar);
+  document.getElementById("mobileLogoutBtn")?.addEventListener("click", handleLogout);
 }
 
 // Clicking the logo (sidebar brand block, or mobile topbar logo/name) always jumps to the Dashboard.
