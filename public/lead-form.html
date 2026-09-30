@@ -4,14 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Enquiry Form — Together, Out Loud</title>
-  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
   <style>
     * { box-sizing: border-box; }
     body {
       margin:0;
       background:#FEF6ED;
-      font-family:'Nunito',sans-serif;
-      color:#3A2418;
+      font-family:'Inter',sans-serif;
+      color:#2B2420;
       display:flex;
       justify-content:center;
       padding:36px 16px 60px;
@@ -20,7 +21,7 @@
     .logo-wrap { text-align:center; margin-bottom:4px; }
     .logo-wrap img { width:170px; max-width:55%; height:auto; }
     .tagline {
-      font-family:'Caveat',cursive;
+      font-family:'Space Grotesk',sans-serif;
       font-weight:700;
       font-size:25px;
       color:#C7401E;
@@ -33,22 +34,22 @@
       border-radius:16px;
       padding:26px 24px;
       box-shadow:0 4px 18px rgba(199,64,30,0.08);
-      border:1px solid #F6E4D2;
+      border:1px solid #EAD9BE;
     }
     .q { margin-bottom:20px; }
     .q:last-child { margin-bottom:0; }
-    label.qlabel { display:block; font-size:14px; color:#3A2418; margin-bottom:2px; font-weight:700; }
-    .qdesc { font-size:12px; color:#B29578; margin-bottom:8px; }
-    .opt { font-weight:400; font-size:12px; color:#B29578; }
+    label.qlabel { display:block; font-size:14px; color:#2B2420; margin-bottom:2px; font-weight:700; }
+    .qdesc { font-size:12px; color:#8A6A54; margin-bottom:8px; }
+    .opt { font-weight:400; font-size:12px; color:#8A6A54; }
     input, select, textarea {
       width:100%;
       padding:11px 12px;
-      border:1.5px solid #F0DCC8;
+      border:1.5px solid #EAD9BE;
       border-radius:9px;
       font-size:14.5px;
-      font-family:'Nunito',sans-serif;
+      font-family:'Inter',sans-serif;
       background:#FFFDFA;
-      color:#3A2418;
+      color:#2B2420;
       transition:border-color 0.15s;
     }
     textarea { resize:vertical; min-height:80px; }
@@ -56,7 +57,7 @@
     .check-group { display:flex; flex-direction:column; gap:8px; margin-top:4px; }
     .check-row, .radio-row {
       display:flex; align-items:center; gap:9px; font-size:14px;
-      background:#FFFDFA; border:1.5px solid #F0DCC8; border-radius:9px; padding:9px 12px;
+      background:#FFFDFA; border:1.5px solid #EAD9BE; border-radius:9px; padding:9px 12px;
       cursor:pointer;
     }
     .check-row input, .radio-row input { width:auto; }
@@ -76,26 +77,26 @@
       font-weight:700;
       font-size:15px;
       cursor:pointer;
-      font-family:'Nunito',sans-serif;
+      font-family:'Inter',sans-serif;
       letter-spacing:0.01em;
       transition:background 0.15s;
     }
-    button:hover:not(:disabled) { background:#AD3517; }
+    button:hover:not(:disabled) { background:#A6432B; }
     button:disabled { opacity:0.5; cursor:not-allowed; }
     .done { display:none; text-align:center; padding:26px 6px; }
     .done .tagline { margin-bottom:8px; }
-    .done p { color:#6B5344; font-size:14.5px; line-height:1.5; }
+    .done p { color:#8A6A54; font-size:14.5px; line-height:1.5; }
     .response-time-note { text-align:center; font-size:12.5px; color:#8A6A54; margin:10px 0 0; }
     .error {
-      color:#AD3517;
-      background:#FCEEDA;
+      color:#A6432B;
+      background:#FBEFD9;
       border-radius:8px;
       font-size:13px;
       margin-top:14px;
       padding:9px 12px;
       display:none;
     }
-    .foot-note { text-align:center; font-size:12px; color:#B29578; margin-top:18px; }
+    .foot-note { text-align:center; font-size:12px; color:#8A6A54; margin-top:18px; }
   </style>
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-2RBT3KFN0J"></script>
@@ -172,7 +173,7 @@
         <div class="q">
           <label class="qlabel">Event Date</label>
           <input id="date" type="date" required />
-          <div id="dateWarning" style="display:none; margin-top:8px; padding:10px; background:#FFF4E5; border-radius:6px; font-size:13px; color:#8A5A1F;">
+          <div id="dateWarning" style="display:none; margin-top:8px; padding:10px; background:#FBEFD9; border-radius:6px; font-size:13px; color:#B6752C;">
             That date already has a confirmed event with us, so we can't accept a new booking for it. Enter an alternative date below if you're flexible — otherwise, please choose a different date to submit.
           </div>
         </div>
@@ -180,7 +181,7 @@
         <div class="q" id="altDateRow" style="display:none;">
           <label class="qlabel">Alternative date <span class="opt">(if flexible)</span></label>
           <input id="altDate" type="date" />
-          <div id="altDateWarning" style="display:none; margin-top:8px; padding:10px; background:#FFF4E5; border-radius:6px; font-size:13px; color:#8A5A1F;">
+          <div id="altDateWarning" style="display:none; margin-top:8px; padding:10px; background:#FBEFD9; border-radius:6px; font-size:13px; color:#B6752C;">
             That alternative date is also already confirmed with us — please try another one.
           </div>
         </div>

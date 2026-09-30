@@ -4,14 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Confirm your event — Together, Out Loud</title>
-  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
   <style>
     * { box-sizing: border-box; }
     body {
       margin:0;
       background:#FEF6ED;
-      font-family:'Nunito',sans-serif;
-      color:#3A2418;
+      font-family:'Inter',sans-serif;
+      color:#2B2420;
       display:flex;
       justify-content:center;
       padding:36px 16px 60px;
@@ -19,52 +20,53 @@
     }
     .wrap { max-width:440px; width:100%; }
     .tagline {
-      font-family:'Caveat',cursive;
+      font-family:'Space Grotesk',sans-serif;
       font-weight:700;
-      font-size:26px;
+      letter-spacing:-0.01em;
+      font-size:24px;
       color:#C7401E;
       text-align:center;
       margin:0 0 4px;
     }
-    .subhead { text-align:center; font-size:13px; color:#8A6A54; margin-bottom:22px; }
+    .subhead { text-align:center; font-family:'JetBrains Mono',monospace; font-size:11.5px; text-transform:uppercase; letter-spacing:0.04em; color:#8A6A54; margin-bottom:22px; }
     .card {
-      background:#FFFFFF;
+      background:#FFFDF8;
       border-radius:16px;
       padding:26px 24px;
-      box-shadow:0 4px 18px rgba(199,64,30,0.08);
-      border:1px solid #F6E4D2;
+      box-shadow:0 4px 18px rgba(43,36,32,0.07);
+      border:1px solid #EAD9BE;
     }
-    .greet { font-size:18px; font-weight:700; margin-bottom:2px; }
+    .greet { font-family:'Space Grotesk',sans-serif; font-size:18px; font-weight:700; margin-bottom:2px; }
     .status-pill {
       display:inline-block; font-size:12.5px; font-weight:700; border-radius:20px;
       padding:4px 12px; margin-top:6px;
     }
     .status-pending { background:#FBEFD9; color:#B6752C; }
-    .status-accepted { background:#E8F0E9; color:#5C8A6B; }
-    .status-declined { background:#F7E4DF; color:#A64B3C; }
-    .detail-row { display:flex; gap:10px; padding:10px 0; border-bottom:1px solid #F6E4D2; font-size:14.5px; }
+    .status-accepted { background:#E4F1F1; color:#1C7A80; }
+    .status-declined { background:#F7E4DF; color:#A6432B; }
+    .detail-row { display:flex; gap:10px; padding:10px 0; border-bottom:1px solid #EAD9BE; font-size:14.5px; }
     .detail-row:last-of-type { border-bottom:none; }
     .detail-icon { flex-shrink:0; width:20px; text-align:center; }
-    .detail-label { color:#B29578; font-size:11.5px; text-transform:uppercase; letter-spacing:0.03em; }
+    .detail-label { color:#8A6A54; font-family:'JetBrains Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:0.03em; }
     .detail-value { font-weight:600; }
     .btn-row { display:flex; gap:10px; margin-top:22px; }
     button {
       flex:1; padding:13px; border-radius:10px; border:none; font-size:15px; font-weight:700;
-      font-family:'Nunito',sans-serif; cursor:pointer; transition:opacity 0.15s;
+      font-family:'Inter',sans-serif; cursor:pointer; transition:opacity 0.15s;
     }
     button:disabled { opacity:0.5; cursor:default; }
-    .btn-accept { background:#22C55E; color:#FFFFFF; }
-    .btn-decline { background:#FFFFFF; color:#A64B3C; border:1.5px solid #E9C9BE; }
-    .msg { text-align:center; font-size:14.5px; margin-top:18px; color:#3A2418; }
+    .btn-accept { background:#1C7A80; color:#FFFFFF; }
+    .btn-decline { background:#FFFFFF; color:#A6432B; border:1.5px solid #EAD9BE; }
+    .msg { text-align:center; font-size:14.5px; margin-top:18px; color:#2B2420; }
     .loading, .error { text-align:center; padding:40px 0; color:#8A6A54; }
-    .note-label { font-size:11.5px; text-transform:uppercase; letter-spacing:0.03em; color:#B29578; margin-top:20px; margin-bottom:6px; display:block; }
+    .note-label { font-size:11px; font-family:'JetBrains Mono',monospace; text-transform:uppercase; letter-spacing:0.03em; color:#8A6A54; margin-top:20px; margin-bottom:6px; display:block; }
     textarea {
-      width:100%; padding:11px 12px; border:1.5px solid #F0DCC8; border-radius:9px;
-      font-size:14px; font-family:'Nunito',sans-serif; color:#3A2418; background:#FFFDFA;
+      width:100%; padding:11px 12px; border:1.5px solid #EAD9BE; border-radius:9px;
+      font-size:14px; font-family:'Inter',sans-serif; color:#2B2420; background:#FFFDFA;
       resize:vertical; min-height:64px;
     }
     textarea:focus { outline:none; border-color:#C7401E; }
-    .btn-save-note { width:100%; margin-top:8px; background:#F0DCC8; color:#3A2418; }
+    .btn-save-note { width:100%; margin-top:8px; background:#F0DCC8; color:#2B2420; }
   </style>
 </head>
 <body>
