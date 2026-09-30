@@ -5790,37 +5790,35 @@ async function renderDashboard(main) {
         </div>
         `;
       }
-      const maxSessions = Math.max(1, ...websiteTraffic.byDay.map((d) => d.sessions));
       const channelColors = { "Direct": "#C1602B", "Organic Search": "#1C7A80", "Organic Social": "#E6467F", "Paid Social": "#1C7A80", "Referral": "#B6752C", "Email": "#8A5FA8" };
+      // A compact trend line instead of a 30-bar chart: last 7 days'
+      // sessions vs the 7 days before that, so it's still one glance to
+      // know "traffic is up/down" without a wall of tiny columns.
+      const byDaySorted = [...websiteTraffic.byDay].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+      const last7 = byDaySorted.slice(-7);
+      const prev7 = byDaySorted.slice(-14, -7);
+      const last7Sessions = last7.reduce((s, d) => s + d.sessions, 0);
+      const prev7Sessions = prev7.reduce((s, d) => s + d.sessions, 0);
+      const trendPct = prev7Sessions > 0 ? Math.round(((last7Sessions - prev7Sessions) / prev7Sessions) * 100) : null;
+      const trendUp = trendPct !== null && trendPct > 0;
+      const trendFlat = trendPct === 0;
       return `
       <div class="card" style="margin-bottom:16px;">
         <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
           <span>🌐 Website traffic (last 30 days)</span>
           <a href="https://analytics.google.com" target="_blank" class="muted small">Open Google Analytics ↗</a>
         </div>
-        <div class="dash-stats" style="grid-template-columns:repeat(3, 1fr); margin-bottom:16px;">
+        <div class="dash-stats" style="grid-template-columns:repeat(3, 1fr); margin-bottom:10px;">
           <div class="card dash-stat"><div class="muted">Sessions</div><div class="mono big">${websiteTraffic.totalSessions.toLocaleString("en-IN")}</div></div>
           <div class="card dash-stat"><div class="muted">Visitors</div><div class="mono big">${websiteTraffic.totalUsers.toLocaleString("en-IN")}</div></div>
           <div class="card dash-stat"><div class="muted">Page views</div><div class="mono big">${websiteTraffic.totalPageViews.toLocaleString("en-IN")}</div></div>
         </div>
-        <div class="revenue-chart-row" style="align-items:flex-end;">
-          ${websiteTraffic.byDay.map((d, i) => {
-            // Labeling every bar would be unreadable at 30 daily columns on a
-            // phone screen, so only a spaced-out subset gets a visible day
-            // number — full date is still available via tap-and-hold/hover.
-            const showLabel = i % 5 === 0 || i === websiteTraffic.byDay.length - 1;
-            const parsed = d.date ? new Date(d.date + "T00:00:00") : null;
-            const dayLabel = showLabel && parsed && !isNaN(parsed) ? parsed.getDate() : "";
-            return `
-            <div class="revenue-chart-col" title="${d.date ? fmtDate(d.date) : "Unknown date"}: ${d.sessions} sessions">
-              <div class="revenue-chart-bars" style="max-width:10px;">
-                <div class="revenue-bar" style="height:${d.sessions === 0 ? 2 : Math.max(4, (d.sessions / maxSessions) * 100)}%; background:#C1602B;"></div>
-              </div>
-              <div class="muted" style="font-size:9px; margin-top:3px; height:12px;">${dayLabel}</div>
-            </div>
-          `;
-          }).join("")}
-        </div>
+        ${trendPct !== null ? `
+          <div class="muted small" style="display:flex; align-items:center; gap:6px;">
+            <span style="color:${trendFlat ? "#8A6A54" : trendUp ? "#1C7A80" : "#A6432B"}; font-weight:700;">${trendFlat ? "→" : trendUp ? "↑" : "↓"} ${Math.abs(trendPct)}%</span>
+            <span>sessions this week (${last7Sessions.toLocaleString("en-IN")}) vs last week (${prev7Sessions.toLocaleString("en-IN")})</span>
+          </div>
+        ` : ""}
         ${websiteTraffic.byChannel.length > 0 ? `
           <div class="muted small" style="font-weight:600; margin:14px 0 6px;">Where visitors came from</div>
           ${websiteTraffic.byChannel.slice(0, 6).map((c) => `
