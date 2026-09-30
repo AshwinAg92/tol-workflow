@@ -3923,14 +3923,12 @@ async function openLeadPaymentsModal(leadId) {
     // hand is shown separately, just below, instead.
     const received = feePayments.reduce((s, p) => s + p.amount, 0);
     const balance = (total - received) + totalReimbursementDue;
-    const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
     body.innerHTML = `
       <div class="dash-stats" style="grid-template-columns:repeat(2,1fr); margin-bottom:16px; gap:8px;">
         <div class="card summary-card summary-card-compact"><div class="muted">Final rate</div><div class="mono big">${inr(total)}</div></div>
         ${totalReimbursementDue > 0 ? `<div class="card summary-card summary-card-compact"><div class="muted">Reimbursement due</div><div class="mono big" style="color:#B6752C;">+ ${inr(totalReimbursementDue)}</div></div>` : ""}
         <div class="card summary-card summary-card-compact"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
         <div class="card summary-card summary-card-compact"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
-        <div class="card summary-card summary-card-compact"><div class="muted">Profit</div><div class="mono big" style="color:${(total - totalExpenses) >= 0 ? "#5C8A6B" : "#A64B3C"};">${inr(total - totalExpenses)}</div></div>
       </div>
       ${totalReimbursementDue > 0 ? `<p class="muted small" style="margin-top:-8px; margin-bottom:14px;">Balance = Final − Received + Reimbursement due (${inr(total)} − ${inr(received)} + ${inr(totalReimbursementDue)}).</p>` : ""}
       ${hasAccountsAccess() ? `<button class="btn-ghost full" id="lpShareLedgerBtn" style="margin-bottom:14px;">📄 Share ledger PDF on WhatsApp</button>` : ""}
@@ -4217,6 +4215,12 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   // Anything logged against this event that isn't an artist fee — travel,
   // venue rental, decor, etc. — shown as its own list in the modal.
   const otherExpenses = leadExpenses.filter((e) => !e.team_id);
+  // Everything spent on this event — artist fees and other costs together —
+  // so it's clear at a glance what's gone out, without having to add up
+  // every row or go check Accounts.
+  const totalExpensesAmount = leadExpenses.reduce((s, e) => s + e.amount, 0);
+  const totalExpensesPaid = leadExpenses.filter((e) => e.paid).reduce((s, e) => s + e.amount, 0);
+  const totalExpensesPending = totalExpensesAmount - totalExpensesPaid;
 
   const statusLabel = { pending: "Pending response", accepted: "Accepted", declined: "Declined" };
   const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C" };
@@ -4261,6 +4265,13 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
         <div class="modal-head"><h3>Team & Expenses — ${lead.name}${lead.occasion ? ` <span class="muted" style="font-weight:400; font-size:14px;">— ${lead.occasion}</span>` : ""}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <button class="btn-ghost" id="openTravelPlanFromTeamBtn" style="margin-bottom:12px;">🧳 Travel plan</button>
+          ${isAdmin && leadExpenses.length > 0 ? `
+            <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:14px; gap:8px;">
+              <div class="card summary-card summary-card-compact"><div class="muted">Total expenses</div><div class="mono big">${inr(totalExpensesAmount)}</div></div>
+              <div class="card summary-card summary-card-compact"><div class="muted">Paid</div><div class="mono big" style="color:#5C8A6B;">${inr(totalExpensesPaid)}</div></div>
+              <div class="card summary-card summary-card-compact"><div class="muted">Pending</div><div class="mono big" style="color:${totalExpensesPending > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(totalExpensesPending)}</div></div>
+            </div>
+          ` : ""}
           <label>Venue</label>
           <input id="venueInput" placeholder="e.g. Radhika Function Hall, MG Road" value="${lead.venue || ""}" style="margin-bottom:14px;" />
           ${(() => {
