@@ -4777,6 +4777,8 @@ async function openTravelPlanModal(leadId) {
   ]);
   let addingNew = false;
   let editingLegId = null;
+  let linkingExisting = false;
+  let unlinkedLegs = null; // lazy-loaded — travel logged elsewhere (e.g. Travel Calendar) with no event attached yet
 
   function legCard(leg) {
     const editing = editingLegId === leg.id;
@@ -4861,6 +4863,39 @@ async function openTravelPlanModal(leadId) {
     `;
   }
 
+  // A journey already logged elsewhere — via Travel Calendar's manual entry,
+  // or under a different event by mistake — with nobody linked to this
+  // event's booking. Lets it be attached here instead of re-entered from
+  // scratch.
+  function linkForm() {
+    if (unlinkedLegs === null) return `<div class="card" style="margin-bottom:10px; border-color:#C1602B;"><p class="muted small">Loading existing travel…</p></div>`;
+    if (unlinkedLegs.length === 0) {
+      return `
+        <div class="card" style="margin-bottom:10px; border-color:#C1602B;">
+          <p class="muted small">No unlinked travel entries found — anything logged elsewhere is already tied to an event.</p>
+          <button class="btn-ghost" data-cancel-link-form="1" style="margin-top:6px;">Cancel</button>
+        </div>
+      `;
+    }
+    return `
+      <div class="card" style="margin-bottom:10px; border-color:#C1602B;">
+        <div style="font-weight:600; margin-bottom:8px;">Link existing travel</div>
+        <select id="linkLegSelect">
+          ${unlinkedLegs.map((l) => {
+            const route = [l.from_city, l.to_city].filter(Boolean).join(" → ");
+            const names = l.members.map((m) => m.name).join(", ");
+            const bits = [l.label, route, names, l.departure_at ? fmtDateTime(l.departure_at) : null].filter(Boolean);
+            return `<option value="${l.id}">${bits.join(" · ") || "Untitled travel"}</option>`;
+          }).join("")}
+        </select>
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <button class="btn-primary" id="confirmLinkLegBtn">Link</button>
+          <button class="btn-ghost" data-cancel-link-form="1">Cancel</button>
+        </div>
+      </div>
+    `;
+  }
+
   function renderModal() {
     root.innerHTML = `
       <div class="modal-overlay" id="overlay">
@@ -4870,10 +4905,16 @@ async function openTravelPlanModal(leadId) {
             <button class="icon-btn" id="closeModal">${ICON_X}</button>
           </div>
           <div class="modal-body">
-            ${legs.length === 0 && !addingNew ? `<p class="muted small">No travel added yet.</p>` : ""}
+            ${legs.length === 0 && !addingNew && !linkingExisting ? `<p class="muted small">No travel added yet.</p>` : ""}
             ${legs.map(legCard).join("")}
             ${addingNew ? legForm({}) : ""}
-            ${assignments.length === 0 ? `<p class="muted small" style="margin-top:10px;">No one's assigned to this event yet — add the team first.</p>` : (!addingNew ? `<button class="btn-ghost" id="addLegBtn" style="margin-top:${legs.length > 0 ? "6px" : "0"};">+ Add travel</button>` : "")}
+            ${linkingExisting ? linkForm() : ""}
+            ${assignments.length === 0 ? `<p class="muted small" style="margin-top:10px;">No one's assigned to this event yet — add the team first.</p>` : (!addingNew && !linkingExisting ? `
+              <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:${legs.length > 0 ? "6px" : "0"};">
+                <button class="btn-ghost" id="addLegBtn">+ Add travel</button>
+                <button class="btn-ghost" id="linkLegBtn">🔗 Link existing travel</button>
+              </div>
+            ` : "")}
           </div>
           <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
         </div>
@@ -4886,6 +4927,35 @@ async function openTravelPlanModal(leadId) {
 
     const addBtn = root.querySelector("#addLegBtn");
     if (addBtn) addBtn.addEventListener("click", () => { addingNew = true; renderModal(); });
+    const linkBtn = root.querySelector("#linkLegBtn");
+    if (linkBtn) linkBtn.addEventListener("click", async () => {
+      linkingExisting = true;
+      renderModal();
+      const all = await api("/api/travel-legs").catch(() => []);
+      unlinkedLegs = all.filter((l) => !l.lead_id);
+      renderModal();
+    });
+    root.querySelectorAll("[data-cancel-link-form]").forEach((btn) => {
+      btn.addEventListener("click", () => { linkingExisting = false; renderModal(); });
+    });
+    const confirmLinkBtn = root.querySelector("#confirmLinkLegBtn");
+    if (confirmLinkBtn) confirmLinkBtn.addEventListener("click", async () => {
+      const legId = root.querySelector("#linkLegSelect")?.value;
+      if (!legId) return;
+      confirmLinkBtn.disabled = true;
+      try {
+        await api(`/api/travel-legs/${legId}`, { method: "PATCH", body: JSON.stringify({ leadId: lead.id }) });
+        linkingExisting = false;
+        unlinkedLegs = null;
+        const updated = await api(`/api/leads/${leadId}/travel-legs`);
+        legs.length = 0;
+        legs.push(...updated);
+        renderModal();
+      } catch (err) {
+        alert(err.message);
+        confirmLinkBtn.disabled = false;
+      }
+    });
     root.querySelectorAll("[data-edit-leg]").forEach((btn) => {
       btn.addEventListener("click", () => { editingLegId = btn.dataset.editLeg; renderModal(); });
     });

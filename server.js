@@ -2231,8 +2231,8 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
 app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const leg = (await pool.query("SELECT * FROM travel_legs WHERE id = $1", [req.params.id])).rows[0];
   if (!leg) return res.status(404).json({ error: "Travel leg not found" });
-  const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "label"];
-  const keyFor = (f) => (f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f);
+  const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "label", "lead_id"];
+  const keyFor = (f) => (f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f === "lead_id" ? "leadId" : f);
   const updates = [];
   const values = [];
   fields.forEach((f) => {
