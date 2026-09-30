@@ -210,13 +210,16 @@ async function setup() {
 
   // One-time correction: Sourav Ghosh's WhatsApp number on file was wrong,
   // which broke both his WhatsApp button and confirmation-link messages.
+  // The wa.me link is built from digits-only with no country code added
+  // (see waDigits in app.js), so the number must include it here — a plain
+  // 10-digit number (first attempt, flag v1) produces an invalid wa.me link.
   // Flagged in site_content so this runs exactly once and can never later
   // clobber a phone number Ashwin has since edited by hand.
-  const souravPhoneFixDone = (await pool.query("SELECT 1 FROM site_content WHERE key = 'sourav_ghosh_phone_fixed_2026_09_30'")).rows[0];
+  const souravPhoneFixDone = (await pool.query("SELECT 1 FROM site_content WHERE key = 'sourav_ghosh_phone_fixed_2026_09_30_v2'")).rows[0];
   if (!souravPhoneFixDone) {
-    await pool.query("UPDATE team SET phone = $1 WHERE name = 'Sourav Ghosh'", ["8981777323"]);
+    await pool.query("UPDATE team SET phone = $1 WHERE name = 'Sourav Ghosh'", ["918981777323"]);
     await pool.query(
-      `INSERT INTO site_content (key, value, updated_at) VALUES ('sourav_ghosh_phone_fixed_2026_09_30', 'true', $1) ON CONFLICT (key) DO NOTHING`,
+      `INSERT INTO site_content (key, value, updated_at) VALUES ('sourav_ghosh_phone_fixed_2026_09_30_v2', 'true', $1) ON CONFLICT (key) DO NOTHING`,
       [new Date().toISOString()]
     );
   }
