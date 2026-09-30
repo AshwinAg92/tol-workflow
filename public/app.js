@@ -4221,6 +4221,39 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   const statusLabel = { pending: "Pending response", accepted: "Accepted", declined: "Declined" };
   const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C" };
 
+  // A one-click "mark paid" doesn't capture how — cash, UPI, or which card —
+  // which is exactly what's worth remembering later. This hidden-by-default
+  // panel (toggled open by an "Edit"/"Payment details" button) is reused for
+  // both artist fees and other event expenses.
+  function expensePaymentForm(e, { editHeadAmount = false } = {}) {
+    return `
+      <div id="expensePaymentForm_${e.id}" class="expense-payment-form" style="display:none; margin-top:8px; padding-top:8px; border-top:1px solid #EFE9DC;">
+        ${editHeadAmount ? `
+          <div class="row-2" style="margin-bottom:8px;">
+            <input class="epf-head" data-expense-id="${e.id}" value="${(e.head || "").replace(/"/g, "&quot;")}" placeholder="e.g. Travel, Venue rental, Decor" />
+            <input class="epf-amount" data-expense-id="${e.id}" type="number" value="${e.amount}" placeholder="Amount ₹" />
+          </div>
+        ` : ""}
+        <div class="row-2">
+          <select class="epf-mode" data-expense-id="${e.id}">
+            <option value="">Payment mode —</option>
+            <option value="Cash" ${e.payment_mode === "Cash" ? "selected" : ""}>Cash</option>
+            <option value="UPI" ${e.payment_mode === "UPI" ? "selected" : ""}>UPI</option>
+            <option value="Card" ${e.payment_mode === "Card" ? "selected" : ""}>Card</option>
+          </select>
+          <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;">
+            <input type="checkbox" class="epf-paid" data-expense-id="${e.id}" ${e.paid ? "checked" : ""} /> Paid
+          </label>
+        </div>
+        <input class="epf-notes" data-expense-id="${e.id}" value="${(e.notes || "").replace(/"/g, "&quot;")}" placeholder="Notes — e.g. paid from HDFC card" style="margin-top:8px;" />
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="btn-primary epf-save-btn" data-expense-id="${e.id}" style="font-size:12px; padding:5px 12px;">Save</button>
+          <button class="btn-ghost epf-cancel-btn" data-expense-id="${e.id}" style="font-size:12px; padding:5px 12px;">Cancel</button>
+        </div>
+      </div>
+    `;
+  }
+
   const root = document.getElementById("modalRoot");
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
@@ -4283,12 +4316,14 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                       ${isAdmin
                         ? `<div style="flex-shrink:0; text-align:right;">
                             <input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : (suggestedFee || "")}" style="width:88px; font-size:12.5px; padding:4px 6px;" />
-                            ${existingFee ? (existingFee.paid
-                              ? `<div class="muted small" style="margin-top:3px; color:#5C8A6B;">Paid</div>`
-                              : `<button class="btn-ghost mark-fee-paid-btn" data-expense-id="${existingFee.id}" style="margin-top:3px; font-size:11px; padding:2px 7px;">Mark paid</button>`) : ""}
+                            ${existingFee ? `
+                              <div class="muted small" style="margin-top:3px;">${existingFee.paid ? `Paid${existingFee.payment_mode ? ` · ${existingFee.payment_mode}` : ""}` : "Pending"}</div>
+                              <button class="btn-ghost edit-expense-payment-btn" data-expense-id="${existingFee.id}" style="margin-top:2px; font-size:11px; padding:2px 7px;">✎ Payment details</button>
+                            ` : ""}
                           </div>`
                         : (CURRENT_USER?.teamId === m.id && existingFee ? `<span class="muted small" style="flex-shrink:0; white-space:nowrap;">Your fee: ${inr(existingFee.amount)}${existingFee.paid ? " · Paid" : " · Pending"}</span>` : "")}
                     </div>
+                    ${isAdmin && existingFee ? expensePaymentForm(existingFee) : ""}
                     ${a ? `
                       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px; padding-top:6px; border-top:1px solid #EFE9DC;">
                         <select class="mark-response-select" data-assignment-id="${a.id}" style="font-size:12px; padding:3px 6px; color:${statusColor[a.status]};">
@@ -4333,15 +4368,19 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
             <div class="section-label" style="margin-top:20px;">Other event expenses (travel, venue, decor, etc.)</div>
             <div id="otherExpensesList">
               ${otherExpenses.length === 0 ? `<p class="muted small">None added yet.</p>` : otherExpenses.map((e) => `
-                <div class="card" style="margin-bottom:8px; padding:10px 14px; display:flex; justify-content:space-between; align-items:center; gap:10px;">
-                  <div style="min-width:0;">
-                    <div style="font-weight:600;">${e.head}</div>
-                    <div class="muted small">${inr(e.amount)}${e.paid ? " · Paid" : " · Pending"}</div>
+                <div class="card" style="margin-bottom:8px; padding:10px 14px;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                    <div style="min-width:0;">
+                      <div class="mono" style="font-size:16px; font-weight:700;">${inr(e.amount)}</div>
+                      <div class="muted small">${e.head} · ${e.paid ? `Paid${e.payment_mode ? ` · ${e.payment_mode}` : ""}` : "Pending"}</div>
+                      ${e.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${e.notes}</div>` : ""}
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+                      <button class="btn-ghost edit-expense-payment-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 8px;">Edit</button>
+                      <button class="btn-ghost remove-other-expense-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 9px; color:#A64B3C;">🗑</button>
+                    </div>
                   </div>
-                  <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
-                    ${!e.paid ? `<button class="btn-ghost mark-fee-paid-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 8px;">Mark paid</button>` : ""}
-                    <button class="btn-ghost remove-other-expense-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 9px; color:#A64B3C;">🗑</button>
-                  </div>
+                  ${expensePaymentForm(e, { editHeadAmount: true })}
                 </div>
               `).join("")}
             </div>
@@ -4492,11 +4531,38 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       openAssignTeamModal(leadId);
     });
   });
-  root.querySelectorAll(".mark-fee-paid-btn").forEach((btn) => {
+  root.querySelectorAll(".edit-expense-payment-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const form = root.querySelector(`#expensePaymentForm_${btn.dataset.expenseId}`);
+      if (form) form.style.display = form.style.display === "none" ? "block" : "none";
+    });
+  });
+  root.querySelectorAll(".epf-cancel-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const form = root.querySelector(`#expensePaymentForm_${btn.dataset.expenseId}`);
+      if (form) form.style.display = "none";
+    });
+  });
+  root.querySelectorAll(".epf-save-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
+      const id = btn.dataset.expenseId;
+      const form = root.querySelector(`#expensePaymentForm_${id}`);
+      const headInput = form.querySelector(".epf-head");
+      const amountInput = form.querySelector(".epf-amount");
+      const payload = {
+        paid: form.querySelector(".epf-paid").checked,
+        paymentMode: form.querySelector(".epf-mode").value || null,
+        notes: form.querySelector(".epf-notes").value.trim() || null,
+      };
+      if (headInput) payload.head = headInput.value.trim();
+      if (amountInput) {
+        const amt = Number(amountInput.value);
+        if (!amountInput.value || !(amt > 0)) return alert("Enter a valid amount.");
+        payload.amount = amt;
+      }
       btn.disabled = true;
       try {
-        await api(`/api/expenses/${btn.dataset.expenseId}`, { method: "PATCH", body: JSON.stringify({ paid: true }) });
+        await api(`/api/expenses/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
         openAssignTeamModal(leadId);
       } catch (err) {
         alert(err.message);
