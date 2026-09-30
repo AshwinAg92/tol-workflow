@@ -5560,27 +5560,16 @@ async function renderAccounts(main) {
 // scroll on the dashboard — redraws only this card, not the whole page, so
 // flipping pages doesn't reset scroll position elsewhere on the dashboard.
 const DASH_ACTIVITY_PAGE_SIZE = 8;
-// Tracks which activity-log entries have already flashed on the Dashboard,
-// in localStorage so it survives refreshes — otherwise every reload would
-// re-flash every acceptance from today instead of just a genuinely new one.
-function getSeenActivityIds() {
-  try {
-    return new Set(JSON.parse(localStorage.getItem("tol_seen_activity_ids") || "[]"));
-  } catch {
-    return new Set();
-  }
-}
-function markActivityIdsSeen(ids) {
-  try {
-    const seen = getSeenActivityIds();
-    ids.forEach((id) => seen.add(id));
-    localStorage.setItem("tol_seen_activity_ids", JSON.stringify([...seen].slice(-300)));
-  } catch {}
-}
 // The one activity-log line worth flashing for — an artist accepting via
 // their no-login confirmation link, since that can happen with nobody at a
 // keyboard to notice it otherwise. Declines aren't flashed the same way;
 // those need a decision (re-book someone), not just an "acknowledged" glance.
+//
+// Flash-worthy entries flash every time the Dashboard is opened or polls,
+// not just the first time — otherwise a single silent render (e.g. the tab
+// sitting open in the background when the push notification landed) would
+// mark it "seen" and it would never visibly flash for anyone. The X button
+// on each entry (which deletes it from the log) is what actually clears it.
 function isFlashWorthyActivity(a) {
   return /accepted .* via confirmation link/i.test(a.message || "");
 }
@@ -5935,10 +5924,8 @@ async function renderDashboard(main) {
     });
   }
   if (isAdmin) {
-    const seenActivityIds = getSeenActivityIds();
-    const flashIds = new Set(activity.filter((a) => isFlashWorthyActivity(a) && !seenActivityIds.has(a.id)).map((a) => a.id));
+    const flashIds = new Set(activity.filter(isFlashWorthyActivity).map((a) => a.id));
     renderTodaysActivityCard(main, activity, flashIds);
-    markActivityIdsSeen(activity.map((a) => a.id));
 
     // Keep checking while the Dashboard stays open, so an artist accepting
     // via their confirmation link flashes here on its own -- that's the one
@@ -5956,12 +5943,10 @@ async function renderDashboard(main) {
       } catch {
         return;
       }
-      const seen = getSeenActivityIds();
-      const newFlashIds = new Set(freshActivity.filter((a) => isFlashWorthyActivity(a) && !seen.has(a.id)).map((a) => a.id));
+      const newFlashIds = new Set(freshActivity.filter(isFlashWorthyActivity).map((a) => a.id));
       activity.length = 0;
       activity.push(...freshActivity);
       renderTodaysActivityCard(main, activity, newFlashIds);
-      markActivityIdsSeen(freshActivity.map((a) => a.id));
     }, 20000);
   }
   const generalMsgBtn = main.querySelector("#sendGeneralMsgBtn");

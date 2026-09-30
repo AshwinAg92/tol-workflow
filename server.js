@@ -1286,7 +1286,7 @@ app.post("/api/push/unsubscribe", requireAuth, async (req, res) => {
 // Sends to every registered subscription (any logged-in user who's opted in
 // on their device) — a new-query alert carries no financial/fee data, so
 // there's no role-visibility reason to restrict it to admins only.
-async function sendPushToAll(title, body, url = "/", { adminOnly = false } = {}) {
+async function sendPushToAll(title, body, url = "/login", { adminOnly = false } = {}) {
   if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return;
   const { rows } = adminOnly
     ? (await pool.query(`SELECT push_subscriptions.* FROM push_subscriptions JOIN users ON users.id = push_subscriptions.user_id WHERE users.access_level = 'admin'`))
@@ -1307,7 +1307,7 @@ async function sendPushToAll(title, body, url = "/", { adminOnly = false } = {})
   }));
 }
 async function notifyNewQuery(lead) {
-  await sendPushToAll("New query received", `${lead.name} — ${packageName(lead.event_type)} in ${lead.city || "?"}`, "/");
+  await sendPushToAll("New query received", `${lead.name} — ${packageName(lead.event_type)} in ${lead.city || "?"}`, "/login");
 }
 
 
@@ -2133,7 +2133,7 @@ app.post("/api/public/assignment/:token/respond", async (req, res) => {
     await sendPushToAll(
       `${emoji} ${member ? member.name : "An artist"} ${status}`,
       `${lead.name} (${lead.date})${note ? " — left a note" : ""}`,
-      "/",
+      "/login",
       { adminOnly: true }
     );
   }
