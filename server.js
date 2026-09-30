@@ -1,4 +1,10 @@
 try { require("dotenv").config(); } catch (e) { /* .env is optional */ }
+// Railway's network can only route outbound to some mail providers (e.g.
+// Gmail's SMTP) over IPv4 -- Node 17+'s default DNS ordering can still hand
+// back an IPv6 address first, which then fails to connect with ENETUNREACH.
+// This forces every dns.lookup() in the process (including nodemailer's,
+// which doesn't expose its own IPv4-only option) to prefer IPv4.
+require("dns").setDefaultResultOrder("ipv4first");
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
