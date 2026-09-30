@@ -15,6 +15,18 @@ const pool = new Pool({
     ? { rejectUnauthorized: false }
     : false,
 });
+// node-postgres emits 'error' on the pool whenever an already-connected,
+// idle client in it hits a background problem (e.g. the network blipping
+// and resetting that connection) -- entirely separate from any query's own
+// try/catch, since nothing was actively being asked of that client at the
+// time. Pool is an EventEmitter, and an EventEmitter's default behavior for
+// an unhandled 'error' event is to throw and crash the process -- so with
+// no listener here, a single dropped idle connection took down the whole
+// app. This is the documented fix: the pool quietly drops that client and
+// opens a fresh one for the next query, and the blip costs nothing further.
+pool.on("error", (err) => {
+  console.error("Postgres pool idle client error (connection dropped, pool recovers automatically):", err.message);
+});
 
 async function setup() {
   await pool.query(`

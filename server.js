@@ -5,6 +5,23 @@ try { require("dotenv").config(); } catch (e) { /* .env is optional */ }
 // This forces every dns.lookup() in the process (including nodemailer's,
 // which doesn't expose its own IPv4-only option) to prefer IPv4.
 require("dns").setDefaultResultOrder("ipv4first");
+// A transient DB hiccup (a dropped connection, a momentary network blip to
+// Postgres) throws inside some route's async handler. Most routes here
+// aren't individually try/caught, so left alone that becomes an unhandled
+// promise rejection -- and in this Node version, an unhandled rejection
+// crashes the ENTIRE process, taking down every other request in flight
+// and putting the whole app into a crash-restart loop over one bad query.
+// Logging instead of crashing means a blip costs one failed request, not
+// the whole site going down. (The one request that hit the error is left
+// hanging without a response rather than getting a clean 500 -- a real but
+// much smaller gap than a full outage, and worth tightening later by
+// wrapping route handlers properly.)
+process.on("unhandledRejection", (err) => {
+  console.error("Unhandled promise rejection (server stays up):", err);
+});
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception (server stays up):", err);
+});
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
