@@ -4262,11 +4262,6 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
         <div class="modal-head"><h3>Team for ${lead.name}${lead.occasion ? ` <span class="muted" style="font-weight:400; font-size:14px;">— ${lead.occasion}</span>` : ""}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <button class="btn-ghost" id="openTravelPlanFromTeamBtn" style="margin-bottom:12px;">🧳 Travel plan</button>
-          <div class="section-label">Event day details</div>
-          <div class="row-2" style="margin-bottom:8px;">
-            <div><label>Event time</label><input id="eventTimeInput" type="time" value="${lead.event_time || ""}" /></div>
-            <div><label>Sound check time</label><input id="soundcheckTimeInput" type="time" value="${lead.soundcheck_time || ""}" /></div>
-          </div>
           <label>Venue</label>
           <input id="venueInput" placeholder="e.g. Radhika Function Hall, MG Road" value="${lead.venue || ""}" style="margin-bottom:14px;" />
           ${(() => {
@@ -4277,8 +4272,10 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
             // exactly the moments you need the full list in view.
             const startExpanded = assignedCount === 0 || !!autoCheckTeamId;
             return `
-            <div class="section-label" data-toggle-team-list style="cursor:pointer; display:flex; align-items:center; gap:6px;">
-              <span data-team-list-caret>${startExpanded ? "▾" : "▸"}</span> Team members (${assignedCount} of ${TEAM.length} assigned)
+            <div data-toggle-team-list style="cursor:pointer; display:flex; align-items:center; gap:8px; background:#F5F0E4; border-radius:8px; padding:10px 14px; margin:16px 0 8px; font-weight:700; font-size:14.5px; color:#2A2620;">
+              <span data-team-list-caret style="font-size:12px;">${startExpanded ? "▾" : "▸"}</span>
+              <span>Team members</span>
+              <span class="muted" style="font-weight:600; font-size:13px;">(${assignedCount} of ${TEAM.length} assigned)</span>
             </div>
             <div id="teamMembersList" style="display:${startExpanded ? "block" : "none"};">
               ${TEAM.map((m) => {
@@ -4748,11 +4745,9 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
           }
         }
       }
-      const eventTime = root.querySelector("#eventTimeInput").value;
-      const soundcheckTime = root.querySelector("#soundcheckTimeInput").value;
       const venue = root.querySelector("#venueInput").value;
-      if (eventTime !== (lead.event_time || "") || soundcheckTime !== (lead.soundcheck_time || "") || venue !== (lead.venue || "")) {
-        await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ eventTime: eventTime || null, soundcheckTime: soundcheckTime || null, venue: venue || null }) });
+      if (venue !== (lead.venue || "")) {
+        await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ venue: venue || null }) });
       }
       await refreshLeads();
       renderMain();
