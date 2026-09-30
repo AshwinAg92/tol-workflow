@@ -914,6 +914,26 @@ async function refreshTasks() {
 }
 
 // ---------- Nav ----------
+// Favourite nav items are a personal, per-user preference — saved to their
+// account (via PATCH /api/my/nav-favorites) so it follows them across
+// devices, same as the sticky note.
+function isNavFavorite(id) {
+  return Array.isArray(CURRENT_USER?.navFavorites) && CURRENT_USER.navFavorites.includes(id);
+}
+async function toggleNavFavorite(id) {
+  if (!CURRENT_USER) return;
+  const current = Array.isArray(CURRENT_USER.navFavorites) ? CURRENT_USER.navFavorites : [];
+  const next = current.includes(id) ? current.filter((f) => f !== id) : [...current, id];
+  CURRENT_USER.navFavorites = next; // optimistic — the sidebar should feel instant
+  renderNav();
+  try {
+    await api("/api/my/nav-favorites", { method: "PUT", body: JSON.stringify({ favorites: next }) });
+  } catch (err) {
+    CURRENT_USER.navFavorites = current; // roll back on failure
+    renderNav();
+  }
+}
+
 function renderNav() {
   const nav = document.getElementById("nav");
   nav.innerHTML = "";
@@ -927,6 +947,36 @@ function renderNav() {
     visibleNav = [visibleNav[0], { id: "myevents", label: "My Events" }, ...visibleNav.slice(1)];
   }
   if (!visibleNav.some((n) => n.id === currentTab)) currentTab = "dashboard";
+
+  function navRow(id, label) {
+    const isFav = isNavFavorite(id);
+    const row = el(`
+      <div class="nav-row">
+        <button class="nav-item${currentTab === id ? " nav-item-active" : ""}">${label}</button>
+        <button class="nav-star-btn${isFav ? " nav-star-active" : ""}" title="${isFav ? "Remove from favourites" : "Add to favourites"}">${isFav ? "★" : "☆"}</button>
+      </div>
+    `);
+    row.querySelector(".nav-item").addEventListener("click", () => {
+      currentTab = id;
+      renderNav();
+      renderMain();
+      closeMobileSidebar();
+    });
+    row.querySelector(".nav-star-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleNavFavorite(id);
+    });
+    return row;
+  }
+
+  const favorites = visibleNav.filter((n) => isNavFavorite(n.id));
+  if (favorites.length > 0) {
+    nav.appendChild(el(`<div class="nav-group-label">Favourites</div>`));
+    favorites
+      .sort((a, b) => CURRENT_USER.navFavorites.indexOf(a.id) - CURRENT_USER.navFavorites.indexOf(b.id))
+      .forEach(({ id, label }) => nav.appendChild(navRow(id, label)));
+  }
+
   let lastGroup = null;
   visibleNav.forEach(({ id, label }) => {
     const group = NAV_GROUPS[id];
@@ -934,14 +984,7 @@ function renderNav() {
       nav.appendChild(el(`<div class="nav-group-label">${group}</div>`));
       lastGroup = group;
     }
-    const btn = el(`<button class="nav-item${currentTab === id ? " nav-item-active" : ""}">${label}</button>`);
-    btn.addEventListener("click", () => {
-      currentTab = id;
-      renderNav();
-      renderMain();
-      closeMobileSidebar();
-    });
-    nav.appendChild(btn);
+    nav.appendChild(navRow(id, label));
   });
   document.getElementById("sidebarFoot").innerHTML = `
     <div>${CURRENT_USER ? `${CURRENT_USER.name || CURRENT_USER.username} <span class="muted">(${CURRENT_USER.accessLevel})</span>` : ""}</div>

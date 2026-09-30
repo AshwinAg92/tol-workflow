@@ -80,7 +80,7 @@ async function getSessionUser(req) {
     const payload = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
     if (!payload.exp || payload.exp < Date.now()) return null;
     const { rows } = await pool.query(
-      "SELECT id, username, access_level, team_id, permissions, is_performer FROM users WHERE id = $1",
+      "SELECT id, username, access_level, team_id, permissions, is_performer, nav_favorites FROM users WHERE id = $1",
       [payload.uid]
     );
     return rows[0] || null;
@@ -295,7 +295,20 @@ app.get("/api/auth/me", async (req, res) => {
   }
   let permissions = null;
   try { permissions = user.permissions ? JSON.parse(user.permissions) : null; } catch { permissions = null; }
-  res.json({ id: user.id, username: user.username, accessLevel: user.access_level, name, permissions, isPerformer: !!user.is_performer, teamId: user.team_id || null });
+  let navFavorites = [];
+  try { navFavorites = user.nav_favorites ? JSON.parse(user.nav_favorites) : []; } catch { navFavorites = []; }
+  res.json({ id: user.id, username: user.username, accessLevel: user.access_level, name, permissions, isPerformer: !!user.is_performer, teamId: user.team_id || null, navFavorites });
+});
+
+// A user's own choice of which sidebar sections to pin to the top —
+// personal preference, no admin gating needed beyond being logged in.
+app.put("/api/my/nav-favorites", requireAuth, async (req, res) => {
+  const { favorites } = req.body;
+  if (!Array.isArray(favorites) || !favorites.every((f) => typeof f === "string")) {
+    return res.status(400).json({ error: "favorites must be an array of strings" });
+  }
+  await pool.query("UPDATE users SET nav_favorites = $1 WHERE id = $2", [JSON.stringify(favorites), req.user.id]);
+  res.json({ favorites });
 });
 
 // ---------- User accounts (admin only) — add teammates with their own login ----------

@@ -181,6 +181,10 @@ async function setup() {
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payment_date TEXT`);
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payment_mode TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS advance_date TEXT`);
+  // Which sidebar sections a user has pinned to their own "Favourites" group
+  // at the top of the nav — a personal preference, stored as a JSON array
+  // of nav ids (e.g. '["leads","accounts"]').
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS nav_favorites TEXT`);
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS specialty TEXT`);
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS base_city TEXT`);
   // Preset fees so the Team assignment screen can suggest a rate automatically
