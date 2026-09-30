@@ -2002,9 +2002,9 @@ app.post("/api/leads/:id/assignments", requireAuth, requireCapability("assign_te
   const newlyAdded = teamIds.filter((id) => !existing.includes(id));
   for (const teamId of newlyAdded) {
     await pool.query(`
-      INSERT INTO event_assignments (id, lead_id, team_id, status, paid, created_at)
-      VALUES ($1, $2, $3, 'pending', 0, $4)
-    `, [uuid(), req.params.id, teamId, now]);
+      INSERT INTO event_assignments (id, lead_id, team_id, status, paid, created_at, confirm_token)
+      VALUES ($1, $2, $3, 'pending', 0, $4, $5)
+    `, [uuid(), req.params.id, teamId, now, uuid()]);
     await pool.query(`
       INSERT INTO notifications (id, team_id, message, created_at)
       VALUES ($1, $2, $3, $4)
@@ -2057,6 +2057,52 @@ app.patch("/api/assignments/:id/mark-response", requireAuth, requireCapability("
     logActivity(req, `Marked ${member ? member.name : "artist"} as ${status} for ${lead.name} (${lead.date})`, a.lead_id);
   }
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
+});
+
+// A no-login confirmation link, sent over WhatsApp -- most performers here
+// don't have an account, so this is how they see their event details and
+// accept/decline straight from their phone. The token is unguessable but
+// otherwise unauthenticated, so only event details already meant to go out
+// over WhatsApp are exposed here — never the client's phone/email or money.
+app.get("/api/public/assignment/:token", async (req, res) => {
+  const row = (await pool.query(`
+    SELECT event_assignments.status, event_assignments.responded_at,
+           team.name AS team_name,
+           leads.name AS client_name, leads.event_type, leads.city, leads.date,
+           leads.venue, leads.event_time, leads.soundcheck_time, leads.pcs
+    FROM event_assignments
+    JOIN team ON team.id = event_assignments.team_id
+    JOIN leads ON leads.id = event_assignments.lead_id
+    WHERE event_assignments.confirm_token = $1
+  `, [req.params.token])).rows[0];
+  if (!row) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
+  res.json({
+    teamName: row.team_name,
+    status: row.status,
+    respondedAt: row.responded_at,
+    clientName: row.client_name,
+    experience: packageName(row.event_type),
+    city: row.city,
+    date: row.date,
+    venue: row.venue,
+    eventTime: row.event_time,
+    soundcheckTime: row.soundcheck_time,
+    pcs: row.pcs,
+  });
+});
+
+app.post("/api/public/assignment/:token/respond", async (req, res) => {
+  const { status } = req.body;
+  if (!["accepted", "declined"].includes(status)) return res.status(400).json({ error: "status must be 'accepted' or 'declined'" });
+  const a = (await pool.query("SELECT * FROM event_assignments WHERE confirm_token = $1", [req.params.token])).rows[0];
+  if (!a) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
+  await pool.query("UPDATE event_assignments SET status = $1, responded_at = $2 WHERE id = $3", [status, new Date().toISOString(), a.id]);
+  const lead = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [a.lead_id])).rows[0];
+  const member = (await pool.query("SELECT name FROM team WHERE id = $1", [a.team_id])).rows[0];
+  if (lead) {
+    logActivity({ user: null }, `${member ? member.name : "An artist"} ${status} ${lead.name} (${lead.date}) via confirmation link`, a.lead_id);
+  }
+  res.json({ status });
 });
 
 // ---------- Travel legs (per-artist travel plan for outstation events) ----------

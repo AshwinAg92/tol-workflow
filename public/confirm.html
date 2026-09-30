@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Confirm your event — Together, Out Loud</title>
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin:0;
+      background:#FEF6ED;
+      font-family:'Nunito',sans-serif;
+      color:#3A2418;
+      display:flex;
+      justify-content:center;
+      padding:36px 16px 60px;
+      min-height:100vh;
+    }
+    .wrap { max-width:440px; width:100%; }
+    .tagline {
+      font-family:'Caveat',cursive;
+      font-weight:700;
+      font-size:26px;
+      color:#C7401E;
+      text-align:center;
+      margin:0 0 4px;
+    }
+    .subhead { text-align:center; font-size:13px; color:#8A6A54; margin-bottom:22px; }
+    .card {
+      background:#FFFFFF;
+      border-radius:16px;
+      padding:26px 24px;
+      box-shadow:0 4px 18px rgba(199,64,30,0.08);
+      border:1px solid #F6E4D2;
+    }
+    .greet { font-size:18px; font-weight:700; margin-bottom:2px; }
+    .status-pill {
+      display:inline-block; font-size:12.5px; font-weight:700; border-radius:20px;
+      padding:4px 12px; margin-top:6px;
+    }
+    .status-pending { background:#FBEFD9; color:#B6752C; }
+    .status-accepted { background:#E8F0E9; color:#5C8A6B; }
+    .status-declined { background:#F7E4DF; color:#A64B3C; }
+    .detail-row { display:flex; gap:10px; padding:10px 0; border-bottom:1px solid #F6E4D2; font-size:14.5px; }
+    .detail-row:last-of-type { border-bottom:none; }
+    .detail-icon { flex-shrink:0; width:20px; text-align:center; }
+    .detail-label { color:#B29578; font-size:11.5px; text-transform:uppercase; letter-spacing:0.03em; }
+    .detail-value { font-weight:600; }
+    .btn-row { display:flex; gap:10px; margin-top:22px; }
+    button {
+      flex:1; padding:13px; border-radius:10px; border:none; font-size:15px; font-weight:700;
+      font-family:'Nunito',sans-serif; cursor:pointer; transition:opacity 0.15s;
+    }
+    button:disabled { opacity:0.5; cursor:default; }
+    .btn-accept { background:#5C8A6B; color:#FFFFFF; }
+    .btn-decline { background:#FFFFFF; color:#A64B3C; border:1.5px solid #E9C9BE; }
+    .msg { text-align:center; font-size:14.5px; margin-top:18px; color:#3A2418; }
+    .loading, .error { text-align:center; padding:40px 0; color:#8A6A54; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="tagline">Together, Out Loud</div>
+    <div class="subhead">Event confirmation</div>
+    <div class="card" id="card">
+      <div class="loading">Loading…</div>
+    </div>
+  </div>
+  <script>
+    const token = new URLSearchParams(window.location.search).get("token");
+    const card = document.getElementById("card");
+    const statusLabel = { pending: "Awaiting your response", accepted: "You've accepted", declined: "You've declined" };
+    const statusClass = { pending: "status-pending", accepted: "status-accepted", declined: "status-declined" };
+
+    function fmtDate(d) {
+      if (!d) return null;
+      const parsed = new Date(d);
+      if (isNaN(parsed)) return d;
+      return parsed.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+    }
+
+    function render(data) {
+      const rows = [
+        ["🎤", "Experience", data.experience],
+        ["📅", "Date", fmtDate(data.date)],
+        ["📍", "City", data.city],
+        ["🏛️", "Venue", data.venue],
+        ["🕒", "Event time", data.eventTime],
+        ["🎶", "Sound check", data.soundcheckTime],
+        ["🎸", "Band size", data.pcs ? `${data.pcs} pcs` : null],
+      ].filter(([, , v]) => v);
+
+      card.innerHTML = `
+        <div class="greet">Hi ${data.teamName || "there"} 👋</div>
+        <div>You've been booked for:</div>
+        <div class="status-pill ${statusClass[data.status] || "status-pending"}">${statusLabel[data.status] || data.status}</div>
+        <div style="margin-top:16px;">
+          ${rows.map(([icon, label, value]) => `
+            <div class="detail-row">
+              <div class="detail-icon">${icon}</div>
+              <div>
+                <div class="detail-label">${label}</div>
+                <div class="detail-value">${value}</div>
+              </div>
+            </div>
+          `).join("")}
+        </div>
+        <div class="btn-row">
+          <button class="btn-accept" id="acceptBtn" ${data.status === "accepted" ? "disabled" : ""}>✓ Accept</button>
+          <button class="btn-decline" id="declineBtn" ${data.status === "declined" ? "disabled" : ""}>✕ Decline</button>
+        </div>
+        <div class="msg" id="msg"></div>
+      `;
+
+      async function respond(status) {
+        document.getElementById("acceptBtn").disabled = true;
+        document.getElementById("declineBtn").disabled = true;
+        document.getElementById("msg").textContent = "Saving…";
+        try {
+          const res = await fetch(`/api/public/assignment/${encodeURIComponent(token)}/respond`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status }),
+          });
+          if (!res.ok) throw new Error((await res.json()).error || "Something went wrong");
+          data.status = status;
+          render(data);
+          document.getElementById("msg").textContent = status === "accepted" ? "Thanks — see you there! 🎉" : "Got it — thanks for letting us know.";
+        } catch (err) {
+          document.getElementById("msg").textContent = err.message;
+          document.getElementById("acceptBtn").disabled = data.status === "accepted";
+          document.getElementById("declineBtn").disabled = data.status === "declined";
+        }
+      }
+      document.getElementById("acceptBtn").addEventListener("click", () => respond("accepted"));
+      document.getElementById("declineBtn").addEventListener("click", () => respond("declined"));
+    }
+
+    if (!token) {
+      card.innerHTML = `<div class="error">This link is missing its token — ask whoever sent it for a fresh copy.</div>`;
+    } else {
+      fetch(`/api/public/assignment/${encodeURIComponent(token)}`)
+        .then(async (res) => {
+          if (!res.ok) throw new Error((await res.json()).error || "Couldn't load this link");
+          return res.json();
+        })
+        .then(render)
+        .catch((err) => {
+          card.innerHTML = `<div class="error">${err.message}</div>`;
+        });
+    }
+  </script>
+</body>
+</html>

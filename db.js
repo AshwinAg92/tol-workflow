@@ -194,6 +194,15 @@ async function setup() {
   await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'`);
   // team_id nullable already — NULL means "for admin" rather than a specific performer.
   await pool.query(`ALTER TABLE event_assignments ADD COLUMN IF NOT EXISTS cancel_reason TEXT`);
+  // A random, unguessable token so an artist can open a no-login link (sent
+  // over WhatsApp) and accept/decline straight from their phone, without an
+  // account — most performers here don't have one. Backfilled once for any
+  // assignment created before this existed; new ones get theirs at creation.
+  await pool.query(`ALTER TABLE event_assignments ADD COLUMN IF NOT EXISTS confirm_token TEXT`);
+  const { rows: assignmentsNeedingToken } = await pool.query("SELECT id FROM event_assignments WHERE confirm_token IS NULL");
+  for (const row of assignmentsNeedingToken) {
+    await pool.query("UPDATE event_assignments SET confirm_token = $1 WHERE id = $2", [uuid(), row.id]);
+  }
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_performer INTEGER NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS event_time TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS soundcheck_time TEXT`);

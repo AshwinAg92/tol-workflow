@@ -4289,6 +4289,11 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                 // size) so they can plan the other artists — everyone else just
                 // needs to know when and where they're playing.
                 const isManager = /manager/i.test(m.role || "");
+                // A no-login link (see public/confirm.html) where they can see
+                // the event details and accept/decline themselves — most
+                // artists here don't have an account, so this rides along on
+                // the same WhatsApp message rather than needing its own step.
+                const confirmLink = a ? `${window.location.origin}/confirm.html?token=${a.confirm_token}` : "";
                 const waMsg = fillTemplate(MESSAGE_TEMPLATES.artist_confirmation || TEMPLATE_META.artist_confirmation.default, {
                   artistName: m.name,
                   clientName: lead.name,
@@ -4299,7 +4304,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                   eventTimeClause: isManager && lead.event_time ? ` Event time: ${lead.event_time}.` : "",
                   soundcheckClause: isManager && lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : "",
                   pcsClause: isManager && lead.pcs ? ` Band size for this event: ${lead.pcs} pcs.` : "",
-                });
+                }) + (confirmLink ? `\n\nAccept or decline here: ${confirmLink}` : "");
                 const isLocalEvent = m.base_city && lead.city && m.base_city.trim().toLowerCase() === lead.city.trim().toLowerCase();
                 const suggestedFee = isLocalEvent ? m.local_fee : m.outstation_fee;
                 return `
@@ -4332,6 +4337,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                           </label>
                           <button class="btn-ghost manager-wa-btn" data-team-id="${m.id}" style="font-size:11.5px; padding:3px 8px;">💬 WhatsApp</button>
                         ` : `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" style="font-size:11.5px; padding:3px 8px;">💬 WhatsApp</a>`) : ""}
+                        <button class="btn-ghost copy-confirm-link-btn" data-confirm-link="${confirmLink}" style="font-size:11.5px; padding:3px 8px;">🔗 Copy link</button>
                       </div>
                     ` : ""}
                   </div>
@@ -4570,7 +4576,23 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       if (includeContact) {
         waMsg += `\n\nClient contact: ${lead.name}${lead.phone ? `, ${lead.phone}` : ""}`;
       }
+      const a = byTeamId[m.id];
+      if (a) waMsg += `\n\nAccept or decline here: ${window.location.origin}/confirm.html?token=${a.confirm_token}`;
       window.location.href = `https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}`;
+    });
+  });
+  root.querySelectorAll(".copy-confirm-link-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const link = btn.dataset.confirmLink;
+      if (!link) return;
+      try {
+        await navigator.clipboard.writeText(link);
+        const original = btn.textContent;
+        btn.textContent = "✓ Copied";
+        setTimeout(() => { btn.textContent = original; }, 1500);
+      } catch (err) {
+        prompt("Copy this link:", link);
+      }
     });
   });
   root.querySelectorAll("[data-remove-temp-artist]").forEach((btn) => {
