@@ -32,15 +32,15 @@ const ICON_X = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stro
 const ICON_EDIT = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
 
 const STAGE_COLOR = {
-  New: "#8A8578",
+  New: "#8A6A54",
   Quoted: "#C1602B",
-  "Follow-up": "#B6752C",
-  Interested: "#4A8FA6",
-  Tentative: "#9B6EA8",
-  Confirmed: "#5C8A6B",
-  Completed: "#2E5C63",
+  "Follow-up": "#F0A438",
+  Interested: "#1C7A80",
+  Tentative: "#E6467F",
+  Confirmed: "#146A66",
+  Completed: "#2B2420",
   "Not Interested": "#A8A296",
-  Cancelled: "#A64B3C",
+  Cancelled: "#A6432B",
 };
 
 // What a quoted/confirmed rate can include — explicit tickable line items
@@ -1131,7 +1131,7 @@ function renderLeadsBulkBar(main) {
     return;
   }
   bar.innerHTML = `
-    <div class="card" style="margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#F5F0E4;">
+    <div class="card" style="margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#FBEFD9;">
       <span>${leadsSelected.size} selected</span>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn-ghost" id="bulkClearBtn">Clear</button>
@@ -1222,7 +1222,7 @@ function openBulkWhatsappFollowupModal(leadIds, main) {
             if (!conflictLead) return "";
             return `<div style="background:#FFF4E5; color:#8A5A1F; padding:8px 10px; border-radius:6px; font-size:12.5px; margin-bottom:12px;">⚠️ ${conflictLead.name} is already ${conflictLead.stage} for this date — you may be chasing a date that's already spoken for.</div>`;
           })()}
-          <div class="card" style="background:#F5F0E4; white-space:pre-wrap; font-size:13.5px; margin-bottom:14px;">${msg}</div>
+          <div class="card" style="background:#FBEFD9; white-space:pre-wrap; font-size:13.5px; margin-bottom:14px;">${msg}</div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button class="btn-primary" id="bulkWaOpenBtn" style="flex:1;">💬 Open WhatsApp</button>
             <button class="btn-ghost" id="bulkWaSkipBtn">Skip</button>
@@ -1312,7 +1312,7 @@ async function openLeadDetailModal(lead) {
                 <div><span class="muted small">${lead.stage === "Tentative" ? "Rate held" : "Final"}</span><div class="mono">${lead.final_amount || lead.quote_amount ? inr(lead.final_amount || lead.quote_amount) : "—"}</div></div>
                 ${lead.reimbursement_due ? `<div><span class="muted small">Reimbursement due</span><div class="mono" style="color:#B6752C;">+ ${inr(lead.reimbursement_due)}</div></div>` : ""}
                 <div><span class="muted small">Received</span><div class="mono">${inr(lead.received || 0)}</div></div>
-                <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
+                <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A6432B" : "#1C7A80"};">${inr(balance)}</div></div>
               </div>
               ${rateInclusionsSummaryText(lead) ? `<div class="muted small" style="margin-top:8px;">${rateInclusionsSummaryText(lead)}</div>` : ""}
               ${lead.rate_note ? `<div class="muted small" style="margin-top:2px;">📝 ${lead.rate_note}</div>` : ""}
@@ -1354,7 +1354,7 @@ async function openLeadDetailModal(lead) {
     const quotesForLead = allQuotes.filter((q) => q.lead_id === lead.id);
     const container = root.querySelector("#leadDetailQuotes");
     if (!container) return; // modal closed while loading
-    const statusColor = { sent: "#B6752C", accepted: "#5C8A6B", rejected: "#A64B3C" };
+    const statusColor = { sent: "#B6752C", accepted: "#1C7A80", rejected: "#A6432B" };
     container.innerHTML = quotesForLead.length === 0
       ? `<p class="muted small">No quotes sent yet.</p>`
       : quotesForLead.map((q) => `
@@ -1386,7 +1386,7 @@ async function openLeadDetailModal(lead) {
         ? `<p class="muted small">No travel added yet.</p>`
         : legs.map((leg) => {
             const names = leg.members.map((m) => m.name).join(", ") || "No one added yet";
-            const statusColor = leg.status === "not_booked" ? "#B6752C" : "#5C8A6B";
+            const statusColor = leg.status === "not_booked" ? "#B6752C" : "#1C7A80";
             const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
             return `
               <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
@@ -1656,13 +1656,13 @@ async function renderLeadsLog(main, skipRefresh) {
             const countsTowardAutoClose = ["New", "Follow-up"].includes(l.stage);
             const count = l.followup_count || 0;
             const counterText = countsTowardAutoClose && count > 0
-              ? ` <span class="muted" style="${count >= 2 ? "color:#A64B3C;" : ""}">(${count}/3${count >= 2 ? " — one more with no response auto-closes this" : ""})</span>`
+              ? ` <span class="muted" style="${count >= 2 ? "color:#A6432B;" : ""}">(${count}/3${count >= 2 ? " — one more with no response auto-closes this" : ""})</span>`
               : "";
             return `<div class="small" style="margin-top:6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
               <span style="color:${color};">${icon} ${label}</span>${counterText}
               <a href="#" class="mark-followup-link" data-lead-id="${l.id}" style="font-size:12px; color:#8A5FA8; text-decoration:underline;" title="Use this if you contacted them by phone or in person instead of the WhatsApp button.">mark followed up now</a>
               ${isSnoozed
-                ? `<a href="#" class="clear-snooze-link" data-lead-id="${l.id}" style="font-size:12px; color:#A64B3C; text-decoration:underline;">clear snooze</a>`
+                ? `<a href="#" class="clear-snooze-link" data-lead-id="${l.id}" style="font-size:12px; color:#A6432B; text-decoration:underline;">clear snooze</a>`
                 : `<a href="#" class="snooze-toggle-link" data-lead-id="${l.id}" style="font-size:12px; color:#8A5FA8; text-decoration:underline;" title="Hide this lead from overdue/follow-up reminders until a date you pick — useful when they've said 'we'll let you know'.">⏰ snooze</a>`
               }
             </div>
@@ -1680,14 +1680,14 @@ async function renderLeadsLog(main, skipRefresh) {
               </div>
               <textarea class="lead-note-input" data-lead-id="${l.id}" rows="2" placeholder="Quick note for this lead…" style="width:100%; padding:6px 8px; border:1px solid #E0CE8A; border-radius:5px; font-family:inherit; font-size:16px; background:#FFFDF6; resize:vertical;">${l.notes || ""}</textarea>
             </div>
-          ` : (l.notes ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#F5F0E4; border-radius:4px;">📝 ${l.notes}</div>` : "")}
-          ${l.stage === "Cancelled" && l.cancellation_reason ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#FBEAE7; border-radius:4px; color:#A64B3C;">❌ Cancelled: ${l.cancellation_reason}</div>` : ""}
+          ` : (l.notes ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#FBEFD9; border-radius:4px;">📝 ${l.notes}</div>` : "")}
+          ${l.stage === "Cancelled" && l.cancellation_reason ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#F7E4DF; border-radius:4px; color:#A6432B;">❌ Cancelled: ${l.cancellation_reason}</div>` : ""}
           ${hasRateInfo ? `
             <div class="lead-card-financials" style="${displayReimbursementDue ? "grid-template-columns:repeat(2,1fr);" : ""}">
               <div><span class="muted small">${l.stage === "Tentative" ? "Rate held" : "Final"}</span><div class="mono">${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
               ${displayReimbursementDue ? `<div><span class="muted small">Reimbursement due</span><div class="mono" style="color:#B6752C;">+ ${inr(displayReimbursementDue)}</div></div>` : ""}
               <div><span class="muted small">Received</span><div class="mono">${inr(displayReceived || 0)}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
-              <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
+              <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A6432B" : "#1C7A80"};">${inr(balance)}</div></div>
             </div>
           ` : ""}
           ${isConfirmedOrDone ? `
@@ -1706,7 +1706,7 @@ async function renderLeadsLog(main, skipRefresh) {
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost travel-plan-btn" data-lead-id="${l.id}">🧳 Travel</button>` : ""}
             ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost lead-documents-btn" data-lead-id="${l.id}">📄 Documents</button>` : ""}
             ${hasLeadsAccess() && l.stage !== "Completed" ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}">✎ Edit</button>` : ""}
-            ${CURRENT_USER?.accessLevel === "admin" && l.stage !== "Completed" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="color:#A64B3C;">🗑 Delete</button>` : ""}
+            ${CURRENT_USER?.accessLevel === "admin" && l.stage !== "Completed" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="color:#A6432B;">🗑 Delete</button>` : ""}
             ${l.stage === "Completed" ? `<span class="muted small">🔒 Completed — locked</span>` : ""}
           </div>
         </div>
@@ -2101,7 +2101,7 @@ function openQuoteViewModal(q) {
             ${editing ? `
               <button class="btn-primary" id="saveEditBtn">Save changes</button>
             ` : `
-              <button class="btn-ghost" id="deleteQuoteBtn" style="color:#A64B3C;">Delete — sent by mistake</button>
+              <button class="btn-ghost" id="deleteQuoteBtn" style="color:#A6432B;">Delete — sent by mistake</button>
               <button class="btn-ghost" id="copyQuoteBtn">Copy text</button>
               ${digits ? `<button class="btn-ghost" id="resendWaBtn">💬 Resend via WhatsApp</button>` : ""}
               <button class="btn-ghost" id="editQuoteBtn">Edit</button>
@@ -2197,7 +2197,7 @@ async function renderQuotation(main) {
           ${quotable.map((l) => `<option value="${l.id}" ${l.id === preselect ? "selected" : ""}>${l.name}${l.is_b2b ? " [B2B]" : ""} — ${fmtDate(l.date)}${l.city ? `, ${l.city}` : ""}</option>`).join("")}
         </select>
         <div id="leadB2bBadge" style="display:none; margin-top:6px;"><span class="mono small" style="background:#8A5FA8; color:#fff; border-radius:4px; padding:2px 8px; font-size:11px; font-weight:600;">B2B lead — quote will show both rates</span></div>
-        <div id="leadContextCard" style="margin:10px 0 4px; padding:10px 12px; background:#F5F0E4; border-radius:6px; font-size:12.5px; display:none;"></div>
+        <div id="leadContextCard" style="margin:10px 0 4px; padding:10px 12px; background:#FBEFD9; border-radius:6px; font-size:12.5px; display:none;"></div>
         <label style="margin-top:10px;">Package</label>
         <select id="qPackage">${CONFIG.packages.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}</select>
         <p class="muted small" style="margin-top:2px; margin-bottom:0;">Defaults to what they originally asked about — change it if they've since asked for something different (e.g. Bhajan Jamming → Musical Pheras). Sending this quote updates the lead to this package.</p>
@@ -2245,7 +2245,7 @@ async function renderQuotation(main) {
     <div class="table" id="quoteHistoryTable"><div class="board-empty">Loading…</div></div>
   `;
 
-  const quoteStatusColor = { sent: "#B6752C", accepted: "#5C8A6B", rejected: "#A64B3C" };
+  const quoteStatusColor = { sent: "#B6752C", accepted: "#1C7A80", rejected: "#A6432B" };
 
   api("/api/quotes").then((history) => {
     const historyTable = main.querySelector("#quoteHistoryTable");
@@ -2548,7 +2548,7 @@ function wireCalendarGrid(container) {
       calCells.appendChild(el(`
         <div class="cal-cell${d ? "" : " cal-cell-empty"}"${blocked ? ` style="background:repeating-linear-gradient(45deg, #E5DFD1, #E5DFD1 6px, #DCD4C0 6px, #DCD4C0 12px);"` : ""}>
           ${d ? `<div class="cal-day">${d}</div>` : ""}
-          ${blocked ? `<div class="cal-event cal-event-blocked" data-blocked-date="${dateStr}" style="cursor:pointer; background:#8A8578;" title="Blocked${blocked.reason ? `: ${blocked.reason}` : ""}">🚫 Blocked</div>` : ""}
+          ${blocked ? `<div class="cal-event cal-event-blocked" data-blocked-date="${dateStr}" style="cursor:pointer; background:#8A6A54;" title="Blocked${blocked.reason ? `: ${blocked.reason}` : ""}">🚫 Blocked</div>` : ""}
           ${evs.map((ev) => {
             const isTentative = ev.stage === "Tentative";
             // Siliguri stays the default brand terracotta (from the .cal-event
@@ -2613,7 +2613,7 @@ function openBlockedDatesModal(onChange) {
                   <div>${fmtDate(b.start_date)}${b.end_date !== b.start_date ? ` – ${fmtDate(b.end_date)}` : ""}</div>
                   ${b.reason ? `<div class="muted small">${b.reason}</div>` : ""}
                 </div>
-                <button class="btn-ghost" data-remove-block="${b.id}" style="font-size:12px; padding:4px 8px; color:#A64B3C;">Remove</button>
+                <button class="btn-ghost" data-remove-block="${b.id}" style="font-size:12px; padding:4px 8px; color:#A6432B;">Remove</button>
               </div>
             `).join("")}
             <div class="section-label" style="margin-top:16px;">Block new dates</div>
@@ -2843,7 +2843,7 @@ async function renderTravelCalendar(main) {
     listEl.innerHTML = upcoming.length === 0 ? `<p class="muted small">Nothing upcoming.</p>` : "";
     upcoming.forEach((leg) => {
       const names = leg.members.map((m) => m.name).join(", ") || "No one added yet";
-      const statusColor = leg.status === "not_booked" ? "#B6752C" : "#5C8A6B";
+      const statusColor = leg.status === "not_booked" ? "#B6752C" : "#1C7A80";
       const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ") || leg.lead_city || "";
       const primaryDt = leg.departure_at || leg.arrival_at;
       const dateObj = primaryDt ? new Date(primaryDt) : null;
@@ -2980,7 +2980,7 @@ function openStandaloneTravelLegModal(legId, onDone) {
             ` : `<p class="muted small" style="margin-top:8px;">Save this trip first, then you can attach a ticket or booking file.</p>`}
           </div>
           <div class="modal-foot">
-            ${leg ? `<button class="btn-ghost" id="stlDeleteBtn" style="color:#A64B3C; margin-right:auto;">Delete</button>` : ""}
+            ${leg ? `<button class="btn-ghost" id="stlDeleteBtn" style="color:#A6432B; margin-right:auto;">Delete</button>` : ""}
             <button class="btn-ghost" id="cancelModal">Cancel</button>
             <button class="btn-primary" id="stlSaveBtn">Save</button>
           </div>
@@ -3105,10 +3105,10 @@ async function renderTeam(main, subTab = "team") {
   const teamIdsWithLogin = new Set(users.map((u) => u.team_id).filter(Boolean));
   content.innerHTML = `
     ${isAdmin && LEADS.some((l) => l.is_seed) ? `
-      <div class="card" style="margin-bottom:20px; border-color:#A64B3C;">
-        <div class="section-label" style="color:#A64B3C;">Going live</div>
+      <div class="card" style="margin-bottom:20px; border-color:#A6432B;">
+        <div class="section-label" style="color:#A6432B;">Going live</div>
         <p class="muted small">Wipe the ${LEADS.filter((l) => l.is_seed).length} demo leads/bookings (and everything tied to them — tasks, documents, expenses, payments, quotes) and the placeholder team members (Divya/Karan/Neha/Devin). Your real leads, bookings, and everyone else's data are never touched.</p>
-        <button class="btn-ghost" id="clearDemoBtn" style="color:#A64B3C; border-color:#A64B3C;">🗑 Clear demo data</button>
+        <button class="btn-ghost" id="clearDemoBtn" style="color:#A6432B; border-color:#A6432B;">🗑 Clear demo data</button>
       </div>
     ` : ""}
     ${isAdmin ? `
@@ -3286,7 +3286,7 @@ async function openTeamMemberEventsModal(member) {
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
 
   const statusLabel = { pending: "Awaiting response", accepted: "Accepted", declined: "Declined", cancel_requested: "Cancellation requested" };
-  const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C", cancel_requested: "#B6752C" };
+  const statusColor = { pending: "#B6752C", accepted: "#1C7A80", declined: "#A6432B", cancel_requested: "#B6752C" };
 
   let events;
   try {
@@ -3311,8 +3311,8 @@ async function openTeamMemberEventsModal(member) {
     <div class="artist-stats-row">
       <div><div class="mono">${completedCount}</div><div class="muted small">Completed</div></div>
       <div><div class="mono">${upcoming.filter((e) => e.status === "accepted").length}</div><div class="muted small">Upcoming</div></div>
-      <div><div class="mono" style="color:${declinedCount > 0 ? "#A64B3C" : "inherit"};">${declinedCount}</div><div class="muted small">Declined</div></div>
-      <div><div class="mono" style="color:${cancelledCount > 0 ? "#A64B3C" : "inherit"};">${cancelledCount}</div><div class="muted small">Cancel requests</div></div>
+      <div><div class="mono" style="color:${declinedCount > 0 ? "#A6432B" : "inherit"};">${declinedCount}</div><div class="muted small">Declined</div></div>
+      <div><div class="mono" style="color:${cancelledCount > 0 ? "#A6432B" : "inherit"};">${cancelledCount}</div><div class="muted small">Cancel requests</div></div>
     </div>
   ` : "";
 
@@ -3655,7 +3655,7 @@ function openEditMemberModal(member, linkedUser) {
             </div>` : ""}
         </div>
         <div class="modal-foot">
-          <button class="btn-ghost" id="deleteMember" style="color:#A64B3C;">Remove member</button>
+          <button class="btn-ghost" id="deleteMember" style="color:#A6432B;">Remove member</button>
           <button class="btn-ghost" id="cancelModal">Cancel</button>
           <button class="btn-primary" id="submitModal">Save</button>
         </div>
@@ -3971,7 +3971,7 @@ async function openLeadPaymentsModal(leadId) {
         <div class="card summary-card summary-card-compact"><div class="muted">Final rate</div><div class="mono big">${inr(total)}</div></div>
         ${totalReimbursementDue > 0 ? `<div class="card summary-card summary-card-compact"><div class="muted">Reimbursement due</div><div class="mono big" style="color:#B6752C;">+ ${inr(totalReimbursementDue)}</div></div>` : ""}
         <div class="card summary-card summary-card-compact"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
-        <div class="card summary-card summary-card-compact"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
+        <div class="card summary-card summary-card-compact"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A6432B" : "#1C7A80"};">${inr(balance)}</div></div>
       </div>
       ${totalReimbursementDue > 0 ? `<p class="muted small" style="margin-top:-8px; margin-bottom:14px;">Balance = Final − Received + Reimbursement due (${inr(total)} − ${inr(received)} + ${inr(totalReimbursementDue)}).</p>` : ""}
       ${hasAccountsAccess() ? `<button class="btn-ghost full" id="lpShareLedgerBtn" style="margin-bottom:14px;">📄 Share ledger PDF on WhatsApp</button>` : ""}
@@ -4001,7 +4001,7 @@ async function openLeadPaymentsModal(leadId) {
             <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
               ${p.status === "due"
                 ? `<button class="btn-ghost mark-reimbursement-btn" data-payment-id="${p.id}" data-mark-status="received" style="font-size:12px; padding:4px 8px;">Mark received</button>`
-                : `<span class="tag" style="color:#5C8A6B;">Received</span><button class="btn-ghost mark-reimbursement-btn" data-payment-id="${p.id}" data-mark-status="due" style="font-size:11px; padding:3px 6px;">Undo</button>`}
+                : `<span class="tag" style="color:#1C7A80;">Received</span><button class="btn-ghost mark-reimbursement-btn" data-payment-id="${p.id}" data-mark-status="due" style="font-size:11px; padding:3px 6px;">Undo</button>`}
               <button class="icon-btn" data-delete-payment="${p.id}">${ICON_X}</button>
             </div>
           </div>
@@ -4266,7 +4266,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   const totalExpensesPending = totalExpensesAmount - totalExpensesPaid;
 
   const statusLabel = { pending: "Pending response", accepted: "Accepted", declined: "Declined" };
-  const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C" };
+  const statusColor = { pending: "#B6752C", accepted: "#1C7A80", declined: "#A6432B" };
 
   // A one-click "mark paid" doesn't capture how — cash, UPI, or which card —
   // which is exactly what's worth remembering later. This hidden-by-default
@@ -4311,8 +4311,8 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
           ${isAdmin && leadExpenses.length > 0 ? `
             <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:14px; gap:8px;">
               <div class="card summary-card summary-card-compact"><div class="muted">Total expenses</div><div class="mono big">${inr(totalExpensesAmount)}</div></div>
-              <div class="card summary-card summary-card-compact"><div class="muted">Paid</div><div class="mono big" style="color:#5C8A6B;">${inr(totalExpensesPaid)}</div></div>
-              <div class="card summary-card summary-card-compact"><div class="muted">Pending</div><div class="mono big" style="color:${totalExpensesPending > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(totalExpensesPending)}</div></div>
+              <div class="card summary-card summary-card-compact"><div class="muted">Paid</div><div class="mono big" style="color:#1C7A80;">${inr(totalExpensesPaid)}</div></div>
+              <div class="card summary-card summary-card-compact"><div class="muted">Pending</div><div class="mono big" style="color:${totalExpensesPending > 0 ? "#A6432B" : "#1C7A80"};">${inr(totalExpensesPending)}</div></div>
             </div>
           ` : ""}
           <label>Venue</label>
@@ -4325,7 +4325,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
             // exactly the moments you need the full list in view.
             const startExpanded = assignedCount === 0 || !!autoCheckTeamId;
             return `
-            <div data-toggle-team-list style="cursor:pointer; display:flex; align-items:center; gap:8px; background:#F5F0E4; border-radius:8px; padding:10px 14px; margin:16px 0 8px; font-weight:700; font-size:14.5px; color:#2A2620;">
+            <div data-toggle-team-list style="cursor:pointer; display:flex; align-items:center; gap:8px; background:#FBEFD9; border-radius:8px; padding:10px 14px; margin:16px 0 8px; font-weight:700; font-size:14.5px; color:#2A2620;">
               <span data-team-list-caret style="font-size:12px;">${startExpanded ? "▾" : "▸"}</span>
               <span>Team members</span>
               <span class="muted" style="font-weight:600; font-size:13px;">(${assignedCount} of ${TEAM.length} assigned)</span>
@@ -4431,7 +4431,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                     </div>
                     <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
                       <button class="btn-ghost edit-expense-payment-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 8px;">Edit</button>
-                      <button class="btn-ghost remove-other-expense-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 9px; color:#A64B3C;">🗑</button>
+                      <button class="btn-ghost remove-other-expense-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 9px; color:#A6432B;">🗑</button>
                     </div>
                   </div>
                   ${expensePaymentForm(e, { editHeadAmount: true })}
@@ -4492,7 +4492,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                 <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
                   <div>
                     <div>${r.head.replace(/^Reimbursement — /, "")} <span class="muted small">— ${inr(r.amount)}</span></div>
-                    <div class="muted small" style="color:${r.approved ? "#5C8A6B" : "#B6752C"};">${reimbStatusLabel[r.approved]}${r.notes ? ` · ${r.notes}` : ""}</div>
+                    <div class="muted small" style="color:${r.approved ? "#1C7A80" : "#B6752C"};">${reimbStatusLabel[r.approved]}${r.notes ? ` · ${r.notes}` : ""}</div>
                   </div>
                 </div>
               `).join("")}
@@ -4885,7 +4885,7 @@ async function openTravelPlanModal(leadId) {
   function legCard(leg) {
     const editing = editingLegId === leg.id;
     if (editing) return legForm({ leg });
-    const statusColor = leg.status === "not_booked" ? "#B6752C" : "#5C8A6B";
+    const statusColor = leg.status === "not_booked" ? "#B6752C" : "#1C7A80";
     const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
     const names = leg.members.map((m) => m.name).join(", ") || "No one added yet";
     return `
@@ -4913,7 +4913,7 @@ async function openTravelPlanModal(leadId) {
         <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
           <label class="btn-ghost" style="font-size:12px; padding:3px 8px; cursor:pointer;">+ Add ticket<input type="file" data-ticket-upload="${leg.id}" style="display:none;" /></label>
           <button class="btn-ghost" data-edit-leg="${leg.id}" style="font-size:12px; padding:3px 8px;">Edit</button>
-          <button class="btn-ghost" data-delete-leg="${leg.id}" style="font-size:12px; padding:3px 8px; color:#A64B3C;">Delete</button>
+          <button class="btn-ghost" data-delete-leg="${leg.id}" style="font-size:12px; padding:3px 8px; color:#A6432B;">Delete</button>
           <span class="muted small" data-ticket-status="${leg.id}"></span>
         </div>
       </div>
@@ -5167,7 +5167,7 @@ async function openTravelPlanViewModal(leadId, leadName) {
         <div class="modal-body">
           ${legs.length === 0 ? `<p class="muted small">No travel added yet for this event.</p>` : legs.map((leg) => {
             const isMine = CURRENT_USER?.teamId && leg.members.some((m) => m.teamId === CURRENT_USER.teamId);
-            const statusColor = leg.status === "not_booked" ? "#B6752C" : "#5C8A6B";
+            const statusColor = leg.status === "not_booked" ? "#B6752C" : "#1C7A80";
             const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
             const names = leg.members.map((m) => (CURRENT_USER?.teamId && m.teamId === CURRENT_USER.teamId ? `${m.name} (You)` : m.name)).join(", ") || "No one added yet";
             return `
@@ -5244,7 +5244,7 @@ async function renderAccounts(main) {
       <div class="card summary-card"><div class="muted">Confirmed</div><div class="mono big" id="acctSumConfirmed">${inr(totals.quoted)}</div></div>
       <div class="card summary-card"><div class="muted">Amount received</div><div class="mono big" id="acctSumReceived" style="color:${STAGE_COLOR.Confirmed}">${inr(totals.received)}</div></div>
       <div class="card summary-card"><div class="muted">Outstanding</div><div class="mono big" id="acctSumOutstanding" style="color:${STAGE_COLOR["Follow-up"]}">${inr(totals.outstanding)}</div></div>
-      <div class="card summary-card"><div class="muted">Total profit</div><div class="mono big" id="acctSumProfit" style="color:${totals.profit >= 0 ? "#5C8A6B" : "#A64B3C"}">${inr(totals.profit)}</div></div>
+      <div class="card summary-card"><div class="muted">Total profit</div><div class="mono big" id="acctSumProfit" style="color:${totals.profit >= 0 ? "#1C7A80" : "#A6432B"}">${inr(totals.profit)}</div></div>
     </div>
     <p class="muted small" id="acctSumFilterNote" style="margin:-8px 0 16px;"></p>
 
@@ -5306,7 +5306,7 @@ async function renderAccounts(main) {
             <div>${t.party_name} <span class="muted small">— ${t.description}</span></div>
             <div class="muted small mono">${fmtDate(t.date)}${t.mode ? ` · ${t.mode}` : ""}</div>
           </div>
-          <span class="mono" style="color:${t.direction === "in" ? "#5C8A6B" : "#A64B3C"}; flex-shrink:0;">${t.direction === "in" ? "+" : "−"}${inr(t.amount)}</span>
+          <span class="mono" style="color:${t.direction === "in" ? "#1C7A80" : "#A6432B"}; flex-shrink:0;">${t.direction === "in" ? "+" : "−"}${inr(t.amount)}</span>
         </div>
       `));
     });
@@ -5367,9 +5367,9 @@ async function renderAccounts(main) {
             <div><span class="muted small">Final</span><div class="mono">${total ? inr(total) : "—"}</div></div>
             ${l.reimbursement_due ? `<div><span class="muted small">Reimb. due</span><div class="mono" style="color:#B6752C;">+ ${inr(l.reimbursement_due)}</div></div>` : ""}
             <div><span class="muted small">Received</span><div class="mono">${inr(l.received)}</div></div>
-            <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A64B3C" : "#5C8A6B"};">${inr(balance)}</div></div>
+            <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A6432B" : "#1C7A80"};">${inr(balance)}</div></div>
             <div><span class="muted small">Expenses</span><div class="mono">${l.expenses ? inr(l.expenses) : "—"}</div></div>
-            <div><span class="muted small">Profit</span><div class="mono" style="color:${l.profit == null ? "inherit" : l.profit >= 0 ? "#5C8A6B" : "#A64B3C"};">${l.profit == null ? "See combo" : inr(l.profit)}</div></div>
+            <div><span class="muted small">Profit</span><div class="mono" style="color:${l.profit == null ? "inherit" : l.profit >= 0 ? "#1C7A80" : "#A6432B"};">${l.profit == null ? "See combo" : inr(l.profit)}</div></div>
           </div>
         </div>
       `);
@@ -5701,7 +5701,7 @@ async function renderDashboard(main) {
         <textarea id="generalMsgInput" rows="2" placeholder="e.g. Running late today, can we talk about next month's schedule..." style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;"></textarea>
         <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
           <button class="btn-primary" id="sendGeneralMsgBtn">Send</button>
-          <span class="muted small" id="generalMsgSentNote" style="display:none; color:#5C8A6B;">Sent ✓</span>
+          <span class="muted small" id="generalMsgSentNote" style="display:none; color:#1C7A80;">Sent ✓</span>
         </div>
       </div>
     ` : ""}
@@ -5802,7 +5802,7 @@ async function renderDashboard(main) {
         `;
       }
       const maxSessions = Math.max(1, ...websiteTraffic.byDay.map((d) => d.sessions));
-      const channelColors = { "Direct": "#C1602B", "Organic Search": "#5C8A6B", "Organic Social": "#9B6EA8", "Paid Social": "#4A8FA6", "Referral": "#B6752C", "Email": "#8A5FA8" };
+      const channelColors = { "Direct": "#C1602B", "Organic Search": "#1C7A80", "Organic Social": "#E6467F", "Paid Social": "#1C7A80", "Referral": "#B6752C", "Email": "#8A5FA8" };
       return `
       <div class="card" style="margin-bottom:16px;">
         <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
@@ -5836,7 +5836,7 @@ async function renderDashboard(main) {
           <div class="muted small" style="font-weight:600; margin:14px 0 6px;">Where visitors came from</div>
           ${websiteTraffic.byChannel.slice(0, 6).map((c) => `
             <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
-              <span><span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:${channelColors[c.channel] || "#8A8578"}; margin-right:6px;"></span>${c.channel}</span>
+              <span><span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:${channelColors[c.channel] || "#8A6A54"}; margin-right:6px;"></span>${c.channel}</span>
               <span class="mono">${c.sessions.toLocaleString("en-IN")}</span>
             </div>
           `).join("")}
@@ -5869,7 +5869,7 @@ async function renderDashboard(main) {
           const label = leg.lead_id ? `${leg.lead_name}${leg.lead_city ? ` (${leg.lead_city})` : ""}` : (leg.label || "Travel");
           const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
           const dt = leg.departure_at || leg.arrival_at;
-          const statusColor = leg.status === "not_booked" ? "#B6752C" : "#5C8A6B";
+          const statusColor = leg.status === "not_booked" ? "#B6752C" : "#1C7A80";
           return `
             <div class="dash-list-item dash-travel-item-click" data-open-travel-leg="${leg.id}" data-lead-id="${leg.lead_id || ""}">
               <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
@@ -6198,10 +6198,10 @@ async function renderB2bContacts(main) {
               <div class="muted small" style="margin-top:2px;">${c.last_contacted_at ? `Last contacted ${fmtDate(c.last_contacted_at.slice(0, 10))}` : "Not contacted yet"}</div>
               <div class="muted small">${c.last_rate_card_sent_at ? `Rate card last sent ${fmtDate(c.last_rate_card_sent_at.slice(0, 10))}` : ""}</div>
               <div style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap;">
-                <span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:2px 8px;">${c.lead_count || 0} lead${c.lead_count == 1 ? "" : "s"}</span>
-                <span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:2px 8px;">${c.confirmed_count || 0} confirmed${conversionPct !== null ? ` (${conversionPct}%)` : ""}</span>
-                <span class="mono small" style="background:${c.total_revenue > 0 ? "#E8F0E9" : "#F5F0E4"}; color:${c.total_revenue > 0 ? "#5C8A6B" : "inherit"}; border-radius:4px; padding:2px 8px; font-weight:600;">${inr(c.total_revenue || 0)} generated</span>
-                ${isQuiet ? `<span class="mono small" style="background:#FBEAE7; color:#A64B3C; border-radius:4px; padding:2px 8px;" title="No new enquiry from them in ${daysSinceEnquiry} days">⏰ Quiet ${daysSinceEnquiry}d — reach out?</span>` : ""}
+                <span class="mono small" style="background:#FBEFD9; border-radius:4px; padding:2px 8px;">${c.lead_count || 0} lead${c.lead_count == 1 ? "" : "s"}</span>
+                <span class="mono small" style="background:#FBEFD9; border-radius:4px; padding:2px 8px;">${c.confirmed_count || 0} confirmed${conversionPct !== null ? ` (${conversionPct}%)` : ""}</span>
+                <span class="mono small" style="background:${c.total_revenue > 0 ? "#E4F1F1" : "#FBEFD9"}; color:${c.total_revenue > 0 ? "#1C7A80" : "inherit"}; border-radius:4px; padding:2px 8px; font-weight:600;">${inr(c.total_revenue || 0)} generated</span>
+                ${isQuiet ? `<span class="mono small" style="background:#F7E4DF; color:#A6432B; border-radius:4px; padding:2px 8px;" title="No new enquiry from them in ${daysSinceEnquiry} days">⏰ Quiet ${daysSinceEnquiry}d — reach out?</span>` : ""}
                 ${rateCardStale ? `<span class="mono small" style="background:#FBF3D9; color:#8A6A1F; border-radius:4px; padding:2px 8px;" title="Our rates have changed since the rate card we last sent them">⚠️ Rates changed since last sent</span>` : ""}
               </div>
             </div>
@@ -6211,7 +6211,7 @@ async function renderB2bContacts(main) {
             <button class="btn-ghost mark-contacted-btn" data-contact-id="${c.id}" style="font-size:12px; padding:4px 9px;">✓ Mark contacted today</button>
             ${c.lead_count > 0 ? `<button class="btn-ghost view-history-btn" data-contact-id="${c.id}" style="font-size:12px; padding:4px 9px;">📊 History</button>` : ""}
             <button class="btn-ghost edit-contact-btn" data-contact-id="${c.id}" style="font-size:12px; padding:4px 9px;">Edit</button>
-            <button class="btn-ghost delete-contact-btn" data-contact-id="${c.id}" style="font-size:12px; padding:4px 9px; color:#A64B3C;">Delete</button>
+            <button class="btn-ghost delete-contact-btn" data-contact-id="${c.id}" style="font-size:12px; padding:4px 9px; color:#A6432B;">Delete</button>
           </div>
         </div>
       `);
@@ -6322,9 +6322,9 @@ async function openB2bHistoryModal(contact) {
       .map(([id, count]) => `${packageName(id)} ×${count}`).join(", ");
     body.innerHTML = `
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
-        <span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:3px 9px;">${leads.length} lead${leads.length === 1 ? "" : "s"}</span>
-        <span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:3px 9px;">${quotes.length} quote${quotes.length === 1 ? "" : "s"} sent</span>
-        <span class="mono small" style="background:#E8F0E9; color:#5C8A6B; font-weight:600; border-radius:4px; padding:3px 9px;">${inr(totalRevenue)} generated</span>
+        <span class="mono small" style="background:#FBEFD9; border-radius:4px; padding:3px 9px;">${leads.length} lead${leads.length === 1 ? "" : "s"}</span>
+        <span class="mono small" style="background:#FBEFD9; border-radius:4px; padding:3px 9px;">${quotes.length} quote${quotes.length === 1 ? "" : "s"} sent</span>
+        <span class="mono small" style="background:#E4F1F1; color:#1C7A80; font-weight:600; border-radius:4px; padding:3px 9px;">${inr(totalRevenue)} generated</span>
       </div>
       <p class="muted small" style="margin-bottom:14px;">Books: ${packageBreakdown}</p>
       ${leads.map((l) => {
@@ -6463,8 +6463,8 @@ async function renderMusicians(main) {
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0;">
               <span class="muted small" data-musician-caret="${m.id}">▸</span>
               <span style="font-weight:600;">${m.name}</span>
-              ${m.team_id ? `<span class="mono small" style="background:#E8F0E9; color:#5C8A6B; border-radius:4px; padding:1px 7px; font-weight:600;">✓ Team</span>` : ""}
-              ${m.instruments.length > 0 ? m.instruments.map((i) => `<span class="mono small" style="background:#F5F0E4; border-radius:4px; padding:1px 7px;">${i}</span>`).join("") : ""}
+              ${m.team_id ? `<span class="mono small" style="background:#E4F1F1; color:#1C7A80; border-radius:4px; padding:1px 7px; font-weight:600;">✓ Team</span>` : ""}
+              ${m.instruments.length > 0 ? m.instruments.map((i) => `<span class="mono small" style="background:#FBEFD9; border-radius:4px; padding:1px 7px;">${i}</span>`).join("") : ""}
             </div>
             <span class="muted small">${[m.phone, m.city].filter(Boolean).join(" · ")}</span>
           </div>
@@ -6476,7 +6476,7 @@ async function renderMusicians(main) {
               <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">
                 ${!m.team_id ? `<button class="btn-ghost promote-musician-btn" data-musician-id="${m.id}" style="font-size:12px; padding:4px 9px;">+ Add to Team</button>` : ""}
                 <button class="btn-ghost edit-musician-btn" data-musician-id="${m.id}" style="font-size:12px; padding:4px 9px;">Edit</button>
-                <button class="btn-ghost delete-musician-btn" data-musician-id="${m.id}" style="font-size:12px; padding:4px 9px; color:#A64B3C;">Delete</button>
+                <button class="btn-ghost delete-musician-btn" data-musician-id="${m.id}" style="font-size:12px; padding:4px 9px; color:#A6432B;">Delete</button>
               </div>
             ` : ""}
           </div>
@@ -7928,7 +7928,7 @@ function wireGoogleAnalyticsSettings(main) {
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;">
             <input id="gaPropertyIdInput" placeholder="e.g. 549584865" style="max-width:180px;" />
             <button class="btn-ghost" id="saveGAPropertyBtn">Save property ID</button>
-            <span class="muted small" id="gaPropertySavedNote" style="display:none; color:#5C8A6B;">Saved ✓</span>
+            <span class="muted small" id="gaPropertySavedNote" style="display:none; color:#1C7A80;">Saved ✓</span>
           </div>
         ` : ""}
         <button class="btn-ghost" id="disconnectGABtn" style="margin-top:8px;">Disconnect</button>
@@ -8082,7 +8082,7 @@ async function renderSettings(main) {
       <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px;">
         <a class="btn-ghost" href="/api/admin/backup" id="downloadBackupBtn">⬇ Download now</a>
         <button class="btn-primary" id="emailBackupBtn">✉️ Email it to me now</button>
-        <span class="muted small" id="backupSentNote" style="display:none; color:#5C8A6B;">Sent ✓</span>
+        <span class="muted small" id="backupSentNote" style="display:none; color:#1C7A80;">Sent ✓</span>
       </div>
     </div>
 
@@ -8095,7 +8095,7 @@ async function renderSettings(main) {
       <div id="pricingEditor" style="margin-top:12px;"></div>
       <div style="display:flex; gap:8px; align-items:center; margin-top:12px;">
         <button class="btn-primary" id="savePricingBtn">Save pricing</button>
-        <span class="muted small" id="pricingSavedNote" style="display:none; color:#5C8A6B;">Saved ✓</span>
+        <span class="muted small" id="pricingSavedNote" style="display:none; color:#1C7A80;">Saved ✓</span>
       </div>
     </div>
 
@@ -8127,7 +8127,7 @@ async function renderSettings(main) {
       <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
         <button class="btn-primary" data-save-template="${key}">Save</button>
         <button class="btn-ghost" data-reset-template="${key}">Reset to default</button>
-        <span class="muted small" data-saved-note="${key}" style="display:none; color:#5C8A6B;">Saved ✓</span>
+        <span class="muted small" data-saved-note="${key}" style="display:none; color:#1C7A80;">Saved ✓</span>
       </div>
     </details>
   `).join("");
@@ -8274,7 +8274,7 @@ async function renderSettings(main) {
       <textarea id="quoteTplBody" rows="14" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:'JetBrains Mono',monospace; font-size:12.5px;">${MESSAGE_TEMPLATES[key] || ""}</textarea>
       <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
         <button class="btn-primary" id="saveQuoteTplBtn">Save</button>
-        <span class="muted small" id="quoteTplSavedNote" style="display:none; color:#5C8A6B;">Saved ✓</span>
+        <span class="muted small" id="quoteTplSavedNote" style="display:none; color:#1C7A80;">Saved ✓</span>
       </div>
     `;
     quoteEditor.querySelector("#saveQuoteTplBtn").addEventListener("click", async () => {
@@ -8374,7 +8374,7 @@ function renderLoginScreen(errorMsg) {
         <img src="/logo.png" class="brand-mark" style="margin:0 auto 14px;" alt="Together, Out Loud" />
         <h2 style="text-align:center; margin-bottom:4px;">Together, Out Loud</h2>
         <p class="muted" style="text-align:center; margin-bottom:20px;">Sign in to the workflow app</p>
-        ${errorMsg ? `<p style="color:#A64B3C; font-size:13px; margin-bottom:10px;">${errorMsg}</p>` : ""}
+        ${errorMsg ? `<p style="color:#A6432B; font-size:13px; margin-bottom:10px;">${errorMsg}</p>` : ""}
         <label>Username</label>
         <input id="loginUsername" autocomplete="username" />
         <label>Password</label>
@@ -8423,7 +8423,7 @@ async function renderMyEvents(main) {
   // capped to the last 60 days so this doesn't grow forever.
   const recentPast = allEvents.filter((e) => e.date < today && e.date >= sixtyDaysAgo && e.stage !== "Cancelled").sort((a, b) => new Date(b.date) - new Date(a.date));
   const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined", cancel_requested: "Cancellation requested" };
-  const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C", cancel_requested: "#B6752C" };
+  const statusColor = { pending: "#B6752C", accepted: "#1C7A80", declined: "#A6432B", cancel_requested: "#B6752C" };
 
   main.innerHTML = `
     <div class="view-head"><div><h2>My Events</h2><p class="muted">Your own assigned events — accept/decline, artist fee, and pay status.</p></div></div>
@@ -8435,10 +8435,10 @@ async function renderMyEvents(main) {
             <div class="muted small">${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""} · ${fmtDate(e.date)} · ${e.city || ""}</div>
           </div>
           ${e.stage === "Cancelled"
-            ? `<span class="tag" style="color:#A64B3C; font-weight:700;">⚠ CANCELLED</span>`
+            ? `<span class="tag" style="color:#A6432B; font-weight:700;">⚠ CANCELLED</span>`
             : `<span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status]}</span>`}
         </div>
-        ${e.stage === "Cancelled" ? `<p class="muted small" style="color:#A64B3C; margin-top:4px;">This event has been cancelled by the team — no action needed.</p>` : `
+        ${e.stage === "Cancelled" ? `<p class="muted small" style="color:#A6432B; margin-top:4px;">This event has been cancelled by the team — no action needed.</p>` : `
         ${e.event_time || e.soundcheck_time ? `
         <div class="performer-event-row">
           <span class="muted small">Timing:</span>
@@ -8457,7 +8457,7 @@ async function renderMyEvents(main) {
         </div>
         <div class="performer-event-row">
           <span class="muted small">Payment:</span>
-          <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
+          <span class="tag" style="color:${e.paid ? "#1C7A80" : "#A6432B"};">${e.paid ? "Paid" : "Unpaid"}</span>
           ${e.paid && e.payment_date ? `<span class="muted small">on ${fmtDate(e.payment_date)}${e.payment_mode ? ` via ${e.payment_mode}` : ""}</span>` : ""}
         </div>
         ${e.status === "cancel_requested" ? `
@@ -8473,7 +8473,7 @@ async function renderMyEvents(main) {
           </div>
         `}
         ${e.status === "accepted" ? `
-          <button class="btn-ghost full" data-request-cancel="${e.id}" style="margin-top:8px; color:#A64B3C;">Request to cancel</button>
+          <button class="btn-ghost full" data-request-cancel="${e.id}" style="margin-top:8px; color:#A6432B;">Request to cancel</button>
         ` : ""}
         <button class="btn-ghost full" data-view-travel="${e.lead_id}" data-view-travel-name="${e.lead_name}" style="margin-top:8px;">🧳 Travel plan</button>
         <button class="btn-ghost full" data-chat-lead="${e.lead_id}" data-chat-name="${e.lead_name}" style="margin-top:10px;">💬 Event chat</button>
@@ -8490,7 +8490,7 @@ async function renderMyEvents(main) {
               <div class="team-name">${e.lead_name}</div>
               <div class="muted small">${packageName(e.event_type)} · ${fmtDate(e.date)}</div>
             </div>
-            <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
+            <span class="tag" style="color:${e.paid ? "#1C7A80" : "#A6432B"};">${e.paid ? "Paid" : "Unpaid"}</span>
           </div>
           <div class="performer-event-row">
             <span class="muted small">Artist fee:</span>
@@ -8542,7 +8542,7 @@ function performerCalendarMarkup(events) {
   const startDay = first.getDay();
   const daysInMonth = new Date(calYear, calMonth, 0).getDate();
   const cells = Array(startDay).fill(null).concat(Array.from({ length: daysInMonth }, (_, i) => i + 1));
-  const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C" };
+  const statusColor = { pending: "#B6752C", accepted: "#1C7A80", declined: "#A6432B" };
   const byDay = {};
   events.forEach((e) => {
     if (!e.date) return;
@@ -8642,7 +8642,7 @@ function renderPerformerTabContent() {
   const { events, tasks, announcements, notifications } = performerData;
 
   const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined", cancel_requested: "Cancellation requested" };
-  const statusColor = { pending: "#B6752C", accepted: "#5C8A6B", declined: "#A64B3C", cancel_requested: "#B6752C" };
+  const statusColor = { pending: "#B6752C", accepted: "#1C7A80", declined: "#A6432B", cancel_requested: "#B6752C" };
   const activeEvents = events.filter((e) => e.stage !== "Cancelled");
   const today0 = new Date().toISOString().slice(0, 10);
   // "Your events" below is a flat upcoming list, not a browsable calendar, so
@@ -8672,10 +8672,10 @@ function renderPerformerTabContent() {
           <div class="muted small">${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""} · ${fmtDate(e.date)} · ${e.city || ""}</div>
         </div>
         ${e.stage === "Cancelled"
-          ? `<span class="tag" style="color:#A64B3C; font-weight:700;">⚠ CANCELLED</span>`
+          ? `<span class="tag" style="color:#A6432B; font-weight:700;">⚠ CANCELLED</span>`
           : `<span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status]}</span>`}
       </div>
-      ${e.stage === "Cancelled" ? `<p class="muted small" style="color:#A64B3C; margin-top:4px;">This event has been cancelled by the team — no action needed.</p>` : `
+      ${e.stage === "Cancelled" ? `<p class="muted small" style="color:#A6432B; margin-top:4px;">This event has been cancelled by the team — no action needed.</p>` : `
       ${e.event_time || e.soundcheck_time ? `
       <div class="performer-event-row">
         <span class="muted small">Timing:</span>
@@ -8690,7 +8690,7 @@ function renderPerformerTabContent() {
       ` : ""}
       <div class="performer-event-row">
         <span class="muted small">Payment:</span>
-        <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
+        <span class="tag" style="color:${e.paid ? "#1C7A80" : "#A6432B"};">${e.paid ? "Paid" : "Unpaid"}</span>
         ${e.paid && e.payment_date ? `<span class="muted small">on ${fmtDate(e.payment_date)}${e.payment_mode ? ` via ${e.payment_mode}` : ""}</span>` : ""}
       </div>
       ${e.status === "cancel_requested" ? `
@@ -8706,7 +8706,7 @@ function renderPerformerTabContent() {
         </div>
       `}
       ${e.status === "accepted" ? `
-        <button class="btn-ghost full" data-request-cancel="${e.id}" style="margin-top:8px; color:#A64B3C;">Request to cancel</button>
+        <button class="btn-ghost full" data-request-cancel="${e.id}" style="margin-top:8px; color:#A6432B;">Request to cancel</button>
       ` : ""}
       <button class="btn-ghost full" data-view-travel="${e.lead_id}" data-view-travel-name="${e.lead_name}" style="margin-top:8px;">🧳 Travel plan</button>
       <button class="btn-ghost full" data-chat-lead="${e.lead_id}" data-chat-name="${e.lead_name}" style="margin-top:10px;">💬 Event chat</button>
@@ -8735,8 +8735,8 @@ function renderPerformerTabContent() {
       ` : ""}
       <div class="section-label">Payment summary</div>
       <div class="dash-stats" style="grid-template-columns:1fr 1fr; margin-bottom:20px;">
-        <div class="card dash-stat"><div class="muted">Paid</div><div class="mono big" style="color:#5C8A6B">${paidCount}</div></div>
-        <div class="card dash-stat"><div class="muted">Unpaid</div><div class="mono big" style="color:#A64B3C">${unpaidCount}</div></div>
+        <div class="card dash-stat"><div class="muted">Paid</div><div class="mono big" style="color:#1C7A80">${paidCount}</div></div>
+        <div class="card dash-stat"><div class="muted">Unpaid</div><div class="mono big" style="color:#A6432B">${unpaidCount}</div></div>
       </div>
       <div class="section-label">Calendar</div>
       <div class="card" id="perfCalCard" style="margin-bottom:20px;">${performerCalendarMarkup(activeEvents)}</div>
@@ -8764,7 +8764,7 @@ function renderPerformerTabContent() {
                 <div class="team-name">${e.lead_name}</div>
                 <div class="muted small">${packageName(e.event_type)} · ${fmtDate(e.date)}</div>
               </div>
-              <span class="tag" style="color:${e.paid ? "#5C8A6B" : "#A64B3C"};">${e.paid ? "Paid" : "Unpaid"}</span>
+              <span class="tag" style="color:${e.paid ? "#1C7A80" : "#A6432B"};">${e.paid ? "Paid" : "Unpaid"}</span>
             </div>
             <div class="performer-event-row">
               <span class="muted small">Artist fee:</span>
@@ -8832,7 +8832,7 @@ function renderPerformerTabContent() {
         <textarea id="generalMsgInput" rows="2" placeholder="e.g. Running late today, can we talk about next month's schedule..." style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;"></textarea>
         <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
           <button class="btn-primary" id="sendGeneralMsgBtn">Send</button>
-          <span class="muted small" id="generalMsgSentNote" style="display:none; color:#5C8A6B;">Sent ✓</span>
+          <span class="muted small" id="generalMsgSentNote" style="display:none; color:#1C7A80;">Sent ✓</span>
         </div>
       </div>
     `;

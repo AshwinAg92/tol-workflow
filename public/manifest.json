@@ -3,8 +3,8 @@
   "short_name": "TOL Workflow",
   "start_url": "/login",
   "display": "standalone",
-  "background_color": "#F1ECE3",
-  "theme_color": "#FAFAF8",
+  "background_color": "#FEF6ED",
+  "theme_color": "#C1602B",
   "icons": [
     { "src": "/logo-icon.png", "sizes": "512x512", "type": "image/png" }
   ]
