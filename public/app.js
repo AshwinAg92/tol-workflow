@@ -4942,7 +4942,7 @@ async function openTravelPlanModal(leadId) {
         <select id="linkLegSelect">
           ${unlinkedLegs.map((l) => {
             const route = [l.from_city, l.to_city].filter(Boolean).join(" → ") || l.label || "Untitled";
-            const date = l.departure_at ? fmtDate(l.departure_at) : null;
+            const date = l.departure_at ? fmtDate(l.departure_at.slice(0, 10)) : null;
             const mode = TRAVEL_MODE_LABELS[l.mode] || null;
             const bits = [route, date, mode].filter(Boolean);
             return `<option value="${l.id}">${bits.join(" · ")}</option>`;
