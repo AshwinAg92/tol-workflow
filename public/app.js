@@ -2915,6 +2915,23 @@ function openStandaloneTravelLegModal(legId, onDone) {
             <input id="stlBookingRef" value="${leg?.booking_ref || ""}" />
             <label style="margin-top:8px;">Notes (optional)</label>
             <input id="stlNotes" value="${leg?.notes || ""}" />
+            ${leg ? `
+              <label style="margin-top:8px;">Ticket / booking file (PDF or image, optional)</label>
+              ${leg.tickets && leg.tickets.length > 0 ? `
+                <div style="margin-bottom:6px;">
+                  ${leg.tickets.map((t) => `
+                    <div class="doc-row" style="padding:6px 0;">
+                      <div class="doc-name"><a href="${t.url}" target="_blank">🎫 ${t.original_name}</a></div>
+                      <button class="icon-btn" data-delete-ticket="${t.id}" title="Delete">${ICON_X}</button>
+                    </div>
+                  `).join("")}
+                </div>
+              ` : ""}
+              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <label class="btn-ghost" style="font-size:12px; padding:3px 8px; cursor:pointer;">+ Add ticket<input type="file" id="stlTicketUpload" accept="application/pdf,image/*" style="display:none;" /></label>
+                <span class="muted small" id="stlTicketStatus"></span>
+              </div>
+            ` : `<p class="muted small" style="margin-top:8px;">Save this trip first, then you can attach a ticket or booking file.</p>`}
           </div>
           <div class="modal-foot">
             ${leg ? `<button class="btn-ghost" id="stlDeleteBtn" style="color:#A64B3C; margin-right:auto;">Delete</button>` : ""}
@@ -2958,14 +2975,46 @@ function openStandaloneTravelLegModal(legId, onDone) {
       const btn = root.querySelector("#stlSaveBtn");
       btn.disabled = true;
       try {
-        if (leg) await api(`/api/travel-legs/${leg.id}`, { method: "PATCH", body: JSON.stringify(payload) });
-        else await api("/api/travel-legs", { method: "POST", body: JSON.stringify(payload) });
-        close();
-        if (onDone) onDone();
+        if (leg) {
+          await api(`/api/travel-legs/${leg.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+          close();
+          if (onDone) onDone();
+        } else {
+          // Reopen in edit mode on the newly-created leg (rather than closing)
+          // so a ticket/booking file can be attached right away if there is one.
+          const created = await api("/api/travel-legs", { method: "POST", body: JSON.stringify(payload) });
+          if (onDone) onDone();
+          openStandaloneTravelLegModal(created.id, onDone);
+        }
       } catch (err) {
         alert(err.message);
         btn.disabled = false;
       }
+    });
+
+    const ticketUploadInput = root.querySelector("#stlTicketUpload");
+    if (ticketUploadInput) {
+      ticketUploadInput.addEventListener("change", async () => {
+        const file = ticketUploadInput.files[0];
+        if (!file) return;
+        const statusEl = root.querySelector("#stlTicketStatus");
+        if (statusEl) statusEl.textContent = "Uploading…";
+        try {
+          const formData = new FormData();
+          formData.append("file", file);
+          const resp = await fetch(`/api/travel-legs/${leg.id}/tickets`, { method: "POST", body: formData });
+          if (!resp.ok) throw new Error("Upload failed");
+          openStandaloneTravelLegModal(leg.id, onDone);
+        } catch (err) {
+          if (statusEl) statusEl.textContent = "Couldn't upload — try again.";
+        }
+      });
+    }
+    root.querySelectorAll("[data-delete-ticket]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await api(`/api/documents/${btn.dataset.deleteTicket}`, { method: "DELETE" });
+        openStandaloneTravelLegModal(leg.id, onDone);
+      });
     });
   })();
 }

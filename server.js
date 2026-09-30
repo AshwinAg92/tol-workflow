@@ -1967,12 +1967,14 @@ app.get("/api/travel-legs", requireAuth, requireCapability("assign_team"), async
     ORDER BY travel_legs.departure_at ASC NULLS LAST, travel_legs.created_at ASC
   `);
   const legIds = legs.map((l) => l.id);
-  const members = legIds.length > 0
-    ? (await pool.query(`SELECT travel_leg_members.leg_id, team.id AS team_id, team.name AS team_name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id = ANY($1)`, [legIds])).rows
-    : [];
+  const [members, tickets] = legIds.length > 0 ? await Promise.all([
+    pool.query(`SELECT travel_leg_members.leg_id, team.id AS team_id, team.name AS team_name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id = ANY($1)`, [legIds]),
+    pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents WHERE travel_leg_id = ANY($1) ORDER BY uploaded_at ASC`, [legIds]),
+  ]) : [{ rows: [] }, { rows: [] }];
   res.json(legs.map((leg) => ({
     ...leg,
-    members: members.filter((m) => m.leg_id === leg.id).map((m) => ({ teamId: m.team_id, name: m.team_name })),
+    members: members.rows.filter((m) => m.leg_id === leg.id).map((m) => ({ teamId: m.team_id, name: m.team_name })),
+    tickets: tickets.rows.filter((t) => t.travel_leg_id === leg.id).map((t) => ({ ...t, url: `/api/documents/${t.id}/file` })),
   })));
 });
 
