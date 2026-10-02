@@ -1144,8 +1144,9 @@ function goToLeads(stage) {
 
 // ---------- Leads log ----------
 // Shows the small bulk-action bar above the Leads list once at least one
-// lead is checked, offering a one-click "mark all as followed up" instead of
-// clicking the same link on every card individually.
+// lead is checked -- follow-up actions for New/Follow-up/Interested/Tentative
+// leads, and a "thank clients" queue for Completed ones -- instead of
+// clicking the same thing on every card individually.
 function renderLeadsBulkBar(main) {
   const bar = main.querySelector("#leadsBulkBar");
   if (!bar) return;
@@ -1153,13 +1154,21 @@ function renderLeadsBulkBar(main) {
     bar.innerHTML = "";
     return;
   }
+  // Follow-up actions only make sense for leads still being chased;
+  // thank-you only for Completed ones -- a mixed selection gets both sets of
+  // buttons, each scoped to just its own subset.
+  const selectedIds = Array.from(leadsSelected);
+  const selectedLeads = selectedIds.map((id) => LEADS.find((l) => l.id === id)).filter(Boolean);
+  const followupIds = selectedLeads.filter((l) => l.stage !== "Completed").map((l) => l.id);
+  const completedIds = selectedLeads.filter((l) => l.stage === "Completed").map((l) => l.id);
   bar.innerHTML = `
     <div class="card" style="margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#FBEFD9;">
       <span>${leadsSelected.size} selected</span>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn-ghost" id="bulkClearBtn">Clear</button>
-        <button class="btn-ghost" id="bulkWhatsappBtn">📤 WhatsApp follow-up (${leadsSelected.size})</button>
-        <button class="btn-primary" id="bulkFollowupBtn">Mark ${leadsSelected.size} as followed up</button>
+        ${followupIds.length > 0 ? `<button class="btn-ghost" id="bulkWhatsappBtn">📤 WhatsApp follow-up (${followupIds.length})</button>` : ""}
+        ${followupIds.length > 0 ? `<button class="btn-primary" id="bulkFollowupBtn">Mark ${followupIds.length} as followed up</button>` : ""}
+        ${completedIds.length > 0 ? `<button class="btn-primary" id="bulkThankBtn">🙏 Thank client${completedIds.length === 1 ? "" : "s"} (${completedIds.length})</button>` : ""}
       </div>
     </div>
   `;
@@ -1167,23 +1176,27 @@ function renderLeadsBulkBar(main) {
     leadsSelected.clear();
     renderLeadsLog(main, true);
   });
-  bar.querySelector("#bulkWhatsappBtn").addEventListener("click", () => {
-    openBulkWhatsappFollowupModal(Array.from(leadsSelected), main);
+  const waBtn = bar.querySelector("#bulkWhatsappBtn");
+  if (waBtn) waBtn.addEventListener("click", () => {
+    openBulkWhatsappFollowupModal(followupIds, main);
   });
-  bar.querySelector("#bulkFollowupBtn").addEventListener("click", async () => {
-    const btn = bar.querySelector("#bulkFollowupBtn");
-    btn.disabled = true;
-    btn.textContent = "Saving…";
-    const ids = Array.from(leadsSelected);
+  const thankBtn = bar.querySelector("#bulkThankBtn");
+  if (thankBtn) thankBtn.addEventListener("click", () => {
+    openBulkThankYouModal(completedIds, main);
+  });
+  const followupBtn = bar.querySelector("#bulkFollowupBtn");
+  if (followupBtn) followupBtn.addEventListener("click", async () => {
+    followupBtn.disabled = true;
+    followupBtn.textContent = "Saving…";
     try {
-      await Promise.all(ids.map((id) => api(`/api/leads/${id}`, { method: "PATCH", body: JSON.stringify({ logFollowup: true }) })));
+      await Promise.all(followupIds.map((id) => api(`/api/leads/${id}`, { method: "PATCH", body: JSON.stringify({ logFollowup: true }) })));
       await refreshLeads();
-      leadsSelected.clear();
+      followupIds.forEach((id) => leadsSelected.delete(id));
       renderLeadsLog(main, true);
     } catch (err) {
       alert(err.message);
-      btn.disabled = false;
-      btn.textContent = `Mark ${leadsSelected.size} as followed up`;
+      followupBtn.disabled = false;
+      followupBtn.textContent = `Mark ${followupIds.length} as followed up`;
     }
   });
 }
@@ -1587,11 +1600,11 @@ async function renderLeadsLog(main, skipRefresh) {
   });
 
   // "Select all" only ever applies to leads that are actually bulk-selectable
-  // (same New/Follow-up/Interested/Tentative rule as each card's own
-  // checkbox) — and only within whatever filters are currently applied, so
-  // it never silently pulls in leads the user can't see right now.
+  // (same New/Follow-up/Interested/Tentative/Completed rule as each card's
+  // own checkbox) — and only within whatever filters are currently applied,
+  // so it never silently pulls in leads the user can't see right now.
   const selectAllRow = main.querySelector("#leadsSelectAllRow");
-  const bulkSelectableIds = sorted.filter((l) => hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage)).map((l) => l.id);
+  const bulkSelectableIds = sorted.filter((l) => hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative", "Completed"].includes(l.stage)).map((l) => l.id);
   if (bulkSelectableIds.length > 0) {
     const allSelected = bulkSelectableIds.every((id) => leadsSelected.has(id));
     selectAllRow.innerHTML = `
@@ -1630,7 +1643,7 @@ async function renderLeadsLog(main, skipRefresh) {
       const displayReceived = comboPrimary ? comboPrimary.received : l.received;
       const displayReimbursementDue = comboPrimary ? comboPrimary.reimbursement_due : l.reimbursement_due;
       const balance = (displayFinal || displayQuote || 0) - (displayReceived || 0) + (displayReimbursementDue || 0);
-      const canBulkSelect = hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage);
+      const canBulkSelect = hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative", "Completed"].includes(l.stage);
       const card = el(`
         <div class="card lead-card" style="margin-bottom:12px;">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
@@ -7119,8 +7132,9 @@ async function openConfirmationMessageModal(lead) {
 // ask folded in automatically once a review link is saved in Settings.
 // Marks the lead as thanked (thanked_at) as soon as WhatsApp or Email is
 // actually used to send it, so the button flips to "🙏 Thanked ✓".
-async function openThankYouMessageModal(lead) {
-  const root = document.getElementById("modalRoot");
+// Shared by the single-lead modal and the bulk "thank several at once" queue
+// below, so the review/feedback-link logic only lives in one place.
+async function buildThankYouMessage(lead) {
   const firstName = (lead.name || "").split(" ")[0] || "there";
   const reviewLink = MESSAGE_TEMPLATES.google_review_link && MESSAGE_TEMPLATES.google_review_link !== "none" ? MESSAGE_TEMPLATES.google_review_link : "";
   // No Google Business Profile yet, so until a review link is saved in
@@ -7139,14 +7153,19 @@ async function openThankYouMessageModal(lead) {
     }
   }
   const tpl = MESSAGE_TEMPLATES.thank_you || TEMPLATE_META.thank_you.default;
-  const message = fillTemplate(tpl, {
+  return { message: fillTemplate(tpl, {
     firstName,
     clientName: lead.name || "",
     experience: packageName(lead.event_type),
     date: fmtDate(lead.date),
     cityClause: lead.city ? ` in ${lead.city}` : "",
     reviewAsk,
-  });
+  }), hasReviewLink: !!reviewLink };
+}
+
+async function openThankYouMessageModal(lead) {
+  const root = document.getElementById("modalRoot");
+  const { message, hasReviewLink: reviewLink } = await buildThankYouMessage(lead);
   const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
   const waLink = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}` : null;
   const mailLink = lead.email ? `mailto:${lead.email}?subject=${encodeURIComponent("Thank you — Together, Out Loud")}&body=${encodeURIComponent(message)}` : null;
@@ -7174,30 +7193,111 @@ async function openThankYouMessageModal(lead) {
   root.querySelector("#doneBtn").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
 
-  async function markThanked() {
-    if (lead.thanked_at) return;
-    const thankedAt = new Date().toISOString();
-    try {
-      await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ thankedAt }) });
-      lead.thanked_at = thankedAt;
-      const listLead = LEADS.find((l) => l.id === lead.id);
-      if (listLead) listLead.thanked_at = thankedAt;
-      const btn = root.querySelector("#waBtn") || root.querySelector("#mailBtn");
-      if (btn) void btn; // no in-modal label to update — button text lives on the lead card, refreshed on close
-    } catch (err) {
-      // Non-fatal — the message still sent; worst case the button doesn't flip until the next manual retry.
-    }
-  }
-
   if (waLink) root.querySelector("#waBtn").addEventListener("click", () => {
     const text = root.querySelector("#tyMessage").value;
     shareImageOrOpen("/thank-you-image.png", "thank-you.png", text);
-    markThanked();
+    markLeadThanked(lead);
   });
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
     window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Thank you — Together, Out Loud")}&body=${encodeURIComponent(root.querySelector("#tyMessage").value)}`;
-    markThanked();
+    markLeadThanked(lead);
   });
+}
+
+// Shared by the single-lead modal and the bulk queue — PATCHes thanked_at
+// and updates both the passed-in lead object and its entry in the global
+// LEADS array, so the "🙏 Thank client" / "Thanked ✓" button flips without
+// needing a full reload either way.
+async function markLeadThanked(lead) {
+  if (lead.thanked_at) return;
+  const thankedAt = new Date().toISOString();
+  try {
+    await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ thankedAt }) });
+    lead.thanked_at = thankedAt;
+    const listLead = LEADS.find((l) => l.id === lead.id);
+    if (listLead) listLead.thanked_at = thankedAt;
+  } catch (err) {
+    // Non-fatal — the message still sent; worst case the button doesn't flip until the next manual retry.
+  }
+}
+
+// Same guided-queue idea as openBulkWhatsappFollowupModal above — WhatsApp
+// can't be bulk-sent from a browser, so this steps through the selected
+// Completed leads one at a time with the thank-you message + image ready to
+// go, logging thanked_at the moment each one is actually sent.
+function openBulkThankYouModal(leadIds, main) {
+  const root = document.getElementById("modalRoot");
+  const queue = leadIds.map((id) => LEADS.find((l) => l.id === id)).filter((l) => l && (l.whatsapp_number || l.phone));
+  const skippedNoPhone = leadIds.length - queue.length;
+  let index = 0;
+  let sentCount = 0;
+
+  async function renderStep() {
+    if (index >= queue.length) {
+      root.innerHTML = `
+        <div class="modal-overlay" id="overlay">
+          <div class="modal-card" style="max-width:400px;">
+            <div class="modal-head"><h3>Done</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+            <p style="margin:14px 0;">Thanked ${sentCount} of ${queue.length}${skippedNoPhone > 0 ? ` (${skippedNoPhone} skipped — no phone number on file)` : ""}.</p>
+            <button class="btn-primary" id="bulkThanksFinishBtn" style="width:100%;">Close</button>
+          </div>
+        </div>
+      `;
+      const finish = () => {
+        root.innerHTML = "";
+        leadsSelected.clear();
+        refreshLeads().then(() => renderLeadsLog(main, true));
+      };
+      root.querySelector("#closeModal").addEventListener("click", finish);
+      root.querySelector("#bulkThanksFinishBtn").addEventListener("click", finish);
+      return;
+    }
+    const lead = queue[index];
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay">
+        <div class="modal-card" style="max-width:420px;">
+          <div class="modal-head"><h3>${lead.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+          <p class="muted small" style="margin-bottom:2px;">Lead ${index + 1} of ${queue.length}</p>
+          <p class="muted small" style="margin-bottom:14px;">${packageName(lead.event_type)} · ${lead.city || "—"} · ${fmtDate(lead.date)}</p>
+          <p class="muted small">Loading message…</p>
+        </div>
+      </div>
+    `;
+    const { message } = await buildThankYouMessage(lead);
+    if (!root.querySelector(".modal-card") || queue[index] !== lead) return; // modal closed or moved on while loading
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay">
+        <div class="modal-card" style="max-width:420px;">
+          <div class="modal-head"><h3>${lead.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+          <p class="muted small" style="margin-bottom:2px;">Lead ${index + 1} of ${queue.length}</p>
+          <p class="muted small" style="margin-bottom:14px;">${packageName(lead.event_type)} · ${lead.city || "—"} · ${fmtDate(lead.date)}</p>
+          <img src="/thank-you-image.png" alt="Thank you" style="width:100%; max-width:160px; display:block; margin:0 auto 14px; border-radius:10px; border:1px solid #EAD9BE;" />
+          <div class="card" style="background:#FBEFD9; white-space:pre-wrap; font-size:13.5px; margin-bottom:14px;">${message}</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn-primary" id="bulkThanksOpenBtn" style="flex:1;">💬 Send on WhatsApp</button>
+            <button class="btn-ghost" id="bulkThanksSkipBtn">Skip</button>
+          </div>
+        </div>
+      </div>
+    `;
+    root.querySelector("#closeModal").addEventListener("click", () => {
+      root.innerHTML = "";
+      leadsSelected.clear();
+      renderLeadsLog(main, true);
+    });
+    root.querySelector("#bulkThanksSkipBtn").addEventListener("click", () => {
+      index++;
+      renderStep();
+    });
+    root.querySelector("#bulkThanksOpenBtn").addEventListener("click", async () => {
+      shareImageOrOpen("/thank-you-image.png", "thank-you.png", message);
+      await markLeadThanked(lead);
+      sentCount++;
+      index++;
+      renderStep();
+    });
+  }
+  renderStep();
 }
 
 function openNewLeadModal() {
