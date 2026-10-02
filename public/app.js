@@ -2261,10 +2261,7 @@ async function renderQuotation(main) {
         <div class="row-2">
           <div><label>Pcs (No. of Musicians)</label><input id="qSet" type="number" placeholder="e.g. 5" /></div>
           <div id="qFormatTypeWrap"><label>Format</label>
-            <select id="qFormatType">
-              <option value="Private">Private</option>
-              <option value="Public">Public</option>
-            </select>
+            <select id="qFormatType">${CONFIG.packages.map((p) => `<option value="${p.name}">${p.name}</option>`).join("")}</select>
           </div>
         </div>
         <label>Performance charges (₹)</label>
@@ -2363,12 +2360,16 @@ async function renderQuotation(main) {
   }
 
   function updatePackageDependentFields() {
-    // A pheras ceremony runs as long as the ceremony itself takes, and doesn't
-    // have a Private/Public distinction the way a jamming session does — so
-    // neither field applies and both are hidden rather than asked for.
-    const isPheras = main.querySelector("#qPackage").value === "pheras";
+    // A pheras ceremony runs as long as the ceremony itself takes, so the
+    // Duration field doesn't apply and is hidden rather than asked for.
+    const selectedPackage = main.querySelector("#qPackage").value;
+    const isPheras = selectedPackage === "pheras";
     main.querySelector("#qDurationWrap").style.display = isPheras ? "none" : "";
     main.querySelector("#qFormatTypeWrap").style.display = isPheras ? "none" : "";
+    // The "Format:" line on the quote names the experience itself (Musical
+    // Pheras, Bhajan Jamming, ...) — keep it in sync with the Package picker
+    // above rather than asking for it twice; still editable by hand after.
+    main.querySelector("#qFormatType").value = packageName(selectedPackage);
   }
 
   function prefillFromLead() {
