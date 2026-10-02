@@ -949,6 +949,41 @@ Warmly,
     `, [uuid(), firstTeamMember ? firstTeamMember.id : null, username, passwordHash, new Date().toISOString()]);
     console.log(`Seeded initial admin login — username: "${username}". Set ADMIN_USERNAME/ADMIN_PASSWORD env vars to control this, or change the password after logging in.`);
   }
+
+  // One-time cleanup: testimonials added via "Add to testimonials" before the
+  // privacy change stored the client's actual name — swap any such entries
+  // (matched by exact quote text against a feedback row) for the occasion/city
+  // label instead. Idempotent, so it's a no-op once everything's already clean.
+  try {
+    const siteContentRow = (await pool.query("SELECT value FROM site_content WHERE key = 'testimonials'")).rows[0];
+    if (siteContentRow && Array.isArray(siteContentRow.value) && siteContentRow.value.length) {
+      const feedbackRows = (await pool.query(`
+        SELECT feedback.message, leads.occasion, leads.occasion_other, leads.event_type, leads.city
+        FROM feedback JOIN leads ON leads.id = feedback.lead_id
+        WHERE feedback.added_to_testimonials = 1 AND feedback.message IS NOT NULL
+      `)).rows;
+      const packageNameFallback = (id) => (PACKAGES.find((p) => p.id === id) || {}).name || id;
+      let changed = false;
+      const updated = siteContentRow.value.map((t) => {
+        const match = feedbackRows.find((f) => f.message === t.quote);
+        if (!match) return t;
+        const occasionLabel = match.occasion === "Other" ? (match.occasion_other || packageNameFallback(match.event_type)) : (match.occasion || packageNameFallback(match.event_type));
+        const label = `${occasionLabel}${match.city ? `, ${match.city}` : ""}`;
+        if (t.name === label) return t;
+        changed = true;
+        return { ...t, name: label };
+      });
+      if (changed) {
+        await pool.query(
+          "UPDATE site_content SET value = $1, updated_at = $2 WHERE key = 'testimonials'",
+          [JSON.stringify(updated), new Date().toISOString()]
+        );
+        console.log("Cleaned up testimonials that were storing a client's name instead of the occasion label.");
+      }
+    }
+  } catch (err) {
+    console.error("Testimonial name cleanup failed:", err.message);
+  }
 }
 
 const ready = setup().catch((err) => {
