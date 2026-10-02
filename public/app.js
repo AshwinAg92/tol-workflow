@@ -1731,6 +1731,7 @@ async function renderLeadsLog(main, skipRefresh) {
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team & Expenses</button>` : ""}
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost travel-plan-btn" data-lead-id="${l.id}">🧳 Travel</button>` : ""}
             ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost lead-documents-btn" data-lead-id="${l.id}">📄 Documents</button>` : ""}
+            ${l.stage === "Completed" && hasLeadsAccess() && l.phone ? `<button class="btn-ghost thank-you-btn" data-lead-id="${l.id}">${l.thanked_at ? "🙏 Thanked ✓" : "🙏 Thank client"}</button>` : ""}
             ${hasLeadsAccess() && l.stage !== "Completed" ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}">✎ Edit</button>` : ""}
             ${CURRENT_USER?.accessLevel === "admin" && l.stage !== "Completed" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="color:#A6432B;">🗑 Delete</button>` : ""}
             ${l.stage === "Completed" ? `<span class="muted small">🔒 Completed — locked</span>` : ""}
@@ -1919,6 +1920,13 @@ async function renderLeadsLog(main, skipRefresh) {
     btn.addEventListener("click", () => {
       const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
       if (lead) openConfirmationMessageModal(lead);
+    });
+  });
+
+  main.querySelectorAll(".thank-you-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
+      if (lead) openThankYouMessageModal(lead);
     });
   });
 
@@ -7106,6 +7114,78 @@ async function openConfirmationMessageModal(lead) {
   });
 }
 
+// Sent from a Completed lead's "🙏 Thank client" button — a warm thank-you
+// message plus the branded thank-you image, with an optional Google review
+// ask folded in automatically once a review link is saved in Settings.
+// Marks the lead as thanked (thanked_at) as soon as WhatsApp or Email is
+// actually used to send it, so the button flips to "🙏 Thanked ✓".
+async function openThankYouMessageModal(lead) {
+  const root = document.getElementById("modalRoot");
+  const firstName = (lead.name || "").split(" ")[0] || "there";
+  const reviewLink = MESSAGE_TEMPLATES.google_review_link && MESSAGE_TEMPLATES.google_review_link !== "none" ? MESSAGE_TEMPLATES.google_review_link : "";
+  const reviewAsk = reviewLink ? `\n\nIf you enjoyed the experience, a quick Google review would mean the world to us: ${reviewLink}` : "";
+  const tpl = MESSAGE_TEMPLATES.thank_you || TEMPLATE_META.thank_you.default;
+  const message = fillTemplate(tpl, {
+    firstName,
+    clientName: lead.name || "",
+    experience: packageName(lead.event_type),
+    date: fmtDate(lead.date),
+    cityClause: lead.city ? ` in ${lead.city}` : "",
+    reviewAsk,
+  });
+  const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
+  const waLink = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}` : null;
+  const mailLink = lead.email ? `mailto:${lead.email}?subject=${encodeURIComponent("Thank you — Together, Out Loud")}&body=${encodeURIComponent(message)}` : null;
+
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>Thank ${lead.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body">
+          ${!reviewLink ? `<p class="muted small" style="margin-top:0; color:#B6752C;">No Google review link on file yet — add one in Settings and it'll be added to this message automatically.</p>` : ""}
+          <img src="/thank-you-image.png" alt="Thank you" style="width:100%; max-width:220px; display:block; margin:0 auto 14px; border-radius:10px; border:1px solid #EAD9BE;" />
+          <textarea id="tyMessage" rows="8" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${message}</textarea>
+          <p class="muted small" style="margin-top:6px; margin-bottom:0;">WhatsApp sends the thank-you image above pre-attached, with this text as the caption.</p>
+        </div>
+        <div class="modal-foot">
+          ${waLink ? `<button class="btn-ghost" id="waBtn">💬 WhatsApp</button>` : `<span class="muted small">No phone on file</span>`}
+          ${mailLink ? `<button class="btn-ghost" id="mailBtn">✉️ Email</button>` : ""}
+          <button class="btn-primary" id="doneBtn">Done</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const close = () => { root.innerHTML = ""; renderMain(); };
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#doneBtn").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+
+  async function markThanked() {
+    if (lead.thanked_at) return;
+    const thankedAt = new Date().toISOString();
+    try {
+      await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ thankedAt }) });
+      lead.thanked_at = thankedAt;
+      const listLead = LEADS.find((l) => l.id === lead.id);
+      if (listLead) listLead.thanked_at = thankedAt;
+      const btn = root.querySelector("#waBtn") || root.querySelector("#mailBtn");
+      if (btn) void btn; // no in-modal label to update — button text lives on the lead card, refreshed on close
+    } catch (err) {
+      // Non-fatal — the message still sent; worst case the button doesn't flip until the next manual retry.
+    }
+  }
+
+  if (waLink) root.querySelector("#waBtn").addEventListener("click", () => {
+    const text = root.querySelector("#tyMessage").value;
+    shareImageOrOpen("/thank-you-image.png", "thank-you.png", text);
+    markThanked();
+  });
+  if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
+    window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Thank you — Together, Out Loud")}&body=${encodeURIComponent(root.querySelector("#tyMessage").value)}`;
+    markThanked();
+  });
+}
+
 function openNewLeadModal() {
   const root = document.getElementById("modalRoot");
   root.innerHTML = `
@@ -7431,6 +7511,12 @@ const TEMPLATE_META = {
     description: "Sent from a Tentative lead's \"Send confirm details\" button — tells the client what's needed to lock the date in and what they'll get once confirmed (tech rider, etc.), with your bank/UPI details for the advance.",
     placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "bankDetails"],
     default: "Hi {firstName}, to go ahead and lock in your {experience} on {date}{cityClause}, here's what happens next:\n\n1. An advance payment secures the date.\n2. Once confirmed, we'll share the tech rider, hospitality rider, and all other event-day details.\n\n{bankDetails}\n\nLet us know once you're ready and we'll get everything moving!\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
+  },
+  thank_you: {
+    label: "Thank-you message",
+    description: "Sent from a Completed lead's \"🙏 Thank client\" button, along with a thank-you image. {reviewAsk} pulls in a Google review request automatically once a review link is saved in Settings — it's left out entirely when no link is set, so nothing needs editing here for that.",
+    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "reviewAsk"],
+    default: "Hi {firstName}, thank you so much for having Together, Out Loud be part of your {experience} on {date}{cityClause}! It truly meant a lot to sing and play for you and your guests.{reviewAsk}\n\nWarm regards,\nTogether, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
 };
 
@@ -8114,10 +8200,19 @@ async function renderSettings(main) {
           <button class="btn-ghost" id="bankQrUploadBtn">${hasQr ? "Replace QR code" : "Upload QR code"}</button>
           ${hasQr ? `<button class="btn-ghost" id="bankQrRemoveBtn" style="color:#A6432B;">Remove</button>` : ""}
           <span class="muted small" id="bankQrSaveStatus"></span>
-          <p class="muted small" style="margin-top:6px; margin-bottom:0;">When set, a "Share QR code" button appears next to confirmation messages that include bank details — it sends the image straight through the share sheet (WhatsApp, etc.) alongside the text.</p>
+          <p class="muted small" style="margin-top:6px; margin-bottom:0;">When set, checking "Include bank/UPI details" on a confirmation message makes the WhatsApp button send this image pre-attached (via the share sheet) instead of just a text link.</p>
         </div>
         `;
       })()}
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">Thank-you messages & reviews</div>
+      <p class="muted small" style="margin-top:-4px;">Once an event is Completed, a "🙏 Thank client" button appears on its lead card — it sends the thank-you message below along with a branded thank-you image. Paste your Google review link here and it's automatically added to the message; leave it blank and that line is simply left out.</p>
+      <input type="text" id="googleReviewLinkInput" placeholder="e.g. https://g.page/r/your-listing/review" value="${MESSAGE_TEMPLATES.google_review_link && MESSAGE_TEMPLATES.google_review_link !== "none" ? MESSAGE_TEMPLATES.google_review_link : ""}" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;" />
+      <button class="btn-ghost" id="saveGoogleReviewLinkBtn" style="margin-top:8px;">Save</button>
+      <span class="muted small" id="googleReviewLinkSaveStatus"></span>
+      <p class="muted small" style="margin-top:8px; margin-bottom:0;">Don't have a Google Business Profile yet? Create one free at <a href="https://business.google.com" target="_blank">business.google.com</a> — once it's live, your review link is in the profile under "Ask for reviews".</p>
     </div>
 
     <div class="card" style="margin-bottom:16px;">
@@ -8311,6 +8406,21 @@ async function renderSettings(main) {
       }
     });
   }
+  main.querySelector("#saveGoogleReviewLinkBtn").addEventListener("click", async () => {
+    const btn = main.querySelector("#saveGoogleReviewLinkBtn");
+    const status = main.querySelector("#googleReviewLinkSaveStatus");
+    const value = main.querySelector("#googleReviewLinkInput").value.trim();
+    btn.disabled = true;
+    try {
+      await api("/api/message-templates/google_review_link", { method: "PATCH", body: JSON.stringify({ template: value || "none" }) });
+      MESSAGE_TEMPLATES.google_review_link = value || "none";
+      status.textContent = "Saved ✓";
+    } catch (err) {
+      status.textContent = "Couldn't save — try again.";
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   container.querySelectorAll("[data-reset-template]").forEach((btn) => {
     btn.addEventListener("click", () => {

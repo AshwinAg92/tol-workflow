@@ -185,6 +185,11 @@ async function setup() {
   // at the top of the nav — a personal preference, stored as a JSON array
   // of nav ids (e.g. '["leads","accounts"]').
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS nav_favorites TEXT`);
+  // Timestamp of the last "thank you" message sent for a Completed event —
+  // lets the Dashboard nudge about events that wrapped up but never got
+  // thanked, and keeps the lead-card button from implying it's unsent once
+  // it's actually gone out.
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS thanked_at TEXT`);
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS specialty TEXT`);
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS base_city TEXT`);
   // Preset fees so the Team assignment screen can suggest a rate automatically
