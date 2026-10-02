@@ -1653,10 +1653,11 @@ async function renderLeadsLog(main, skipRefresh) {
             // The 3-follow-up auto-close only ever applies at New/Follow-up —
             // once a lead progresses further it's clearly engaged, so no
             // countdown applies (and none should be shown) past that point.
-            const countsTowardAutoClose = ["New", "Follow-up"].includes(l.stage);
+            const autoCloseOn = (MESSAGE_TEMPLATES.auto_close_after_followups ?? "true") !== "false";
+            const countsTowardAutoClose = autoCloseOn && ["New", "Follow-up"].includes(l.stage);
             const count = l.followup_count || 0;
-            const counterText = countsTowardAutoClose && count > 0
-              ? ` <span class="muted" style="${count >= 2 ? "color:#A6432B;" : ""}">(${count}/3${count >= 2 ? " — one more with no response auto-closes this" : ""})</span>`
+            const counterText = count > 0
+              ? ` <span class="muted" style="${countsTowardAutoClose && count >= 2 ? "color:#A6432B;" : ""}">(${count}${countsTowardAutoClose ? "/3" : ""}${countsTowardAutoClose && count >= 2 ? " — one more with no response auto-closes this" : ""})</span>`
               : "";
             return `<div class="small" style="margin-top:6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
               <span style="color:${color};">${icon} ${label}</span>${counterText}
@@ -8034,6 +8035,15 @@ async function renderSettings(main) {
     <div id="templateCards"></div>
 
     <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">Follow-up behavior</div>
+      <label class="check-row" style="font-size:13.5px; margin-top:4px;">
+        <input type="checkbox" id="autoCloseFollowupsCheckbox" ${(MESSAGE_TEMPLATES.auto_close_after_followups ?? "true") !== "false" ? "checked" : ""} />
+        <span>Auto-close a lead to "Not Interested" after 3 follow-ups with no response</span>
+      </label>
+      <p class="muted small" style="margin-top:6px; margin-bottom:0;">Only applies to leads still sitting at New/Follow-up — once a lead has progressed (Interested, Tentative, etc.) it's never auto-closed. Turn this off to always leave the decision to you.</p>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
       <div class="section-label">Bank / UPI details for advance payments</div>
       <p class="muted small" style="margin-top:-4px;">Plain text, used to fill the {bankDetails} placeholder in the "Tentative → what happens next" message. Not a message template itself — just your payment info.</p>
       <textarea id="bankDetailsInput" rows="4" placeholder="e.g. Account name, bank, account no., IFSC, UPI ID" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${MESSAGE_TEMPLATES.bank_details || ""}</textarea>
@@ -8136,6 +8146,16 @@ async function renderSettings(main) {
   wireGoogleCalendarSettings(main);
   wireGoogleAnalyticsSettings(main);
   main.querySelector("#openNotInterestedReportBtn").addEventListener("click", () => openNotInterestedReportModal());
+  main.querySelector("#autoCloseFollowupsCheckbox").addEventListener("change", async (e) => {
+    const checked = e.target.checked;
+    try {
+      await api("/api/message-templates/auto_close_after_followups", { method: "PATCH", body: JSON.stringify({ template: checked ? "true" : "false" }) });
+      MESSAGE_TEMPLATES.auto_close_after_followups = checked ? "true" : "false";
+    } catch (err) {
+      e.target.checked = !checked; // revert on failure
+      alert("Couldn't save that setting — try again.");
+    }
+  });
   main.querySelector("#saveBankDetailsBtn").addEventListener("click", async () => {
     const btn = main.querySelector("#saveBankDetailsBtn");
     const status = main.querySelector("#bankDetailsSaveStatus");

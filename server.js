@@ -1796,7 +1796,10 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     // Deliberately does NOT apply once a lead has progressed further
     // (Interested/Tentative etc.) — "we'll let you know" leads are still
     // warm and shouldn't get auto-declined just for going quiet a while.
-    if (newFollowupCount >= 3 && req.body.stage === undefined && ["New", "Follow-up"].includes(lead.stage)) {
+    // Admin-togglable from Settings (on by default, matching prior behavior).
+    const autoCloseSetting = (await pool.query("SELECT template FROM message_templates WHERE key = 'auto_close_after_followups'")).rows[0];
+    const autoCloseEnabled = autoCloseSetting ? autoCloseSetting.template === "true" : true;
+    if (autoCloseEnabled && newFollowupCount >= 3 && req.body.stage === undefined && ["New", "Follow-up"].includes(lead.stage)) {
       autoMovedToNotInterested = true;
       values.push("Not Interested");
       updates.push(`stage = $${values.length}`);
