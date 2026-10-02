@@ -6989,6 +6989,13 @@ async function openConfirmationMessageModal(lead) {
         <div class="modal-head"><h3>Send confirmation to ${lead.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <textarea id="ceMessage" rows="8" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${message}</textarea>
+          <div style="margin-top:14px;">
+            <label class="check-row" style="font-size:13.5px;">
+              <input type="checkbox" id="confirmBankDetailsCheckbox" ${(MESSAGE_TEMPLATES.bank_details || "").trim() ? "" : "disabled"} />
+              <span>💳 Include bank/UPI details</span>
+            </label>
+            ${!(MESSAGE_TEMPLATES.bank_details || "").trim() ? `<p class="muted small" style="margin-top:4px; color:#B6752C;">No bank/UPI details on file — add them in Settings to enable this.</p>` : ""}
+          </div>
           ${(leadDocs.length > 0 || generalDocs.length > 0) ? `
             <div style="margin-top:14px;">
               <div class="section-label" style="margin-bottom:6px;">📎 Attach document links (optional)</div>
@@ -7028,11 +7035,17 @@ async function openConfirmationMessageModal(lead) {
   // duplicates a link that's already there.
   function finalMessage() {
     const base = root.querySelector("#ceMessage").value;
+    const extras = [];
+    const bankCheckbox = root.querySelector("#confirmBankDetailsCheckbox");
+    if (bankCheckbox && bankCheckbox.checked && (MESSAGE_TEMPLATES.bank_details || "").trim()) {
+      extras.push(`💳 Bank/UPI details:\n${MESSAGE_TEMPLATES.bank_details.trim()}`);
+    }
     const links = Array.from(root.querySelectorAll(".confirm-doc-checkbox:checked")).map((cb) => {
       const doc = docs.find((d) => d.id === cb.dataset.docId);
       return doc ? `📎 ${doc.notes || doc.original_name}: ${window.location.origin + doc.url}` : "";
     }).filter(Boolean);
-    return links.length > 0 ? `${base}\n\n${links.join("\n")}` : base;
+    extras.push(...links);
+    return extras.length > 0 ? `${base}\n\n${extras.join("\n")}` : base;
   }
   if (waLink) root.querySelector("#waBtn").addEventListener("click", () => window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(finalMessage())}`);
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
