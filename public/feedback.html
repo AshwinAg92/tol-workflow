@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Share your feedback — Together, Out Loud</title>
+  <meta name="description" content="Share your feedback on your event with Together, Out Loud." />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Share your feedback — Together, Out Loud" />
+  <meta property="og:description" content="Share your feedback on your event with Together, Out Loud." />
+  <meta property="og:image" content="https://www.togetheroutloud.in/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Share your feedback — Together, Out Loud" />
+  <meta name="twitter:image" content="https://www.togetheroutloud.in/og-image.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin:0;
+      background:#FEF6ED;
+      font-family:'Inter',sans-serif;
+      color:#2B2420;
+      display:flex;
+      justify-content:center;
+      padding:36px 16px 60px;
+      min-height:100vh;
+    }
+    .wrap { max-width:440px; width:100%; }
+    .tagline {
+      font-family:'Space Grotesk',sans-serif;
+      font-weight:700;
+      letter-spacing:-0.01em;
+      font-size:24px;
+      color:#C7401E;
+      text-align:center;
+      margin:0 0 4px;
+    }
+    .subhead { text-align:center; font-family:'JetBrains Mono',monospace; font-size:11.5px; text-transform:uppercase; letter-spacing:0.04em; color:#8A6A54; margin-bottom:22px; }
+    .card {
+      background:#FFFDF8;
+      border-radius:16px;
+      padding:26px 24px;
+      box-shadow:0 4px 18px rgba(43,36,32,0.07);
+      border:1px solid #EAD9BE;
+    }
+    .greet { font-family:'Space Grotesk',sans-serif; font-size:18px; font-weight:700; margin-bottom:2px; }
+    .event-sub { color:#8A6A54; font-size:14px; margin-bottom:18px; }
+    .stars { display:flex; justify-content:center; gap:6px; margin:18px 0 6px; }
+    .star-btn {
+      background:none; border:none; font-size:34px; line-height:1; cursor:pointer; padding:2px;
+      color:#EAD9BE; transition:color 0.1s, transform 0.1s;
+    }
+    .star-btn.filled { color:#F0A438; }
+    .star-btn:hover { transform:scale(1.1); }
+    .note-label { font-size:11px; font-family:'JetBrains Mono',monospace; text-transform:uppercase; letter-spacing:0.03em; color:#8A6A54; margin-top:18px; margin-bottom:6px; display:block; }
+    textarea {
+      width:100%; padding:11px 12px; border:1.5px solid #EAD9BE; border-radius:9px;
+      font-size:14px; font-family:'Inter',sans-serif; color:#2B2420; background:#FFFDFA;
+      resize:vertical; min-height:90px;
+    }
+    textarea:focus { outline:none; border-color:#C7401E; }
+    button.submit {
+      width:100%; margin-top:18px; padding:13px; border-radius:10px; border:none;
+      background:#1C7A80; color:#FFFFFF; font-size:15px; font-weight:700;
+      font-family:'Inter',sans-serif; cursor:pointer; transition:opacity 0.15s;
+    }
+    button.submit:disabled { opacity:0.5; cursor:default; }
+    .msg { text-align:center; font-size:14.5px; margin-top:16px; color:#2B2420; }
+    .loading, .error { text-align:center; padding:40px 0; color:#8A6A54; }
+    .thanks { text-align:center; }
+    .thanks .big { font-size:40px; margin-bottom:10px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="tagline">Together, Out Loud</div>
+    <div class="subhead">Share your feedback</div>
+    <div class="card" id="card">
+      <div class="loading">Loading…</div>
+    </div>
+  </div>
+  <script>
+    const token = new URLSearchParams(window.location.search).get("token");
+    const card = document.getElementById("card");
+    let selectedRating = 0;
+
+    function fmtDate(d) {
+      if (!d) return null;
+      const parsed = new Date(d);
+      if (isNaN(parsed)) return d;
+      return parsed.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+    }
+
+    function renderStars(container) {
+      container.innerHTML = [1, 2, 3, 4, 5].map((n) => `<button type="button" class="star-btn" data-star="${n}">★</button>`).join("");
+      container.querySelectorAll(".star-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          selectedRating = parseInt(btn.dataset.star, 10);
+          container.querySelectorAll(".star-btn").forEach((b) => b.classList.toggle("filled", parseInt(b.dataset.star, 10) <= selectedRating));
+        });
+      });
+    }
+
+    function render(data) {
+      const eventBits = [data.experience, fmtDate(data.date), data.city].filter(Boolean).join(" · ");
+      card.innerHTML = `
+        <div class="greet">Hi ${(data.clientName || "there").split(" ")[0]} 👋</div>
+        ${eventBits ? `<div class="event-sub">${eventBits}</div>` : ""}
+        <div>How was your experience with us?</div>
+        <div class="stars" id="starsRow"></div>
+        <label class="note-label" for="feedbackNote">Tell us more (optional)</label>
+        <textarea id="feedbackNote" placeholder="What stood out, what we could do better…">${data.message ? data.message.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])) : ""}</textarea>
+        <button class="submit" id="submitBtn">Submit feedback</button>
+        <div class="msg" id="msg"></div>
+      `;
+      const starsRow = document.getElementById("starsRow");
+      renderStars(starsRow);
+      if (data.rating) {
+        selectedRating = data.rating;
+        starsRow.querySelectorAll(".star-btn").forEach((b) => b.classList.toggle("filled", parseInt(b.dataset.star, 10) <= selectedRating));
+      }
+      document.getElementById("submitBtn").addEventListener("click", async () => {
+        const msgEl = document.getElementById("msg");
+        if (!selectedRating) { msgEl.textContent = "Please pick a star rating first."; return; }
+        const btn = document.getElementById("submitBtn");
+        btn.disabled = true;
+        msgEl.textContent = "Submitting…";
+        try {
+          const res = await fetch(`/api/public/feedback/${encodeURIComponent(token)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ rating: selectedRating, message: document.getElementById("feedbackNote").value.trim() }),
+          });
+          if (!res.ok) throw new Error((await res.json()).error || "Something went wrong");
+          card.innerHTML = `<div class="thanks"><div class="big">💛</div><div class="greet">Thank you!</div><div class="event-sub">We really appreciate you taking the time to share this.</div></div>`;
+        } catch (err) {
+          msgEl.textContent = err.message;
+          btn.disabled = false;
+        }
+      });
+    }
+
+    if (!token) {
+      card.innerHTML = `<div class="error">This link is missing its token — ask whoever sent it for a fresh copy.</div>`;
+    } else {
+      fetch(`/api/public/feedback/${encodeURIComponent(token)}`)
+        .then(async (res) => {
+          if (!res.ok) throw new Error((await res.json()).error || "Couldn't load this link");
+          return res.json();
+        })
+        .then(render)
+        .catch((err) => {
+          card.innerHTML = `<div class="error">${err.message}</div>`;
+        });
+    }
+  </script>
+</body>
+</html>

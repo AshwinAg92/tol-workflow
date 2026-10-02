@@ -190,6 +190,20 @@ async function setup() {
   // thanked, and keeps the lead-card button from implying it's unsent once
   // it's actually gone out.
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS thanked_at TEXT`);
+  // Unguessable token (lazily generated) powering the public no-login feedback
+  // form linked from the thank-you message — same pattern as event_assignments'
+  // confirm_token below.
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS feedback_token TEXT`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS feedback (
+      id TEXT PRIMARY KEY,
+      lead_id TEXT REFERENCES leads(id) ON DELETE CASCADE,
+      rating INTEGER,
+      message TEXT,
+      created_at TEXT NOT NULL,
+      added_to_testimonials INTEGER NOT NULL DEFAULT 0
+    );
+  `);
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS specialty TEXT`);
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS base_city TEXT`);
   // Preset fees so the Team assignment screen can suggest a rate automatically

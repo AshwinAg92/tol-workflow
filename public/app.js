@@ -7123,7 +7123,21 @@ async function openThankYouMessageModal(lead) {
   const root = document.getElementById("modalRoot");
   const firstName = (lead.name || "").split(" ")[0] || "there";
   const reviewLink = MESSAGE_TEMPLATES.google_review_link && MESSAGE_TEMPLATES.google_review_link !== "none" ? MESSAGE_TEMPLATES.google_review_link : "";
-  const reviewAsk = reviewLink ? `\n\nIf you enjoyed the experience, a quick Google review would mean the world to us: ${reviewLink}` : "";
+  // No Google Business Profile yet, so until a review link is saved in
+  // Settings, this falls back to our own feedback form — same idea, just
+  // collected into the CRM so good ones can be featured on the website.
+  let reviewAsk = "";
+  if (reviewLink) {
+    reviewAsk = `\n\nIf you enjoyed the experience, a quick Google review would mean the world to us: ${reviewLink}`;
+  } else {
+    try {
+      const { token } = await api(`/api/leads/${lead.id}/feedback-link`, { method: "POST" });
+      const feedbackLink = `${window.location.origin}/feedback.html?token=${token}`;
+      reviewAsk = `\n\nWe'd love to hear how it went — share a quick note here: ${feedbackLink}`;
+    } catch (err) {
+      // Non-fatal — the thank-you message still goes out without the feedback ask.
+    }
+  }
   const tpl = MESSAGE_TEMPLATES.thank_you || TEMPLATE_META.thank_you.default;
   const message = fillTemplate(tpl, {
     firstName,
@@ -7514,7 +7528,7 @@ const TEMPLATE_META = {
   },
   thank_you: {
     label: "Thank-you message",
-    description: "Sent from a Completed lead's \"🙏 Thank client\" button, along with a thank-you image. {reviewAsk} pulls in a Google review request automatically once a review link is saved in Settings — it's left out entirely when no link is set, so nothing needs editing here for that.",
+    description: "Sent from a Completed lead's \"🙏 Thank client\" button, along with a thank-you image. {reviewAsk} is filled in automatically: a Google review ask once a review link is saved in Settings, or — until then — a link to your own feedback form instead. Nothing needs editing here for that.",
     placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "reviewAsk"],
     default: "Hi {firstName}, thank you so much for having Together, Out Loud be part of your {experience} on {date}{cityClause}! It truly meant a lot to sing and play for you and your guests.{reviewAsk}\n\nWarm regards,\nTogether, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
@@ -8097,6 +8111,60 @@ function wireGoogleAnalyticsSettings(main) {
   });
 }
 
+function wireFeedbackSettings(main) {
+  const wrap = main.querySelector("#feedbackListWrap");
+  if (!wrap) return;
+  const stars = (n) => "★".repeat(n || 0) + "☆".repeat(5 - (n || 0));
+  api("/api/feedback").then((items) => {
+    if (items.length === 0) {
+      wrap.innerHTML = `<p class="muted small">No feedback submitted yet.</p>`;
+      return;
+    }
+    wrap.innerHTML = items.map((f) => `
+      <div class="table-row" style="display:block; padding:10px 0; border-bottom:1px solid #EFE9DC;">
+        <div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+          <span><strong>${f.clientName}</strong> <span class="muted small">${[f.experience, f.date ? fmtDate(f.date) : null].filter(Boolean).join(" · ")}</span></span>
+          <span style="color:#F0A438;">${stars(f.rating)}</span>
+        </div>
+        ${f.message ? `<p style="margin:6px 0 0; font-size:14px;">${f.message.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))}</p>` : `<p class="muted small" style="margin:6px 0 0;">No written note — rating only.</p>`}
+        <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+          ${f.addedToTestimonials
+            ? `<span class="muted small">✓ Added to testimonials</span>`
+            : `<button class="btn-ghost" data-add-testimonial="${f.id}" style="font-size:12px; padding:4px 10px;">➕ Add to testimonials</button>`}
+          <button class="btn-ghost" data-delete-feedback="${f.id}" style="font-size:12px; padding:4px 10px; color:#A6432B;">Delete</button>
+        </div>
+      </div>
+    `).join("");
+    wrap.querySelectorAll("[data-add-testimonial]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await api(`/api/feedback/${btn.dataset.addTestimonial}/add-to-testimonials`, { method: "POST" });
+          wireFeedbackSettings(main);
+        } catch (err) {
+          alert("Couldn't add that to testimonials — try again.");
+          btn.disabled = false;
+        }
+      });
+    });
+    wrap.querySelectorAll("[data-delete-feedback]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this feedback submission?")) return;
+        btn.disabled = true;
+        try {
+          await api(`/api/feedback/${btn.dataset.deleteFeedback}`, { method: "DELETE" });
+          wireFeedbackSettings(main);
+        } catch (err) {
+          alert("Couldn't delete — try again.");
+          btn.disabled = false;
+        }
+      });
+    });
+  }).catch(() => {
+    wrap.innerHTML = `<p class="muted small">Couldn't load feedback.</p>`;
+  });
+}
+
 // A month-end breakdown of why leads went Not Interested, grouped by the
 // preset reason picked at the time. Grouped by the lead's created_at month
 // (when it came in), since that's the only date consistently on record —
@@ -8216,6 +8284,12 @@ async function renderSettings(main) {
     </div>
 
     <div class="card" style="margin-bottom:16px;">
+      <div class="section-label">Client feedback</div>
+      <p class="muted small" style="margin-top:-4px;">Submissions from the feedback link sent in thank-you messages (used while there's no Google review link saved above). Pick the good ones to feature as testimonials on the website.</p>
+      <div id="feedbackListWrap"><p class="muted small">Loading…</p></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
       <div class="section-label">Rate card</div>
       <p class="muted small" style="margin-top:-4px;">The rate card sent from the Documents tab shows both rates side by side — B2B is always ₹${(B2B_DISCOUNT / 1000).toFixed(0)},000 less than the standard (B2C) rate below, which comes from Pricing in config.js.</p>
       <div class="table" style="margin-top:10px;">
@@ -8309,6 +8383,7 @@ async function renderSettings(main) {
 
   wireGoogleCalendarSettings(main);
   wireGoogleAnalyticsSettings(main);
+  wireFeedbackSettings(main);
   main.querySelector("#openNotInterestedReportBtn").addEventListener("click", () => openNotInterestedReportModal());
   main.querySelector("#autoCloseFollowupsCheckbox").addEventListener("change", async (e) => {
     const checked = e.target.checked;

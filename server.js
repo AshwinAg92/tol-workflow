@@ -2159,6 +2159,111 @@ app.post("/api/public/assignment/:token/note", async (req, res) => {
   res.json({ note: (note || "").trim() || null });
 });
 
+// ---------- Client feedback (no-login form linked from the thank-you message) ----------
+// Google Business Profile reviews are on hold for now, so feedback is
+// collected directly into the CRM instead and surfaced on the website via
+// the existing testimonials block (an admin picks which ones to feature).
+
+// Generates the lead's feedback token on first use, same lazy pattern as
+// event_assignments' confirm_token.
+app.post("/api/leads/:id/feedback-link", requireAuth, async (req, res) => {
+  const lead = (await pool.query("SELECT id, feedback_token FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  let token = lead.feedback_token;
+  if (!token) {
+    token = uuid();
+    await pool.query("UPDATE leads SET feedback_token = $1 WHERE id = $2", [token, lead.id]);
+  }
+  res.json({ token });
+});
+
+app.get("/api/public/feedback/:token", async (req, res) => {
+  const lead = (await pool.query(
+    "SELECT id, name, event_type, date, city FROM leads WHERE feedback_token = $1",
+    [req.params.token]
+  )).rows[0];
+  if (!lead) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
+  const existing = (await pool.query("SELECT rating, message FROM feedback WHERE lead_id = $1", [lead.id])).rows[0];
+  res.json({
+    clientName: lead.name,
+    experience: packageName(lead.event_type),
+    date: lead.date,
+    city: lead.city,
+    rating: existing ? existing.rating : null,
+    message: existing ? existing.message : null,
+  });
+});
+
+app.post("/api/public/feedback/:token", async (req, res) => {
+  const { rating, message } = req.body;
+  const parsedRating = parseInt(rating, 10);
+  if (!Number.isInteger(parsedRating) || parsedRating < 1 || parsedRating > 5) {
+    return res.status(400).json({ error: "Please pick a star rating from 1 to 5." });
+  }
+  const lead = (await pool.query("SELECT id, name FROM leads WHERE feedback_token = $1", [req.params.token])).rows[0];
+  if (!lead) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
+  const existing = (await pool.query("SELECT id FROM feedback WHERE lead_id = $1", [lead.id])).rows[0];
+  if (existing) {
+    await pool.query("UPDATE feedback SET rating = $1, message = $2 WHERE id = $3", [parsedRating, (message || "").trim() || null, existing.id]);
+  } else {
+    await pool.query(
+      "INSERT INTO feedback (id, lead_id, rating, message, created_at) VALUES ($1, $2, $3, $4, $5)",
+      [uuid(), lead.id, parsedRating, (message || "").trim() || null, new Date().toISOString()]
+    );
+  }
+  logActivity({ user: null }, `${lead.name} left feedback (${parsedRating}★)`, lead.id);
+  res.json({ ok: true });
+});
+
+// Admin — review submissions and pick which ones to feature as testimonials.
+app.get("/api/feedback", requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await pool.query(`
+    SELECT feedback.*, leads.name AS client_name, leads.event_type, leads.date, leads.city
+    FROM feedback
+    JOIN leads ON leads.id = feedback.lead_id
+    ORDER BY feedback.created_at DESC
+  `);
+  res.json(rows.map((r) => ({
+    id: r.id,
+    leadId: r.lead_id,
+    clientName: r.client_name,
+    experience: packageName(r.event_type),
+    date: r.date,
+    city: r.city,
+    rating: r.rating,
+    message: r.message,
+    createdAt: r.created_at,
+    addedToTestimonials: !!r.added_to_testimonials,
+  })));
+});
+
+// Folds a feedback submission straight into the existing admin-curated
+// testimonials list that the public site already renders — kept a manual,
+// one-click step rather than fully automatic so nothing unflattering or
+// spammy ends up on the website unreviewed.
+app.post("/api/feedback/:id/add-to-testimonials", requireAuth, requireAdmin, async (req, res) => {
+  const fb = (await pool.query(`
+    SELECT feedback.*, leads.name AS client_name
+    FROM feedback JOIN leads ON leads.id = feedback.lead_id
+    WHERE feedback.id = $1
+  `, [req.params.id])).rows[0];
+  if (!fb) return res.status(404).json({ error: "Feedback not found" });
+  const row = (await pool.query("SELECT value FROM site_content WHERE key = 'testimonials'")).rows[0];
+  const testimonials = row ? row.value : [];
+  testimonials.push({ name: fb.client_name, quote: fb.message || "", videoUrl: "" });
+  await pool.query(`
+    INSERT INTO site_content (key, value, updated_at) VALUES ('testimonials', $1, $2)
+    ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = $2
+  `, [JSON.stringify(testimonials), new Date().toISOString()]);
+  await pool.query("UPDATE feedback SET added_to_testimonials = 1 WHERE id = $1", [fb.id]);
+  res.json({ ok: true });
+});
+
+app.delete("/api/feedback/:id", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM feedback WHERE id = $1", [req.params.id]);
+  res.json({ ok: true });
+});
+
 // ---------- Travel legs (per-artist travel plan for outstation events) ----------
 const TRAVEL_MODE_LABELS = { flight: "Flight", train: "Train", bus: "Bus", car: "Car", self: "Self-arranged" };
 const TRAVEL_STATUS_LABELS = { not_booked: "Not booked yet", booked: "Booked", self_arranged: "Self-arranged" };
