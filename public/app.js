@@ -1650,14 +1650,16 @@ async function renderLeadsLog(main, skipRefresh) {
               : `Last followed up ${timeAgo(l.last_followup_at)}${overdue ? " — overdue" : ""}`;
             const color = isSnoozed ? "#5C7A5A" : !l.last_followup_at || overdue ? "#B6752C" : "#5C7A5A";
             const icon = isSnoozed ? "💤" : !l.last_followup_at || overdue ? "⏳" : "✓";
-            // The 3-follow-up auto-close only ever applies at New/Follow-up —
+            // The N-follow-up auto-close only ever applies at New/Follow-up —
             // once a lead progresses further it's clearly engaged, so no
             // countdown applies (and none should be shown) past that point.
             const autoCloseOn = (MESSAGE_TEMPLATES.auto_close_after_followups ?? "true") !== "false";
+            const autoCloseThreshold = parseInt(MESSAGE_TEMPLATES.auto_close_followup_threshold, 10) || 3;
             const countsTowardAutoClose = autoCloseOn && ["New", "Follow-up"].includes(l.stage);
             const count = l.followup_count || 0;
+            const nearAutoClose = countsTowardAutoClose && count >= autoCloseThreshold - 1;
             const counterText = count > 0
-              ? ` <span class="muted" style="${countsTowardAutoClose && count >= 2 ? "color:#A6432B;" : ""}">(${count}${countsTowardAutoClose ? "/3" : ""}${countsTowardAutoClose && count >= 2 ? " — one more with no response auto-closes this" : ""})</span>`
+              ? ` <span class="muted" style="${nearAutoClose ? "color:#A6432B;" : ""}">(${count}${countsTowardAutoClose ? `/${autoCloseThreshold}` : ""}${nearAutoClose ? " — one more with no response auto-closes this" : ""})</span>`
               : "";
             return `<div class="small" style="margin-top:6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
               <span style="color:${color};">${icon} ${label}</span>${counterText}
@@ -8038,9 +8040,14 @@ async function renderSettings(main) {
       <div class="section-label">Follow-up behavior</div>
       <label class="check-row" style="font-size:13.5px; margin-top:4px;">
         <input type="checkbox" id="autoCloseFollowupsCheckbox" ${(MESSAGE_TEMPLATES.auto_close_after_followups ?? "true") !== "false" ? "checked" : ""} />
-        <span>Auto-close a lead to "Not Interested" after 3 follow-ups with no response</span>
+        <span>Auto-close a lead to "Not Interested" after too many follow-ups with no response</span>
       </label>
-      <p class="muted small" style="margin-top:6px; margin-bottom:0;">Only applies to leads still sitting at New/Follow-up — once a lead has progressed (Interested, Tentative, etc.) it's never auto-closed. Turn this off to always leave the decision to you.</p>
+      <div style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:13.5px;">
+        <span>Follow-ups before auto-close:</span>
+        <input type="number" id="autoCloseThresholdInput" min="1" max="20" value="${parseInt(MESSAGE_TEMPLATES.auto_close_followup_threshold, 10) || 3}" style="width:56px; padding:4px 6px; border:1px solid #DDD5C4; border-radius:5px; font-family:inherit; font-size:13.5px; text-align:center;" />
+      </div>
+      <p class="muted small" style="margin-top:6px; margin-bottom:0;">Only applies to leads still sitting at New/Follow-up — once a lead has progressed (Interested, Tentative, etc.) it's never auto-closed. Turn the checkbox off to always leave the decision to you.</p>
+      <span class="muted small" id="autoCloseSaveStatus"></span>
     </div>
 
     <div class="card" style="margin-bottom:16px;">
@@ -8154,6 +8161,23 @@ async function renderSettings(main) {
     } catch (err) {
       e.target.checked = !checked; // revert on failure
       alert("Couldn't save that setting — try again.");
+    }
+  });
+  main.querySelector("#autoCloseThresholdInput").addEventListener("change", async (e) => {
+    const status = main.querySelector("#autoCloseSaveStatus");
+    const prev = MESSAGE_TEMPLATES.auto_close_followup_threshold || "3";
+    let value = parseInt(e.target.value, 10);
+    if (!Number.isInteger(value) || value < 1) value = 1;
+    if (value > 20) value = 20;
+    e.target.value = value;
+    try {
+      await api("/api/message-templates/auto_close_followup_threshold", { method: "PATCH", body: JSON.stringify({ template: String(value) }) });
+      MESSAGE_TEMPLATES.auto_close_followup_threshold = String(value);
+      status.textContent = "Saved ✓";
+      setTimeout(() => { status.textContent = ""; }, 2000);
+    } catch (err) {
+      e.target.value = prev;
+      status.textContent = "Couldn't save — try again.";
     }
   });
   main.querySelector("#saveBankDetailsBtn").addEventListener("click", async () => {

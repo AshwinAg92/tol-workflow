@@ -1790,20 +1790,26 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     const newFollowupCount = (lead.followup_count || 0) + 1;
     values.push(newFollowupCount);
     updates.push(`followup_count = $${values.length}`);
-    // After 3 follow-ups with no reply, and only while the lead is still
+    // After N follow-ups with no reply, and only while the lead is still
     // sitting at New/Follow-up (i.e. never actually engaged), auto-close it
     // out as Not Interested so it stops cluttering the active pipeline.
     // Deliberately does NOT apply once a lead has progressed further
     // (Interested/Tentative etc.) — "we'll let you know" leads are still
     // warm and shouldn't get auto-declined just for going quiet a while.
-    // Admin-togglable from Settings (on by default, matching prior behavior).
-    const autoCloseSetting = (await pool.query("SELECT template FROM message_templates WHERE key = 'auto_close_after_followups'")).rows[0];
-    const autoCloseEnabled = autoCloseSetting ? autoCloseSetting.template === "true" : true;
-    if (autoCloseEnabled && newFollowupCount >= 3 && req.body.stage === undefined && ["New", "Follow-up"].includes(lead.stage)) {
+    // Both the on/off switch and N are admin-togglable from Settings
+    // (on, N=3 by default, matching prior hardcoded behavior).
+    const [autoCloseSetting, autoCloseThresholdSetting] = await Promise.all([
+      pool.query("SELECT template FROM message_templates WHERE key = 'auto_close_after_followups'"),
+      pool.query("SELECT template FROM message_templates WHERE key = 'auto_close_followup_threshold'"),
+    ]);
+    const autoCloseEnabled = autoCloseSetting.rows[0] ? autoCloseSetting.rows[0].template === "true" : true;
+    const parsedThreshold = parseInt(autoCloseThresholdSetting.rows[0]?.template, 10);
+    const autoCloseThreshold = Number.isInteger(parsedThreshold) && parsedThreshold > 0 ? parsedThreshold : 3;
+    if (autoCloseEnabled && newFollowupCount >= autoCloseThreshold && req.body.stage === undefined && ["New", "Follow-up"].includes(lead.stage)) {
       autoMovedToNotInterested = true;
       values.push("Not Interested");
       updates.push(`stage = $${values.length}`);
-      const autoNote = `[Auto] Moved to Not Interested — 3 follow-ups sent with no response (as of ${new Date().toISOString().slice(0, 10)}).`;
+      const autoNote = `[Auto] Moved to Not Interested — ${autoCloseThreshold} follow-up${autoCloseThreshold === 1 ? "" : "s"} sent with no response (as of ${new Date().toISOString().slice(0, 10)}).`;
       values.push(lead.notes ? `${autoNote}\n${lead.notes}` : autoNote);
       updates.push(`notes = $${values.length}`);
       if (!lead.not_interested_reason) {
