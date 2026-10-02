@@ -7034,18 +7034,23 @@ async function openConfirmationMessageModal(lead) {
   // textarea, so re-checking boxes or clicking WhatsApp then Email never
   // duplicates a link that's already there.
   function finalMessage() {
-    const base = root.querySelector("#ceMessage").value;
-    const extras = [];
+    let base = root.querySelector("#ceMessage").value;
+    // Bank details go in the body of the message, before the sign-off —
+    // not tacked on after "Warm regards" / the Instagram+website line like
+    // the document links below, which read fine as a trailing P.S.
     const bankCheckbox = root.querySelector("#confirmBankDetailsCheckbox");
     if (bankCheckbox && bankCheckbox.checked && (MESSAGE_TEMPLATES.bank_details || "").trim()) {
-      extras.push(`💳 Bank/UPI details:\n${MESSAGE_TEMPLATES.bank_details.trim()}`);
+      const bankBlock = `💳 Bank/UPI details:\n${MESSAGE_TEMPLATES.bank_details.trim()}`;
+      const signoff = base.match(/\n(Warm regards,)/);
+      base = signoff
+        ? base.slice(0, signoff.index) + `\n\n${bankBlock}` + base.slice(signoff.index)
+        : `${base}\n\n${bankBlock}`;
     }
     const links = Array.from(root.querySelectorAll(".confirm-doc-checkbox:checked")).map((cb) => {
       const doc = docs.find((d) => d.id === cb.dataset.docId);
       return doc ? `📎 ${doc.notes || doc.original_name}: ${window.location.origin + doc.url}` : "";
     }).filter(Boolean);
-    extras.push(...links);
-    return extras.length > 0 ? `${base}\n\n${extras.join("\n")}` : base;
+    return links.length > 0 ? `${base}\n\n${links.join("\n")}` : base;
   }
   if (waLink) root.querySelector("#waBtn").addEventListener("click", () => window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(finalMessage())}`);
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
