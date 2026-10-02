@@ -523,6 +523,29 @@ async function sharePdfOrDownload(doc, filename, { text, digitsOnly } = {}) {
   return { method: "download" };
 }
 
+// Same idea as sharePdfOrDownload, but for an already-hosted image (the
+// saved bank/UPI QR code) instead of a freshly generated PDF — fetches the
+// bytes and hands them to the native Share sheet so WhatsApp etc. get the
+// actual image pre-attached, not just a link. Opens the image in a new tab
+// as a fallback wherever the Share sheet isn't available (mainly desktop).
+async function shareImageOrOpen(url, filename, text) {
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error("Couldn't fetch image");
+    const blob = await resp.blob();
+    const file = new File([blob], filename, { type: blob.type || "image/png" });
+    if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+      await navigator.share({ files: [file], text: text || undefined });
+      return { method: "share" };
+    }
+  } catch (err) {
+    if (err && err.name === "AbortError") return { method: "cancelled" };
+    // Fall through to opening it directly for any other failure.
+  }
+  window.open(url, "_blank");
+  return { method: "open" };
+}
+
 async function downloadLedgerPDF(booking, payments, reimbursements = [], shareOptions = null) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
@@ -6920,6 +6943,7 @@ async function openTentativeConfirmInfoModal(lead) {
   const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
   const waLink = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}` : null;
   const mailLink = lead.email ? `mailto:${lead.email}?subject=${encodeURIComponent("Next steps to confirm your event — Together, Out Loud")}&body=${encodeURIComponent(message)}` : null;
+  const hasBankQr = MESSAGE_TEMPLATES.bank_qr_document_id && MESSAGE_TEMPLATES.bank_qr_document_id !== "none";
 
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
@@ -6932,6 +6956,7 @@ async function openTentativeConfirmInfoModal(lead) {
         <div class="modal-foot">
           ${waLink ? `<button class="btn-ghost" id="waBtn">💬 WhatsApp</button>` : `<span class="muted small">No phone on file</span>`}
           ${mailLink ? `<button class="btn-ghost" id="mailBtn">✉️ Email</button>` : ""}
+          ${hasBankQr ? `<button class="btn-ghost" id="shareQrBtn">📱 Share QR code</button>` : ""}
           <button class="btn-primary" id="doneBtn">Done</button>
         </div>
       </div>
@@ -6945,6 +6970,7 @@ async function openTentativeConfirmInfoModal(lead) {
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
     window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Next steps to confirm your event — Together, Out Loud")}&body=${encodeURIComponent(root.querySelector("#tiMessage").value)}`;
   });
+  if (hasBankQr) root.querySelector("#shareQrBtn").addEventListener("click", () => shareImageOrOpen(`/api/documents/${MESSAGE_TEMPLATES.bank_qr_document_id}/file`, "bank-qr.png", root.querySelector("#tiMessage").value));
 }
 
 async function openConfirmationMessageModal(lead) {
@@ -6985,6 +7011,7 @@ async function openConfirmationMessageModal(lead) {
   const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
   const waLink = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}` : null;
   const mailLink = lead.email ? `mailto:${lead.email}?subject=${encodeURIComponent("Your event is confirmed — Together, Out Loud")}&body=${encodeURIComponent(message)}` : null;
+  const hasBankQr = MESSAGE_TEMPLATES.bank_qr_document_id && MESSAGE_TEMPLATES.bank_qr_document_id !== "none";
 
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
@@ -7024,6 +7051,7 @@ async function openConfirmationMessageModal(lead) {
         <div class="modal-foot">
           ${waLink ? `<button class="btn-ghost" id="waBtn">💬 WhatsApp</button>` : `<span class="muted small">No phone on file</span>`}
           ${mailLink ? `<button class="btn-ghost" id="mailBtn">✉️ Email</button>` : ""}
+          ${hasBankQr ? `<button class="btn-ghost" id="shareQrBtn">📱 Share QR code</button>` : ""}
           <button class="btn-primary" id="doneBtn">Done</button>
         </div>
       </div>
@@ -7033,6 +7061,7 @@ async function openConfirmationMessageModal(lead) {
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#doneBtn").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  if (hasBankQr) root.querySelector("#shareQrBtn").addEventListener("click", () => shareImageOrOpen(`/api/documents/${MESSAGE_TEMPLATES.bank_qr_document_id}/file`, "bank-qr.png", root.querySelector("#confirmBankDetailsCheckbox")?.checked ? finalMessage() : undefined));
   // Doc links are appended fresh at send-time rather than baked into the
   // textarea, so re-checking boxes or clicking WhatsApp then Email never
   // duplicates a link that's already there.
@@ -8056,6 +8085,23 @@ async function renderSettings(main) {
       <textarea id="bankDetailsInput" rows="4" placeholder="e.g. Account name, bank, account no., IFSC, UPI ID" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${MESSAGE_TEMPLATES.bank_details || ""}</textarea>
       <button class="btn-ghost" id="saveBankDetailsBtn" style="margin-top:8px;">Save</button>
       <span class="muted small" id="bankDetailsSaveStatus"></span>
+      ${(() => {
+        const qrId = MESSAGE_TEMPLATES.bank_qr_document_id;
+        const hasQr = qrId && qrId !== "none";
+        return `
+        <div style="margin-top:16px; padding-top:14px; border-top:1px solid #EFE9DC;">
+          <div class="muted small" style="font-weight:600; margin-bottom:8px;">Payment QR code (optional)</div>
+          <div id="bankQrPreviewWrap" style="${hasQr ? "" : "display:none;"} margin-bottom:10px;">
+            <img id="bankQrPreviewImg" src="${hasQr ? `/api/documents/${qrId}/file` : ""}" style="width:140px; height:140px; object-fit:contain; border:1px solid #DDD5C4; border-radius:8px; background:#fff; display:block;" />
+          </div>
+          <input type="file" id="bankQrFileInput" accept="image/*" style="display:none;" />
+          <button class="btn-ghost" id="bankQrUploadBtn">${hasQr ? "Replace QR code" : "Upload QR code"}</button>
+          ${hasQr ? `<button class="btn-ghost" id="bankQrRemoveBtn" style="color:#A6432B;">Remove</button>` : ""}
+          <span class="muted small" id="bankQrSaveStatus"></span>
+          <p class="muted small" style="margin-top:6px; margin-bottom:0;">When set, a "Share QR code" button appears next to confirmation messages that include bank details — it sends the image straight through the share sheet (WhatsApp, etc.) alongside the text.</p>
+        </div>
+        `;
+      })()}
     </div>
 
     <div class="card" style="margin-bottom:16px;">
@@ -8196,6 +8242,59 @@ async function renderSettings(main) {
       btn.disabled = false;
     }
   });
+
+  const bankQrUploadBtn = main.querySelector("#bankQrUploadBtn");
+  if (bankQrUploadBtn) {
+    const fileInput = main.querySelector("#bankQrFileInput");
+    bankQrUploadBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      const status = main.querySelector("#bankQrSaveStatus");
+      const oldQrId = MESSAGE_TEMPLATES.bank_qr_document_id;
+      bankQrUploadBtn.disabled = true;
+      status.textContent = "Uploading…";
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("notes", "Bank/UPI QR code (used in Settings)");
+        const resp = await fetch("/api/documents", { method: "POST", body: formData });
+        if (!resp.ok) throw new Error("Upload failed");
+        const doc = await resp.json();
+        await api("/api/message-templates/bank_qr_document_id", { method: "PATCH", body: JSON.stringify({ template: doc.id }) });
+        MESSAGE_TEMPLATES.bank_qr_document_id = doc.id;
+        // Clean up the previous QR image now that it's been replaced, so old
+        // ones don't quietly pile up in the general Documents list.
+        if (oldQrId && oldQrId !== "none") {
+          try { await api(`/api/documents/${oldQrId}`, { method: "DELETE" }); } catch {}
+        }
+        status.textContent = "Saved ✓";
+        renderSettings(main);
+      } catch (err) {
+        status.textContent = "Couldn't upload — try again.";
+        bankQrUploadBtn.disabled = false;
+      }
+    });
+  }
+  const bankQrRemoveBtn = main.querySelector("#bankQrRemoveBtn");
+  if (bankQrRemoveBtn) {
+    bankQrRemoveBtn.addEventListener("click", async () => {
+      if (!confirm("Remove the saved QR code?")) return;
+      const qrId = MESSAGE_TEMPLATES.bank_qr_document_id;
+      bankQrRemoveBtn.disabled = true;
+      try {
+        await api("/api/message-templates/bank_qr_document_id", { method: "PATCH", body: JSON.stringify({ template: "none" }) });
+        MESSAGE_TEMPLATES.bank_qr_document_id = "none";
+        if (qrId && qrId !== "none") {
+          try { await api(`/api/documents/${qrId}`, { method: "DELETE" }); } catch {}
+        }
+        renderSettings(main);
+      } catch (err) {
+        alert("Couldn't remove — try again.");
+        bankQrRemoveBtn.disabled = false;
+      }
+    });
+  }
 
   container.querySelectorAll("[data-reset-template]").forEach((btn) => {
     btn.addEventListener("click", () => {
