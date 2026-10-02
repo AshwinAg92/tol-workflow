@@ -322,6 +322,20 @@
   .testimonial-card .quote{font-family:'Space Grotesk',sans-serif; font-style:normal; font-weight:600; font-size:16px; color:var(--ink); line-height:1.4;}
   .testimonial-card .name{margin-top:12px; font-family:'Space Grotesk'; font-weight:700; font-size:13px; color:var(--terracotta);}
   .testimonial-card .instagram-media{width:100% !important; margin:0 0 14px !important;}
+  /* Written-only testimonials (no video) get their own quote-card treatment
+     instead of just floating thin and short next to the tall Instagram
+     embeds in the same scroll row. */
+  .testimonial-card.quote-only{
+    display:flex; flex-direction:column; justify-content:center; text-align:center;
+    min-height:280px; background:var(--cream); border-color:var(--hairline);
+  }
+  .testimonial-card.quote-only .quote-mark{
+    font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:52px; line-height:1;
+    color:var(--marigold); opacity:0.55; margin-bottom:4px;
+  }
+  .testimonial-card.quote-only .stars{color:var(--marigold); font-size:15px; letter-spacing:2px; margin-bottom:12px;}
+  .testimonial-card.quote-only .quote{font-size:17px;}
+  .testimonial-card.quote-only .name{margin-top:16px; text-transform:uppercase; letter-spacing:0.03em; font-size:12px;}
   .press-row{display:flex; justify-content:space-between; align-items:center; gap:14px; padding:14px 0; border-bottom:1px solid var(--hairline);}
   .press-row:last-child{border-bottom:none;}
   .press-row .outlet{font-family:'Space Grotesk'; font-weight:700; font-size:14px;}
@@ -1288,9 +1302,11 @@
     document.getElementById('mobileNavTestimonialsLink').style.display = '';
     const isInstagram = (url) => /instagram\.com\/(reel|p|tv)\//.test(url || '');
     document.getElementById('testimonialsGrid').innerHTML = items.map((t) => `
-      <div class="testimonial-card">
+      <div class="testimonial-card${!t.videoUrl ? ' quote-only' : ''}">
         ${t.videoUrl && isInstagram(t.videoUrl) ? `<blockquote class="instagram-media" data-instgrm-permalink="${escapeHtml(t.videoUrl)}" data-instgrm-version="14" style="margin:0 0 14px !important;"></blockquote>` : ''}
         ${t.videoUrl && !isInstagram(t.videoUrl) ? `<a href="${escapeHtml(t.videoUrl)}" target="_blank" rel="noopener noreferrer" class="btn-text" style="margin-bottom:12px; display:inline-block;">▶ Watch</a>` : ''}
+        ${!t.videoUrl ? `<div class="quote-mark">&ldquo;</div>` : ''}
+        ${!t.videoUrl && t.rating ? `<div class="stars">${'★'.repeat(t.rating)}${'☆'.repeat(5 - t.rating)}</div>` : ''}
         <div class="quote">"${escapeHtml(t.quote)}"</div>
         <div class="name">— ${escapeHtml(t.name)}</div>
       </div>

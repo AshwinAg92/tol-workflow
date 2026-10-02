@@ -2243,14 +2243,19 @@ app.get("/api/feedback", requireAuth, requireAdmin, async (req, res) => {
 // spammy ends up on the website unreviewed.
 app.post("/api/feedback/:id/add-to-testimonials", requireAuth, requireAdmin, async (req, res) => {
   const fb = (await pool.query(`
-    SELECT feedback.*, leads.name AS client_name
+    SELECT feedback.*, leads.name AS client_name, leads.occasion, leads.occasion_other, leads.event_type, leads.city
     FROM feedback JOIN leads ON leads.id = feedback.lead_id
     WHERE feedback.id = $1
   `, [req.params.id])).rows[0];
   if (!fb) return res.status(404).json({ error: "Feedback not found" });
+  if (!fb.message) return res.status(400).json({ error: "This feedback has no written note — there's nothing to show as a quote." });
   const row = (await pool.query("SELECT value FROM site_content WHERE key = 'testimonials'")).rows[0];
   const testimonials = row ? row.value : [];
-  testimonials.push({ name: fb.client_name, quote: fb.message || "", videoUrl: "" });
+  // Never put the client's actual name in public testimonials -- the
+  // occasion (and city, if known) is what makes it feel specific instead.
+  const occasionLabel = fb.occasion === "Other" ? (fb.occasion_other || packageName(fb.event_type)) : (fb.occasion || packageName(fb.event_type));
+  const label = `${occasionLabel}${fb.city ? `, ${fb.city}` : ""}`;
+  testimonials.push({ name: label, quote: fb.message, videoUrl: "", rating: fb.rating || undefined });
   await pool.query(`
     INSERT INTO site_content (key, value, updated_at) VALUES ('testimonials', $1, $2)
     ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = $2
@@ -2260,6 +2265,20 @@ app.post("/api/feedback/:id/add-to-testimonials", requireAuth, requireAdmin, asy
 });
 
 app.delete("/api/feedback/:id", requireAuth, requireAdmin, async (req, res) => {
+  const fb = (await pool.query("SELECT * FROM feedback WHERE id = $1", [req.params.id])).rows[0];
+  // If this one was already featured on the website, pull it back out of the
+  // testimonials list too -- deleting feedback shouldn't leave a stale copy
+  // live on the public site.
+  if (fb && fb.added_to_testimonials) {
+    const row = (await pool.query("SELECT value FROM site_content WHERE key = 'testimonials'")).rows[0];
+    if (row && Array.isArray(row.value)) {
+      const testimonials = row.value.filter((t) => t.quote !== fb.message);
+      await pool.query(
+        "UPDATE site_content SET value = $1, updated_at = $2 WHERE key = 'testimonials'",
+        [JSON.stringify(testimonials), new Date().toISOString()]
+      );
+    }
+  }
   await pool.query("DELETE FROM feedback WHERE id = $1", [req.params.id]);
   res.json({ ok: true });
 });

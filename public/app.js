@@ -8142,14 +8142,17 @@ function wireFeedbackSettings(main) {
           await api(`/api/feedback/${btn.dataset.addTestimonial}/add-to-testimonials`, { method: "POST" });
           wireFeedbackSettings(main);
         } catch (err) {
-          alert("Couldn't add that to testimonials — try again.");
+          alert(err.message || "Couldn't add that to testimonials — try again.");
           btn.disabled = false;
         }
       });
     });
     wrap.querySelectorAll("[data-delete-feedback]").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        if (!confirm("Delete this feedback submission?")) return;
+        const confirmMsg = items.find((i) => i.id === btn.dataset.deleteFeedback)?.addedToTestimonials
+          ? "Delete this feedback? It's live as a testimonial on the website — that will be removed too."
+          : "Delete this feedback submission?";
+        if (!confirm(confirmMsg)) return;
         btn.disabled = true;
         try {
           await api(`/api/feedback/${btn.dataset.deleteFeedback}`, { method: "DELETE" });
@@ -8285,7 +8288,7 @@ async function renderSettings(main) {
 
     <div class="card" style="margin-bottom:16px;">
       <div class="section-label">Client feedback</div>
-      <p class="muted small" style="margin-top:-4px;">Submissions from the feedback link sent in thank-you messages (used while there's no Google review link saved above). Pick the good ones to feature as testimonials on the website.</p>
+      <p class="muted small" style="margin-top:-4px;">Submissions from the feedback link sent in thank-you messages (used while there's no Google review link saved above). Pick the good ones to feature as testimonials on the website — client names shown here are for your reference only; the public card shows the occasion (e.g. "Baby Shower") and city instead, never the name.</p>
       <div id="feedbackListWrap"><p class="muted small">Loading…</p></div>
     </div>
 
