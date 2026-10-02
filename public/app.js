@@ -6956,7 +6956,6 @@ async function openTentativeConfirmInfoModal(lead) {
         <div class="modal-foot">
           ${waLink ? `<button class="btn-ghost" id="waBtn">💬 WhatsApp</button>` : `<span class="muted small">No phone on file</span>`}
           ${mailLink ? `<button class="btn-ghost" id="mailBtn">✉️ Email</button>` : ""}
-          ${hasBankQr ? `<button class="btn-ghost" id="shareQrBtn">📱 Share QR code</button>` : ""}
           <button class="btn-primary" id="doneBtn">Done</button>
         </div>
       </div>
@@ -6966,11 +6965,20 @@ async function openTentativeConfirmInfoModal(lead) {
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#doneBtn").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
-  if (waLink) root.querySelector("#waBtn").addEventListener("click", () => window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(root.querySelector("#tiMessage").value)}`);
+  // Bank details are always baked into this message (no checkbox here), so
+  // when a QR code is on file, WhatsApp hands it to the Share sheet with the
+  // message as the caption instead of just opening a wa.me text link.
+  if (waLink) root.querySelector("#waBtn").addEventListener("click", () => {
+    const text = root.querySelector("#tiMessage").value;
+    if (hasBankQr) {
+      shareImageOrOpen(`/api/documents/${MESSAGE_TEMPLATES.bank_qr_document_id}/file`, "bank-qr.png", text);
+    } else {
+      window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(text)}`;
+    }
+  });
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
     window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Next steps to confirm your event — Together, Out Loud")}&body=${encodeURIComponent(root.querySelector("#tiMessage").value)}`;
   });
-  if (hasBankQr) root.querySelector("#shareQrBtn").addEventListener("click", () => shareImageOrOpen(`/api/documents/${MESSAGE_TEMPLATES.bank_qr_document_id}/file`, "bank-qr.png", root.querySelector("#tiMessage").value));
 }
 
 async function openConfirmationMessageModal(lead) {
@@ -7051,7 +7059,6 @@ async function openConfirmationMessageModal(lead) {
         <div class="modal-foot">
           ${waLink ? `<button class="btn-ghost" id="waBtn">💬 WhatsApp</button>` : `<span class="muted small">No phone on file</span>`}
           ${mailLink ? `<button class="btn-ghost" id="mailBtn">✉️ Email</button>` : ""}
-          ${hasBankQr ? `<button class="btn-ghost" id="shareQrBtn">📱 Share QR code</button>` : ""}
           <button class="btn-primary" id="doneBtn">Done</button>
         </div>
       </div>
@@ -7061,7 +7068,6 @@ async function openConfirmationMessageModal(lead) {
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#doneBtn").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
-  if (hasBankQr) root.querySelector("#shareQrBtn").addEventListener("click", () => shareImageOrOpen(`/api/documents/${MESSAGE_TEMPLATES.bank_qr_document_id}/file`, "bank-qr.png", root.querySelector("#confirmBankDetailsCheckbox")?.checked ? finalMessage() : undefined));
   // Doc links are appended fresh at send-time rather than baked into the
   // textarea, so re-checking boxes or clicking WhatsApp then Email never
   // duplicates a link that's already there.
@@ -7084,7 +7090,17 @@ async function openConfirmationMessageModal(lead) {
     }).filter(Boolean);
     return links.length > 0 ? `${base}\n\n${links.join("\n")}` : base;
   }
-  if (waLink) root.querySelector("#waBtn").addEventListener("click", () => window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(finalMessage())}`);
+  // When the bank-details checkbox is on and a QR code is on file, WhatsApp
+  // hands the actual QR image to the Share sheet with the message as the
+  // caption, instead of just opening a wa.me text link.
+  if (waLink) root.querySelector("#waBtn").addEventListener("click", () => {
+    const bankChecked = root.querySelector("#confirmBankDetailsCheckbox")?.checked;
+    if (bankChecked && hasBankQr) {
+      shareImageOrOpen(`/api/documents/${MESSAGE_TEMPLATES.bank_qr_document_id}/file`, "bank-qr.png", finalMessage());
+    } else {
+      window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(finalMessage())}`;
+    }
+  });
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
     window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Your event is confirmed — Together, Out Loud")}&body=${encodeURIComponent(finalMessage())}`;
   });
