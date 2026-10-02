@@ -7159,6 +7159,12 @@ async function buildThankYouMessage(lead) {
     experience: packageName(lead.event_type),
     date: fmtDate(lead.date),
     cityClause: lead.city ? ` in ${lead.city}` : "",
+    // A plain wa.me link can target a specific number OR attach a file, but
+    // not both -- so instead of attaching the image, the message carries a
+    // link to it that WhatsApp unfurls into a photo preview card, which lets
+    // the WhatsApp button stay a normal text link straight to the right
+    // contact instead of the share sheet's "pick a contact" dialog.
+    imageLink: `${window.location.origin}/thank-you.html`,
     reviewAsk,
   }), hasReviewLink: !!reviewLink };
 }
@@ -7178,7 +7184,7 @@ async function openThankYouMessageModal(lead) {
           ${!reviewLink ? `<p class="muted small" style="margin-top:0; color:#B6752C;">No Google review link on file yet — add one in Settings and it'll be added to this message automatically.</p>` : ""}
           <img src="/thank-you-image.png" alt="Thank you" style="width:100%; max-width:220px; display:block; margin:0 auto 14px; border-radius:10px; border:1px solid #EAD9BE;" />
           <textarea id="tyMessage" rows="8" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${message}</textarea>
-          <p class="muted small" style="margin-top:6px; margin-bottom:0;">WhatsApp sends the thank-you image above pre-attached, with this text as the caption.</p>
+          <p class="muted small" style="margin-top:6px; margin-bottom:0;">Opens WhatsApp straight to ${lead.name}'s number. The link in the message unfurls into the thank-you image as a preview card — WhatsApp can't attach a file to a specific chat from here directly.</p>
         </div>
         <div class="modal-foot">
           ${waLink ? `<button class="btn-ghost" id="waBtn">💬 WhatsApp</button>` : `<span class="muted small">No phone on file</span>`}
@@ -7195,7 +7201,7 @@ async function openThankYouMessageModal(lead) {
 
   if (waLink) root.querySelector("#waBtn").addEventListener("click", () => {
     const text = root.querySelector("#tyMessage").value;
-    shareImageOrOpen("/thank-you-image.png", "thank-you.png", text);
+    window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(text)}`;
     markLeadThanked(lead);
   });
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
@@ -7273,6 +7279,7 @@ function openBulkThankYouModal(leadIds, main) {
           <p class="muted small" style="margin-bottom:14px;">${packageName(lead.event_type)} · ${lead.city || "—"} · ${fmtDate(lead.date)}</p>
           <img src="/thank-you-image.png" alt="Thank you" style="width:100%; max-width:160px; display:block; margin:0 auto 14px; border-radius:10px; border:1px solid #EAD9BE;" />
           <div class="card" style="background:#FBEFD9; white-space:pre-wrap; font-size:13.5px; margin-bottom:14px;">${message}</div>
+          <p class="muted small" style="margin-top:-6px; margin-bottom:14px;">Opens WhatsApp straight to ${lead.name}'s number — the link in the message unfurls into the thank-you image above as a preview card.</p>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button class="btn-primary" id="bulkThanksOpenBtn" style="flex:1;">💬 Send on WhatsApp</button>
             <button class="btn-ghost" id="bulkThanksSkipBtn">Skip</button>
@@ -7290,7 +7297,8 @@ function openBulkThankYouModal(leadIds, main) {
       renderStep();
     });
     root.querySelector("#bulkThanksOpenBtn").addEventListener("click", async () => {
-      shareImageOrOpen("/thank-you-image.png", "thank-you.png", message);
+      const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
+      window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}`;
       await markLeadThanked(lead);
       sentCount++;
       index++;
@@ -7628,9 +7636,9 @@ const TEMPLATE_META = {
   },
   thank_you: {
     label: "Thank-you message",
-    description: "Sent from a Completed lead's \"🙏 Thank client\" button, along with a thank-you image. {reviewAsk} is filled in automatically: a Google review ask once a review link is saved in Settings, or — until then — a link to your own feedback form instead. Nothing needs editing here for that.",
-    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "reviewAsk"],
-    default: "Hi {firstName}, thank you so much for having Together, Out Loud be part of your {experience} on {date}{cityClause}! It truly meant a lot to sing and play for you and your guests.{reviewAsk}\n\nWarm regards,\nTogether, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
+    description: "Sent from a Completed lead's \"🙏 Thank client\" button (or the bulk \"Thank clients\" queue) straight to the client's WhatsApp number. {imageLink} is a link to the branded thank-you image — WhatsApp shows it as a photo preview card when the link unfurls, since a plain wa.me link can't attach a file directly. {reviewAsk} is filled in automatically: a Google review ask once a review link is saved in Settings, or — until then — a link to your own feedback form instead. Neither needs editing here.",
+    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "imageLink", "reviewAsk"],
+    default: "Hi {firstName}, thank you so much for having Together, Out Loud be part of your {experience} on {date}{cityClause}! It truly meant a lot to sing and play for you and your guests. 🎶\n\n{imageLink}{reviewAsk}\n\nWarm regards,\nTogether, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
 };
 
