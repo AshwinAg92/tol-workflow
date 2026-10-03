@@ -7,6 +7,7 @@ const PACKAGES = [
   { id: "club", name: "Bhajan Clubbing", rate: 120000 },
   { id: "pheras", name: "Musical Pheras", rate: 100000 },
   { id: "bollywood", name: "Bollywood Jamming", rate: 80000 },
+  { id: "bolly_fusion", name: "Bhajan Bolly Fusion", rate: 60000 },
   { id: "satsang", name: "Devotional Satsang", rate: 55000 },
   { id: "shraddhanjali", name: "Shraddhanjali Satsang", rate: 50000 },
   { id: "jam_pheras_both", name: "Combo (Bhajan Jamming & Musical Pheras)", rate: 150000 },
@@ -25,6 +26,7 @@ const ADDONS = [
 const PRICING = {
   pheras: { 6: 150000 },
   jam: { 4: 140000, 5: 150000 },
+  bolly_fusion: { 4: 140000, 5: 150000 },
   bollywood: { 4: 140000, 5: 150000 },
   satsang: { 4: 140000, 5: 150000 },
   shraddhanjali: { 4: 75000, 5: 85000 },
