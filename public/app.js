@@ -2378,7 +2378,8 @@ async function renderQuotation(main) {
     main.querySelector("#leadB2bBadge").style.display = lead.is_b2b ? "block" : "none";
     main.querySelector("#qB2bChargesWrap").style.display = lead.is_b2b ? "block" : "none";
     main.querySelector("#qLocation").value = lead.city || "";
-    main.querySelector("#qDate").value = fmtDate(lead.date);
+    // If the client offered an alternative date, the quote is for that date.
+    main.querySelector("#qDate").value = fmtDate(lead.alt_date || lead.date);
     main.querySelector("#qOccasion").value = lead.occasion || "";
     main.querySelector("#qGuests").value = lead.guest_range || "";
     // Reset to whatever package this lead is currently on — if it was
@@ -2403,7 +2404,7 @@ async function renderQuotation(main) {
       lead.guest_range ? ["Guest range (as submitted)", lead.guest_range] : null,
       lead.state ? ["State", lead.state] : null,
       lead.budget ? ["Budget mentioned", inr(lead.budget)] : null,
-      lead.alt_date ? ["Alternate date", fmtDate(lead.alt_date)] : null,
+      lead.alt_date ? ["Alternate date (quoted)", `${fmtDate(lead.alt_date)} — original request: ${fmtDate(lead.date)}`] : null,
       lead.how_heard ? ["Heard about us via", lead.how_heard] : null,
       (lead.phone || lead.whatsapp_number) ? ["Contact", `${lead.phone || ""}${lead.whatsapp_number && lead.whatsapp_number !== lead.phone ? ` (WhatsApp: ${lead.whatsapp_number})` : ""}`] : null,
       lead.email ? ["Email", lead.email] : null,
