@@ -1669,7 +1669,10 @@ async function renderLeadsLog(main, skipRefresh) {
             if (!["New", "Follow-up"].includes(l.stage) || !l.date) return "";
             const conflictLead = LEADS.find((o) => o.id !== l.id && o.date === l.date && ["Interested", "Tentative", "Confirmed"].includes(o.stage));
             if (!conflictLead) return "";
-            return `<div style="background:#FFF4E5; color:#8A5A1F; padding:6px 10px; border-radius:6px; font-size:12.5px; margin-top:6px;">⚠️ ${conflictLead.name} is already ${conflictLead.stage} for this date</div>`;
+            const canAsk = ["Interested", "Tentative"].includes(conflictLead.stage) && (conflictLead.whatsapp_number || conflictLead.phone);
+            return `<div style="background:#FFF4E5; color:#8A5A1F; padding:6px 10px; border-radius:6px; font-size:12.5px; margin-top:6px;">⚠️ ${conflictLead.name} is already ${conflictLead.stage} for this date
+              ${canAsk ? `<div style="margin-top:6px;"><button class="btn-ghost ask-date-confirm-btn" data-conflict-id="${conflictLead.id}" style="font-size:12px; padding:4px 10px;">💬 Ask ${(conflictLead.name || "").split(" ")[0]} to confirm</button></div>` : ""}
+            </div>`;
           })()}
           <div class="muted small">Submitted ${fmtDateTime(l.created_at)}</div>
           ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}${l.last_quoted_at ? ` <span class="muted">— sent ${fmtDate(l.last_quoted_at.slice(0, 10))}</span>` : ""}${l.quote_count > 1 ? ` <span class="muted">(${l.quote_count} quotes sent — see history in Quotation)</span>` : ""}</div>` : ""}
@@ -1793,6 +1796,24 @@ async function renderLeadsLog(main, skipRefresh) {
       currentTab = "quotation";
       renderNav();
       renderMain();
+    });
+  });
+
+  // Nudge whoever is already Interested/Tentative on a date that another
+  // enquiry has just come in for, asking them to confirm so we can lock it.
+  main.querySelectorAll(".ask-date-confirm-btn").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const other = LEADS.find((l) => l.id === btn.dataset.conflictId);
+      if (!other) return;
+      const msg = fillTemplate(MESSAGE_TEMPLATES.date_hold_check || TEMPLATE_META.date_hold_check.default, {
+        firstName: (other.name || "").split(" ")[0] || "there",
+        experience: packageName(other.event_type),
+        date: fmtDate(other.date),
+      });
+      const digitsOnly = (other.whatsapp_number || other.phone || "").replace(/\D/g, "");
+      if (!digitsOnly) return;
+      window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
     });
   });
 
@@ -7611,6 +7632,12 @@ const TEMPLATE_META = {
     description: "Sent from the same \"💬 Follow up\" button, but for Tentative leads instead.",
     placeholders: ["firstName", "experience", "dateClause"],
     default: "Hi {firstName}, following up on your {experience}{dateClause} — we've tentatively held this date for you with Together, Out Loud. Let us know if you'd like to go ahead so we can lock it in for you!\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
+  },
+  date_hold_check: {
+    label: "Date confirmation request",
+    description: "Sent from the \"💬 Ask … to confirm\" button on a New/Follow-up lead's date-clash warning — goes to the Interested/Tentative client who already has that date, asking them to confirm because we've received another enquiry.",
+    placeholders: ["firstName", "experience", "date"],
+    default: "Hi {firstName}, we've received another enquiry for {date}, and you're currently on our list for {experience} on that date with Together, Out Loud. Could you please let us know if you'd like to go ahead and confirm it? We'd love to lock it in for you!\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
   confirmed: {
     label: "Confirmed client message",
