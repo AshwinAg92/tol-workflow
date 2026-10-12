@@ -1488,7 +1488,7 @@ async function renderLeadsLog(main, skipRefresh) {
         <h2>Leads</h2>
         <p class="muted">Every query received, across every format.</p>
       </div>
-      <button class="btn-primary" id="newLeadBtn">+ New lead</button>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;"><button class="btn-ghost" id="quickConfirmBtn">⚡ Quick confirm</button><button class="btn-primary" id="newLeadBtn">+ New lead</button></div>
     </div>
 
     <div class="card" style="margin-bottom:18px;">
@@ -2063,6 +2063,7 @@ async function renderLeadsLog(main, skipRefresh) {
   });
 
   main.querySelector("#newLeadBtn").addEventListener("click", openNewLeadModal);
+  main.querySelector("#quickConfirmBtn").addEventListener("click", openQuickConfirmModal);
   main.querySelector("#copyLinkBtn").addEventListener("click", () => {
     navigator.clipboard.writeText(shareLink);
     const btn = main.querySelector("#copyLinkBtn");
@@ -6890,7 +6891,7 @@ function openTentativeRateModal(lead) {
   });
 }
 
-function openConfirmEventModal(lead) {
+function openConfirmEventModal(lead, rateHint) {
   const root = document.getElementById("modalRoot");
   const conflict = LEADS.find((l) => l.id !== lead.id && (l.stage === "Confirmed" || l.stage === "Tentative") && l.date === lead.date);
 
@@ -6915,7 +6916,8 @@ function openConfirmEventModal(lead) {
           ` : ""}
           <div class="muted small mono" style="margin-bottom:8px;">Quoted: ${lead.quote_amount ? inr(lead.quote_amount) : "—"}</div>
           <label>Final closed rate (₹)</label>
-          <input id="ceAmount" type="number" value="${lead.quote_amount || ""}" placeholder="e.g. 145000" />
+          <input id="ceAmount" type="number" value="${lead.quote_amount || rateHint || ""}" placeholder="e.g. 145000" />
+          ${!lead.quote_amount && rateHint ? `<div class="muted small" style="margin-top:2px;">Pre-filled from this client's last booking — change it if the rate is different this time.</div>` : ""}
           <label style="margin-top:10px;">This rate is —</label>
           ${rateInclusionsCheckboxesHtml("ce", parseRateInclusions(lead.rate_inclusions))}
           <label style="margin-top:10px;">Anything else to note? (optional)</label>
@@ -7511,6 +7513,152 @@ function openNewLeadModal() {
       openConfirmEventModal(freshLead);
     } else {
       renderMain();
+    }
+  });
+}
+
+// Repeat clients: type a name, pick them from past leads, and their details
+// pre-fill — only the new date (and anything that changed) needs entering.
+// Creates a fresh lead and hands straight to the normal Confirm flow, so the
+// rate/advance prompt, conflict checks and confirmation message all still apply.
+function openQuickConfirmModal() {
+  const root = document.getElementById("modalRoot");
+  const digits = (v) => (v || "").replace(/\D/g, "").slice(-10);
+  // One entry per client — their most recent lead (matched by phone, else name).
+  const byClient = new Map();
+  [...LEADS].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")).forEach((l) => {
+    const key = digits(l.phone) || (l.name || "").trim().toLowerCase();
+    if (key && !byClient.has(key)) byClient.set(key, l);
+  });
+  const clients = [...byClient.values()];
+  let picked = null;
+
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>⚡ Quick confirm</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body">
+          <label>Find a past client</label>
+          <input id="qcSearch" placeholder="Start typing a name…" autocomplete="off" />
+          <div id="qcResults" style="margin-top:6px;"></div>
+          <div id="qcForm" style="display:none;">
+            <div id="qcPickedNote" class="muted small" style="margin:10px 0;"></div>
+            <label>Name / organisation</label>
+            <input id="qcName" />
+            <div class="row-2">
+              <div><label>Phone</label><input id="qcPhone" /></div>
+              <div><label>Email</label><input id="qcEmail" /></div>
+            </div>
+            <div class="row-2">
+              <div><label>Format</label><select id="qcType">${CONFIG.packages.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}</select></div>
+              <div><label>New event date</label><input id="qcDate" type="date" min="${new Date().toISOString().slice(0, 10)}" /></div>
+            </div>
+            <div class="row-2">
+              <div><label>City</label><input id="qcCity" /></div>
+              <div><label>State</label><input id="qcState" /></div>
+            </div>
+            <div class="row-2">
+              <div><label>Occasion</label><select id="qcOccasion"><option value="">Not specified</option>${CONFIG.occasions.map((o) => `<option value="${o}">${o}</option>`).join("")}</select></div>
+              <div><label>No. of guests</label><select id="qcGuests"><option value="">Not specified</option>${CONFIG.guestRanges.map((g) => `<option value="${g}">${g}</option>`).join("")}</select></div>
+            </div>
+            <div class="row-2" id="qcPcsRow">
+              <div><label>Pcs (No. of Musicians)</label><input id="qcPcs" type="number" /></div>
+              <div></div>
+            </div>
+            <label>Venue (optional)</label>
+            <input id="qcVenue" />
+          </div>
+        </div>
+        <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal" disabled>Continue to confirm</button></div>
+      </div>
+    </div>
+  `;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+
+  const q = (id) => root.querySelector(id);
+  const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+
+  function renderResults() {
+    const term = q("#qcSearch").value.trim().toLowerCase();
+    if (!term) { q("#qcResults").innerHTML = ""; return; }
+    const matches = clients.filter((l) => (l.name || "").toLowerCase().includes(term) || digits(l.phone).includes(term.replace(/\D/g, "") || "~")).slice(0, 8);
+    q("#qcResults").innerHTML = matches.length
+      ? matches.map((l) => `
+          <button class="btn-ghost qc-result" data-id="${l.id}" style="display:block; width:100%; text-align:left; margin-bottom:6px; padding:8px 10px;">
+            <b>${esc(l.name)}</b>
+            <div class="muted small">${esc(packageName(l.event_type))}${l.city ? ` · ${esc(l.city)}` : ""} · last ${fmtDate(l.date)}</div>
+          </button>`).join("")
+      : `<div class="muted small">No past client matches "${esc(q("#qcSearch").value.trim())}". Use "+ New lead" for someone new.</div>`;
+    q("#qcResults").querySelectorAll(".qc-result").forEach((btn) => btn.addEventListener("click", () => pick(clients.find((c) => c.id === btn.dataset.id))));
+  }
+
+  function pick(l) {
+    if (!l) return;
+    picked = l;
+    q("#qcResults").innerHTML = "";
+    q("#qcSearch").value = l.name || "";
+    q("#qcForm").style.display = "block";
+    q("#submitModal").disabled = false;
+    q("#qcName").value = l.name || "";
+    q("#qcPhone").value = l.whatsapp_number || l.phone || "";
+    q("#qcEmail").value = l.email || "";
+    q("#qcType").value = l.event_type;
+    q("#qcCity").value = l.city || "";
+    q("#qcState").value = l.state || "";
+    q("#qcOccasion").value = l.occasion || "";
+    q("#qcGuests").value = l.guest_range || "";
+    q("#qcPcs").value = l.pcs || "";
+    q("#qcVenue").value = "";
+    q("#qcDate").value = "";
+    q("#qcPcsRow").style.display = l.event_type === "pheras" ? "none" : "";
+    const lastRate = l.final_amount || l.quote_amount;
+    q("#qcPickedNote").textContent = `Pre-filled from their last enquiry (${packageName(l.event_type)}, ${fmtDate(l.date)}${lastRate ? `, ${inr(lastRate)}` : ""}). Change anything that's different this time.`;
+    q("#qcDate").focus();
+  }
+
+  q("#qcSearch").addEventListener("input", () => { picked = null; q("#qcForm").style.display = "none"; q("#submitModal").disabled = true; renderResults(); });
+  q("#qcType").addEventListener("change", (e) => { q("#qcPcsRow").style.display = e.target.value === "pheras" ? "none" : ""; });
+  q("#qcSearch").focus();
+
+  q("#submitModal").addEventListener("click", async () => {
+    if (!picked) return;
+    const name = q("#qcName").value.trim();
+    const date = q("#qcDate").value;
+    if (!name) return alert("Name is required.");
+    if (!date) return alert("Please pick the new event date.");
+    const btn = q("#submitModal");
+    btn.disabled = true;
+    try {
+      const created = await api("/api/leads", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          phone: q("#qcPhone").value,
+          email: q("#qcEmail").value,
+          eventType: q("#qcType").value,
+          city: q("#qcCity").value,
+          state: q("#qcState").value || null,
+          date,
+          guestRange: q("#qcGuests").value || null,
+          occasion: q("#qcOccasion").value || null,
+          venue: q("#qcVenue").value || null,
+          pcs: q("#qcPcs").value || null,
+          isEventManager: !!picked.is_b2b,
+          notes: "⚡ Repeat client — created via Quick confirm",
+        }),
+      });
+      await refreshLeads();
+      close();
+      const fresh = LEADS.find((l) => l.id === created.id) || created;
+      // Same package as last time → carry the old rate over as a starting point.
+      const rateHint = picked.event_type === fresh.event_type ? (picked.final_amount || picked.quote_amount || null) : null;
+      openConfirmEventModal(fresh, rateHint);
+    } catch (err) {
+      btn.disabled = false;
+      alert(err.message);
     }
   });
 }
