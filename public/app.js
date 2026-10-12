@@ -137,7 +137,7 @@ function confirmationTermsBlock(lead) {
 // inclusions aren't locked until the lead is actually Confirmed. Anything we
 // don't know yet is left out rather than guessed.
 function tentativeTermsBlock(lead) {
-  const lines = ["📋 Your booking details (as per our quotation)"];
+  const lines = ["📋 Your booking details (as per our quotation)", "⏳ Status: *Tentatively booked* — we are holding this date for you, but it is not final until confirmed."];
   lines.push(`🎶 Format: ${packageName(lead.event_type)}`);
   if (lead.date) lines.push(`📅 Date: ${fmtDate(lead.date)}`);
   const where = lead.venue || lead.city;
@@ -7879,7 +7879,7 @@ const TEMPLATE_META = {
     label: "Tentative → what happens next",
     description: "Sent from a Tentative lead's \"Send confirm details\" button — tells the client what's needed to lock the date in and what they'll get once confirmed (tech rider, etc.), with your bank/UPI details for the advance.",
     placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "termsBlock", "bankDetails"],
-    default: "Hi {firstName}, to go ahead and lock in your {experience} on {date}{cityClause}, here's what happens next:\n\n{termsBlock}\n\n1. An advance payment secures the date.\n2. Once confirmed, we'll share the tech rider, hospitality rider, and all other event-day details.\n\n{bankDetails}\n\nLet us know once you're ready and we'll get everything moving!\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
+    default: "Hi {firstName}, your {experience} on {date}{cityClause} is currently *tentatively booked* with Together, Out Loud. To make it final and lock in the date, here's what happens next:\n\n{termsBlock}\n\n1. An advance payment secures the date.\n2. Once confirmed, we'll share the tech rider, hospitality rider, and all other event-day details.\n\n{bankDetails}\n\nLet us know once you're ready and we'll get everything moving!\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
   thank_you: {
     label: "Thank-you message",
