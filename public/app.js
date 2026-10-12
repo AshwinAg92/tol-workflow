@@ -112,6 +112,26 @@ function clientArrangementsPhrase(lead) {
   return remaining.length === 0 ? "the venue technical requirements" : `the ${remaining.join(", ")}, and venue technical requirements`;
 }
 
+// The "terms" block for the final confirmation message: what the agreed fee
+// covers, what the client must arrange themselves, and any custom note typed
+// at confirmation time — spelled out so nothing is left to "as discussed".
+function confirmationTermsBlock(lead) {
+  const included = parseRateInclusions(lead.rate_inclusions);
+  const includedLabels = included.map((id) => RATE_INCLUSIONS.find((o) => o.id === id)?.label || id);
+  const lines = ["📋 Terms of this booking"];
+  if (includedLabels.length > 0) {
+    lines.push(`✅ Included in the agreed fee: ${includedLabels.join(", ")}`);
+  } else if (lead.rate_type === "inclusive") {
+    lines.push("✅ Included in the agreed fee: Travel & accommodation (all-in)");
+  } else {
+    lines.push("✅ The agreed fee is for the performance only — travel, stay and food are not included.");
+  }
+  lines.push(`🙋 To be arranged by you: ${clientArrangementsPhrase(lead).replace(/^the /, "")}`);
+  const note = (lead.rate_note || "").trim();
+  if (note) lines.push(`📝 Note: ${note}`);
+  return lines.join("\n");
+}
+
 const NAV = [
   { id: "dashboard", label: "Dashboard" },
   { id: "leads", label: "Leads" },
@@ -7054,7 +7074,17 @@ async function openConfirmationMessageModal(lead) {
     advance: Number(received || 0).toLocaleString("en-IN"),
     outstanding: finalAmount ? Number(outstanding).toLocaleString("en-IN") : "",
     clientArrangements: clientArrangementsPhrase(lead),
+    rateTermsBlock: confirmationTermsBlock(lead),
   });
+  // A custom-saved template from before this block existed won't have the
+  // placeholder — slot the terms in before the sign-off so they're never missing.
+  if (!tpl.includes("{rateTermsBlock}")) {
+    const termsBlock = confirmationTermsBlock(lead);
+    const signoff = message.match(/\n(Warm regards,)/);
+    message = signoff
+      ? message.slice(0, signoff.index) + `\n\n${termsBlock}` + message.slice(signoff.index)
+      : `${message}\n\n${termsBlock}`;
+  }
   // The Confirmed template is shared across every package (unlike the quote
   // wording, which is per-package) -- so Pheras' "no fixed duration" is
   // handled here by dropping the line after filling, rather than forking the
@@ -7790,8 +7820,8 @@ const TEMPLATE_META = {
   confirmed: {
     label: "Confirmed client message",
     description: "Starting text shown when you confirm an event — you can still tweak it per-send before it goes out. Location, Set, Duration, Fee, Advance, Outstanding, and what the client needs to arrange are pulled automatically from the lead.",
-    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "amountLine", "location", "occasion", "pieces", "duration", "performanceFee", "advance", "outstanding", "clientArrangements"],
-    default: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe are pleased to confirm our booking for: {clientName}\nLocation: {location}\nDate: {date}\nOccasion: {occasion}\nSet: {pieces} Pieces\nDuration: {duration}\nPerformance Fee: ₹{performanceFee}/-\nAdvance: ₹{advance}/-\nOutstanding: ₹{outstanding}\n\nAs discussed, we request your support in arranging {clientArrangements}.\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
+    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "amountLine", "location", "occasion", "pieces", "duration", "performanceFee", "advance", "outstanding", "clientArrangements", "rateTermsBlock"],
+    default: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe are pleased to confirm our booking for: {clientName}\nLocation: {location}\nDate: {date}\nOccasion: {occasion}\nSet: {pieces} Pieces\nDuration: {duration}\nPerformance Fee: ₹{performanceFee}/-\nAdvance: ₹{advance}/-\nOutstanding: ₹{outstanding}\n\n{rateTermsBlock}\n\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
   document_share: {
     label: "Document share message",
