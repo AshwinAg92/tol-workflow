@@ -132,6 +132,38 @@ function confirmationTermsBlock(lead) {
   return lines.join("\n");
 }
 
+// Soft-confirmation terms for a Tentative lead — the same idea as the final
+// confirmation block, but worded as "per our quotation" because the rate and
+// inclusions aren't locked until the lead is actually Confirmed. Anything we
+// don't know yet is left out rather than guessed.
+function tentativeTermsBlock(lead) {
+  const lines = ["📋 Your booking details (as per our quotation)"];
+  lines.push(`🎶 Format: ${packageName(lead.event_type)}`);
+  if (lead.date) lines.push(`📅 Date: ${fmtDate(lead.date)}`);
+  const where = lead.venue || lead.city;
+  if (where) lines.push(`📍 Location: ${where}`);
+  if (lead.occasion) lines.push(`🎉 Occasion: ${lead.occasion === "Other" && lead.occasion_other ? lead.occasion_other : lead.occasion}`);
+  if (lead.pcs && lead.event_type !== "pheras") lines.push(`🎻 Set: ${lead.pcs} Pieces`);
+  const fee = lead.final_amount || lead.quote_amount;
+  if (fee) lines.push(`💰 Performance fee: ₹${Number(fee).toLocaleString("en-IN")}/-`);
+  const included = parseRateInclusions(lead.rate_inclusions);
+  const hasInclusionInfo = included.length > 0 || (lead.rate_inclusions !== null && lead.rate_inclusions !== undefined) || !!lead.rate_type;
+  if (hasInclusionInfo) {
+    if (included.length > 0) {
+      lines.push(`✅ Included in the fee: ${included.map((id) => RATE_INCLUSIONS.find((o) => o.id === id)?.label || id).join(", ")}`);
+    } else if (lead.rate_type === "inclusive") {
+      lines.push("✅ Included in the fee: Travel & accommodation (all-in)");
+    } else {
+      lines.push("✅ The fee is for the performance only — travel, stay and food are not included.");
+    }
+    lines.push(`🙋 To be arranged by you: ${clientArrangementsPhrase(lead).replace(/^the /, "")}`);
+  }
+  const note = (lead.rate_note || "").trim();
+  if (note) lines.push(`📝 Note: ${note}`);
+  lines.push("The final rate and terms are locked in once the date is confirmed with the advance.");
+  return lines.join("\n");
+}
+
 const NAV = [
   { id: "dashboard", label: "Dashboard" },
   { id: "leads", label: "Leads" },
@@ -6998,14 +7030,22 @@ async function openTentativeConfirmInfoModal(lead) {
   const root = document.getElementById("modalRoot");
   const firstName = (lead.name || "").split(" ")[0] || "there";
   const tpl = MESSAGE_TEMPLATES.tentative_confirm_info || TEMPLATE_META.tentative_confirm_info.default;
-  const message = fillTemplate(tpl, {
+  let message = fillTemplate(tpl, {
     firstName,
     clientName: lead.name || "",
     experience: packageName(lead.event_type),
     date: fmtDate(lead.date),
     cityClause: lead.city ? ` in ${lead.city}` : "",
     bankDetails: MESSAGE_TEMPLATES.bank_details || "",
+    termsBlock: tentativeTermsBlock(lead),
   });
+  // Saved custom wording from before the terms block existed: slot it in
+  // ahead of the bank details (or at the end) so it's never missing.
+  if (!tpl.includes("{termsBlock}")) {
+    const bank = (MESSAGE_TEMPLATES.bank_details || "").trim();
+    const at = bank ? message.indexOf(bank) : -1;
+    message = at > 0 ? message.slice(0, at) + `${tentativeTermsBlock(lead)}\n\n` + message.slice(at) : `${message}\n\n${tentativeTermsBlock(lead)}`;
+  }
   const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
   const waLink = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}` : null;
   const mailLink = lead.email ? `mailto:${lead.email}?subject=${encodeURIComponent("Next steps to confirm your event — Together, Out Loud")}&body=${encodeURIComponent(message)}` : null;
@@ -7838,8 +7878,8 @@ const TEMPLATE_META = {
   tentative_confirm_info: {
     label: "Tentative → what happens next",
     description: "Sent from a Tentative lead's \"Send confirm details\" button — tells the client what's needed to lock the date in and what they'll get once confirmed (tech rider, etc.), with your bank/UPI details for the advance.",
-    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "bankDetails"],
-    default: "Hi {firstName}, to go ahead and lock in your {experience} on {date}{cityClause}, here's what happens next:\n\n1. An advance payment secures the date.\n2. Once confirmed, we'll share the tech rider, hospitality rider, and all other event-day details.\n\n{bankDetails}\n\nLet us know once you're ready and we'll get everything moving!\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
+    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "termsBlock", "bankDetails"],
+    default: "Hi {firstName}, to go ahead and lock in your {experience} on {date}{cityClause}, here's what happens next:\n\n{termsBlock}\n\n1. An advance payment secures the date.\n2. Once confirmed, we'll share the tech rider, hospitality rider, and all other event-day details.\n\n{bankDetails}\n\nLet us know once you're ready and we'll get everything moving!\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
   thank_you: {
     label: "Thank-you message",
