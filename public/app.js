@@ -4364,6 +4364,9 @@ function openTempArtistDirectoryModal(directory, onBack) {
 }
 
 async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
+  // Re-opening after each save used to jump back to the top; remember where we were.
+  const _prevCard = document.querySelector("#modalRoot .modal-card");
+  const _prevScroll = _prevCard ? _prevCard.scrollTop : 0;
   const lead = LEADS.find((l) => l.id === leadId);
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
   const [assignments, tempArtists, leadExpenses, myReimbursements, myOwnFee, tempArtistDirectory, allMusicians, allDocs] = await Promise.all([
@@ -4700,6 +4703,10 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       </div>
     </div>
   `;
+  if (_prevScroll > 0) {
+    const _card = root.querySelector(".modal-card");
+    if (_card) _card.scrollTop = _prevScroll;
+  }
   const close = () => (root.innerHTML = "");
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#cancelModal").addEventListener("click", close);
@@ -5238,6 +5245,8 @@ async function openTravelPlanModal(leadId) {
   }
 
   function renderModal() {
+    const _pc = root.querySelector(".modal-card");
+    const _ps = _pc ? _pc.scrollTop : 0;
     root.innerHTML = `
       <div class="modal-overlay" id="overlay">
         <div class="modal-card" style="width:640px; max-width:96vw;">
@@ -5261,6 +5270,7 @@ async function openTravelPlanModal(leadId) {
         </div>
       </div>
     `;
+    if (_ps > 0) { const _c = root.querySelector(".modal-card"); if (_c) _c.scrollTop = _ps; }
     const close = () => (root.innerHTML = "");
     root.querySelector("#closeModal").addEventListener("click", close);
     root.querySelector("#cancelModal").addEventListener("click", close);
