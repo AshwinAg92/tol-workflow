@@ -1016,6 +1016,9 @@ function renderNav() {
   let visibleNav = NAV.filter((n) => {
     if (n.id === "settings" || n.id === "website") return CURRENT_USER?.accessLevel === "admin";
     if (n.id === "travelcal") return canAssignTeam();
+    // Team tab (and the Musicians pool inside it) is admin-only for now — a manager
+    // shouldn't be able to browse the wider musician pool. Re-open later by relaxing this.
+    if (n.id === "team") return CURRENT_USER?.accessLevel === "admin";
     return n.id === "dashboard" || !Array.isArray(perms) || perms.includes(n.id);
   });
   if (CURRENT_USER?.isPerformer && CURRENT_USER.accessLevel !== "performer") {

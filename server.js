@@ -733,7 +733,7 @@ app.delete("/api/b2b-contacts/:id", requireAuth, requireSection("b2b"), async (r
 // just the ones actively performing with you. A musician can be promoted
 // into Team (team_id gets set) without a login being created; a login is
 // added separately, whenever wanted, from the Team tab's existing flow.
-app.get("/api/musicians", requireAuth, async (req, res) => {
+app.get("/api/musicians", requireAuth, requireAdmin, async (req, res) => {
   const { rows: musicians } = await pool.query(`
     SELECT musicians.*, team.name AS team_name
     FROM musicians
@@ -752,7 +752,7 @@ app.get("/api/musicians", requireAuth, async (req, res) => {
   })));
 });
 
-app.post("/api/musicians", requireAuth, requireCapability("manage_team"), async (req, res) => {
+app.post("/api/musicians", requireAuth, requireAdmin, async (req, res) => {
   const { name, phone, city, notes, instruments } = req.body;
   const rateLocal = canSeeMoney(req.user) ? req.body.rateLocal : undefined;
   const rateOutstation = canSeeMoney(req.user) ? req.body.rateOutstation : undefined;
@@ -770,7 +770,7 @@ app.post("/api/musicians", requireAuth, requireCapability("manage_team"), async 
   res.status(201).json({ id });
 });
 
-app.patch("/api/musicians/:id", requireAuth, requireCapability("manage_team"), async (req, res) => {
+app.patch("/api/musicians/:id", requireAuth, requireAdmin, async (req, res) => {
   const musician = (await pool.query("SELECT * FROM musicians WHERE id = $1", [req.params.id])).rows[0];
   if (!musician) return res.status(404).json({ error: "Musician not found" });
   const fields = ["name", "phone", "city", "rate_local", "rate_outstation", "notes"];
@@ -801,7 +801,7 @@ app.patch("/api/musicians/:id", requireAuth, requireCapability("manage_team"), a
   res.json({ ...updatedRest, ...(canSeeMoney(req.user) ? { rate_local: rl, rate_outstation: ro } : {}), instruments });
 });
 
-app.delete("/api/musicians/:id", requireAuth, requireCapability("manage_team"), async (req, res) => {
+app.delete("/api/musicians/:id", requireAuth, requireAdmin, async (req, res) => {
   await pool.query("DELETE FROM musicians WHERE id = $1", [req.params.id]);
   res.status(204).end();
 });
@@ -809,7 +809,7 @@ app.delete("/api/musicians/:id", requireAuth, requireCapability("manage_team"), 
 // Promotes a musician into Team — creates the team row (no login) and links
 // it back on the musician record. Gated by manage_team (not just the
 // "musicians" section) since it's really a Team-management action.
-app.post("/api/musicians/:id/promote", requireAuth, requireCapability("manage_team"), async (req, res) => {
+app.post("/api/musicians/:id/promote", requireAuth, requireAdmin, async (req, res) => {
   const musician = (await pool.query("SELECT * FROM musicians WHERE id = $1", [req.params.id])).rows[0];
   if (!musician) return res.status(404).json({ error: "Musician not found" });
   if (musician.team_id) return res.status(400).json({ error: "Already added to Team" });
