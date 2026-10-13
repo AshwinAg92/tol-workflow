@@ -9214,6 +9214,25 @@ function initBackNavigation() {
         if (!v) { pending = 0; lastHead = null; anchor = null; desc.set.call(this, v); return; }
         const old = this.querySelector(".modal-card");
         if (old && old.scrollTop > 0) { pending = old.scrollTop; anchor = findAnchor(old); }
+        // Same popup refreshing itself: swap only the card's contents so the
+        // scrolling container (and its scroll position) survives untouched.
+        if (old && old.scrollTop > 0) {
+          const tmp = document.createElement("div");
+          desc.set.call(tmp, v);
+          const nc = tmp.querySelector(".modal-card");
+          const oh = headOf(old), nh = headOf(nc);
+          if (nc && oh && nh && oh === nh) {
+            const top = old.scrollTop;
+            old.setAttribute("style", nc.getAttribute("style") || "");
+            old.innerHTML = nc.innerHTML;
+            old.scrollTop = top;
+            if (anchor) {
+              const e2 = old.querySelectorAll(anchor.sel)[anchor.idx];
+              if (e2) old.scrollTop += e2.getBoundingClientRect().top - old.getBoundingClientRect().top - anchor.offset;
+            }
+            return;
+          }
+        }
         desc.set.call(this, v);
         const card = this.querySelector(".modal-card");
         const newHead = headOf(card);
