@@ -9188,6 +9188,29 @@ function recordTabHistory() {
 }
 function initBackNavigation() {
   const root = document.getElementById("modalRoot");
+  // Popups that refresh themselves after a save (re-render via innerHTML) should
+  // keep the scroll position instead of jumping back to the top.
+  if (root) {
+    const desc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+    let pending = 0, lastHead = null;
+    const headOf = (c) => (c && c.querySelector(".modal-head h3") ? c.querySelector(".modal-head h3").textContent.trim() : null);
+    Object.defineProperty(root, "innerHTML", {
+      configurable: true,
+      get() { return desc.get.call(this); },
+      set(v) {
+        if (!v) { pending = 0; lastHead = null; desc.set.call(this, v); return; }
+        const old = this.querySelector(".modal-card");
+        const oldHead = headOf(old);
+        if (old && old.scrollTop > 0) pending = old.scrollTop;
+        desc.set.call(this, v);
+        const card = this.querySelector(".modal-card");
+        const newHead = headOf(card);
+        if (newHead) { if (lastHead && lastHead !== newHead) pending = 0; lastHead = newHead; }
+        if (!old) { pending = 0; lastHead = null; if (newHead) lastHead = newHead; }
+        if (pending > 0 && card) card.scrollTop = pending;
+      },
+    });
+  }
   try { history.replaceState({ tab: currentTab }, ""); } catch (e) {}
   _histLastTab = currentTab;
   const isOpen = () => !!root && root.innerHTML.trim() !== "";
@@ -9230,9 +9253,14 @@ function renderMain() {
   // Without this, switching tabs (or logging back in) can leave the view
   // scrolled to wherever the previous screen was, instead of starting fresh
   // at the top.
-  main.scrollTop = 0;
-  main.scrollLeft = 0;
-  window.scrollTo(0, 0);
+  // Only jump to the top when actually switching screens — a save that just
+  // refreshes the current screen should leave you where you were.
+  if (window._lastRenderedTab !== currentTab) {
+    main.scrollTop = 0;
+    main.scrollLeft = 0;
+    window.scrollTo(0, 0);
+  }
+  window._lastRenderedTab = currentTab;
   if (currentTab === "dashboard") renderDashboard(main);
   else if (currentTab === "leads") renderLeadsLog(main);
   else if (currentTab === "quotation") renderQuotation(main);
