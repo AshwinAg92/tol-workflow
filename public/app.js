@@ -3569,11 +3569,12 @@ function openAddMemberModal(onCreated) {
           <label>Base city</label>
           <input id="nmBaseCity" placeholder="e.g. Siliguri" />
           <p class="muted small" style="margin:2px 0 0;">Helps you spot who's already near an outstation event when planning travel.</p>
+          ${hasAccountsAccess() ? `
           <div class="row-2" style="margin-top:8px;">
             <div><label>Local fee (₹)</label><input id="nmLocalFee" type="number" placeholder="e.g. 3000" /></div>
             <div><label>Outstation fee (₹)</label><input id="nmOutstationFee" type="number" placeholder="e.g. 5000" /></div>
           </div>
-          <p class="muted small" style="margin:2px 0 0;">Auto-suggested when assigning them to an event, based on whether the event city matches their base city.</p>
+          <p class="muted small" style="margin:2px 0 0;">Auto-suggested when assigning them to an event, based on whether the event city matches their base city.</p>` : ""}
           <label style="margin-top:8px;">Phone</label>
           <input id="nmPhone" placeholder="e.g. 9876543210" />
           <p class="muted small" style="margin:4px 0 0;">Username and password default to this phone number — change them below if you'd like something else.</p>
@@ -3631,8 +3632,8 @@ function openAddMemberModal(onCreated) {
           name,
           roleTitle: root.querySelector("#nmRole").value,
           baseCity: root.querySelector("#nmBaseCity").value,
-          localFee: root.querySelector("#nmLocalFee").value,
-          outstationFee: root.querySelector("#nmOutstationFee").value,
+          localFee: root.querySelector("#nmLocalFee")?.value,
+          outstationFee: root.querySelector("#nmOutstationFee")?.value,
           phone: root.querySelector("#nmPhone").value,
           username,
           password,
@@ -3744,10 +3745,11 @@ function openEditMemberModal(member, linkedUser) {
           </div>
           <label>Base city</label>
           <input id="emBaseCity" value="${member.base_city || ""}" placeholder="e.g. Siliguri" />
+          ${hasAccountsAccess() ? `
           <div class="row-2" style="margin-top:8px;">
             <div><label>Local fee (₹)</label><input id="emLocalFee" type="number" value="${member.local_fee || ""}" placeholder="e.g. 3000" /></div>
             <div><label>Outstation fee (₹)</label><input id="emOutstationFee" type="number" value="${member.outstation_fee || ""}" placeholder="e.g. 5000" /></div>
-          </div>
+          </div>` : ""}
           <div class="row-2" style="margin-top:8px;">
             <div><label>Phone</label><input id="emPhone" value="${member.phone || ""}" /></div>
             <div><label>Email</label><input id="emEmail" value="${member.email || ""}" /></div>
@@ -3814,8 +3816,8 @@ function openEditMemberModal(member, linkedUser) {
           role: root.querySelector("#emRole").value,
           specialty: root.querySelector("#emSpecialty").value,
           baseCity: root.querySelector("#emBaseCity").value,
-          localFee: root.querySelector("#emLocalFee").value,
-          outstationFee: root.querySelector("#emOutstationFee").value,
+          localFee: root.querySelector("#emLocalFee")?.value,
+          outstationFee: root.querySelector("#emOutstationFee")?.value,
           phone: root.querySelector("#emPhone").value,
           email: root.querySelector("#emEmail").value,
         }),
@@ -6757,10 +6759,11 @@ function openMusicianModal(musician, onDone) {
           <input id="muCity" value="${musician?.city || ""}" placeholder="e.g. Siliguri" />
           <label style="margin-top:8px;">Phone / WhatsApp</label>
           <input id="muPhone" value="${musician?.phone || ""}" />
+          ${hasAccountsAccess() ? `
           <div class="row-2" style="margin-top:8px;">
             <div><label>Local rate (₹)</label><input id="muRateLocal" type="number" value="${musician?.rate_local || ""}" placeholder="e.g. 3000" /></div>
             <div><label>Outstation rate (₹)</label><input id="muRateOutstation" type="number" value="${musician?.rate_outstation || ""}" placeholder="e.g. 5000" /></div>
-          </div>
+          </div>` : ""}
           <label style="margin-top:8px;">Notes (optional)</label>
           <input id="muNotes" value="${musician?.notes || ""}" placeholder="How you know them, availability, etc." />
         </div>
@@ -6783,8 +6786,8 @@ function openMusicianModal(musician, onDone) {
       instruments: root.querySelector("#muInstruments").value.split(",").map((i) => i.trim()).filter(Boolean),
       city: root.querySelector("#muCity").value.trim() || null,
       phone: root.querySelector("#muPhone").value.trim() || null,
-      rateLocal: root.querySelector("#muRateLocal").value || null,
-      rateOutstation: root.querySelector("#muRateOutstation").value || null,
+      rateLocal: hasAccountsAccess() ? (root.querySelector("#muRateLocal").value || null) : undefined,
+      rateOutstation: hasAccountsAccess() ? (root.querySelector("#muRateOutstation").value || null) : undefined,
       notes: root.querySelector("#muNotes").value.trim() || null,
     };
     const btn = root.querySelector("#muSaveBtn");

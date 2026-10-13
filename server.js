@@ -154,6 +154,34 @@ function requireCapability(capability) {
   };
 }
 
+// ---------- Commercial-data guards ----------
+// A manager (staff without Leads/Accounts access) must never receive fees, rates,
+// quotes, payments or pricing — not even in a response the screen doesn't show,
+// since anyone can read raw API responses in their browser. Every route that can
+// carry money strips it unless the user has the matching section.
+const canSeeMoney = (user) => userHasSection(user, "accounts");
+function restrictedLeadView(l) {
+  return {
+    id: l.id, name: l.name, date: l.date, city: l.city, event_type: l.event_type, stage: l.stage,
+    event_time: l.event_time, soundcheck_time: l.soundcheck_time, occasion: l.occasion, venue: l.venue,
+    combo_group_id: l.combo_group_id, is_combo_primary: l.is_combo_primary, pcs: l.pcs, duration: l.duration,
+    sound_manager_name: l.sound_manager_name, sound_manager_phone: l.sound_manager_phone,
+    coordinator_name: l.coordinator_name, coordinator_phone: l.coordinator_phone,
+  };
+}
+// Events a team member is allotted to (not declined). null = no roster link, i.e. no scoping possible.
+async function assignedLeadIdSet(user) {
+  if (!user.team_id) return null;
+  const rows = (await pool.query("SELECT lead_id FROM event_assignments WHERE team_id = $1 AND status <> 'declined'", [user.team_id])).rows;
+  return new Set(rows.map((r) => r.lead_id));
+}
+function requireAnySection(sections) {
+  return (req, res, next) => {
+    if (sections.some((sec) => userHasSection(req.user, sec))) return next();
+    return res.status(403).json({ error: "You don't have access to that" });
+  };
+}
+
 // Documents are stored in Postgres (as bytea), not on local disk — Railway's
 // container filesystem is wiped on every redeploy, which was silently losing
 // every uploaded file each time we shipped new code. The database is the one
@@ -322,7 +350,9 @@ app.get("/api/users", requireAuth, requireAdmin, async (req, res) => {
 });
 
 app.post("/api/users", requireAuth, requireCapability("manage_team"), async (req, res) => {
-  const { name, roleTitle, phone, specialty, baseCity, localFee, outstationFee, username, password, accessLevel, existingTeamId, permissions, isPerformer } = req.body;
+  const { name, roleTitle, phone, specialty, baseCity, username, password, accessLevel, existingTeamId, permissions, isPerformer } = req.body;
+  const localFee = canSeeMoney(req.user) ? req.body.localFee : undefined;
+  const outstationFee = canSeeMoney(req.user) ? req.body.outstationFee : undefined;
   if (!username || !password) return res.status(400).json({ error: "Username and password are required" });
   if (!existingTeamId && !name) return res.status(400).json({ error: "Name is required for a new team member" });
   if (!["admin", "staff", "performer"].includes(accessLevel)) return res.status(400).json({ error: "accessLevel must be 'admin', 'staff', or 'performer'" });
@@ -426,7 +456,11 @@ app.patch("/api/team/:id", requireAuth, requireCapability("manage_team"), async 
       return res.status(403).json({ error: "Managers can't edit an admin's details." });
     }
   }
-  const { name, role, phone, email, specialty, baseCity, localFee, outstationFee } = req.body;
+  const { name, role, phone, email, specialty, baseCity } = req.body;
+  // Fee rates are commercial — only someone with Accounts access can change them.
+  const feeAllowed = canSeeMoney(req.user);
+  const localFee = feeAllowed ? req.body.localFee : undefined;
+  const outstationFee = feeAllowed ? req.body.outstationFee : undefined;
   await pool.query(`UPDATE team SET name = $1, role = $2, phone = $3, email = $4, specialty = $5, base_city = $6, local_fee = $7, outstation_fee = $8 WHERE id = $9`, [
     name || member.name,
     role !== undefined ? role : member.role,
@@ -438,7 +472,8 @@ app.patch("/api/team/:id", requireAuth, requireCapability("manage_team"), async 
     outstationFee !== undefined ? (outstationFee || null) : member.outstation_fee,
     member.id,
   ]);
-  res.json((await pool.query("SELECT * FROM team WHERE id = $1", [member.id])).rows[0]);
+  const { local_fee, outstation_fee, ...savedMember } = (await pool.query("SELECT * FROM team WHERE id = $1", [member.id])).rows[0];
+  res.json(feeAllowed ? { ...savedMember, local_fee, outstation_fee } : savedMember);
 });
 
 // Remove a team member entirely — also removes any login tied to them.
@@ -471,6 +506,23 @@ app.delete("/api/team/:id", requireAuth, requireAdmin, async (req, res) => {
 
 // ---------- Config (so the frontend never hardcodes pricing) ----------
 app.get("/api/config", async (req, res) => {
+  // Public (the enquiry form reads it), so the rate card must not be: package rates,
+  // add-on rates and the pricing matrix only go to logged-in people who quote or
+  // handle money.
+  const viewer = await getSessionUser(req);
+  const seesRates = !!viewer && (userHasSection(viewer, "leads") || userHasSection(viewer, "quotation") || userHasSection(viewer, "accounts"));
+  if (!seesRates) {
+    return res.json({
+      stages: STAGES,
+      packages: PACKAGES.map(({ id, name }) => ({ id, name })),
+      addons: ADDONS.map(({ id, name }) => ({ id, name })),
+      pricing: {},
+      experiences: EXPERIENCES,
+      occasions: OCCASIONS,
+      guestRanges: GUEST_RANGES,
+      howHeard: HOW_HEARD,
+    });
+  }
   let pricing = PRICING;
   try {
     const row = (await pool.query("SELECT template FROM message_templates WHERE key = 'pricing_matrix'")).rows[0];
@@ -555,18 +607,9 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   // And if they're on the team roster themselves, only the events they've been
   // allotted (and haven't declined) — not the whole company calendar.
   let visible = withReceived;
-  if (req.user.team_id) {
-    const mine = (await pool.query("SELECT lead_id FROM event_assignments WHERE team_id = $1 AND status <> 'declined'", [req.user.team_id])).rows;
-    const myLeadIds = new Set(mine.map((r) => r.lead_id));
-    visible = withReceived.filter((l) => myLeadIds.has(l.id));
-  }
-  res.json(visible.map((l) => ({
-    id: l.id, name: l.name, date: l.date, city: l.city, event_type: l.event_type, stage: l.stage,
-    event_time: l.event_time, soundcheck_time: l.soundcheck_time, occasion: l.occasion, venue: l.venue,
-    combo_group_id: l.combo_group_id, is_combo_primary: l.is_combo_primary, pcs: l.pcs, duration: l.duration,
-    sound_manager_name: l.sound_manager_name, sound_manager_phone: l.sound_manager_phone,
-    coordinator_name: l.coordinator_name, coordinator_phone: l.coordinator_phone,
-  })));
+  const mineIds = await assignedLeadIdSet(req.user);
+  if (mineIds) visible = withReceived.filter((l) => mineIds.has(l.id));
+  res.json(visible.map(restrictedLeadView));
 });
 
 // Public lead-capture endpoint — this is the form link you'd share with a new query.
@@ -701,14 +744,18 @@ app.get("/api/musicians", requireAuth, async (req, res) => {
   const instrumentRows = ids.length > 0
     ? (await pool.query(`SELECT musician_id, instrument FROM musician_instruments WHERE musician_id = ANY($1) ORDER BY instrument ASC`, [ids])).rows
     : [];
-  res.json(musicians.map((m) => ({
+  const showMoney = canSeeMoney(req.user);
+  res.json(musicians.map(({ rate_local, rate_outstation, ...m }) => ({
     ...m,
+    ...(showMoney ? { rate_local, rate_outstation } : {}),
     instruments: instrumentRows.filter((i) => i.musician_id === m.id).map((i) => i.instrument),
   })));
 });
 
 app.post("/api/musicians", requireAuth, requireCapability("manage_team"), async (req, res) => {
-  const { name, phone, city, rateLocal, rateOutstation, notes, instruments } = req.body;
+  const { name, phone, city, notes, instruments } = req.body;
+  const rateLocal = canSeeMoney(req.user) ? req.body.rateLocal : undefined;
+  const rateOutstation = canSeeMoney(req.user) ? req.body.rateOutstation : undefined;
   if (!name || !name.trim()) return res.status(400).json({ error: "Name is required" });
   const id = uuid();
   await pool.query(`
@@ -731,6 +778,7 @@ app.patch("/api/musicians/:id", requireAuth, requireCapability("manage_team"), a
   const values = [];
   fields.forEach((f) => {
     const bodyKey = f === "rate_local" ? "rateLocal" : f === "rate_outstation" ? "rateOutstation" : f;
+    if ((f === "rate_local" || f === "rate_outstation") && !canSeeMoney(req.user)) return; // rates are commercial
     if (req.body[bodyKey] !== undefined) {
       values.push(req.body[bodyKey] || null);
       updates.push(`${f} = $${values.length}`);
@@ -749,7 +797,8 @@ app.patch("/api/musicians/:id", requireAuth, requireCapability("manage_team"), a
   }
   const updated = (await pool.query("SELECT * FROM musicians WHERE id = $1", [req.params.id])).rows[0];
   const instruments = (await pool.query("SELECT instrument FROM musician_instruments WHERE musician_id = $1 ORDER BY instrument ASC", [req.params.id])).rows.map((r) => r.instrument);
-  res.json({ ...updated, instruments });
+  const { rate_local: rl, rate_outstation: ro, ...updatedRest } = updated;
+  res.json({ ...updatedRest, ...(canSeeMoney(req.user) ? { rate_local: rl, rate_outstation: ro } : {}), instruments });
 });
 
 app.delete("/api/musicians/:id", requireAuth, requireCapability("manage_team"), async (req, res) => {
@@ -1681,7 +1730,7 @@ app.delete("/api/gallery/:id", requireAuth, requireAdmin, async (req, res) => {
 // combo_group_id. Only the first ("primary") lead carries the quote/final
 // amount, so Accounts/profit totals aren't double-counted across the group —
 // the others just point back to it for display.
-app.post("/api/leads/combo", requireAuth, async (req, res) => {
+app.post("/api/leads/combo", requireAuth, requireSection("leads"), async (req, res) => {
   const { name, phone, email, city, occasion, guestRange, events, budget, finalAmount, alreadyConfirmed, advanceAmount, advanceDate, advanceMode, isB2b } = req.body;
   if (!name) return res.status(400).json({ error: "Name is required" });
   if (!Array.isArray(events) || events.length < 2) return res.status(400).json({ error: "Provide at least two format/date combinations for a combo booking" });
@@ -1864,7 +1913,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   }
 
   const updatedLead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
-  res.json(updatedLead);
+  res.json(hasLeads ? updatedLead : restrictedLeadView(updatedLead));
   syncLeadToGoogleCalendar(updatedLead).catch((err) => console.error("Google Calendar sync error:", err.message));
 
   if (req.body.stage !== undefined && req.body.stage !== lead.stage) {
@@ -1923,7 +1972,7 @@ app.delete("/api/leads/:id", requireAuth, requireAdmin, async (req, res) => {
 // change wording, amount, or anything else himself without needing a code
 // change). This endpoint just records the amount + stage, and turns the
 // final text into a WhatsApp link and a mailto link.
-app.post("/api/leads/:id/quote", requireAuth, async (req, res) => {
+app.post("/api/leads/:id/quote", requireAuth, requireAnySection(["leads", "quotation"]), async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
@@ -1970,7 +2019,7 @@ app.post("/api/leads/:id/quote", requireAuth, async (req, res) => {
 });
 
 // History of every quote ever sent, newest first — so Ashwin can see what's gone to whom.
-app.get("/api/quotes", requireAuth, async (req, res) => {
+app.get("/api/quotes", requireAuth, requireAnySection(["leads", "quotation"]), async (req, res) => {
   const { rows } = await pool.query(`
     SELECT quotes.*, leads.name AS lead_name, leads.phone AS lead_phone, leads.email AS lead_email
     FROM quotes JOIN leads ON leads.id = quotes.lead_id
@@ -1983,7 +2032,7 @@ app.get("/api/quotes", requireAuth, async (req, res) => {
 // "sent" forever — purely informational, doesn't touch the lead's stage.
 // Also lets a quote sent by mistake (wrong amount, typo, etc.) be corrected
 // in place rather than living on in the history forever.
-app.patch("/api/quotes/:id", requireAuth, async (req, res) => {
+app.patch("/api/quotes/:id", requireAuth, requireAnySection(["leads", "quotation"]), async (req, res) => {
   const { status, amount, subject, body } = req.body;
   const updates = [];
   const values = [];
@@ -2014,7 +2063,7 @@ app.patch("/api/quotes/:id", requireAuth, async (req, res) => {
 
 // Removes a quote sent by mistake (duplicate send, wrong lead, testing) —
 // doesn't touch the lead itself, just its quote history.
-app.delete("/api/quotes/:id", requireAuth, async (req, res) => {
+app.delete("/api/quotes/:id", requireAuth, requireAnySection(["leads", "quotation"]), async (req, res) => {
   const { rows } = await pool.query("DELETE FROM quotes WHERE id = $1 RETURNING id", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "Quote not found" });
   res.status(204).end();
@@ -2844,8 +2893,10 @@ app.get("/api/team", requireAuth, async (req, res) => {
     WHERE event_assignments.status != 'declined' AND leads.stage != 'Cancelled' AND leads.date >= $1
     ORDER BY leads.date ASC
   `, [today])).rows;
-  const team = (await pool.query("SELECT * FROM team")).rows.map((m) => ({
+  const showMoney = canSeeMoney(req.user);
+  const team = (await pool.query("SELECT * FROM team")).rows.map(({ local_fee, outstation_fee, ...m }) => ({
     ...m,
+    ...(showMoney ? { local_fee, outstation_fee } : {}),
     activeShows: assignments.filter((a) => a.team_id === m.id),
   }));
   res.json(team);
@@ -2883,7 +2934,9 @@ app.get("/api/calendar", requireAuth, async (req, res) => {
     const d = new Date(l.date + "T00:00:00");
     return (!year || d.getFullYear() === Number(year)) && (!month || d.getMonth() + 1 === Number(month));
   });
-  res.json(filtered);
+  if (userHasSection(req.user, "leads")) return res.json(filtered);
+  const mineIds = await assignedLeadIdSet(req.user);
+  res.json((mineIds ? filtered.filter((l) => mineIds.has(l.id)) : filtered).map(restrictedLeadView));
 });
 
 // ---------- Accounts ----------
@@ -3286,7 +3339,8 @@ app.get("/api/my/tasks", requireAuth, async (req, res) => {
 
 app.get("/api/tasks", requireAuth, async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM tasks ORDER BY done ASC, due_date ASC");
-  res.json(rows);
+  // Task titles can mention deals — without the Tasks section you only see your own.
+  res.json(userHasSection(req.user, "tasks") ? rows : rows.filter((t) => req.user.team_id && t.assigned_to === req.user.team_id));
 });
 
 app.post("/api/tasks", requireAuth, async (req, res) => {
@@ -3338,9 +3392,13 @@ const DOC_LIST_COLUMNS = "id, lead_id, original_name, notes, uploaded_at, travel
 
 app.get("/api/documents", requireAuth, async (req, res) => {
   const { leadId } = req.query;
-  const { rows } = leadId
+  const { rows: allRows } = leadId
     ? await pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents WHERE lead_id = $1 ORDER BY uploaded_at DESC`, [leadId])
     : await pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents ORDER BY uploaded_at DESC`);
+  // Invoices, quotes, contracts etc. live here too — anyone without Documents/Leads
+  // access (e.g. a manager) only sees riders, which is all they need to forward.
+  const fullAccess = userHasSection(req.user, "documents") || userHasSection(req.user, "leads");
+  const rows = fullAccess ? allRows : allRows.filter((d) => /rider/i.test(d.notes || ""));
   res.json(rows.map((d) => ({ ...d, url: `/api/documents/${d.id}/file` })));
 });
 
@@ -3355,7 +3413,7 @@ app.get("/api/documents/:id/file", async (req, res) => {
   res.send(doc.file_data);
 });
 
-app.post("/api/documents", requireAuth, upload.single("file"), async (req, res) => {
+app.post("/api/documents", requireAuth, requireAnySection(["documents", "leads"]), upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
   const id = uuid();
   await pool.query(`
@@ -3372,7 +3430,7 @@ app.post("/api/documents", requireAuth, upload.single("file"), async (req, res) 
   logActivity(req, `Document uploaded${req.body.notes ? `: ${req.body.notes}` : ""}${leadName ? ` for ${leadName}` : ""} (${req.file.originalname})`, req.body.leadId || null);
 });
 
-app.delete("/api/documents/:id", requireAuth, async (req, res) => {
+app.delete("/api/documents/:id", requireAuth, requireAnySection(["documents", "leads"]), async (req, res) => {
   await pool.query("DELETE FROM documents WHERE id = $1", [req.params.id]);
   res.status(204).end();
 });
@@ -3380,7 +3438,7 @@ app.delete("/api/documents/:id", requireAuth, async (req, res) => {
 // Copies a document from the general library onto a specific event, without
 // re-uploading — the bytes are duplicated into a new row (not just referenced),
 // so deleting either copy later never breaks the other one.
-app.post("/api/documents/:id/attach", requireAuth, async (req, res) => {
+app.post("/api/documents/:id/attach", requireAuth, requireAnySection(["documents", "leads"]), async (req, res) => {
   const source = (await pool.query("SELECT * FROM documents WHERE id = $1", [req.params.id])).rows[0];
   if (!source) return res.status(404).json({ error: "Document not found" });
   const { leadId } = req.body;
@@ -3404,6 +3462,10 @@ app.get("/api/message-templates", requireAuth, async (req, res) => {
   const { rows } = await pool.query("SELECT key, template FROM message_templates");
   const map = {};
   rows.forEach((r) => (map[r.key] = r.template));
+  // Pricing matrix and bank/UPI details are commercial — only for people who quote or handle money.
+  if (!userHasSection(req.user, "leads") && !userHasSection(req.user, "quotation") && !canSeeMoney(req.user)) {
+    ["pricing_matrix", "bank_details", "bank_qr_document_id"].forEach((k) => delete map[k]);
+  }
   res.json(map);
 });
 
@@ -3464,6 +3526,26 @@ app.put("/api/my/sticky-note", requireAuth, async (req, res) => {
 app.get("/api/dashboard", requireAuth, async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const weekAhead = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+
+  // No Leads access (e.g. a manager): no pipeline, no totals, no outstanding —
+  // just their own upcoming events and tasks.
+  if (!userHasSection(req.user, "leads")) {
+    const mineIds = await assignedLeadIdSet(req.user);
+    const upcomingAll = (await pool.query(`SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1 ORDER BY date ASC`, [today])).rows
+      .filter((l) => !mineIds || mineIds.has(l.id));
+    const allTasks = (await pool.query(`SELECT * FROM tasks WHERE done = 0 AND (due_date <= $1 OR due_date IS NULL) ORDER BY due_date ASC LIMIT 8`, [weekAhead])).rows;
+    return res.json({
+      upcomingEvents: upcomingAll.slice(0, 5).map(restrictedLeadView),
+      upcomingEventsCount: upcomingAll.length,
+      pendingFollowUps: [],
+      tasksDueSoon: userHasSection(req.user, "tasks") ? allTasks : allTasks.filter((t) => req.user.team_id && t.assigned_to === req.user.team_id),
+      newLeadsCount: 0,
+      tentativeBookings: [],
+      interestedLeads: [],
+      outstanding: 0,
+      stageCounts: {},
+    });
+  }
 
   const [upcomingRes, upcomingCountRes, followUpsRes, accountsRes, paymentsRes, dueReimbursementRes, tasksRes, newLeadsRes, tentativeRes, interestedRes, stageCountsRes] = await Promise.all([
     pool.query(`SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1 ORDER BY date ASC LIMIT 5`, [today]),
