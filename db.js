@@ -194,6 +194,12 @@ async function setup() {
   // form linked from the thank-you message — same pattern as event_assignments'
   // confirm_token below.
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS feedback_token TEXT`);
+  // On-site contacts for an event (venue sound manager / event coordinator) so
+  // whoever is managing the day can call or WhatsApp them straight from the app.
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sound_manager_name TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sound_manager_phone TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS coordinator_name TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS coordinator_phone TEXT`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS feedback (
       id TEXT PRIMARY KEY,

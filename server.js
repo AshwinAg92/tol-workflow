@@ -552,10 +552,20 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   if (hasLeadsAccess) return res.json(withReceived);
   // Restricted staff (e.g. a manager who can assign team but not view the pipeline)
   // still need basic event info for the calendar and team assignment — nothing sensitive.
-  res.json(withReceived.map((l) => ({
+  // And if they're on the team roster themselves, only the events they've been
+  // allotted (and haven't declined) — not the whole company calendar.
+  let visible = withReceived;
+  if (req.user.team_id) {
+    const mine = (await pool.query("SELECT lead_id FROM event_assignments WHERE team_id = $1 AND status <> 'declined'", [req.user.team_id])).rows;
+    const myLeadIds = new Set(mine.map((r) => r.lead_id));
+    visible = withReceived.filter((l) => myLeadIds.has(l.id));
+  }
+  res.json(visible.map((l) => ({
     id: l.id, name: l.name, date: l.date, city: l.city, event_type: l.event_type, stage: l.stage,
     event_time: l.event_time, soundcheck_time: l.soundcheck_time, occasion: l.occasion, venue: l.venue,
     combo_group_id: l.combo_group_id, is_combo_primary: l.is_combo_primary, pcs: l.pcs, duration: l.duration,
+    sound_manager_name: l.sound_manager_name, sound_manager_phone: l.sound_manager_phone,
+    coordinator_name: l.coordinator_name, coordinator_phone: l.coordinator_phone,
   })));
 });
 
@@ -1745,7 +1755,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration", "whatsapp_number",
     "cancellation_reason", "snooze_until", "state", "rate_type", "rate_note", "rate_inclusions", "occasion_other", "not_interested_reason", "is_b2b", "thanked_at",
   ];
-  const sharedFields = ["event_time", "soundcheck_time", "venue"];
+  const sharedFields = ["event_time", "soundcheck_time", "venue", "sound_manager_name", "sound_manager_phone", "coordinator_name", "coordinator_phone"];
   if (!hasLeads) {
     const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f === "not_interested_reason" ? "notInterestedReason" : f === "is_b2b" ? "isB2b" : f === "thanked_at" ? "thankedAt" : f);
     const attemptedRestricted = leadsOnlyFields.some((f) => req.body[keyFor(f)] !== undefined);

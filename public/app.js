@@ -4352,7 +4352,7 @@ function openTempArtistDirectoryModal(directory, onBack) {
 async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   const lead = LEADS.find((l) => l.id === leadId);
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
-  const [assignments, tempArtists, leadExpenses, myReimbursements, myOwnFee, tempArtistDirectory, allMusicians] = await Promise.all([
+  const [assignments, tempArtists, leadExpenses, myReimbursements, myOwnFee, tempArtistDirectory, allMusicians, allDocs] = await Promise.all([
     api(`/api/leads/${leadId}/assignments`),
     api(`/api/leads/${leadId}/temp-artists`),
     isAdmin ? api(`/api/expenses?leadId=${leadId}`) : Promise.resolve([]),
@@ -4360,7 +4360,13 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     !isAdmin ? api(`/api/my/artist-fee?leadId=${leadId}`).catch(() => null) : Promise.resolve(null),
     api(`/api/temp-artists`).catch(() => []),
     api(`/api/musicians`).catch(() => []),
+    api(`/api/documents`).catch(() => []),
   ]);
+  // Riders (Tech / Hospitality) — this event's own copy first, else the general library one.
+  const riderDocs = [];
+  allDocs.filter((d) => /rider/i.test(d.notes || "") && (!d.lead_id || d.lead_id === leadId))
+    .sort((x, y) => (y.lead_id === leadId ? 1 : 0) - (x.lead_id === leadId ? 1 : 0))
+    .forEach((d) => { if (!riderDocs.some((r) => (r.notes || "").trim().toLowerCase() === (d.notes || "").trim().toLowerCase())) riderDocs.push(d); });
   // Only musicians not already promoted into Team are offered here — once
   // promoted they show up in the regular Team checklist below like anyone else.
   const unpromotedMusicians = allMusicians.filter((m) => !m.team_id);
@@ -4430,6 +4436,44 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       <div class="modal-card" style="width:680px; max-width:96vw;">
         <div class="modal-head"><h3>Team & Expenses — ${lead.name}${lead.occasion ? ` <span class="muted" style="font-weight:400; font-size:14px;">— ${lead.occasion}</span>` : ""}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
+          <div class="card" style="margin-bottom:12px; padding:10px 14px;">
+            <div style="font-weight:700; margin-bottom:6px;">Event details</div>
+            ${[
+              ["Date", lead.date ? fmtDate(lead.date) : ""],
+              ["City", lead.city || ""],
+              ["Format", packageName(lead.event_type)],
+              ["Occasion", lead.occasion || ""],
+              ["Timing", [lead.soundcheck_time ? `Sound check ${fmtTimeHM(lead.soundcheck_time)}` : "", lead.event_time ? `Event ${fmtTimeHM(lead.event_time)}` : ""].filter(Boolean).join(" · ")],
+              ["Set", lead.pcs && lead.event_type !== "pheras" ? `${lead.pcs} pieces` : ""],
+              ["Duration", lead.duration || ""],
+            ].filter(([, v]) => v).map(([k, v]) => `<div class="performer-event-row"><span class="muted small">${k}:</span> <span>${v}</span></div>`).join("")}
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+              <button class="btn-ghost" id="openMapsBtn" style="font-size:12px; padding:4px 10px;">📍 Open in Maps</button>
+              <button class="btn-ghost" id="shareEventSummaryBtn" style="font-size:12px; padding:4px 10px;">📤 Share event summary</button>
+            </div>
+          </div>
+          <div class="card" style="margin-bottom:12px; padding:10px 14px;">
+            <div style="font-weight:700; margin-bottom:2px;">On-site contacts</div>
+            <p class="muted small" style="margin:0 0 8px;">Add the numbers here so you can call or WhatsApp them straight from the app. Hit Save at the bottom to keep them.</p>
+            ${[
+              ["sc", "Sound manager", lead.sound_manager_name, lead.sound_manager_phone],
+              ["ec", "Event coordinator", lead.coordinator_name, lead.coordinator_phone],
+            ].map(([id, label, nm, ph]) => `
+              <div style="margin-bottom:12px;">
+                <label>${label}</label>
+                <div class="row-2">
+                  <input id="${id}Name" placeholder="Name" value="${(nm || "").replace(/"/g, "&quot;")}" />
+                  <input id="${id}Phone" type="tel" placeholder="Phone" value="${(ph || "").replace(/"/g, "&quot;")}" />
+                </div>
+                <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
+                  <button class="btn-ghost contact-call-btn" data-contact="${id}" style="font-size:12px; padding:4px 10px;">📞 Call</button>
+                  <button class="btn-ghost contact-wa-btn" data-contact="${id}" style="font-size:12px; padding:4px 10px;">💬 WhatsApp</button>
+                  ${riderDocs.map((d, i) => `<button class="btn-ghost contact-rider-btn" data-contact="${id}" data-rider="${i}" style="font-size:12px; padding:4px 10px;">📎 Send ${(d.notes || d.original_name).replace(/</g, "&lt;")}</button>`).join("")}
+                </div>
+              </div>
+            `).join("")}
+            ${riderDocs.length === 0 ? `<p class="muted small" style="margin:0;">No riders uploaded yet — once a document labelled "Tech Rider" or "Hospitality Rider" is added under Documents, a send button appears here.</p>` : ""}
+          </div>
           <button class="btn-ghost" id="openTravelPlanFromTeamBtn" style="margin-bottom:12px;">🧳 Travel plan</button>
           ${isAdmin && leadExpenses.length > 0 ? `
             <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:14px; gap:8px;">
@@ -4647,6 +4691,52 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   root.querySelector("#cancelModal").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
   root.querySelector("#openChatBtn").addEventListener("click", () => openEventChat(leadId, lead.name));
+  // --- On-site contacts: call / WhatsApp / send rider ---
+  const waNumber = (raw) => {
+    const d = (raw || "").replace(/\D/g, "");
+    return d.length === 10 ? `91${d}` : d; // bare 10-digit number → assume India
+  };
+  const eventWhere = () => lead.venue || lead.city || "";
+  function contactInfo(id) {
+    return { name: root.querySelector(`#${id}Name`).value.trim(), phone: waNumber(root.querySelector(`#${id}Phone`).value) };
+  }
+  root.querySelectorAll(".contact-call-btn").forEach((btn) => btn.addEventListener("click", () => {
+    const { phone } = contactInfo(btn.dataset.contact);
+    if (!phone) return alert("Add a phone number first.");
+    window.location.href = `tel:+${phone}`;
+  }));
+  root.querySelectorAll(".contact-wa-btn").forEach((btn) => btn.addEventListener("click", () => {
+    const { name, phone } = contactInfo(btn.dataset.contact);
+    if (!phone) return alert("Add a phone number first.");
+    window.location.href = `https://wa.me/${phone}?text=${encodeURIComponent(`Hi${name ? ` ${name.split(" ")[0]}` : ""}, regarding ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${eventWhere() ? ` at ${eventWhere()}` : ""} — Together, Out Loud.`)}`;
+  }));
+  root.querySelectorAll(".contact-rider-btn").forEach((btn) => btn.addEventListener("click", () => {
+    const { name, phone } = contactInfo(btn.dataset.contact);
+    if (!phone) return alert("Add a phone number first.");
+    const doc = riderDocs[Number(btn.dataset.rider)];
+    if (!doc) return;
+    const label = doc.notes || doc.original_name;
+    const msg = `Hi${name ? ` ${name.split(" ")[0]}` : ""}, sharing the ${label} for ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${eventWhere() ? ` at ${eventWhere()}` : ""}${lead.soundcheck_time ? `. Sound check: ${fmtTimeHM(lead.soundcheck_time)}` : ""}${lead.event_time ? `. Event time: ${fmtTimeHM(lead.event_time)}` : ""}.\n\n📎 ${label}: ${window.location.origin + doc.url}\n\nPlease go through it and let us know if anything needs a change.\n\nTogether, Out Loud`;
+    window.location.href = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+  }));
+  root.querySelector("#openMapsBtn").addEventListener("click", () => {
+    const q = [lead.venue, lead.city].filter(Boolean).join(", ");
+    if (!q) return alert("No venue or city on this event yet.");
+    window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`, "_blank", "noopener");
+  });
+  root.querySelector("#shareEventSummaryBtn").addEventListener("click", () => {
+    const lines = [
+      `🎶 ${packageName(lead.event_type)}${lead.occasion ? ` — ${lead.occasion}` : ""}`,
+      `📅 ${fmtDate(lead.date)}`,
+      eventWhere() ? `📍 ${[lead.venue, lead.city].filter(Boolean).join(", ")}` : "",
+      lead.soundcheck_time ? `🔊 Sound check: ${fmtTimeHM(lead.soundcheck_time)}` : "",
+      lead.event_time ? `⏰ Event: ${fmtTimeHM(lead.event_time)}` : "",
+      lead.pcs && lead.event_type !== "pheras" ? `🎻 Set: ${lead.pcs} pieces` : "",
+      contactInfo("sc").phone ? `🎚 Sound manager: ${contactInfo("sc").name || ""} ${root.querySelector("#scPhone").value}`.trim() : "",
+      contactInfo("ec").phone ? `🧑‍💼 Coordinator: ${contactInfo("ec").name || ""} ${root.querySelector("#ecPhone").value}`.trim() : "",
+    ].filter(Boolean).join("\n");
+    window.location.href = `https://wa.me/?text=${encodeURIComponent(lines)}`;
+  });
   root.querySelector("#openTravelPlanFromTeamBtn").addEventListener("click", () => openTravelPlanModal(leadId));
   root.querySelector("#addMemberInlineBtn").addEventListener("click", () => {
     openAddMemberModal(() => openAssignTeamModal(leadId));
@@ -4975,6 +5065,14 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       const venue = root.querySelector("#venueInput").value;
       if (venue !== (lead.venue || "")) {
         await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ venue: venue || null }) });
+      }
+      const contactBody = {};
+      [["sound_manager_name", "#scName"], ["sound_manager_phone", "#scPhone"], ["coordinator_name", "#ecName"], ["coordinator_phone", "#ecPhone"]].forEach(([field, sel]) => {
+        const v = root.querySelector(sel).value.trim();
+        if (v !== (lead[field] || "")) contactBody[field] = v || null;
+      });
+      if (Object.keys(contactBody).length > 0) {
+        await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify(contactBody) });
       }
       await refreshLeads();
       renderMain();
