@@ -196,6 +196,8 @@ async function setup() {
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS feedback_token TEXT`);
   // On-site contacts for an event (venue sound manager / event coordinator) so
   // whoever is managing the day can call or WhatsApp them straight from the app.
+  // Managers' own travel remarks (separate from the admin's private `notes`).
+  await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS manager_notes TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sound_manager_name TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sound_manager_phone TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS coordinator_name TEXT`);

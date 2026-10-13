@@ -176,10 +176,11 @@ async function assignedLeadIdSet(user) {
   return new Set(rows.map((r) => r.lead_id));
 }
 // Travel notes are the admin's private remarks — nobody else gets them.
+// Managers (assign_team) additionally see the manager_notes they and other managers write.
 function legForUser(leg, user) {
   if (user.access_level === "admin") return leg;
-  const { notes, ...rest } = leg;
-  return rest;
+  const { notes, manager_notes, ...rest } = leg;
+  return userHasSection(user, "assign_team") ? { ...rest, manager_notes } : rest;
 }
 function requireAnySection(sections) {
   return (req, res, next) => {
@@ -2399,13 +2400,14 @@ app.get("/api/travel-legs", requireAuth, requireCapability("assign_team"), async
 app.post("/api/travel-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const { label, teamIds, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status } = req.body;
   const notes = req.user.access_level === "admin" ? req.body.notes : null;
+  const managerNotes = req.body.managerNotes || null;
   if (!label || !label.trim()) return res.status(400).json({ error: "A label is required for manually-logged travel" });
   const id = uuid();
   const now = new Date().toISOString();
   await pool.query(`
-    INSERT INTO travel_legs (id, lead_id, label, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, created_at, updated_at)
-    VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
-  `, [id, label.trim(), mode || null, fromCity || null, toCity || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, now]);
+    INSERT INTO travel_legs (id, lead_id, label, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, manager_notes, created_at, updated_at)
+    VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+  `, [id, label.trim(), mode || null, fromCity || null, toCity || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, managerNotes, now]);
   for (const teamId of (Array.isArray(teamIds) ? teamIds : [])) {
     await pool.query(`INSERT INTO travel_leg_members (id, leg_id, team_id) VALUES ($1, $2, $3)`, [uuid(), id, teamId]);
   }
@@ -2418,13 +2420,14 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
   if (!lead) return res.status(404).json({ error: "Event not found" });
   const { teamIds, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status } = req.body;
   const notes = req.user.access_level === "admin" ? req.body.notes : null;
+  const managerNotes = req.body.managerNotes || null;
   if (!Array.isArray(teamIds) || teamIds.length === 0) return res.status(400).json({ error: "Select at least one artist" });
   const id = uuid();
   const now = new Date().toISOString();
   await pool.query(`
-    INSERT INTO travel_legs (id, lead_id, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
-  `, [id, req.params.id, mode || null, fromCity || null, toCity || lead.city || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, now]);
+    INSERT INTO travel_legs (id, lead_id, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, manager_notes, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+  `, [id, req.params.id, mode || null, fromCity || null, toCity || lead.city || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, managerNotes, now]);
   for (const teamId of teamIds) {
     await pool.query(`INSERT INTO travel_leg_members (id, leg_id, team_id) VALUES ($1, $2, $3)`, [uuid(), id, teamId]);
   }
@@ -2444,8 +2447,8 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
 app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const leg = (await pool.query("SELECT * FROM travel_legs WHERE id = $1", [req.params.id])).rows[0];
   if (!leg) return res.status(404).json({ error: "Travel leg not found" });
-  const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "label", "lead_id"];
-  const keyFor = (f) => (f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f === "lead_id" ? "leadId" : f);
+  const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "manager_notes", "label", "lead_id"];
+  const keyFor = (f) => (f === "manager_notes" ? "managerNotes" : f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f === "lead_id" ? "leadId" : f);
   const updates = [];
   const values = [];
   fields.forEach((f) => {
