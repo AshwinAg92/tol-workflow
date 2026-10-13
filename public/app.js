@@ -7660,6 +7660,10 @@ function openNewLeadModal(opts = {}) {
         date: row.querySelector(".combo-date").value,
       }));
       if (events.some((e) => !e.date)) return alert("Every row needs a date.");
+      if (alreadyConfirmed) {
+        const clashes = events.map((e) => LEADS.find((l) => l.stage === "Confirmed" && l.date === e.date && (l.name || "").trim().toLowerCase() !== name.trim().toLowerCase())).filter(Boolean);
+        if (clashes.length && !confirm("⚠️ Double-booking warning:\n\n" + clashes.map((l) => `${l.name} is already Confirmed on ${fmtDate(l.date)}`).join("\n") + "\n\nConfirm this booking anyway?")) return;
+      }
       const created = await api("/api/leads/combo", {
         method: "POST",
         body: JSON.stringify({

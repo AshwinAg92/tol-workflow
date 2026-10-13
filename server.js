@@ -1789,6 +1789,11 @@ app.post("/api/leads/combo", requireAuth, requireSection("leads"), async (req, r
   }
   const rows = (await pool.query("SELECT * FROM leads WHERE id = ANY($1::text[]) ORDER BY date ASC", [createdIds])).rows;
   res.status(201).json(rows);
+  // Already-confirmed combo events must reach Google Calendar straight away —
+  // previously only the stage-change route synced, so these never appeared.
+  if (alreadyConfirmed) {
+    for (const r of rows) syncLeadToGoogleCalendar(r).catch((err) => console.error("Google Calendar sync error:", err.message));
+  }
   logActivity(req, `Combo booking added for ${name}: ${events.map((e) => packageName(e.eventType)).join(" + ")}${alreadyConfirmed && finalAmount ? ` — ₹${Number(finalAmount).toLocaleString("en-IN")}` : ""}`, createdIds[0]);
 
   // Same B2B directory upsert as the single-event path below — logged
