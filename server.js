@@ -1194,22 +1194,37 @@ async function getGoogleAnalyticsAuth() {
 // One-off backfill for events that were Confirmed/Completed before the sync
 // was connected — normal syncing only fires on a stage change going forward,
 // so anything already sitting in those stages needs this to catch up.
+// Runs in the background (it can take well over the 20s request timeout when
+// there are many events) — the page polls /backfill/status for progress.
+let gcalBackfill = { running: false, total: 0, done: 0, created: 0, updated: 0, failed: 0, finishedAt: null };
 app.post("/api/google-calendar/backfill", requireAuth, requireAdmin, async (req, res) => {
+  if (gcalBackfill.running) return res.json({ started: false, ...gcalBackfill });
   const leads = (await pool.query("SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') ORDER BY date ASC")).rows;
-  let created = 0, updated = 0, failed = 0;
-  for (const lead of leads) {
-    const hadEventId = !!lead.google_event_id;
-    try {
-      await syncLeadToGoogleCalendar(lead);
-      const after = (await pool.query("SELECT google_event_id FROM leads WHERE id = $1", [lead.id])).rows[0];
-      if (after.google_event_id) { hadEventId ? updated++ : created++; }
-      else failed++;
-    } catch (err) {
-      failed++;
-    }
-  }
-  res.json({ total: leads.length, created, updated, failed });
+  gcalBackfill = { running: true, total: leads.length, done: 0, created: 0, updated: 0, failed: 0, finishedAt: null };
+  res.json({ started: true, ...gcalBackfill });
+  (async () => {
+    const queue = leads.slice();
+    const worker = async () => {
+      while (queue.length) {
+        const lead = queue.shift();
+        const hadEventId = !!lead.google_event_id;
+        try {
+          await syncLeadToGoogleCalendar(lead);
+          const after = (await pool.query("SELECT google_event_id FROM leads WHERE id = $1", [lead.id])).rows[0];
+          if (after && after.google_event_id) { hadEventId ? gcalBackfill.updated++ : gcalBackfill.created++; }
+          else gcalBackfill.failed++;
+        } catch (err) {
+          gcalBackfill.failed++;
+        }
+        gcalBackfill.done++;
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    gcalBackfill.running = false;
+    gcalBackfill.finishedAt = new Date().toISOString();
+  })().catch((err) => { console.error("Google Calendar backfill crashed:", err.message); gcalBackfill.running = false; });
 });
+app.get("/api/google-calendar/backfill/status", requireAuth, requireAdmin, (req, res) => res.json(gcalBackfill));
 
 async function getGoogleAccessToken() {
   const row = (await pool.query("SELECT * FROM google_calendar_auth WHERE id = $1", [GOOGLE_CALENDAR_AUTH_ROW_ID])).rows[0];

@@ -8508,7 +8508,12 @@ function wireGoogleCalendarSettings(main) {
         btn.disabled = true;
         note.textContent = "Syncing…";
         try {
-          const result = await api("/api/google-calendar/backfill", { method: "POST" });
+          let result = await api("/api/google-calendar/backfill", { method: "POST" });
+          while (result.running) {
+            note.textContent = `Syncing… ${result.done} of ${result.total}`;
+            await new Promise((r) => setTimeout(r, 1500));
+            result = await api("/api/google-calendar/backfill/status");
+          }
           note.textContent = `Done — ${result.created} added, ${result.updated} already synced, ${result.failed} skipped (out of ${result.total}).`;
         } catch (err) {
           note.textContent = "Couldn't sync — try again.";
