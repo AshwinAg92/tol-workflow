@@ -2671,8 +2671,10 @@ function wireCalendarGrid(container) {
       const evs = d ? (eventsByDay[d] || []) : [];
       const dateStr = d ? `${calYear}-${String(calMonth).padStart(2, "0")}-${String(d).padStart(2, "0")}` : null;
       const blocked = dateStr ? isDateBlocked(dateStr) : null;
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const canQuickAdd = !!d && !blocked && evs.length === 0 && dateStr >= todayStr && hasLeadsAccess();
       calCells.appendChild(el(`
-        <div class="cal-cell${d ? "" : " cal-cell-empty"}"${blocked ? ` style="background:repeating-linear-gradient(45deg, #E5DFD1, #E5DFD1 6px, #DCD4C0 6px, #DCD4C0 12px);"` : ""}>
+        <div class="cal-cell${d ? "" : " cal-cell-empty"}"${canQuickAdd ? ` data-quick-add="${dateStr}" title="Add an event on this date"` : ""}${blocked ? ` style="background:repeating-linear-gradient(45deg, #E5DFD1, #E5DFD1 6px, #DCD4C0 6px, #DCD4C0 12px);"` : canQuickAdd ? ` style="cursor:pointer;"` : ""}>
           ${d ? `<div class="cal-day">${d}</div>` : ""}
           ${blocked ? `<div class="cal-event cal-event-blocked" data-blocked-date="${dateStr}" style="cursor:pointer; background:#8A6A54;" title="Blocked${blocked.reason ? `: ${blocked.reason}` : ""}">🚫 Blocked</div>` : ""}
           ${evs.map((ev) => {
@@ -2709,6 +2711,9 @@ function wireCalendarGrid(container) {
           openAssignTeamModal(lead.id);
         }
       });
+    });
+    calCells.querySelectorAll("[data-quick-add]").forEach((cell) => {
+      cell.addEventListener("click", () => openNewLeadModal({ date: cell.dataset.quickAdd, confirmed: true }));
     });
     calCells.querySelectorAll(".cal-event-blocked").forEach((pill) => {
       pill.addEventListener("click", () => {
@@ -7516,12 +7521,13 @@ function openBulkThankYouModal(leadIds, main) {
   renderStep();
 }
 
-function openNewLeadModal() {
+function openNewLeadModal(opts = {}) {
+  const quickDate = typeof opts.date === "string" ? opts.date : null; // set when opened from a free calendar date
   const root = document.getElementById("modalRoot");
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card">
-        <div class="modal-head"><h3>New lead</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-head"><h3>${quickDate ? `Add event — ${fmtDate(quickDate)}` : "New lead"}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <label>Name / organisation</label>
           <input id="mName" placeholder="e.g. Priya & Raj Sharma" />
@@ -7601,6 +7607,12 @@ function openNewLeadModal() {
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#cancelModal").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  if (quickDate) {
+    // From a free calendar date: date pre-filled, and it goes straight to the Confirm step.
+    root.querySelector("#mDate").value = quickDate;
+    root.querySelector("#mAlreadyConfirmed").checked = true;
+    root.querySelector("#submitModal").textContent = "Add & confirm";
+  }
 
   const comboRowsEl = root.querySelector("#comboRows");
   function addComboRow() {
@@ -9153,9 +9165,58 @@ async function renderSettings(main) {
   });
 }
 
+// ---------- Phone-style Back navigation ----------
+// Back closes an open popup first, then steps back through previously visited tabs.
+let _histLastTab = null, _histSuppress = false, _modalPushed = false, _modalWasOpen = false, _popSkip = false;
+function recordTabHistory() {
+  if (_histSuppress) { _histLastTab = currentTab; return; }
+  if (_histLastTab === null) { _histLastTab = currentTab; try { history.replaceState({ tab: currentTab }, ""); } catch (e) {} return; }
+  if (currentTab !== _histLastTab) {
+    _histLastTab = currentTab;
+    try { history.pushState({ tab: currentTab }, ""); } catch (e) {}
+  }
+}
+function initBackNavigation() {
+  const root = document.getElementById("modalRoot");
+  try { history.replaceState({ tab: currentTab }, ""); } catch (e) {}
+  _histLastTab = currentTab;
+  const isOpen = () => !!root && root.innerHTML.trim() !== "";
+  if (root) {
+    new MutationObserver(() => {
+      const open = isOpen();
+      if (open && !_modalWasOpen) {
+        _modalWasOpen = true;
+        try { history.pushState({ modal: true }, ""); _modalPushed = true; } catch (e) {}
+      } else if (!open && _modalWasOpen) {
+        _modalWasOpen = false;
+        if (_modalPushed) {
+          _modalPushed = false;
+          setTimeout(() => {
+            if (history.state && history.state.modal && !isOpen()) { _popSkip = true; history.back(); }
+          }, 80);
+        }
+      }
+    }).observe(root, { childList: true });
+  }
+  window.addEventListener("popstate", (e) => {
+    if (_popSkip) { _popSkip = false; return; }
+    if (isOpen()) { _modalPushed = false; root.innerHTML = ""; return; }
+    const st = e.state || {};
+    if (st.modal) { history.back(); return; }
+    if (st.tab && st.tab !== currentTab) {
+      _histSuppress = true;
+      currentTab = st.tab;
+      renderNav();
+      renderMain();
+      _histSuppress = false;
+    }
+  });
+}
+
 // ---------- Main dispatch ----------
 function renderMain() {
   const main = document.getElementById("main");
+  if (typeof recordTabHistory === "function") recordTabHistory();
   // Without this, switching tabs (or logging back in) can leave the view
   // scrolled to wherever the previous screen was, instead of starting fresh
   // at the top.
@@ -9922,4 +9983,5 @@ if ("serviceWorker" in navigator) {
   initMobileNav();
   initLogoNav();
   initGlobalSearch();
+  initBackNavigation();
 })();
