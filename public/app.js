@@ -4703,10 +4703,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       </div>
     </div>
   `;
-  if (_prevScroll > 0) {
-    const _card = root.querySelector(".modal-card");
-    if (_card) _card.scrollTop = _prevScroll;
-  }
+
   const close = () => (root.innerHTML = "");
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#cancelModal").addEventListener("click", close);
@@ -5270,7 +5267,6 @@ async function openTravelPlanModal(leadId) {
         </div>
       </div>
     `;
-    if (_ps > 0) { const _c = root.querySelector(".modal-card"); if (_c) _c.scrollTop = _ps; }
     const close = () => (root.innerHTML = "");
     root.querySelector("#closeModal").addEventListener("click", close);
     root.querySelector("#cancelModal").addEventListener("click", close);
@@ -9192,22 +9188,44 @@ function initBackNavigation() {
   // keep the scroll position instead of jumping back to the top.
   if (root) {
     const desc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
-    let pending = 0, lastHead = null;
+    let pending = 0, lastHead = null, anchor = null;
     const headOf = (c) => (c && c.querySelector(".modal-head h3") ? c.querySelector(".modal-head h3").textContent.trim() : null);
+    const KEYS = ["data-expense-id", "data-team-id", "data-assignment-id", "data-ta-id", "data-lead-id", "data-id"];
+    const findAnchor = (card) => {
+      const cr = card.getBoundingClientRect();
+      const cands = card.querySelectorAll("[id]," + KEYS.map((k) => "[" + k + "]").join(","));
+      for (const el of cands) {
+        const r = el.getBoundingClientRect();
+        if (r.height <= 0 || r.top < cr.top + 4 || r.top > cr.bottom - 40) continue;
+        let sel = null;
+        if (el.id && !/^(closeModal|cancelModal|submitModal|overlay)$/.test(el.id)) sel = '[id="' + el.id + '"]';
+        else for (const k of KEYS) if (el.hasAttribute(k)) { sel = "[" + k + '="' + el.getAttribute(k) + '"]'; break; }
+        if (!sel) continue;
+        const idx = Array.from(card.querySelectorAll(sel)).indexOf(el);
+        if (idx < 0) continue;
+        return { sel, idx, offset: r.top - cr.top };
+      }
+      return null;
+    };
     Object.defineProperty(root, "innerHTML", {
       configurable: true,
       get() { return desc.get.call(this); },
       set(v) {
-        if (!v) { pending = 0; lastHead = null; desc.set.call(this, v); return; }
+        if (!v) { pending = 0; lastHead = null; anchor = null; desc.set.call(this, v); return; }
         const old = this.querySelector(".modal-card");
-        const oldHead = headOf(old);
-        if (old && old.scrollTop > 0) pending = old.scrollTop;
+        if (old && old.scrollTop > 0) { pending = old.scrollTop; anchor = findAnchor(old); }
         desc.set.call(this, v);
         const card = this.querySelector(".modal-card");
         const newHead = headOf(card);
-        if (newHead) { if (lastHead && lastHead !== newHead) pending = 0; lastHead = newHead; }
-        if (!old) { pending = 0; lastHead = null; if (newHead) lastHead = newHead; }
-        if (pending > 0 && card) card.scrollTop = pending;
+        if (newHead) { if (lastHead && lastHead !== newHead) { pending = 0; anchor = null; } lastHead = newHead; }
+        if (!old) { pending = 0; anchor = null; lastHead = newHead || null; }
+        if (pending > 0 && card) {
+          card.scrollTop = pending;
+          if (anchor && newHead) {
+            const el2 = card.querySelectorAll(anchor.sel)[anchor.idx];
+            if (el2) card.scrollTop += el2.getBoundingClientRect().top - card.getBoundingClientRect().top - anchor.offset;
+          }
+        }
       },
     });
   }
