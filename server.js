@@ -175,6 +175,12 @@ async function assignedLeadIdSet(user) {
   const rows = (await pool.query("SELECT lead_id FROM event_assignments WHERE team_id = $1 AND status <> 'declined'", [user.team_id])).rows;
   return new Set(rows.map((r) => r.lead_id));
 }
+// Travel notes are the admin's private remarks — nobody else gets them.
+function legForUser(leg, user) {
+  if (user.access_level === "admin") return leg;
+  const { notes, ...rest } = leg;
+  return rest;
+}
 function requireAnySection(sections) {
   return (req, res, next) => {
     if (sections.some((sec) => userHasSection(req.user, sec))) return next();
@@ -2362,7 +2368,7 @@ app.get("/api/leads/:id/travel-legs", requireAuth, async (req, res) => {
     pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents WHERE travel_leg_id = ANY($1) ORDER BY uploaded_at ASC`, [legIds]),
   ]) : [{ rows: [] }, { rows: [] }];
   res.json(legs.map((leg) => ({
-    ...leg,
+    ...legForUser(leg, req.user),
     members: members.rows.filter((m) => m.leg_id === leg.id).map((m) => ({ teamId: m.team_id, name: m.team_name })),
     tickets: tickets.rows.filter((t) => t.travel_leg_id === leg.id).map((t) => ({ ...t, url: `/api/documents/${t.id}/file` })),
   })));
@@ -2384,14 +2390,15 @@ app.get("/api/travel-legs", requireAuth, requireCapability("assign_team"), async
     pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents WHERE travel_leg_id = ANY($1) ORDER BY uploaded_at ASC`, [legIds]),
   ]) : [{ rows: [] }, { rows: [] }];
   res.json(legs.map((leg) => ({
-    ...leg,
+    ...legForUser(leg, req.user),
     members: members.rows.filter((m) => m.leg_id === leg.id).map((m) => ({ teamId: m.team_id, name: m.team_name })),
     tickets: tickets.rows.filter((t) => t.travel_leg_id === leg.id).map((t) => ({ ...t, url: `/api/documents/${t.id}/file` })),
   })));
 });
 
 app.post("/api/travel-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
-  const { label, teamIds, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status, notes } = req.body;
+  const { label, teamIds, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status } = req.body;
+  const notes = req.user.access_level === "admin" ? req.body.notes : null;
   if (!label || !label.trim()) return res.status(400).json({ error: "A label is required for manually-logged travel" });
   const id = uuid();
   const now = new Date().toISOString();
@@ -2409,7 +2416,8 @@ app.post("/api/travel-legs", requireAuth, requireCapability("assign_team"), asyn
 app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Event not found" });
-  const { teamIds, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status, notes } = req.body;
+  const { teamIds, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status } = req.body;
+  const notes = req.user.access_level === "admin" ? req.body.notes : null;
   if (!Array.isArray(teamIds) || teamIds.length === 0) return res.status(400).json({ error: "Select at least one artist" });
   const id = uuid();
   const now = new Date().toISOString();
@@ -2441,6 +2449,7 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
   const updates = [];
   const values = [];
   fields.forEach((f) => {
+    if (f === "notes" && req.user.access_level !== "admin") return; // admin-only remarks
     const key = keyFor(f);
     if (req.body[key] !== undefined) { values.push(req.body[key]); updates.push(`${f} = $${values.length}`); }
   });
@@ -2467,7 +2476,7 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
     }
   }
 
-  res.json((await pool.query("SELECT * FROM travel_legs WHERE id = $1", [req.params.id])).rows[0]);
+  res.json(legForUser((await pool.query("SELECT * FROM travel_legs WHERE id = $1", [req.params.id])).rows[0], req.user));
 
   const lead = (await pool.query("SELECT name, date, city FROM leads WHERE id = $1", [leg.lead_id])).rows[0];
   if (!lead) return;

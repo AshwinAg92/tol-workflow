@@ -3085,8 +3085,8 @@ function openStandaloneTravelLegModal(legId, onDone) {
             </div>
             <label>Booking ref / PNR (optional)</label>
             <input id="stlBookingRef" value="${leg?.booking_ref || ""}" />
-            <label style="margin-top:8px;">Notes (optional)</label>
-            <input id="stlNotes" value="${leg?.notes || ""}" />
+            ${CURRENT_USER?.accessLevel === "admin" ? `<label style="margin-top:8px;">Notes (optional)</label>
+            <input id="stlNotes" value="${leg?.notes || ""}" />` : ""}
             ${leg ? `
               <label style="margin-top:8px;">Ticket / booking file (PDF or image, optional)</label>
               ${leg.tickets && leg.tickets.length > 0 ? `
@@ -3142,7 +3142,7 @@ function openStandaloneTravelLegModal(legId, onDone) {
         arrivalAt: root.querySelector("#stlArrival").value || null,
         bookingRef: root.querySelector("#stlBookingRef").value.trim() || null,
         status: root.querySelector("#stlStatus").value,
-        notes: root.querySelector("#stlNotes").value.trim() || null,
+        notes: root.querySelector("#stlNotes")?.value.trim() || null,
       };
       const btn = root.querySelector("#stlSaveBtn");
       btn.disabled = true;
@@ -5181,8 +5181,8 @@ async function openTravelPlanModal(leadId) {
         </div>
         <label>Booking ref / PNR (optional)</label>
         <input id="${prefix}BookingRef" value="${leg?.booking_ref || ""}" placeholder="e.g. PNR or booking number" />
-        <label style="margin-top:8px;">Notes (optional)</label>
-        <input id="${prefix}Notes" value="${leg?.notes || ""}" placeholder="e.g. Same train, different coach" />
+        ${CURRENT_USER?.accessLevel === "admin" ? `<label style="margin-top:8px;">Notes (optional)</label>
+        <input id="${prefix}Notes" value="${leg?.notes || ""}" placeholder="e.g. Same train, different coach" />` : ""}
         <div style="display:flex; gap:8px; margin-top:10px;">
           <button class="btn-primary" data-save-leg="${isNew ? "new" : leg.id}" data-is-new="${isNew}">Save</button>
           <button class="btn-ghost" data-cancel-leg-form="1">Cancel</button>
@@ -5315,7 +5315,7 @@ async function openTravelPlanModal(leadId) {
           arrivalAt: root.querySelector(`#${prefix}Arrival`).value || null,
           bookingRef: root.querySelector(`#${prefix}BookingRef`).value.trim() || null,
           status: root.querySelector(`#${prefix}Status`).value,
-          notes: root.querySelector(`#${prefix}Notes`).value.trim() || null,
+          notes: root.querySelector(`#${prefix}Notes`)?.value.trim() || null,
         };
         btn.disabled = true;
         try {
