@@ -6646,9 +6646,9 @@ async function renderDashboard(main) {
       </div>
       <div class="card reminder-flash" id="teamNotifCard" style="margin-bottom:16px;">
         ${teamNotifs.map((n) => `
-          <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
+          <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;${n.message.startsWith("\ud83c\udf89 TEAM COMPLETE") ? " background:#E3F4E5; border:2px solid #2E8B3D; border-radius:10px; padding:12px 14px; margin-bottom:8px;" : ""}">
             <div>
-              <div>${n.message}</div>
+              <div${n.message.startsWith("\ud83c\udf89 TEAM COMPLETE") ? ' style="font-size:16px; font-weight:700; color:#1E6B2B;"' : ""}>${n.message}</div>
               <div class="muted small">${fmtDateTime(n.created_at)}</div>
             </div>
             <div style="display:flex; gap:6px; flex-shrink:0;">

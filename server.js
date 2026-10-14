@@ -1986,6 +1986,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const updatedLead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   res.json(hasLeads ? updatedLead : restrictedLeadView(updatedLead));
   syncLeadToGoogleCalendar(updatedLead).catch((err) => console.error("Google Calendar sync error:", err.message));
+  checkTeamComplete(updatedLead.id); // a lead that just became Confirmed with everyone already accepted is "complete"
 
   if (req.body.stage !== undefined && req.body.stage !== lead.stage) {
     if (req.body.stage === "Confirmed") {
@@ -2177,15 +2178,39 @@ app.post("/api/leads/:id/assignments", requireAuth, requireCapability("assign_te
     WHERE lead_id = $1
   `, [req.params.id]);
   res.status(201).json(rows);
+  await checkTeamComplete(req.params.id);
   if (newlyAdded.length > 0) {
     const names = rows.filter((r) => newlyAdded.includes(r.team_id)).map((r) => r.team_name).join(", ");
     logActivity(req, `${names} assigned to ${lead.name}`, lead.id);
   }
 });
 
+// "Team complete": fires ONE major alert when every member assigned to a Confirmed event has
+// accepted (nobody pending, declined or asking to cancel). If the line-up later stops being
+// complete (someone added/declines), the flag resets so the alert fires again when it is.
+async function checkTeamComplete(leadId) {
+  try {
+    const lead = (await pool.query("SELECT id, name, date, city, stage, team_complete_notified FROM leads WHERE id = $1", [leadId])).rows[0];
+    if (!lead) return;
+    const as = (await pool.query("SELECT status FROM event_assignments WHERE lead_id = $1", [leadId])).rows;
+    const complete = lead.stage === "Confirmed" && as.length > 0 && as.every((a) => a.status === "accepted");
+    if (!complete) {
+      if (lead.team_complete_notified) await pool.query("UPDATE leads SET team_complete_notified = 0 WHERE id = $1", [leadId]);
+      return;
+    }
+    const won = await pool.query("UPDATE leads SET team_complete_notified = 1 WHERE id = $1 AND team_complete_notified = 0 RETURNING id", [leadId]);
+    if (!won.rows.length) return;
+    const msg = `\ud83c\udf89 TEAM COMPLETE \u2014 all ${as.length} member${as.length > 1 ? "s have" : " has"} confirmed ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""}.`;
+    await pool.query("INSERT INTO admin_notifications (id, message, assignment_id, audience, created_at) VALUES ($1,$2,NULL,'coordination',$3)", [uuid(), msg, new Date().toISOString()]);
+    logActivity({ user: null }, `Team complete: everyone confirmed ${lead.name} (${lead.date})`, leadId);
+    await sendPushToAll("\ud83c\udf89 Team complete!", `${lead.name} (${lead.date}) \u2014 every member has confirmed.`, "/login", { adminOnly: true });
+  } catch (err) { console.error("checkTeamComplete failed (not fatal):", err.message); }
+}
+
 app.delete("/api/assignments/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
-  await pool.query("DELETE FROM event_assignments WHERE id = $1", [req.params.id]);
+  const gone = (await pool.query("DELETE FROM event_assignments WHERE id = $1 RETURNING lead_id", [req.params.id])).rows[0];
   res.status(204).end();
+  if (gone) await checkTeamComplete(gone.lead_id);
 });
 
 // Admin marks a crew member's fee as paid/unpaid for a specific event.
@@ -2218,6 +2243,7 @@ app.patch("/api/assignments/:id/mark-response", requireAuth, requireCapability("
     logActivity(req, `Marked ${member ? member.name : "artist"} as ${status} for ${lead.name} (${lead.date})`, a.lead_id);
   }
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
+  await checkTeamComplete(a.lead_id);
 });
 
 // A no-login confirmation link, sent over WhatsApp -- most performers here
@@ -2277,6 +2303,7 @@ app.post("/api/public/assignment/:token/respond", async (req, res) => {
     );
   }
   res.json({ status, note: note !== undefined ? (note || null) : a.note });
+  await checkTeamComplete(a.lead_id);
 });
 
 // Lets the artist leave/update their note independently of accept/decline —
@@ -2761,6 +2788,7 @@ app.post("/api/my/assignments/:id/respond", requireAuth, async (req, res) => {
   }
 
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
+  await checkTeamComplete(a.lead_id);
 });
 
 // A performer who already accepted can request to back out, giving a reason —
@@ -2803,6 +2831,7 @@ app.post("/api/assignments/:id/resolve-cancel", requireAuth, requireCapability("
     `, [uuid(), a.team_id, `Your cancellation request for ${lead.name} (${lead.date}) was ${approve ? "approved" : "declined — you're still on this event"}.`, new Date().toISOString()]);
   }
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
+  await checkTeamComplete(a.lead_id);
 });
 
 // Managers (assign_team capability) see this feed too, not just admin — they're

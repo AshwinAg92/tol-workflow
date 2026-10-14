@@ -552,6 +552,7 @@ async function setup() {
   // admin-only concern, so every row is tagged with who it's for. Existing rows
   // default to 'coordination' since they were all manager-relevant event
   // activity before this column existed.
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS team_complete_notified INTEGER NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE admin_notifications ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'coordination'`);
   // Backfill: notifications created before the audience column existed default to
   // 'coordination' (fine for artist-response/cancellation ones), but any that are
