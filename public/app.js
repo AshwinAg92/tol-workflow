@@ -575,6 +575,118 @@ async function sharePdfOrDownload(doc, filename, { text, digitsOnly } = {}) {
   return { method: "download" };
 }
 
+// A warm, branded card (instead of a payment QR) sent with the confirmation /
+// tentative messages. Drawn on a canvas so it can carry the client's first name,
+// the event, date and city — 1080x1350, sized for a WhatsApp image.
+async function makeEventCard(lead, kind) {
+  const W = 1080, H = 1350;
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  const first = (lead.name || "").trim().split(/\s+/)[0] || "there";
+  const experience = packageName(lead.event_type);
+  const exp = experience.toLowerCase();
+  const dateLong = lead.date ? new Date(lead.date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "";
+  const SERIF = "Georgia, 'Times New Roman', serif";
+  const SANS = "'Helvetica Neue', Helvetica, Arial, sans-serif";
+  const confirmed = kind !== "tentative";
+
+  // Background + soft glow + frame
+  const bg = g.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#FEF6ED"); bg.addColorStop(1, "#F6E0C2");
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  const glow = g.createRadialGradient(W - 120, 140, 10, W - 120, 140, 460);
+  glow.addColorStop(0, "rgba(240,164,56,0.38)"); glow.addColorStop(1, "rgba(240,164,56,0)");
+  g.fillStyle = glow; g.fillRect(0, 0, W, H);
+  g.strokeStyle = "#C1602B"; g.lineWidth = 3; g.strokeRect(44, 44, W - 88, H - 88);
+  g.strokeStyle = "rgba(193,96,43,0.35)"; g.lineWidth = 1.5; g.strokeRect(58, 58, W - 116, H - 116);
+
+  const center = (txt, y, font, color, spacing) => {
+    g.font = font; g.fillStyle = color; g.textAlign = "center"; g.textBaseline = "alphabetic";
+    if (spacing && "letterSpacing" in g) g.letterSpacing = spacing + "px";
+    g.fillText(txt, W / 2, y);
+    if ("letterSpacing" in g) g.letterSpacing = "0px";
+  };
+  const wrap = (txt, maxW, font) => {
+    g.font = font;
+    const words = txt.split(" "); const lines = []; let line = "";
+    words.forEach((w) => { const t = line ? line + " " + w : w; if (g.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t; });
+    if (line) lines.push(line);
+    return lines;
+  };
+
+  // Logo + brand
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = "/logo.png"; });
+    const lh = 150, lw = (img.width / img.height) * lh;
+    g.drawImage(img, W / 2 - lw / 2, 105, lw, lh);
+  } catch { /* card still looks fine without the logo */ }
+  center("TOGETHER, OUT LOUD", 312, `700 28px ${SANS}`, "#2B2420", 7);
+
+  // Status pill text
+  center(confirmed ? "YOUR EVENT IS CONFIRMED" : "YOUR DATE IS TENTATIVELY BOOKED", 408, `700 24px ${SANS}`, "#C1602B", 5);
+
+  // Headline with the first name
+  const headline = confirmed ? [`It's official,`, `${first}!`] : [`We're holding`, `your date, ${first}!`];
+  let y = 505;
+  headline.forEach((ln) => {
+    let size = 96;
+    g.font = `700 ${size}px ${SERIF}`;
+    while (g.measureText(ln).width > W - 200 && size > 52) { size -= 4; g.font = `700 ${size}px ${SERIF}`; }
+    center(ln, y, `700 ${size}px ${SERIF}`, "#2B2420");
+    y += 104;
+  });
+
+  // Ornament
+  y += 6;
+  g.strokeStyle = "#F0A438"; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(W / 2 - 150, y); g.lineTo(W / 2 - 22, y); g.moveTo(W / 2 + 22, y); g.lineTo(W / 2 + 150, y); g.stroke();
+  g.fillStyle = "#F0A438"; g.beginPath(); g.arc(W / 2, y, 7, 0, Math.PI * 2); g.fill();
+  y += 78;
+
+  // Event details
+  let expSize = 62; g.font = `700 ${expSize}px ${SERIF}`;
+  while (g.measureText(experience).width > W - 200 && expSize > 38) { expSize -= 4; g.font = `700 ${expSize}px ${SERIF}`; }
+  center(experience, y, `700 ${expSize}px ${SERIF}`, "#C1602B");
+  y += 66;
+  if (dateLong) { center(dateLong, y, `600 42px ${SANS}`, "#2B2420"); y += 56; }
+  if (lead.city) { center(lead.city, y, `500 34px ${SANS}`, "#8A6A54"); y += 44; }
+
+  // Warm line
+  y += 40;
+  let line;
+  if (!confirmed) line = "We're keeping this date aside just for you. Confirm with your advance and it's yours \u2014 we can't wait!";
+  else if (/pheras/.test(exp)) line = "Your pheras, set to live devotional music \u2014 a moment we are truly honoured to be part of.";
+  else if (/bolly|fusion/.test(exp)) line = "A night of Bollywood and bhajans, sung together \u2014 get ready to sing, sway and celebrate.";
+  else if (/club/.test(exp)) line = "A night of devotion with a beat — we can't wait to bring the whole room together.";
+  else line = "An evening where everyone sings along — we can't wait to create something unforgettable with you and your guests.";
+  wrap(line, W - 240, `italic 400 36px ${SERIF}`).forEach((ln) => { center(ln, y, `italic 400 36px ${SERIF}`, "#4A3A30"); y += 50; });
+
+  // Sign-off
+  center("With love,", H - 190, `italic 400 32px ${SERIF}`, "#8A6A54");
+  center("Team Together, Out Loud", H - 142, `700 36px ${SERIF}`, "#2B2420");
+  center("togetheroutloud.in", H - 100, `500 24px ${SANS}`, "#C1602B", 2);
+
+  return new Promise((res) => c.toBlob((b) => res(b), "image/png"));
+}
+// Hands the card to the native Share sheet (WhatsApp etc.) with the message as
+// the caption. Returns false where file sharing isn't available (mainly desktop)
+// so the caller can fall back to a plain wa.me text link.
+async function shareCardBlob(blob, filename, text) {
+  const file = new File([blob], filename, { type: "image/png" });
+  if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], text: text || undefined }); } catch (err) { /* cancelled */ }
+    return true;
+  }
+  return false;
+}
+function downloadBlob(blob, filename) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
 // Same idea as sharePdfOrDownload, but for an already-hosted image (the
 // saved bank/UPI QR code) instead of a freshly generated PDF — fetches the
 // bytes and hands them to the native Share sheet so WhatsApp etc. get the
@@ -7683,6 +7795,15 @@ async function openTentativeConfirmInfoModal(lead) {
         <div class="modal-body">
           ${!(MESSAGE_TEMPLATES.bank_details || "").trim() ? `<p class="muted small" style="color:#B6752C; margin-top:0;">No bank/UPI details on file — add them in Settings so they fill in automatically here.</p>` : ""}
           <textarea id="tiMessage" rows="9" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${message}</textarea>
+          <div style="margin-top:12px;">
+            <div class="muted small" style="margin-bottom:6px;">Sent with the message as a personalised card:</div>
+            <img id="cardPreview" alt="" style="width:100%; max-width:300px; border-radius:10px; border:1px solid #EAD9BE; display:none;" />
+            <div id="cardLoading" class="muted small">Preparing card…</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+              <button class="btn-ghost" id="cardDlBtn" style="font-size:12px; padding:4px 10px;">⬇ Download card</button>
+              ${hasBankQr ? `<button class="btn-ghost" id="qrBtn" style="font-size:12px; padding:4px 10px;">💳 Send payment QR separately</button>` : ""}
+            </div>
+          </div>
         </div>
         <div class="modal-foot">
           ${waLink ? `<button class="btn-ghost" id="waBtn">💬 WhatsApp</button>` : `<span class="muted small">No phone on file</span>`}
@@ -7699,13 +7820,21 @@ async function openTentativeConfirmInfoModal(lead) {
   // Bank details are always baked into this message (no checkbox here), so
   // when a QR code is on file, WhatsApp hands it to the Share sheet with the
   // message as the caption instead of just opening a wa.me text link.
-  if (waLink) root.querySelector("#waBtn").addEventListener("click", () => {
+  let cardBlob = null;
+  const cardReady = makeEventCard(lead, "tentative").then((b) => {
+    cardBlob = b;
+    const img = root.querySelector("#cardPreview");
+    if (img) { img.src = URL.createObjectURL(b); img.style.display = "block"; }
+    const ld = root.querySelector("#cardLoading"); if (ld) ld.style.display = "none";
+  }).catch(() => { const ld = root.querySelector("#cardLoading"); if (ld) ld.textContent = "Couldn't prepare the card — the message will go as text."; });
+  root.querySelector("#cardDlBtn").addEventListener("click", async () => { await cardReady; if (cardBlob) downloadBlob(cardBlob, `tentative-${(lead.name || "client").split(" ")[0]}.png`); });
+  const qrBtn = root.querySelector("#qrBtn");
+  if (qrBtn) qrBtn.addEventListener("click", () => shareImageOrOpen(`/api/documents/${MESSAGE_TEMPLATES.bank_qr_document_id}/file`, "payment-qr.png", "Payment QR code for your booking — Together, Out Loud"));
+  if (waLink) root.querySelector("#waBtn").addEventListener("click", async () => {
     const text = root.querySelector("#tiMessage").value;
-    if (hasBankQr) {
-      shareImageOrOpen(`/api/documents/${MESSAGE_TEMPLATES.bank_qr_document_id}/file`, "bank-qr.png", text);
-    } else {
-      window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(text)}`;
-    }
+    await cardReady;
+    if (cardBlob && await shareCardBlob(cardBlob, "together-out-loud.png", text)) return;
+    window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(text)}`;
   });
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
     window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Next steps to confirm your event — Together, Out Loud")}&body=${encodeURIComponent(root.querySelector("#tiMessage").value)}`;
@@ -7768,6 +7897,15 @@ async function openConfirmationMessageModal(lead) {
         <div class="modal-head"><h3>Send confirmation to ${lead.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <textarea id="ceMessage" rows="8" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${message}</textarea>
+          <div style="margin-top:12px;">
+            <div class="muted small" style="margin-bottom:6px;">Sent with the message as a personalised card:</div>
+            <img id="cardPreview" alt="" style="width:100%; max-width:300px; border-radius:10px; border:1px solid #EAD9BE; display:none;" />
+            <div id="cardLoading" class="muted small">Preparing card…</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+              <button class="btn-ghost" id="cardDlBtn" style="font-size:12px; padding:4px 10px;">⬇ Download card</button>
+              ${hasBankQr ? `<button class="btn-ghost" id="qrBtn" style="font-size:12px; padding:4px 10px;">💳 Send payment QR separately</button>` : ""}
+            </div>
+          </div>
           <div style="margin-top:14px;">
             <label class="check-row" style="font-size:13.5px;">
               <input type="checkbox" id="confirmBankDetailsCheckbox" ${(MESSAGE_TEMPLATES.bank_details || "").trim() ? "" : "disabled"} />
@@ -7834,13 +7972,21 @@ async function openConfirmationMessageModal(lead) {
   // When the bank-details checkbox is on and a QR code is on file, WhatsApp
   // hands the actual QR image to the Share sheet with the message as the
   // caption, instead of just opening a wa.me text link.
-  if (waLink) root.querySelector("#waBtn").addEventListener("click", () => {
-    const bankChecked = root.querySelector("#confirmBankDetailsCheckbox")?.checked;
-    if (bankChecked && hasBankQr) {
-      shareImageOrOpen(`/api/documents/${MESSAGE_TEMPLATES.bank_qr_document_id}/file`, "bank-qr.png", finalMessage());
-    } else {
-      window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(finalMessage())}`;
-    }
+  let cardBlob = null;
+  const cardReady = makeEventCard(lead, "confirmed").then((b) => {
+    cardBlob = b;
+    const img = root.querySelector("#cardPreview");
+    if (img) { img.src = URL.createObjectURL(b); img.style.display = "block"; }
+    const ld = root.querySelector("#cardLoading"); if (ld) ld.style.display = "none";
+  }).catch(() => { const ld = root.querySelector("#cardLoading"); if (ld) ld.textContent = "Couldn't prepare the card — the message will go as text."; });
+  root.querySelector("#cardDlBtn").addEventListener("click", async () => { await cardReady; if (cardBlob) downloadBlob(cardBlob, `confirmed-${(lead.name || "client").split(" ")[0]}.png`); });
+  const qrBtn = root.querySelector("#qrBtn");
+  if (qrBtn) qrBtn.addEventListener("click", () => shareImageOrOpen(`/api/documents/${MESSAGE_TEMPLATES.bank_qr_document_id}/file`, "payment-qr.png", "Payment QR code for your booking — Together, Out Loud"));
+  if (waLink) root.querySelector("#waBtn").addEventListener("click", async () => {
+    const text = finalMessage();
+    await cardReady;
+    if (cardBlob && await shareCardBlob(cardBlob, "together-out-loud.png", text)) return;
+    window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(text)}`;
   });
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
     window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Your event is confirmed — Together, Out Loud")}&body=${encodeURIComponent(finalMessage())}`;
