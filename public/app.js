@@ -3466,6 +3466,8 @@ async function renderTeam(main, subTab = "team") {
         <div id="announceList" style="margin-top:12px;"></div>
       </div>
     ` : ""}
+    <input id="teamSearch" type="search" placeholder="🔍 Search team by name, role, city, phone…" style="margin-bottom:12px;" autocomplete="off" />
+    <div id="teamNoMatch" class="muted small" style="display:none; margin-bottom:10px;">No team member matches that search.</div>
     <div class="team-grid" id="teamGrid"></div>
     ${isAdmin ? `
       <div class="section-label" style="margin-top:24px;">Logins</div>
@@ -3538,7 +3540,18 @@ async function renderTeam(main, subTab = "team") {
       }
       openTeamMemberEventsModal(m);
     });
+    card.dataset.search = [m.name, m.role, m.specialty, m.base_city, m.phone, m.email].filter(Boolean).join(" ").toLowerCase();
     grid.appendChild(card);
+  });
+  main.querySelector("#teamSearch").addEventListener("input", (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    let shown = 0;
+    grid.querySelectorAll(".team-card").forEach((c) => {
+      const hit = !q || (c.dataset.search || "").includes(q);
+      c.style.display = hit ? "" : "none";
+      if (hit) shown++;
+    });
+    main.querySelector("#teamNoMatch").style.display = shown === 0 ? "block" : "none";
   });
   if (canManage) {
     main.querySelectorAll("[data-edit-member]").forEach((btn) => {
@@ -7396,6 +7409,7 @@ async function renderMusicians(main) {
 
   let cityFilter = "";
   let instrumentFilter = "";
+  let searchText = "";
   const canManage = canManageTeam();
 
   function distinctSorted(values) {
@@ -7414,7 +7428,8 @@ async function renderMusicians(main) {
 
     const filtered = musicians.filter((m) =>
       (!cityFilter || m.city === cityFilter) &&
-      (!instrumentFilter || m.instruments.includes(instrumentFilter))
+      (!instrumentFilter || m.instruments.includes(instrumentFilter)) &&
+      (!searchText || [m.name, m.phone, m.city, m.notes, m.email, ...m.instruments].filter(Boolean).join(" ").toLowerCase().includes(searchText))
     );
 
     if (musicians.length === 0) {
@@ -7504,6 +7519,7 @@ async function renderMusicians(main) {
 
   main.innerHTML = `
     <div class="card" style="margin-bottom:14px; padding:12px 14px;">
+      <input id="musSearch" type="search" placeholder="🔍 Search musicians by name, phone, city, instrument…" style="margin-bottom:10px;" autocomplete="off" />
       <div class="row-2">
         <div><label>City</label><select id="musCityFilter"></select></div>
         <div><label>Instrument</label><select id="musInstrumentFilter"></select></div>
@@ -7512,6 +7528,7 @@ async function renderMusicians(main) {
     <div id="musiciansList"></div>
   `;
 
+  main.querySelector("#musSearch").addEventListener("input", (e) => { searchText = e.target.value.trim().toLowerCase(); renderList(); });
   main.querySelector("#musCityFilter").addEventListener("change", (e) => { cityFilter = e.target.value; renderList(); });
   main.querySelector("#musInstrumentFilter").addEventListener("change", (e) => { instrumentFilter = e.target.value; renderList(); });
 
