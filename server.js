@@ -3674,17 +3674,15 @@ app.post("/api/member-registration/disable", requireAuth, requireAdmin, async (r
 });
 
 const REG_LABELS = ["Aadhaar", "Passport", "PAN card", "Driving licence", "Voter ID", "Other document"];
-app.get("/join/:token", async (req, res) => {
+async function regFormPage(req, res, ok) {
   res.setHeader("Cache-Control", "no-store");
-  res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  const link = await getRegLink();
-  const ok = link && link.enabled && link.token === req.params.token;
   const css = `body{font-family:Georgia,serif;background:#FBF6EC;color:#3A2A1A;margin:0;padding:18px}.w{max-width:560px;margin:0 auto}h1{font-size:23px;margin:0 0 4px}.m{color:#7A6A58;font-size:13px}label{display:block;font-size:13px;color:#7A6A58;margin:14px 0 4px}input,select,textarea{width:100%;box-sizing:border-box;padding:11px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;background:#fff}.r2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.c{background:#fff;border:1px solid #E9DFCF;border-radius:12px;padding:12px 14px;margin-top:12px}button{margin-top:20px;width:100%;padding:13px;border:0;border-radius:10px;background:#B5541C;color:#fff;font:inherit;font-size:16px;cursor:pointer}button:disabled{opacity:.6}.hp{position:absolute;left:-9999px}#err{color:#A6432B;margin-top:12px;font-size:14px}`;
   if (!ok) return res.status(404).send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Registration</title><style>${css}</style></head><body><div class="w"><h1>This link isn't active</h1><p class="m">Please ask Together, Out Loud for a fresh registration link.</p></div></body></html>`);
   const slot = (n, req_, title) => `<div class="c"><div style="font-weight:700">${title}${req_ ? " *" : ""}</div>
     <label>Document type</label><select name="label${n}">${REG_LABELS.map((l, i) => `<option ${(n === 2 && i === 1) || (n === 3 && i === 5) ? "selected" : ""}>${l}</option>`).join("")}</select>
     <label>Photo or PDF</label><input type="file" name="file${n}" accept="image/*,application/pdf" ${req_ ? "required" : ""}></div>`;
   res.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Join Together, Out Loud</title><style>${css}</style></head><body><div class="w">
+<div style="text-align:center;margin-bottom:14px"><img src="/logo.png" alt="" width="64" height="64" style="object-fit:contain"><div style="letter-spacing:.16em;font-size:12px;font-weight:700;color:#B5541C;margin-top:4px">TOGETHER, OUT LOUD</div></div>
 <h1>Join Together, Out Loud</h1><p class="m">Artist registration. Please fill this in once — your details go only to our team and are used for bookings and travel.</p>
 <form id="f" autocomplete="on">
 <div class="hp"><label>Website</label><input name="website" tabindex="-1" autocomplete="off"></div>
@@ -3708,10 +3706,33 @@ try{const r=await fetch(location.pathname,{method:'POST',body:new FormData(f)});
 if(!r.ok)throw new Error(j.error||'Something went wrong — please try again.');f.style.display='none';document.querySelector('.m').style.display='none';document.querySelector('h1').style.display='none';document.getElementById('done').style.display='block';window.scrollTo(0,0)}
 catch(x){er.textContent=x.message;b.disabled=false;b.textContent='Submit registration'}});
 </script></body></html>`);
+}
+app.get("/join/:token", async (req, res) => {
+  const link = await getRegLink();
+  regFormPage(req, res, !!(link && link.enabled && link.token === req.params.token));
 });
-app.post("/join/:token", upload.fields([{ name: "file1", maxCount: 1 }, { name: "file2", maxCount: 1 }, { name: "file3", maxCount: 1 }]), async (req, res) => {
+// Public entry point for the website's "Join the band" button. Open whenever the
+// registration link is switched on (turning it off in the Team tab closes this too).
+app.get("/join-us", async (req, res) => {
+  let link = await getRegLink();
+  if (!link) {
+    await pool.query("INSERT INTO member_reg_link (id, token, enabled, created_at) VALUES ($1,$2,1,$3)", [uuid(), crypto.randomBytes(18).toString("base64url"), new Date().toISOString()]);
+    link = await getRegLink();
+  }
+  regFormPage(req, res, !!link.enabled);
+});
+const regUpload = upload.fields([{ name: "file1", maxCount: 1 }, { name: "file2", maxCount: 1 }, { name: "file3", maxCount: 1 }]);
+app.post("/join-us", regUpload, async (req, res) => {
+  const link = await getRegLink();
+  if (!link || !link.enabled) return res.status(404).json({ error: "Registrations are currently closed." });
+  return regSubmit(req, res);
+});
+app.post("/join/:token", regUpload, async (req, res) => {
   const link = await getRegLink();
   if (!link || !link.enabled || link.token !== req.params.token) return res.status(404).json({ error: "This registration link is no longer active." });
+  return regSubmit(req, res);
+});
+async function regSubmit(req, res) {
   if (req.body.website) return res.json({ ok: true }); // honeypot — bots fill hidden fields
   if (!regRateOk(String(req.headers["x-forwarded-for"] || req.ip).split(",")[0].trim())) return res.status(429).json({ error: "Too many submissions — please try again later." });
   const t = (k, max = 200) => String(req.body[k] || "").trim().slice(0, max);
@@ -3736,7 +3757,7 @@ app.post("/join/:token", upload.fields([{ name: "file1", maxCount: 1 }, { name: 
     await pool.query("INSERT INTO member_registration_files (id, registration_id, label, original_name, mime_type, file_data) VALUES ($1,$2,$3,$4,$5,$6)", [uuid(), id, label, f.originalname, f.mimetype, f.buffer]);
   }
   res.status(201).json({ ok: true });
-});
+}
 
 app.get("/api/member-registrations", requireAuth, requireAdmin, async (req, res) => {
   const regs = (await pool.query("SELECT * FROM member_registrations WHERE status = 'pending' ORDER BY created_at ASC")).rows;

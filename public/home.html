@@ -441,6 +441,27 @@
   }
 
   /* cta */
+
+  /* ---- Join the band ---- */
+  .join-band{background:linear-gradient(135deg,#2B2420 0%,#3A2E27 100%); color:var(--cream); padding:96px 0; position:relative; overflow:hidden;}
+  .join-band::before{content:""; position:absolute; right:-120px; top:-120px; width:420px; height:420px; border-radius:50%; background:radial-gradient(circle,rgba(240,164,56,.22),transparent 70%);}
+  .join-grid{display:grid; grid-template-columns:1.15fr .85fr; gap:56px; align-items:center; position:relative;}
+  .join-band .tag{border-color:var(--marigold); color:var(--marigold);}
+  .join-band h2{color:var(--cream); font-size:clamp(30px,4.6vw,46px); line-height:1.06; margin-top:16px;}
+  .join-band .join-lead{color:rgba(254,246,237,.78); font-size:16.5px; line-height:1.6; margin-top:18px; max-width:540px; font-weight:500;}
+  .join-btn{display:inline-flex; align-items:center; gap:10px; margin-top:30px; background:var(--marigold); color:#2B2420; padding:16px 30px; border-radius:999px; font-family:'Space Grotesk'; font-weight:700; font-size:15px; transition:transform .2s, background .2s;}
+  .join-btn:hover{background:#FFB84D; transform:translateY(-2px);}
+  .join-note{margin-top:14px; font-size:13px; color:rgba(254,246,237,.55);}
+  .join-card{background:rgba(254,246,237,.06); border:1px solid rgba(254,246,237,.14); border-radius:18px; padding:30px 28px; backdrop-filter:blur(2px);}
+  .join-card h3{font-family:'Space Grotesk'; font-size:13px; letter-spacing:.14em; color:var(--marigold); margin:0 0 18px;}
+  .join-step{display:flex; gap:16px; align-items:flex-start; padding:14px 0; border-top:1px solid rgba(254,246,237,.12);}
+  .join-step:first-of-type{border-top:0; padding-top:0;}
+  .join-num{flex:none; width:34px; height:34px; border-radius:50%; background:rgba(240,164,56,.16); color:var(--marigold); font-family:'Space Grotesk'; font-weight:700; display:flex; align-items:center; justify-content:center;}
+  .join-step b{display:block; font-family:'Space Grotesk'; font-size:15.5px; color:var(--cream);}
+  .join-step span{display:block; font-size:14px; color:rgba(254,246,237,.66); margin-top:3px; line-height:1.5;}
+  .join-points{display:flex; gap:22px; flex-wrap:wrap; margin-top:26px; font-size:13.5px; color:rgba(254,246,237,.75); font-weight:600;}
+  .join-points span::before{content:"✓ "; color:var(--marigold);}
+  @media (max-width:860px){ .join-grid{grid-template-columns:1fr; gap:34px;} .join-band{padding:72px 0;} }
   .cta-band{background:var(--terracotta); color:var(--cream); padding:90px 26px; text-align:center; position:relative; overflow:hidden;}
   .cta-band h2{font-size:clamp(32px,5.6vw,54px); color:var(--cream); max-width:740px; margin:0 auto; line-height:1.05;}
   .cta-band .btn-primary{background:var(--cream); color:var(--ember); margin-top:30px;}
@@ -589,6 +610,7 @@
     <a href="#gallerySection">Gallery</a>
     <a href="#pressSection" id="navPressLink" style="display:none;">Press</a>
     <a href="#faq">FAQ</a>
+    <a href="#join">Join the Band</a>
     <a href="#contact">Contact Us</a>
     <a href="/login" class="nav-login-link" title="Team Login">Login</a>
   </div>
@@ -606,6 +628,7 @@
   <a href="#gallerySection">Gallery</a>
   <a href="#pressSection" id="mobileNavPressLink" style="display:none;">Press</a>
   <a href="#faq">FAQ</a>
+  <a href="#join">Join the Band</a>
   <a href="#contact">Contact Us</a>
   <a href="/login" style="margin-top:8px; text-align:center; color:var(--muted); font-weight:600; font-size:13px;">Team Login</a>
   <a class="btn-primary" href="/lead-form.html" style="margin-top:4px; text-align:center;">Enquire Now →</a>
@@ -918,6 +941,25 @@
   </div>
 </section>
 
+<section class="join-band reveal" id="join">
+  <div class="wrap join-grid">
+    <div>
+      <span class="tag">JOIN THE BAND</span>
+      <h2>Make music that moves people. Make it with us.</h2>
+      <p class="join-lead">Together, Out Loud brings devotional and celebratory music to weddings, satsangs and corporate gatherings across India. If you play, sing or perform and love sharing a stage with an audience that sings along, we'd like to hear from you.</p>
+      <div class="join-points"><span>Instrumentalists &amp; vocalists</span><span>Weddings, satsangs &amp; corporate events</span><span>Travel &amp; logistics coordinated</span></div>
+      <a class="join-btn" href="/join-us">Register as an artist <span aria-hidden="true">→</span></a>
+      <p class="join-note">Takes about 3 minutes. You'll need a photo or PDF of a government ID.</p>
+    </div>
+    <div class="join-card">
+      <h3>HOW IT WORKS</h3>
+      <div class="join-step"><div class="join-num">1</div><div><b>Register</b><span>Share your details, instrument and base city, and upload your ID.</span></div></div>
+      <div class="join-step"><div class="join-num">2</div><div><b>We review</b><span>Our team looks at every profile personally.</span></div></div>
+      <div class="join-step"><div class="join-num">3</div><div><b>We reach out</b><span>When an event fits your style and city, we contact you on WhatsApp.</span></div></div>
+    </div>
+  </div>
+</section>
+
 <section class="contact reveal" id="contact">
   <div class="wrap">
     <span class="tag">GET IN TOUCH</span>
@@ -948,7 +990,8 @@
     <a href="https://wa.me/919832302001" target="_blank" rel="noopener noreferrer">WhatsApp</a> ·
     <a href="https://www.instagram.com/togetheroutloudclub" target="_blank" rel="noopener noreferrer">Instagram</a> ·
     <a href="https://www.youtube.com/@togetheroutloud" target="_blank" rel="noopener noreferrer">YouTube</a> ·
-    <a href="mailto:togetheroutloudclub@gmail.com">togetheroutloudclub@gmail.com</a>
+    <a href="mailto:togetheroutloudclub@gmail.com">togetheroutloudclub@gmail.com</a> ·
+    <a href="/join-us">Join the band</a>
   </div>
   <div class="foot-copy">© <span id="yr"></span> Together, Out Loud. All rights reserved.</div>
 </footer>
