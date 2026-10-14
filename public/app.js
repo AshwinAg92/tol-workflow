@@ -4064,12 +4064,9 @@ function openEditMemberModal(member, linkedUser) {
               <label class="check-row"><input type="checkbox" id="emIsPerformer" ${linkedUser.is_performer ? "checked" : ""} /> Also a performer (sees own assigned events, artist fee, and accept/decline)</label>
             </div>
           ` : ""}
-          <div class="row-2">
-            <div><label>Role / title</label><input id="emRole" value="${member.role || ""}" /></div>
-            <div><label>Specialty (optional)</label><input id="emSpecialty" value="${member.specialty || ""}" placeholder="e.g. Drummer, Photographer" /></div>
-          </div>
-          <label>Instruments (comma-separated \u2014 used by the filters)</label>
-          <input id="emInstruments" value="${String(member.instruments || "").replace(/"/g, "&quot;")}" placeholder="e.g. Tabla, Dholak" />
+          <label>Instruments / role (comma-separated \u2014 used by the filters)</label>
+          <input id="emInstruments" value="${String(member.instruments || member.specialty || member.role || "").replace(/"/g, "&quot;")}" placeholder="e.g. Tabla, Dholak" />
+          ${(() => { const cur = String(member.instruments || member.specialty || member.role || "").toLowerCase(); const r = String(member.role || ""); return r && !cur.includes(r.toLowerCase()) ? `<label>Title (optional, e.g. Manager)</label><input id="emRole" value="${r.replace(/"/g, "&quot;")}" />` : ""; })()}
           <div class="row-2">
             <div><label>Type</label><select id="emKind"><option value="core" ${member.kind !== "freelance" ? "selected" : ""}>Core (plays with you regularly)</option><option value="freelance" ${member.kind === "freelance" ? "selected" : ""}>Freelance (called as needed)</option></select></div>
             <div><label>Base city</label><input id="emBaseCity" value="${member.base_city || ""}" placeholder="e.g. Siliguri" /></div>
@@ -4154,8 +4151,8 @@ function openEditMemberModal(member, linkedUser) {
         method: "PATCH",
         body: JSON.stringify({
           name: root.querySelector("#emName").value,
-          role: root.querySelector("#emRole").value,
-          specialty: root.querySelector("#emSpecialty").value,
+          role: root.querySelector("#emRole") ? root.querySelector("#emRole").value : (root.querySelector("#emInstruments").value || member.role || ""),
+          specialty: root.querySelector("#emInstruments").value,
           baseCity: root.querySelector("#emBaseCity").value,
           kind: root.querySelector("#emKind").value,
           instruments: root.querySelector("#emInstruments").value,
