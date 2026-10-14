@@ -3178,7 +3178,7 @@ async function renderTravelCalendar(main) {
               <div style="font-weight:600;">${route || legLabel(leg)}</div>
               <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
             </div>
-            <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${dateObj ? ` · ${dateObj.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}${leg.arrival_at && leg.departure_at ? ` – ${new Date(leg.arrival_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : ""}` : ""}</div>
+            <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${leg.arrival_at && leg.departure_at ? ` · returns ${new Date(leg.arrival_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : ""}</div>
             <div class="muted small">${legLabel(leg)} · ${names}</div>
             ${leg.notes ? `<div style="font-weight:700; margin-top:4px;">📝 ${leg.notes}</div>` : ""}
             ${leg.manager_notes ? `<div style="font-weight:700; margin-top:4px;">🗒 Manager: ${leg.manager_notes}</div>` : ""}
@@ -3283,8 +3283,8 @@ function openStandaloneTravelLegModal(legId, onDone) {
               <div><label>To city</label><input id="stlToCity" value="${leg?.to_city || ""}" /></div>
             </div>
             <div class="row-2">
-              <div><label>Departure (optional)</label><input id="stlDeparture" type="datetime-local" value="${leg?.departure_at ? leg.departure_at.slice(0, 16) : ""}" /></div>
-              <div><label>Return (optional)</label><input id="stlArrival" type="datetime-local" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 16) : ""}" /></div>
+              <div><label>Departure (optional)</label><input id="stlDeparture" type="date" value="${leg?.departure_at ? leg.departure_at.slice(0, 10) : ""}" /></div>
+              <div><label>Return (optional)</label><input id="stlArrival" type="date" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 10) : ""}" /></div>
             </div>
             <label>Booking ref / PNR (optional)</label>
             <input id="stlBookingRef" value="${leg?.booking_ref || ""}" />
@@ -5610,13 +5610,12 @@ async function openTravelShareModal(leadId) {
   const root = document.getElementById("modalRoot");
   const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
   const wall = (v) => {
-    const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(v || "");
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v || "");
     if (!m) return v || "";
     const mon = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][Number(m[2]) - 1];
-    let out = `${Number(m[3])} ${mon} ${m[1]}`;
-    if (m[4]) { const h = Number(m[4]); out += `, ${((h + 11) % 12) + 1}:${m[5]} ${h >= 12 ? "PM" : "AM"}`; }
-    return out;
+    return `${Number(m[3])} ${mon} ${m[1]}`;
   };
+
   const cap = (x) => (x ? x[0].toUpperCase() + x.slice(1) : "Travel");
   let data;
   try { data = await api(`/api/leads/${leadId}/travel-share`); } catch (err) { return alert(err.message); }
@@ -5625,6 +5624,7 @@ async function openTravelShareModal(leadId) {
   let clientPhone = lead.whatsapp_number || lead.phone || "";
   let busy = false;
   let includeTickets = true;
+  let clientNote = "";
   const LINK = "{link}";
 
   const legsFor = () => data.legs.map((l) => ({ ...l, who: data.team.filter((t) => selected.has(t.teamId) && l.memberIds.includes(t.teamId)).map((t) => t.name) }));
@@ -5648,6 +5648,7 @@ async function openTravelShareModal(leadId) {
         `   Travelling: ${l.who.join(", ")}`,
       ]),
       "",
+      ...(clientNote.trim() ? ["\ud83d\udcdd *Note:* " + clientNote.trim(), ""] : []),
       ...(includeTickets && legs.some((l) => (l.tickets || []).length) ? ["\ud83c\udfab Tickets already booked are attached in the link below.", ""] : []),
       `🪪 *ID cards + full details (secure link, valid 15 days):*`,
       LINK,
@@ -5712,6 +5713,8 @@ async function openTravelShareModal(leadId) {
             ${excluded.length && included.length ? `<p class="muted small">${excluded.length} other travel entr${excluded.length > 1 ? "ies" : "y"} for this event has none of the selected people, so it is left out.</p>` : ""}
 
             <div class="section-label" style="margin-top:14px;">3. Send to the client</div>
+            <label>Note for the client (optional \u2014 added to the message and the link page)</label>
+            <textarea id="tsNote" rows="2" placeholder="e.g. Please book the 2nd AC train; the keyboardist needs a window seat\u2026" style="font-size:13px;">${esc(clientNote)}</textarea>
             <label>Client WhatsApp number</label>
             <input id="tsPhone" type="tel" value="${esc(clientPhone)}" placeholder="Client phone" />
             <label>Message (you can edit it — keep the {link} line)</label>
@@ -5751,7 +5754,7 @@ async function openTravelShareModal(leadId) {
     if (missing.length && !confirm(`No ID saved for: ${missing.join(", ")}.\n\nSend anyway? The client will see "ID not available" for them.`)) return null;
     const hasLegs = legsFor().some((l) => l.who.length > 0);
     if (!hasLegs && !confirm("No travel details are linked to this event for the selected people. Send with just the IDs?")) return null;
-    const r = await api(`/api/leads/${leadId}/travel-share`, { method: "POST", body: JSON.stringify({ teamIds: ids, includeTickets: includeTickets && legsFor().some((l) => l.who.length > 0 && (l.tickets || []).length > 0) }) });
+    const r = await api(`/api/leads/${leadId}/travel-share`, { method: "POST", body: JSON.stringify({ teamIds: ids, note: clientNote, includeTickets: includeTickets && legsFor().some((l) => l.who.length > 0 && (l.tickets || []).length > 0) }) });
     const link = `${window.location.origin}/trip/${r.token}`;
     text = text.includes(LINK) ? text.replace(LINK, link) : `${text}\n\n🪪 ${link}`;
     return { text, link };
@@ -5764,10 +5767,17 @@ async function openTravelShareModal(leadId) {
     root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
     const keepInputs = () => {
       clientPhone = root.querySelector("#tsPhone").value;
+      clientNote = root.querySelector("#tsNote").value;
       const cur = root.querySelector("#tsMsg").value;
       if (cur !== buildMessage()) msgOverride = cur;
     };
     root.querySelector("#tsPhone").addEventListener("input", (e) => { clientPhone = e.target.value; });
+    root.querySelector("#tsMsg").addEventListener("input", (e) => { msgOverride = e.target.value; });
+    root.querySelector("#tsNote").addEventListener("input", (e) => {
+      clientNote = e.target.value;
+      const ta = root.querySelector("#tsMsg");
+      if (msgOverride == null && ta) ta.value = buildMessage();
+    });
     const tk = root.querySelector("#tsIncludeTickets");
     if (tk) tk.addEventListener("change", () => { keepInputs(); includeTickets = tk.checked; msgOverride = null; render(); });
     root.querySelectorAll(".ts-pick").forEach((cb) => cb.addEventListener("change", () => {
@@ -5866,7 +5876,7 @@ async function openTravelPlanModal(leadId) {
           </div>
           <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
         </div>
-        ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small" style="margin-top:6px;">${leg.departure_at ? `Departs ${fmtDateTime(leg.departure_at)}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Returns ${fmtDateTime(leg.arrival_at)}` : ""}</div>` : ""}
+        ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small" style="margin-top:6px;">${leg.departure_at ? `Departs ${fmtDate(leg.departure_at.slice(0, 10))}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Returns ${fmtDate(leg.arrival_at.slice(0, 10))}` : ""}</div>` : ""}
         ${leg.booking_ref ? `<div class="muted small" style="margin-top:2px;">Ref: ${leg.booking_ref}</div>` : ""}
         ${leg.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${leg.notes}</div>` : ""}
         ${leg.manager_notes ? `<div class="muted small" style="margin-top:2px;">🗒 Manager: ${leg.manager_notes}</div>` : ""}
@@ -5920,8 +5930,8 @@ async function openTravelPlanModal(leadId) {
           <div><label>To city</label><input id="${prefix}ToCity" value="${leg?.to_city || lead.city || ""}" placeholder="e.g. ${lead.city || "event city"}" /></div>
         </div>
         <div class="row-2">
-          <div><label>Departure (optional)</label><input id="${prefix}Departure" type="datetime-local" value="${leg?.departure_at ? leg.departure_at.slice(0, 16) : ""}" /></div>
-          <div><label>Return (optional)</label><input id="${prefix}Arrival" type="datetime-local" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 16) : ""}" /></div>
+          <div><label>Departure (optional)</label><input id="${prefix}Departure" type="date" value="${leg?.departure_at ? leg.departure_at.slice(0, 10) : ""}" /></div>
+          <div><label>Return (optional)</label><input id="${prefix}Arrival" type="date" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 10) : ""}" /></div>
         </div>
         <label>Booking ref / PNR (optional)</label>
         <input id="${prefix}BookingRef" value="${leg?.booking_ref || ""}" placeholder="e.g. PNR or booking number" />
@@ -6154,7 +6164,7 @@ async function openTravelPlanViewModal(leadId, leadName) {
                   </div>
                   <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
                 </div>
-                ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small" style="margin-top:6px;">${leg.departure_at ? `Departs ${fmtDateTime(leg.departure_at)}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Returns ${fmtDateTime(leg.arrival_at)}` : ""}</div>` : ""}
+                ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small" style="margin-top:6px;">${leg.departure_at ? `Departs ${fmtDate(leg.departure_at.slice(0, 10))}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Returns ${fmtDate(leg.arrival_at.slice(0, 10))}` : ""}</div>` : ""}
                 ${leg.booking_ref ? `<div class="muted small" style="margin-top:2px;">Ref: ${leg.booking_ref}</div>` : ""}
                 ${leg.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${leg.notes}</div>` : ""}
                 ${leg.tickets.length > 0 ? `

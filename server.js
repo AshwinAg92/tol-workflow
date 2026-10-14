@@ -3940,8 +3940,8 @@ app.post("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, r
   const token = crypto.randomBytes(24).toString("base64url");
   const now = new Date();
   const expires = new Date(now.getTime() + 15 * 86400000);
-  await pool.query("INSERT INTO travel_shares (token, lead_id, team_ids, created_at, expires_at, created_by, include_tickets) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-    [token, leadId, JSON.stringify(allIds), now.toISOString(), expires.toISOString(), req.user.username || null, req.body.includeTickets ? 1 : 0]);
+  await pool.query("INSERT INTO travel_shares (token, lead_id, team_ids, created_at, expires_at, created_by, include_tickets, note) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+    [token, leadId, JSON.stringify(allIds), now.toISOString(), expires.toISOString(), req.user.username || null, req.body.includeTickets ? 1 : 0, String(req.body.note || "").trim().slice(0, 1000) || null]);
   logActivity(req, `Travel IDs & details link created for ${lead.name} (${allIds.length} traveller${allIds.length > 1 ? "s" : ""})`, leadId);
   res.status(201).json({ token, expiresAt: expires.toISOString() });
 });
@@ -3984,7 +3984,7 @@ app.get("/trip/:token", async (req, res) => {
     const who = members.rows.filter((m) => m.leg_id === l.id && teamIds.includes(m.team_id)).map((m) => m.name);
     if (who.length === 0) return "";
     return `<div class="c"><b>${escHtml(l.mode ? l.mode[0].toUpperCase() + l.mode.slice(1) : "Travel")}</b> — ${escHtml(l.from_city || "?")} → ${escHtml(l.to_city || "?")}
-      ${l.departure_at ? `<div class="m">Depart: ${escHtml(fmtWall(l.departure_at))}</div>` : ""}${l.arrival_at ? `<div class="m">Arrive: ${escHtml(fmtWall(l.arrival_at))}</div>` : ""}
+      ${l.departure_at ? `<div class="m">Depart: ${escHtml(fmtWall(String(l.departure_at).slice(0, 10)))}</div>` : ""}${l.arrival_at ? `<div class="m">Arrive: ${escHtml(fmtWall(String(l.arrival_at).slice(0, 10)))}</div>` : ""}
       <div style="margin-top:6px">Travelling: ${who.map(escHtml).join(", ")}</div>
       ${ticketDocs.filter((d) => d.travel_leg_id === l.id).map((d) => { const url = `/trip/${encodeURIComponent(req.params.token)}/ticket/${d.id}`; return `<div style="margin-top:8px"><span class="m">\ud83c\udfab ${escHtml(d.original_name)}</span>${/^image\//i.test(d.mime_type || "") && !/hei[cf]/i.test(d.mime_type) ? `<br><img src="${url}" alt="Ticket">` : ""}<br><a href="${url}" target="_blank" rel="noopener">Open ticket</a></div>`; }).join("")}</div>`;
   }).join("");
@@ -3998,6 +3998,7 @@ app.get("/trip/:token", async (req, res) => {
   }).join("");
   res.send(shell(`<h1>Travel details & IDs</h1><div class="m">${escHtml(lead ? `${lead.name}${lead.city ? " · " + lead.city : ""}${lead.date ? " · " + fmtWall(lead.date) : ""}` : "")}</div>
     <div class="m" style="margin-top:6px">Shared by Together, Out Loud for booking tickets. Link valid until ${escHtml(fmtWall(s.expires_at))}.</div>
+    ${s.note ? `<div class="c" style="margin-top:12px;border-left:4px solid #C1602B"><b>Note from Together, Out Loud</b><div style="margin-top:4px;white-space:pre-wrap">${escHtml(s.note)}</div></div>` : ""}
     <h2>Team travelling (${trav.team.length + trav.guests.length})</h2>${idCards}
     <h2>Travel plan</h2>${legCards || `<div class="c m">Travel plan will be shared shortly.</div>`}`));
 });
