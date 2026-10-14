@@ -4847,10 +4847,10 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
           </div>
           ${unpromotedMusicians.length > 0 ? `
             <div id="addFromMusicianPanel" style="display:none; margin-top:8px;">
-              <select id="addFromMusicianSelect">
-                <option value="">Choose a musician…</option>
-                ${unpromotedMusicians.map((m) => `<option value="${m.id}">${m.name}${m.instruments.length > 0 ? ` — ${m.instruments.join(", ")}` : ""}</option>`).join("")}
-              </select>
+              <input id="addFromMusicianSearch" type="search" placeholder="🔍 Type to search all ${allMusicians.length} musicians (name, instrument, city, phone)…" autocomplete="off" />
+              <input id="addFromMusicianSelect" type="hidden" value="" />
+              <div id="addFromMusicianResults" style="max-height:220px; overflow:auto; border:1px solid #E9DFCF; border-radius:8px; margin-top:4px; background:#fff;"></div>
+              <div id="addFromMusicianPicked" class="small" style="margin-top:4px; font-weight:600;"></div>
               ${isAdmin ? `<input id="addFromMusicianFee" type="number" placeholder="Fee ₹ for this gig (optional)" style="margin-top:6px;" />` : ""}
               <button class="btn-primary full" id="confirmAddGuestMusicianBtn" style="margin-top:6px;">Add as guest for this event (stays in Musicians)</button>
               <button class="btn-ghost full" id="confirmAddFromMusicianBtn" style="margin-top:6px; font-size:12.5px;">Or make them a Team member & assign</button>
@@ -5053,6 +5053,30 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       const panel = root.querySelector("#addFromMusicianPanel");
       panel.style.display = panel.style.display === "none" ? "block" : "none";
     });
+    const mSearch = root.querySelector("#addFromMusicianSearch");
+    const mResults = root.querySelector("#addFromMusicianResults");
+    const mPicked = root.querySelector("#addFromMusicianPicked");
+    const mEsc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const drawMusicianResults = () => {
+      const q = mSearch.value.trim().toLowerCase();
+      const guestIds = new Set(tempArtists.map((t) => t.musician_id));
+      const hits = allMusicians
+        .filter((m) => !q || [m.name, m.phone, m.city, ...(m.instruments || [])].filter(Boolean).join(" ").toLowerCase().includes(q))
+        .slice().sort((a, b) => a.name.localeCompare(b.name)).slice(0, 40);
+      mResults.innerHTML = hits.length === 0 ? `<div class="muted small" style="padding:8px 10px;">No musician matches "${mEsc(mSearch.value)}".</div>` : hits.map((m) => {
+        const note = m.team_id ? "in Team \u2014 tick them in the list above" : guestIds.has(m.id) ? "already a guest here" : "";
+        return `<div class="mus-pick" data-id="${m.id}" data-ok="${note ? "" : "1"}" style="padding:7px 10px; border-top:1px solid #F1E9DA; ${note ? "opacity:.5;" : "cursor:pointer;"}">
+          <b>${mEsc(m.name)}</b> <span class="muted small">${mEsc([(m.instruments || []).join(", "), m.city].filter(Boolean).join(" \u00b7 "))}${note ? ` \u00b7 ${note}` : ""}</span></div>`;
+      }).join("");
+      mResults.querySelectorAll(".mus-pick[data-ok='1']").forEach((row) => row.addEventListener("click", () => {
+        const m = allMusicians.find((x) => x.id === row.dataset.id);
+        root.querySelector("#addFromMusicianSelect").value = m.id;
+        mPicked.textContent = `Selected: ${m.name}`;
+        mResults.querySelectorAll(".mus-pick").forEach((r) => (r.style.background = r === row ? "#F6E8D2" : ""));
+      }));
+    };
+    mSearch.addEventListener("input", drawMusicianResults);
+    drawMusicianResults();
     root.querySelector("#confirmAddGuestMusicianBtn").addEventListener("click", async (e) => {
       const musicianId = root.querySelector("#addFromMusicianSelect").value;
       if (!musicianId) return alert("Choose a musician first.");
