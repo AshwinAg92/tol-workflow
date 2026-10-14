@@ -2689,6 +2689,25 @@ app.get("/api/travel-legs", requireAuth, requireCapability("assign_team"), async
   })));
 });
 
+// Same person, same sector (from -> to), same event = a duplicate travel plan.
+async function sectorDuplicateNames({ leadId, fromCity, toCity, departureAt, teamIds, excludeLegId }) {
+  const norm = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const f = norm(fromCity), t = norm(toCity);
+  if (!f || !t || !Array.isArray(teamIds) || teamIds.length === 0) return [];
+  const { rows } = await pool.query(`
+    SELECT travel_legs.id, travel_legs.from_city, travel_legs.to_city, travel_legs.departure_at, travel_leg_members.team_id, team.name
+    FROM travel_legs
+    JOIN travel_leg_members ON travel_leg_members.leg_id = travel_legs.id
+    JOIN team ON team.id = travel_leg_members.team_id
+    WHERE travel_leg_members.team_id = ANY($1) AND ($2::text IS NULL OR travel_legs.id <> $2)
+      AND ${leadId ? "travel_legs.lead_id = $3" : "travel_legs.lead_id IS NULL AND LEFT(COALESCE(travel_legs.departure_at, ''), 10) = $3"}
+  `, [teamIds, excludeLegId || null, leadId || String(departureAt || "").slice(0, 10)]);
+  return [...new Set(rows.filter((r) => norm(r.from_city) === f && norm(r.to_city) === t).map((r) => r.name))];
+}
+function dupTravelMessage(names, fromCity, toCity) {
+  return `${names.join(", ")} already ${names.length > 1 ? "have" : "has"} a travel plan for ${fromCity} \u2192 ${toCity} on this event. Edit that one instead of creating a duplicate.`;
+}
+
 app.post("/api/travel-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const { leadId, label, teamIds, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status } = req.body;
   const notes = req.user.access_level === "admin" ? req.body.notes : null;
@@ -2699,6 +2718,7 @@ app.post("/api/travel-legs", requireAuth, requireCapability("assign_team"), asyn
     if (!(await pool.query("SELECT 1 FROM leads WHERE id = $1", [leadId])).rows[0]) return res.status(404).json({ error: "Event not found" });
     linkLeadId = leadId;
   }
+  { const dups = await sectorDuplicateNames({ leadId: linkLeadId, fromCity, toCity, departureAt, teamIds }); if (dups.length) return res.status(400).json({ error: dupTravelMessage(dups, fromCity, toCity) }); }
   const id = uuid();
   const now = new Date().toISOString();
   await pool.query(`
@@ -2719,6 +2739,7 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
   const notes = req.user.access_level === "admin" ? req.body.notes : null;
   const managerNotes = req.body.managerNotes || null;
   if (!Array.isArray(teamIds) || teamIds.length === 0) return res.status(400).json({ error: "Select at least one artist" });
+  { const fc = fromCity, tc = toCity || lead.city; const dups = await sectorDuplicateNames({ leadId: req.params.id, fromCity: fc, toCity: tc, teamIds }); if (dups.length) return res.status(400).json({ error: dupTravelMessage(dups, fc, tc) }); }
   const id = uuid();
   const now = new Date().toISOString();
   await pool.query(`
@@ -2744,6 +2765,14 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
 app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const leg = (await pool.query("SELECT * FROM travel_legs WHERE id = $1", [req.params.id])).rows[0];
   if (!leg) return res.status(404).json({ error: "Travel leg not found" });
+  {
+    const curMembers = (await pool.query("SELECT team_id FROM travel_leg_members WHERE leg_id = $1", [req.params.id])).rows.map((r) => r.team_id);
+    const fc = req.body.fromCity !== undefined ? req.body.fromCity : leg.from_city;
+    const tc = req.body.toCity !== undefined ? req.body.toCity : leg.to_city;
+    const lid = req.body.leadId !== undefined ? req.body.leadId : leg.lead_id;
+    const dups = await sectorDuplicateNames({ leadId: lid || null, fromCity: fc, toCity: tc, departureAt: req.body.departureAt !== undefined ? req.body.departureAt : leg.departure_at, teamIds: Array.isArray(req.body.teamIds) ? req.body.teamIds : curMembers, excludeLegId: req.params.id });
+    if (dups.length) return res.status(400).json({ error: dupTravelMessage(dups, fc, tc) });
+  }
   const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "manager_notes", "label", "lead_id"];
   const keyFor = (f) => (f === "manager_notes" ? "managerNotes" : f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f === "lead_id" ? "leadId" : f);
   const updates = [];
