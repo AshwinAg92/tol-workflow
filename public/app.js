@@ -4024,7 +4024,7 @@ function openEditMemberModal(member, linkedUser) {
             <div id="emPerformerWrap" style="margin-top:10px; display:${linkedUser.access_level === "performer" ? "none" : "block"};">
               <label class="check-row"><input type="checkbox" id="emIsPerformer" ${linkedUser.is_performer ? "checked" : ""} /> Also a performer (sees own assigned events, artist fee, and accept/decline)</label>
             </div>
-          ` : `<p class="muted small">No login yet for this person — add a username/password below to create one.</p>`}
+          ` : ""}
           <div class="row-2">
             <div><label>Role / title</label><input id="emRole" value="${member.role || ""}" /></div>
             <div><label>Specialty (optional)</label><input id="emSpecialty" value="${member.specialty || ""}" placeholder="e.g. Drummer, Photographer" /></div>
@@ -4046,6 +4046,8 @@ function openEditMemberModal(member, linkedUser) {
             <div><label>Phone</label><input id="emPhone" value="${member.phone || ""}" /></div>
             <div><label>Email</label><input id="emEmail" value="${member.email || ""}" /></div>
           </div>
+          ${!linkedUser ? `<div id="emNoLoginBox" class="card" style="margin-top:12px; padding:10px 12px;"><div class="muted small">${member.kind === "freelance" ? "No login needed \u2014 they confirm events through the WhatsApp link." : "No login for this person."}</div><button type="button" class="btn-ghost" id="emShowLogin" style="margin-top:6px;">Give this person a login</button></div>` : ""}
+          <div id="emLoginBlock" style="display:${linkedUser ? "block" : "none"};">
           <div class="row-2">
             <div><label>Username</label><input id="emUsername" value="${linkedUser ? linkedUser.username : ""}" placeholder="${linkedUser ? "" : "Leave blank for no login"}" /></div>
             <div><label>${linkedUser ? "New password (leave blank to keep unchanged)" : "Password"}</label>
@@ -4070,6 +4072,7 @@ function openEditMemberModal(member, linkedUser) {
             <div id="emPerformerWrap" style="margin-top:10px;">
               <label class="check-row"><input type="checkbox" id="emIsPerformer" /> Also a performer (sees own assigned events, artist fee, and accept/decline)</label>
             </div>` : ""}
+          </div>
         </div>
         <div class="modal-foot">
           <button class="btn-ghost" id="deleteMember" style="color:#A6432B;">Remove member</button>
@@ -4088,6 +4091,11 @@ function openEditMemberModal(member, linkedUser) {
     };
     emAccessSelect.addEventListener("change", toggleEmPerms);
   }
+  const showLoginBtn = root.querySelector("#emShowLogin");
+  if (showLoginBtn) showLoginBtn.addEventListener("click", () => {
+    root.querySelector("#emLoginBlock").style.display = "block";
+    root.querySelector("#emNoLoginBox").style.display = "none";
+  });
   root.querySelector("#genPasswordBtn").addEventListener("click", () => {
     const pw = Math.random().toString(36).slice(-4) + Math.floor(1000 + Math.random() * 9000);
     const input = root.querySelector("#emPassword");
