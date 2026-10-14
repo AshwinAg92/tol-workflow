@@ -10,6 +10,7 @@ let currentTab = "dashboard";
 let leadsFilter = "all";
 let leadsStageFilter = "all";
 let leadsSearch = "";
+let leadsOnlyId = ""; // set when jumping to one specific event from search/calendar
 let leadsCityFilter = "";
 let leadsDateFilter = "";
 let leadsQuoteDateFilter = "";
@@ -1299,7 +1300,7 @@ function initGlobalSearch() {
       btn.addEventListener("click", () => {
         const lead = LEADS.find((l) => l.id === btn.dataset.gotoLead);
         if (!lead || !hasLeadsAccess()) { close(); return; }
-        leadsSearch = lead.name;
+        leadsSearch = lead.name; leadsOnlyId = lead.id;
         leadsCityFilter = "";
         leadsStageFilter = "all";
         leadsDateFilter = "";
@@ -1695,12 +1696,13 @@ async function renderLeadsLog(main, skipRefresh) {
     // than silently disappearing. Selecting a specific stage from the
     // dropdown always shows that stage's full history regardless of date.
     .filter((l) => {
+      if (leadsOnlyId) return l.id === leadsOnlyId;
       if (leadsStageFilter !== "all") return l.stage === leadsStageFilter;
       if (l.stage === "Completed") return false;
       if (l.date && l.date < todayStr && l.stage !== "Tentative") return false;
       return true;
     })
-    .filter((l) => !leadsSearch || l.name.toLowerCase().includes(leadsSearch.toLowerCase()))
+    .filter((l) => leadsOnlyId || !leadsSearch || l.name.toLowerCase().includes(leadsSearch.toLowerCase()))
     .filter((l) => !leadsCityFilter || (l.city || "").toLowerCase().includes(leadsCityFilter.toLowerCase()))
     .filter((l) => !leadsDateFilter || l.date === leadsDateFilter)
     .filter((l) => !leadsQuoteDateFilter || (l.last_quoted_at || "").slice(0, 10) === leadsQuoteDateFilter)
@@ -1755,7 +1757,7 @@ async function renderLeadsLog(main, skipRefresh) {
           <option value="newest" ${leadsSortBy === "newest" ? "selected" : ""}>Sort: Newest submitted</option>
         </select>
         <button class="btn-ghost${leadsB2bOnly ? " filter-chip-active" : ""}" id="leadsB2bToggle" style="${leadsB2bOnly ? "background:#8A5FA8; color:#fff; border-color:#8A5FA8;" : ""}">🏢 B2B only</button>
-        ${(leadsSearch || leadsCityFilter || leadsDateFilter || leadsQuoteDateFilter || leadsStageFilter !== "all" || leadsB2bOnly) ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
+        ${(leadsSearch || leadsOnlyId || leadsCityFilter || leadsDateFilter || leadsQuoteDateFilter || leadsStageFilter !== "all" || leadsB2bOnly) ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
       </div>
     </div>
 
@@ -1768,6 +1770,7 @@ async function renderLeadsLog(main, skipRefresh) {
   main.querySelector("#leadsSearchInput").addEventListener("input", (e) => {
     const cursorPos = e.target.selectionStart;
     leadsSearch = e.target.value;
+    leadsOnlyId = "";
     renderLeadsLog(main, true);
     const newInput = document.querySelector("#leadsSearchInput");
     if (newInput) {
@@ -1799,7 +1802,7 @@ async function renderLeadsLog(main, skipRefresh) {
   main.querySelector("#leadsSortSelect").addEventListener("change", (e) => { leadsSortBy = e.target.value; renderLeadsLog(main, true); });
   main.querySelector("#leadsB2bToggle").addEventListener("click", () => { leadsB2bOnly = !leadsB2bOnly; renderLeadsLog(main, true); });
   const clearAllBtn = main.querySelector("#clearAllFilters");
-  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsCityFilter = ""; leadsDateFilter = ""; leadsQuoteDateFilter = ""; leadsStageFilter = "all"; leadsB2bOnly = false; renderLeadsLog(main, true); });
+  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsOnlyId = ""; leadsCityFilter = ""; leadsDateFilter = ""; leadsQuoteDateFilter = ""; leadsStageFilter = "all"; leadsB2bOnly = false; renderLeadsLog(main, true); });
 
   const filterRow = main.querySelector("#filterRow");
   const allChip = el(`<button class="filter-chip${leadsFilter === "all" ? " filter-chip-active" : ""}">All <span class="mono">${baseFiltered.length}</span></button>`);
@@ -2871,7 +2874,7 @@ function wireCalendarGrid(container) {
         const lead = LEADS.find((l) => l.id === pill.dataset.leadId);
         if (!lead) return;
         if (hasLeadsAccess()) {
-          leadsSearch = lead.name;
+          leadsSearch = lead.name; leadsOnlyId = lead.id;
           leadsStageFilter = "all";
           leadsCityFilter = "";
           leadsDateFilter = "";
@@ -3002,7 +3005,7 @@ async function renderCalendar(main) {
     });
     row.addEventListener("click", () => {
       if (hasLeadsAccess()) {
-        leadsSearch = l.name;
+        leadsSearch = l.name; leadsOnlyId = l.id;
         leadsStageFilter = "all";
         leadsCityFilter = "";
         leadsDateFilter = "";
