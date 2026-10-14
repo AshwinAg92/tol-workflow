@@ -3487,7 +3487,7 @@ async function renderTeam(main, subTab = "team") {
             ${m.kind === "freelance" ? `<span class="mono small" style="background:#EDE7F6; color:#5E4B8B; border-radius:4px; padding:1px 7px; font-weight:600;">Freelance</span>` : `<span class="mono small" style="background:#E4F1F1; color:#1C7A80; border-radius:4px; padding:1px 7px; font-weight:600;">Core</span>`}
             ${instList.map((i) => `<span class="mono small" style="background:#FBEFD9; border-radius:4px; padding:1px 7px;">${escT(i)}</span>`).join("")}
           </div>
-          <span class="muted small">${escT([m.phone, m.base_city].filter(Boolean).join(" \u00b7 "))}${m.activeShows.length ? ` \u00b7 ${m.activeShows.length} upcoming` : ""}</span>
+          <span class="muted small">${m.kind === "freelance" && !teamIdsWithLogin.has(m.id) ? "No login \u00b7 " : ""}${escT([m.phone, m.base_city].filter(Boolean).join(" \u00b7 "))}${m.activeShows.length ? ` \u00b7 ${m.activeShows.length} upcoming` : ""}</span>
         </div>
         <div data-person-details="${m.id}" style="display:none; margin-top:10px; padding-top:10px; border-top:1px solid #EEE7D8; font-size:13px; line-height:1.7;">
           ${m.role ? `<div><span class="muted">Role:</span> ${escT(m.role)}</div>` : ""}
@@ -3500,8 +3500,9 @@ async function renderTeam(main, subTab = "team") {
           <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">
             <button class="btn-ghost" data-view-events="${m.id}" style="font-size:12px; padding:4px 9px;">\ud83d\udcc5 Events</button>
             ${canManage ? `<button class="btn-ghost" data-edit-member="${m.id}" style="font-size:12px; padding:4px 9px;">Edit</button>` : ""}
-            ${canManage && !teamIdsWithLogin.has(m.id) ? `<button class="btn-ghost" data-add-login="${m.id}" style="font-size:12px; padding:4px 9px;">+ Add login</button>` : ""}
+            ${canManage && !teamIdsWithLogin.has(m.id) ? `<button class="btn-ghost" data-add-login="${m.id}" style="font-size:12px; padding:4px 9px;">${m.kind === "freelance" ? "Give a login anyway" : "+ Add login"}</button>` : ""}
           </div>
+          ${m.kind === "freelance" && !teamIdsWithLogin.has(m.id) ? `<div class="muted small" style="margin-top:6px;">No login needed \u2014 they accept or decline through the WhatsApp link you send for each event.</div>` : ""}
         </div>
       </div>
     `);
