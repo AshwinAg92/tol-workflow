@@ -3790,7 +3790,7 @@ function openAddPersonModal(onCreated, defaults = {}) {
       <div class="modal-head"><h3>Add a person</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
       <div class="modal-body">
         <label>Name *</label><input id="apName" />
-        <label>Instruments (comma-separated)</label><input id="apInstruments" placeholder="e.g. Tabla, Dholak" />
+        <label>Instruments (tick all that apply)</label>${instrumentPickerHtml("apInstruments", "")}
         <div class="row-2">
           <div><label>Type</label><select id="apKind"><option value="freelance" ${defaults.kind !== "core" ? "selected" : ""}>Freelance (called as needed)</option><option value="core" ${defaults.kind === "core" ? "selected" : ""}>Core (plays with you regularly)</option></select></div>
           <div><label>Base city</label><input id="apCity" placeholder="e.g. Kolkata" /></div>
@@ -3809,6 +3809,7 @@ function openAddPersonModal(onCreated, defaults = {}) {
       </div>
       <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="apSave">Add</button></div>
     </div></div>`;
+  wireInstrumentPicker(root, "apInstruments");
   const close = () => (root.innerHTML = "");
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#cancelModal").addEventListener("click", close);
@@ -3820,7 +3821,7 @@ function openAddPersonModal(onCreated, defaults = {}) {
     btn.disabled = true;
     try {
       const r = await api("/api/team", { method: "POST", body: JSON.stringify({
-        name, instruments: root.querySelector("#apInstruments").value, kind: root.querySelector("#apKind").value,
+        name, instruments: readInstrumentPicker(root, "apInstruments"), kind: root.querySelector("#apKind").value,
         baseCity: root.querySelector("#apCity").value, phone: root.querySelector("#apPhone").value, email: root.querySelector("#apEmail").value,
         localFee: root.querySelector("#apLocalFee")?.value || null, outstationFee: root.querySelector("#apOutFee")?.value || null,
         notes: root.querySelector("#apNotes")?.value,
@@ -4009,6 +4010,37 @@ function openAddLoginForMemberModal(member) {
   });
 }
 
+const BASE_INSTRUMENTS = ["Vocals", "Keyboard", "Tabla", "Drummer", "Bass Guitar", "Guitar", "Flute", "Octopad", "Dholak", "Violin", "Harmonium", "Percussion", "Photographer", "Sound Engineer"];
+// Pick-from-a-list instrument chooser (avoids spelling variants breaking the filters).
+function instrumentPickerHtml(id, current) {
+  const cur = String(current || "").split(/,|&| and /i).map((x) => x.replace(/ player$/i, "").trim()).filter(Boolean);
+  const all = new Map();
+  [...BASE_INSTRUMENTS, ...(TEAM || []).flatMap((m) => String(m.instruments || "").split(",").map((x) => x.trim()).filter(Boolean)), ...cur]
+    .forEach((i) => { if (!/^(admin|manager)$/i.test(i) && !all.has(i.toLowerCase())) all.set(i.toLowerCase(), i); });
+  const sel = new Set(cur.map((x) => x.toLowerCase()));
+  const opts = [...all.values()].sort((a, b) => a.localeCompare(b));
+  return `<div id="${id}" class="inst-picker" style="display:flex; flex-wrap:wrap; gap:6px 12px; margin:4px 0 6px;">${opts.map((i) => `<label class="check-row" style="margin:0;"><input type="checkbox" class="inst-cb" value="${i.replace(/"/g, "&quot;")}" ${sel.has(i.toLowerCase()) ? "checked" : ""} /> ${i.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</label>`).join("")}</div>
+    <div style="display:flex; gap:6px; margin-bottom:8px;"><input id="${id}Other" placeholder="Not in the list? Type it here" style="flex:1;" /><button type="button" class="btn-ghost" id="${id}Add">+ Add</button></div>`;
+}
+function wireInstrumentPicker(root, id) {
+  const box = root.querySelector("#" + id), inp = root.querySelector("#" + id + "Other");
+  root.querySelector("#" + id + "Add").addEventListener("click", () => {
+    const v = inp.value.trim().replace(/\s+/g, " ");
+    if (!v) return;
+    const ex = [...box.querySelectorAll(".inst-cb")].find((c) => c.value.toLowerCase() === v.toLowerCase());
+    if (ex) ex.checked = true;
+    else {
+      const l = document.createElement("label"); l.className = "check-row"; l.style.margin = "0";
+      const c = document.createElement("input"); c.type = "checkbox"; c.className = "inst-cb"; c.value = v; c.checked = true;
+      l.append(c, " " + v); box.appendChild(l);
+    }
+    inp.value = "";
+  });
+}
+function readInstrumentPicker(root, id) {
+  return [...root.querySelectorAll("#" + id + " .inst-cb:checked")].map((c) => c.value).join(", ");
+}
+
 function openDuplicatesModal(groups) {
   const escapeHtml = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;");
   const root = document.getElementById("modalRoot");
@@ -4064,8 +4096,8 @@ function openEditMemberModal(member, linkedUser) {
               <label class="check-row"><input type="checkbox" id="emIsPerformer" ${linkedUser.is_performer ? "checked" : ""} /> Also a performer (sees own assigned events, artist fee, and accept/decline)</label>
             </div>
           ` : ""}
-          <label>Instruments / role (comma-separated \u2014 used by the filters)</label>
-          <input id="emInstruments" value="${String(member.instruments || member.specialty || member.role || "").replace(/"/g, "&quot;")}" placeholder="e.g. Tabla, Dholak" />
+          <label>Instruments / role (tick all that apply \u2014 used by the filters)</label>
+          ${instrumentPickerHtml("emInstruments", member.instruments || member.specialty || member.role)}
           ${(() => { const cur = String(member.instruments || member.specialty || member.role || "").toLowerCase(); const r = String(member.role || ""); return r && !cur.includes(r.toLowerCase()) ? `<label>Title (optional, e.g. Manager)</label><input id="emRole" value="${r.replace(/"/g, "&quot;")}" />` : ""; })()}
           <div class="row-2">
             <div><label>Type</label><select id="emKind"><option value="core" ${member.kind !== "freelance" ? "selected" : ""}>Core (plays with you regularly)</option><option value="freelance" ${member.kind === "freelance" ? "selected" : ""}>Freelance (called as needed)</option></select></div>
@@ -4119,6 +4151,7 @@ function openEditMemberModal(member, linkedUser) {
     </div>
   `;
   wirePasswordToggles(root);
+  wireInstrumentPicker(root, "emInstruments");
   const emAccessSelect = root.querySelector("#emAccess");
   if (emAccessSelect) {
     const toggleEmPerms = () => {
@@ -4151,11 +4184,11 @@ function openEditMemberModal(member, linkedUser) {
         method: "PATCH",
         body: JSON.stringify({
           name: root.querySelector("#emName").value,
-          role: root.querySelector("#emRole") ? root.querySelector("#emRole").value : (root.querySelector("#emInstruments").value || member.role || ""),
-          specialty: root.querySelector("#emInstruments").value,
+          role: root.querySelector("#emRole") ? root.querySelector("#emRole").value : (readInstrumentPicker(root, "emInstruments") || member.role || ""),
+          specialty: readInstrumentPicker(root, "emInstruments"),
           baseCity: root.querySelector("#emBaseCity").value,
           kind: root.querySelector("#emKind").value,
-          instruments: root.querySelector("#emInstruments").value,
+          instruments: readInstrumentPicker(root, "emInstruments"),
           notes: root.querySelector("#emNotes")?.value,
           localFee: root.querySelector("#emLocalFee")?.value,
           outstationFee: root.querySelector("#emOutstationFee")?.value,
