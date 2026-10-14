@@ -4761,11 +4761,22 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
             // assigned yet, or right after adding someone, since those are
             // exactly the moments you need the full list in view.
             const startExpanded = assignedCount === 0 || !!autoCheckTeamId;
-            return `
+            const lineupTeam = TEAM.filter((m) => byTeamId[m.id]).map((m) => ({ name: m.name, role: m.role, status: byTeamId[m.id].status, guest: false }));
+            const lineupGuests = tempArtists.map((t) => ({ name: t.name, role: t.description, status: t.status || "pending", guest: true }));
+            const lineupAll = [...lineupTeam, ...lineupGuests];
+            const chip = { accepted: ["#E3F4E5", "#1E6B2B", "Accepted"], declined: ["#FBE3DE", "#A6432B", "Declined"], pending: ["#FFF4E5", "#8A5A1F", "Awaiting"], cancel_requested: ["#FFF4E5", "#8A5A1F", "Cancel requested"] };
+            const lineupCard = `
+            <div class="card" style="margin:16px 0 8px; padding:12px 14px; border-color:#B5541C;">
+              <div style="font-weight:700;">\ud83c\udfa4 Lineup for this event \u2014 ${lineupAll.length} ${lineupAll.length === 1 ? "person" : "people"}${lineupGuests.length ? ` <span class="muted small" style="font-weight:400;">(${lineupTeam.length} team + ${lineupGuests.length} guest)</span>` : ""}</div>
+              ${lineupAll.length === 0 ? `<div class="muted small">Nobody added yet.</div>` : lineupAll.map((x) => { const c = chip[x.status] || chip.pending; return `<div style="display:flex; justify-content:space-between; gap:8px; align-items:center; font-size:13px; padding:4px 0; border-top:1px solid #F1E9DA;">
+                <span><b>${String(x.name).replace(/</g, "&lt;")}</b>${x.role ? ` <span class="muted small">\u00b7 ${String(x.role).replace(/</g, "&lt;")}</span>` : ""}${x.guest ? ` <span class="mono small" style="background:#E4F1F1; color:#1C7A80; border-radius:4px; padding:0 6px;">Guest</span>` : ""}</span>
+                <span class="small" style="background:${c[0]}; color:${c[1]}; border-radius:10px; padding:1px 9px; white-space:nowrap;">${c[2]}</span></div>`; }).join("")}
+            </div>`;
+            return lineupCard + `
             <div data-toggle-team-list style="cursor:pointer; display:flex; align-items:center; gap:8px; background:#FBEFD9; border-radius:8px; padding:10px 14px; margin:16px 0 8px; font-weight:700; font-size:14.5px; color:#2A2620;">
               <span data-team-list-caret style="font-size:12px;">${startExpanded ? "▾" : "▸"}</span>
               <span>Team members</span>
-              <span class="muted" style="font-weight:600; font-size:13px;">(${assignedCount} of ${TEAM.length} assigned)</span>
+              <span class="muted" style="font-weight:600; font-size:13px;">(${assignedCount} of ${TEAM.length} assigned${tempArtists.length ? ` \u00b7 guests listed below` : ""})</span>
             </div>
             <div id="teamMembersList" style="display:${startExpanded ? "block" : "none"};">
               ${TEAM.map((m) => {
@@ -5025,6 +5036,13 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       lead.soundcheck_time ? `🔊 Sound check: ${fmtTimeHM(lead.soundcheck_time)}` : "",
       lead.event_time ? `⏰ Event: ${fmtTimeHM(lead.event_time)}` : "",
       lead.pcs && lead.event_type !== "pheras" ? `🎻 Set: ${lead.pcs} pieces` : "",
+      (() => {
+        const names = [
+          ...TEAM.filter((m) => byTeamId[m.id] && byTeamId[m.id].status !== "declined").map((m) => `${m.name}${m.role ? ` (${m.role})` : ""}`),
+          ...tempArtists.filter((t) => t.status !== "declined").map((t) => `${t.name}${t.description ? ` (${t.description})` : ""}`),
+        ];
+        return names.length ? `🎤 Team (${names.length}):\n${names.map((n, i) => `${i + 1}. ${n}`).join("\n")}` : "";
+      })(),
       ...[...root.querySelectorAll("#contactRows .contact-row")].map((row) => {
         const ph = row.querySelector(".ct-phone").value.trim();
         if (!ph) return "";
