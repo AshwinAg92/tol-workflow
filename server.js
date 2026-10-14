@@ -505,6 +505,80 @@ app.patch("/api/team/:id", requireAuth, requireCapability("manage_team"), async 
 });
 
 // Remove a team member entirely — also removes any login tied to them.
+function normPersonName(n) { return String(n || "").toLowerCase().replace(/[^a-z0-9]/g, ""); }
+function phoneKey(ph) { const d = String(ph || "").replace(/\D/g, ""); return d.length >= 10 ? d.slice(-10) : ""; }
+
+// Possible duplicate people (same name or same phone) — admin only.
+app.get("/api/team/duplicates", requireAuth, requireAdmin, async (req, res) => {
+  const people = (await pool.query("SELECT id, name, phone, email, kind, base_city, instruments FROM team")).rows;
+  const users = (await pool.query("SELECT team_id FROM users")).rows.map((u) => u.team_id);
+  const up = (await pool.query(`SELECT event_assignments.team_id AS tid, COUNT(*) AS c FROM event_assignments JOIN leads ON leads.id = event_assignments.lead_id WHERE leads.stage = 'Confirmed' GROUP BY 1`)).rows;
+  const counts = Object.fromEntries(up.map((r) => [r.tid, Number(r.c)]));
+  const parent = {};
+  const find = (x) => (parent[x] === x ? x : (parent[x] = find(parent[x])));
+  people.forEach((p) => (parent[p.id] = p.id));
+  const seen = {};
+  for (const p of people) {
+    for (const k of [normPersonName(p.name) && "n:" + normPersonName(p.name), phoneKey(p.phone) && "p:" + phoneKey(p.phone)]) {
+      if (!k) continue;
+      if (seen[k]) parent[find(p.id)] = find(seen[k]); else seen[k] = p.id;
+    }
+  }
+  const groups = {};
+  people.forEach((p) => { (groups[find(p.id)] = groups[find(p.id)] || []).push({ ...p, hasLogin: users.includes(p.id), events: counts[p.id] || 0 }); });
+  res.json(Object.values(groups).filter((g) => g.length > 1));
+});
+
+// Merge person `fromId` into person `:id`; everything linked to fromId moves across.
+app.post("/api/team/:id/merge", requireAuth, requireAdmin, async (req, res) => {
+  const keepId = req.params.id, fromId = req.body && req.body.fromId;
+  if (!fromId || fromId === keepId) return res.status(400).json({ error: "Pick a different person to merge" });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const keep = (await client.query("SELECT * FROM team WHERE id = $1", [keepId])).rows[0];
+    const from = (await client.query("SELECT * FROM team WHERE id = $1", [fromId])).rows[0];
+    if (!keep || !from) throw new Error("Person not found");
+    const ku = (await client.query("SELECT id FROM users WHERE team_id = $1", [keepId])).rows[0];
+    const fu = (await client.query("SELECT id FROM users WHERE team_id = $1", [fromId])).rows[0];
+    if (ku && fu) throw new Error("Both people have logins — remove one login first, then merge.");
+    if (fu) await client.query("UPDATE users SET team_id = $1 WHERE id = $2", [keepId, fu.id]);
+    // assignments: keep the existing one if both were on the same event
+    const fa = (await client.query("SELECT * FROM event_assignments WHERE team_id = $1", [fromId])).rows;
+    for (const a of fa) {
+      const dup = (await client.query("SELECT id FROM event_assignments WHERE lead_id = $1 AND team_id = $2", [a.lead_id, keepId])).rows[0];
+      if (dup) await client.query("DELETE FROM event_assignments WHERE id = $1", [a.id]);
+      else await client.query("UPDATE event_assignments SET team_id = $1 WHERE id = $2", [keepId, a.id]);
+    }
+    for (const [t, c] of [["expenses","team_id"],["notifications","team_id"],["notifications","from_team_id"],["travel_legs","team_id"],["team_id_docs","team_id"],["musicians","team_id"],["tasks","assigned_to"],["leads","assigned_to"]]) {
+      await client.query(`UPDATE ${t} SET ${c} = $1 WHERE ${c} = $2`, [keepId, fromId]);
+    }
+    await client.query("DELETE FROM travel_leg_members WHERE team_id = $1 AND leg_id IN (SELECT leg_id FROM travel_leg_members WHERE team_id = $2)", [fromId, keepId]);
+    await client.query("UPDATE travel_leg_members SET team_id = $1 WHERE team_id = $2", [keepId, fromId]);
+    const shares = (await client.query("SELECT token, team_ids FROM travel_shares")).rows;
+    for (const sh of shares) {
+      let ids; try { ids = JSON.parse(sh.team_ids || "[]"); } catch { continue; }
+      if (!ids.includes(fromId)) continue;
+      ids = [...new Set(ids.map((i) => (i === fromId ? keepId : i)))];
+      await client.query("UPDATE travel_shares SET team_ids = $1 WHERE token = $2", [JSON.stringify(ids), sh.token]);
+    }
+    await client.query("UPDATE member_registrations SET team_id = $1 WHERE team_id = $2", [keepId, fromId]);
+    // fill blanks on the kept person
+    const inst = [...new Set(`${keep.instruments || ""},${from.instruments || ""}`.split(",").map((x) => x.trim()).filter(Boolean))].join(", ");
+    const notes = [keep.notes, from.notes].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(" | ");
+    await client.query(`UPDATE team SET phone = COALESCE(NULLIF(phone,''), $1), email = COALESCE(NULLIF(email,''), $2), base_city = COALESCE(NULLIF(base_city,''), $3),
+      specialty = COALESCE(NULLIF(specialty,''), $4), local_fee = COALESCE(local_fee, $5), outstation_fee = COALESCE(outstation_fee, $6),
+      reg_details = COALESCE(reg_details, $7), legacy_musician_id = COALESCE(legacy_musician_id, $8), instruments = $9, notes = $10 WHERE id = $11`,
+      [from.phone, from.email, from.base_city, from.specialty, from.local_fee, from.outstation_fee, from.reg_details, from.legacy_musician_id, inst || null, notes || null, keepId]);
+    await client.query("DELETE FROM team WHERE id = $1", [fromId]);
+    await client.query("COMMIT");
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    res.status(400).json({ error: err.message });
+  } finally { client.release(); }
+});
+
 app.delete("/api/team/:id", requireAuth, requireAdmin, async (req, res) => {
   const linkedUser = (await pool.query("SELECT id FROM users WHERE team_id = $1", [req.params.id])).rows[0];
   if (linkedUser && linkedUser.id === req.user.id) {

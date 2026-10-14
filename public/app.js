@@ -3438,6 +3438,7 @@ async function renderTeam(main, subTab = "team") {
         <div><label>Type</label><select id="teamKindFilter"><option value="">Everyone</option><option value="core">Core</option><option value="freelance">Freelance</option></select></div>
       </div>
     </div>
+    <div id="dupBanner"></div>
     <div id="teamNoMatch" class="muted small" style="display:none; margin-bottom:10px;">No team member matches that search.</div>
     <div id="teamGrid"></div>
     ${isAdmin ? `
@@ -3524,6 +3525,13 @@ async function renderTeam(main, subTab = "team") {
     const insts = [...new Map(TEAM.flatMap((m) => (m.instruments || m.specialty || m.role || "").split(/,|&| and /i).map((x) => x.trim()).filter(Boolean)).map((x) => [x.toLowerCase(), x])).values()].sort((a, b) => a.localeCompare(b));
     main.querySelector("#teamCityFilter").innerHTML = `<option value="">All cities</option>${cities.map((c) => `<option>${c}</option>`).join("")}`;
     main.querySelector("#teamInstFilter").innerHTML = `<option value="">All instruments</option>${insts.map((c) => `<option>${c}</option>`).join("")}`;
+    if (isAdmin) api("/api/team/duplicates").then((groups) => {
+      if (!groups.length) return;
+      const box = main.querySelector("#dupBanner");
+      if (!box) return;
+      box.innerHTML = `<div class="card" style="padding:10px 14px; margin-bottom:12px; border-left:4px solid #C98A1B;"><b>\u26a0 ${groups.length} possible duplicate${groups.length > 1 ? "s" : ""}</b> <button class="btn-ghost" id="dupReview" style="margin-left:8px;">Review &amp; merge</button></div>`;
+      box.querySelector("#dupReview").addEventListener("click", () => openDuplicatesModal(groups));
+    }).catch(() => {});
     const applyTeamFilters = () => {
       const q = main.querySelector("#teamSearch").value.trim().toLowerCase();
       const city = main.querySelector("#teamCityFilter").value;
@@ -3999,6 +4007,37 @@ function openAddLoginForMemberModal(member) {
       alert(err.message);
     }
   });
+}
+
+function openDuplicatesModal(groups) {
+  const escapeHtml = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay"><div class="modal-card">
+      <div class="modal-head"><h3>Possible duplicates</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+      <div class="modal-body">
+        <p class="muted small">Same name or phone number. Choose which entry to <b>keep</b> \u2014 the other one's events, fees, travel and ID cards move across, blanks are filled in, then the extra entry is removed.</p>
+        ${groups.map((g, gi) => `<div class="card" style="padding:10px 12px; margin-bottom:10px;">${g.map((p) => `
+          <div style="display:flex; justify-content:space-between; gap:8px; align-items:center; padding:4px 0;">
+            <div><b>${escapeHtml(p.name)}</b> <span class="muted small">${escapeHtml([p.kind, p.phone, p.base_city, p.instruments].filter(Boolean).join(" \u00b7 "))}${p.hasLogin ? " \u00b7 has login" : ""} \u00b7 ${p.events} confirmed event${p.events === 1 ? "" : "s"}</span></div>
+            <button class="btn-ghost" data-keep="${p.id}" data-group="${gi}">Keep this one</button>
+          </div>`).join("")}</div>`).join("")}
+      </div>
+    </div></div>`;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelectorAll("[data-keep]").forEach((btn) => btn.addEventListener("click", async () => {
+    const g = groups[Number(btn.dataset.group)];
+    const others = g.filter((p) => p.id !== btn.dataset.keep);
+    if (!confirm(`Merge ${others.length} other entr${others.length > 1 ? "ies" : "y"} into this one? This can't be undone.`)) return;
+    try {
+      for (const o of others) await api(`/api/team/${btn.dataset.keep}/merge`, { method: "POST", body: JSON.stringify({ fromId: o.id }) });
+      TEAM = await api("/api/team");
+      close();
+      renderMain();
+    } catch (err) { alert(err.message); }
+  }));
 }
 
 function openEditMemberModal(member, linkedUser) {
