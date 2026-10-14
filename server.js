@@ -453,6 +453,24 @@ app.patch("/api/users/:id", requireAuth, requireCapability("manage_team"), async
   res.json({ id: user.id, username: username || user.username, accessLevel: accessLevel || user.access_level, isPerformer: !!(isPerformer !== undefined ? isPerformer : user.is_performer) });
 });
 
+// Add a person to the single people list WITHOUT a login (core band member or freelancer).
+app.post("/api/team", requireAuth, requireCapability("manage_team"), async (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || "").trim();
+  if (!name) return res.status(400).json({ error: "Name is required" });
+  const kind = ["core", "freelance"].includes(b.kind) ? b.kind : "freelance";
+  const instruments = String(b.instruments || "").split(",").map((x) => x.trim()).filter(Boolean).join(", ");
+  const money = canSeeMoney(req.user);
+  const id = uuid();
+  await pool.query(`INSERT INTO team (id, name, role, phone, email, specialty, base_city, local_fee, outstation_fee, kind, instruments, notes)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+    [id, name, (b.role || "").trim() || instruments || "Musician", (b.phone || "").trim() || null, (b.email || "").trim() || null, instruments || null,
+     (b.baseCity || "").trim() || null, money ? (b.localFee || null) : null, money ? (b.outstationFee || null) : null, kind, instruments || null,
+     req.user.access_level === "admin" ? ((b.notes || "").trim() || null) : null]);
+  logActivity(req, `Added ${name} to Team (${kind === "core" ? "core" : "freelance"})`, null);
+  res.status(201).json({ id });
+});
+
 // Update a team member's own details (name, role/title, phone, email).
 app.patch("/api/team/:id", requireAuth, requireCapability("manage_team"), async (req, res) => {
   const member = (await pool.query("SELECT * FROM team WHERE id = $1", [req.params.id])).rows[0];
@@ -464,6 +482,9 @@ app.patch("/api/team/:id", requireAuth, requireCapability("manage_team"), async 
     }
   }
   const { name, role, phone, email, specialty, baseCity } = req.body;
+  if (req.body.kind !== undefined && ["core", "freelance"].includes(req.body.kind)) await pool.query("UPDATE team SET kind = $1 WHERE id = $2", [req.body.kind, member.id]);
+  if (req.body.instruments !== undefined) await pool.query("UPDATE team SET instruments = $1 WHERE id = $2", [String(req.body.instruments || "").trim() || null, member.id]);
+  if (req.body.notes !== undefined && req.user.access_level === "admin") await pool.query("UPDATE team SET notes = $1 WHERE id = $2", [String(req.body.notes || "").trim() || null, member.id]);
   // Fee rates are commercial — only someone with Accounts access can change them.
   const feeAllowed = canSeeMoney(req.user);
   const localFee = feeAllowed ? req.body.localFee : undefined;
@@ -823,7 +844,7 @@ async function artistHistory({ teamId, musicianId }) {
       FROM event_assignments JOIN leads ON leads.id = event_assignments.lead_id WHERE event_assignments.team_id = $1`, [teamId])).rows;
     a.forEach((r) => rows.push({ ...r, as: "Team" }));
   }
-  const guestWhere = musicianId ? "ta.musician_id = $1" : "ta.musician_id IN (SELECT id FROM musicians WHERE team_id = $1)";
+  const guestWhere = (musicianId ? "ta.musician_id = $1" : "ta.musician_id IN (SELECT id FROM musicians WHERE team_id = $1)") + " AND ta.migrated_assignment_id IS NULL";
   const g = (await pool.query(`SELECT leads.id, leads.name, leads.date, leads.city, leads.event_type, leads.stage
     FROM temp_artists ta JOIN leads ON leads.id = ta.lead_id WHERE ${guestWhere}`, [musicianId || teamId])).rows;
   g.forEach((r) => rows.push({ ...r, status: null, as: "Guest" }));
@@ -2194,7 +2215,7 @@ async function checkTeamComplete(leadId) {
     if (!lead) return;
     const as = [
       ...(await pool.query("SELECT status FROM event_assignments WHERE lead_id = $1", [leadId])).rows,
-      ...(await pool.query("SELECT status FROM temp_artists WHERE lead_id = $1", [leadId])).rows,
+      ...(await pool.query("SELECT status FROM temp_artists WHERE lead_id = $1 AND migrated_assignment_id IS NULL", [leadId])).rows,
     ];
     const complete = lead.stage === "Confirmed" && as.length > 0 && as.every((a) => a.status === "accepted");
     if (!complete) {
@@ -3062,9 +3083,9 @@ app.get("/api/team", requireAuth, async (req, res) => {
     ORDER BY leads.date ASC
   `, [today])).rows;
   const showMoney = canSeeMoney(req.user);
-  const team = (await pool.query("SELECT * FROM team")).rows.map(({ local_fee, outstation_fee, reg_details, ...m }) => ({
+  const team = (await pool.query("SELECT * FROM team")).rows.map(({ local_fee, outstation_fee, reg_details, notes, legacy_musician_id, ...m }) => ({
     ...m,
-    ...(req.user.access_level === "admin" ? { reg_details } : {}),
+    ...(req.user.access_level === "admin" ? { reg_details, notes } : {}),
     ...(showMoney ? { local_fee, outstation_fee } : {}),
     activeShows: assignments.filter((a) => a.team_id === m.id),
   }));
@@ -3666,13 +3687,18 @@ app.delete("/api/team-id-docs/:docId", requireAuth, requireAdmin, async (req, re
 // database for this event). Guest ids look like "g:<temp_artist id>". Guests' IDs live on
 // the musician record (or on the team record if they were promoted to Team later).
 async function loadTravellers(leadId, ids) {
-  const teamIds = ids.filter((x) => !String(x).startsWith("g:"));
-  const guestIds = ids.filter((x) => String(x).startsWith("g:")).map((x) => String(x).slice(2));
+  let teamIds = ids.filter((x) => !String(x).startsWith("g:"));
+  const guestIdsAll = ids.filter((x) => String(x).startsWith("g:")).map((x) => String(x).slice(2));
+  // Old links may name guests that have since become normal team entries.
+  const moved = guestIdsAll.length ? (await pool.query(
+    "SELECT ea.team_id FROM temp_artists ta JOIN event_assignments ea ON ea.id = ta.migrated_assignment_id WHERE ta.id = ANY($1)", [guestIdsAll])).rows.map((r) => r.team_id) : [];
+  teamIds = [...new Set([...teamIds, ...moved])];
+  const guestIds = guestIdsAll;
   const team = teamIds.length ? (await pool.query("SELECT id, name, role, phone FROM team WHERE id = ANY($1) ORDER BY name ASC", [teamIds])).rows : [];
   const teamDocs = teamIds.length ? (await pool.query("SELECT id, team_id, label, original_name, mime_type FROM team_id_docs WHERE team_id = ANY($1) ORDER BY uploaded_at ASC", [teamIds])).rows : [];
   const guests = guestIds.length ? (await pool.query(
     `SELECT ta.id, ta.name, ta.description AS role, ta.phone, ta.musician_id, m.team_id AS musician_team_id
-     FROM temp_artists ta JOIN musicians m ON m.id = ta.musician_id WHERE ta.lead_id = $1 AND ta.id = ANY($2) ORDER BY ta.name ASC`, [leadId, guestIds])).rows : [];
+     FROM temp_artists ta JOIN musicians m ON m.id = ta.musician_id WHERE ta.lead_id = $1 AND ta.id = ANY($2) AND ta.migrated_assignment_id IS NULL ORDER BY ta.name ASC`, [leadId, guestIds])).rows : [];
   const mids = guests.map((g) => g.musician_id);
   const mteams = guests.map((g) => g.musician_team_id).filter(Boolean);
   const guestDocs = guests.length ? (await pool.query(
@@ -3689,7 +3715,7 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
     pool.query(`SELECT team.id AS team_id, team.name, team.role, team.phone, event_assignments.status
                 FROM event_assignments JOIN team ON team.id = event_assignments.team_id
                 WHERE event_assignments.lead_id = $1 ORDER BY team.name ASC`, [leadId]),
-    pool.query("SELECT id, name, description, phone, musician_id FROM temp_artists WHERE lead_id = $1", [leadId]),
+    pool.query("SELECT id, name, description, phone, musician_id FROM temp_artists WHERE lead_id = $1 AND migrated_assignment_id IS NULL", [leadId]),
     pool.query("SELECT id, mode, from_city, to_city, departure_at, arrival_at FROM travel_legs WHERE lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [leadId]),
     pool.query("SELECT token, team_ids, created_at, expires_at, revoked FROM travel_shares WHERE lead_id = $1 ORDER BY created_at DESC", [leadId]),
   ]);
@@ -3849,9 +3875,9 @@ async function regFormPage(req, res, ok) {
   const css = `body{font-family:Georgia,serif;background:#FBF6EC;color:#3A2A1A;margin:0;padding:18px}.w{max-width:560px;margin:0 auto}h1{font-size:23px;margin:0 0 4px}.m{color:#7A6A58;font-size:13px}label{display:block;font-size:13px;color:#7A6A58;margin:14px 0 4px}input,select,textarea{width:100%;box-sizing:border-box;padding:11px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;background:#fff}.r2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.c{background:#fff;border:1px solid #E9DFCF;border-radius:12px;padding:12px 14px;margin-top:12px}button{margin-top:20px;width:100%;padding:13px;border:0;border-radius:10px;background:#B5541C;color:#fff;font:inherit;font-size:16px;cursor:pointer}button:disabled{opacity:.6}.hp{position:absolute;left:-9999px}#err{color:#A6432B;margin-top:12px;font-size:14px}`;
   if (!ok) return res.status(404).send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Registration</title><style>${css}</style></head><body><div class="w"><h1>This link isn't active</h1><p class="m">Please ask Together, Out Loud for a fresh registration link.</p></div></body></html>`);
   const BASE_INST = ["Vocals", "Keyboard", "Tabla", "Drummer", "Bass Guitar", "Guitar", "Flute", "Octopad", "Dholak", "Violin"];
-  const instRows = (await pool.query("SELECT DISTINCT instrument FROM musician_instruments")).rows.map((r) => r.instrument);
+  const instRows = (await pool.query("SELECT instruments FROM team WHERE instruments IS NOT NULL")).rows.flatMap((r) => r.instruments.split(",").map((x) => x.trim()).filter(Boolean));
   const instList = [...new Map([...BASE_INST, ...instRows].filter((i) => i && !/^(admin|manager)$/i.test(i)).map((i) => [i.toLowerCase(), i])).values()].sort((a, b) => a.localeCompare(b));
-  const cityRows = (await pool.query("SELECT DISTINCT city FROM musicians WHERE city IS NOT NULL UNION SELECT DISTINCT base_city FROM team WHERE base_city IS NOT NULL")).rows.map((r) => r.city);
+  const cityRows = (await pool.query("SELECT DISTINCT base_city AS city FROM team WHERE base_city IS NOT NULL")).rows.map((r) => r.city);
   const cityList = [...new Map(cityRows.filter(Boolean).map((c) => [c.toLowerCase(), c])).values()].sort((a, b) => a.localeCompare(b));
   const slot = (n, req_, title) => `<div class="c"><div style="font-weight:700">${title}${req_ ? " *" : ""}</div>
     <label>Document type</label><select name="label${n}">${REG_LABELS.map((l, i) => `<option ${(n === 2 && i === 1) || (n === 3 && i === 5) ? "selected" : ""}>${l}</option>`).join("")}</select>
@@ -3971,31 +3997,30 @@ app.post("/api/member-registrations/:id/approve", requireAuth, requireAdmin, asy
   const b = req.body || {};
   const name = (b.name || d.name || "").trim();
   if (!name) return res.status(400).json({ error: "Name is required" });
-  const musicianId = uuid();
-  // Match existing spellings (case-insensitive) so the Musicians city/instrument filters group them correctly.
-  const knownCities = (await pool.query("SELECT city AS c FROM musicians WHERE city IS NOT NULL UNION SELECT base_city FROM team WHERE base_city IS NOT NULL")).rows.map((r) => r.c);
-  const knownInst = (await pool.query("SELECT DISTINCT instrument FROM musician_instruments")).rows.map((r) => r.instrument);
+  const teamId = uuid();
+  // Match existing spellings (case-insensitive) so the city/instrument filters group them correctly.
+  const knownCities = (await pool.query("SELECT DISTINCT base_city AS c FROM team WHERE base_city IS NOT NULL")).rows.map((r) => r.c);
+  const knownInst = [...new Set((await pool.query("SELECT instruments FROM team WHERE instruments IS NOT NULL")).rows.flatMap((r) => r.instruments.split(",").map((x) => x.trim()).filter(Boolean)))];
   const norm = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
   const canon = (v, known) => { const n = norm(v); return known.find((k) => norm(k) === n) || String(v || "").trim(); };
   const INST_ALIAS = { drum: "drummer", drums: "drummer", vocal: "vocals", singer: "vocals", vocalist: "vocals", keys: "keyboard", keyboardist: "keyboard", guitarist: "guitar", "bass": "bass guitar", bassist: "bass guitar" };
   const canonInst = (v) => canon(INST_ALIAS[norm(v)] || v, knownInst);
+  const instruments = [...new Set(String((b.role ?? d.role) || "").split(",").map((x) => x.trim()).filter(Boolean).map(canonInst))].join(", ");
   const details = { legalName: d.name, dob: d.dob, gender: d.gender, emergencyName: d.emName, emergencyPhone: d.emPhone, instagram: d.instagram, feeExpectation: d.fee, notes: d.notes };
   const notes = [d.fee ? `Fee expectation: ${d.fee}` : "", d.instagram ? `Instagram: ${d.instagram}` : "", d.notes || ""].filter(Boolean).join(" \u00b7 ");
-  await pool.query("INSERT INTO musicians (id, name, phone, city, notes, email, reg_details, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-    [musicianId, name, (b.phone ?? d.phone) || null, canon((b.baseCity ?? d.city) || "", knownCities) || null, notes || null, d.email || null, JSON.stringify(details), new Date().toISOString()]);
-  const role = String((b.role ?? d.role) || "").split(",").map((x) => x.trim()).filter(Boolean);
-  for (const instrument of [...new Set(role.map(canonInst))]) {
-    await pool.query("INSERT INTO musician_instruments (id, musician_id, instrument) VALUES ($1,$2,$3)", [uuid(), musicianId, instrument]);
-  }
+  await pool.query(`INSERT INTO team (id, name, role, phone, email, specialty, base_city, reg_details, kind, instruments, notes)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'freelance',$9,$10)`,
+    [teamId, name, instruments || "Musician", (b.phone ?? d.phone) || null, d.email || null, instruments || null,
+     canon((b.baseCity ?? d.city) || "", knownCities) || null, JSON.stringify(details), instruments || null, notes || null]);
   const files = (await pool.query("SELECT * FROM member_registration_files WHERE registration_id = $1", [reg.id])).rows;
   for (const f of files) {
-    await pool.query("INSERT INTO team_id_docs (id, team_id, musician_id, label, original_name, mime_type, file_data, uploaded_at) VALUES ($1,NULL,$2,$3,$4,$5,$6,$7)",
-      [uuid(), musicianId, f.label, f.original_name, f.mime_type, f.file_data, new Date().toISOString()]);
+    await pool.query("INSERT INTO team_id_docs (id, team_id, label, original_name, mime_type, file_data, uploaded_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      [uuid(), teamId, f.label, f.original_name, f.mime_type, f.file_data, new Date().toISOString()]);
   }
   await pool.query("DELETE FROM member_registration_files WHERE registration_id = $1", [reg.id]);
-  await pool.query("UPDATE member_registrations SET status = 'approved' WHERE id = $1", [reg.id]);
-  logActivity(req, `Artist registration approved into Musicians: ${name}`, null);
-  res.json({ musicianId });
+  await pool.query("UPDATE member_registrations SET status = 'approved', team_id = $1 WHERE id = $2", [teamId, reg.id]);
+  logActivity(req, `Artist registration approved into Team (freelance): ${name}`, null);
+  res.json({ teamId });
 });
 app.post("/api/member-registrations/:id/reject", requireAuth, requireAdmin, async (req, res) => {
   await pool.query("DELETE FROM member_registrations WHERE id = $1 AND status = 'pending'", [req.params.id]);

@@ -3392,60 +3392,25 @@ async function renderTeam(main, subTab = "team") {
 
   main.innerHTML = `
     <div class="view-head">
-      <div><h2>Team</h2><p class="muted">${subTab === "musicians" ? "Your wider pool of musicians — filterable by city and instrument, so you can quickly find who to reach out to." : "Your band's musicians, crew, and staff."}</p></div>
-      <div style="display:flex; gap:8px;">
-        ${subTab === "musicians" && isAdmin ? `<button class="btn-ghost" id="regLinkBtn">🔗 Registration link</button>` : ""}
-        ${subTab === "team" && canManage ? `<button class="btn-primary" id="addMemberBtn">+ Add team member</button>` : ""}
-        ${subTab === "musicians" && canManage ? `<button class="btn-primary" id="addMusicianBtn">+ Add musician</button>` : ""}
+      <div><h2>Team</h2><p class="muted">Everyone you work with \u2014 your core band and freelancers \u2014 in one list. Search or filter by city, instrument or type, and assign anyone to any event.</p></div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        ${isAdmin ? `<button class="btn-ghost" id="regLinkBtn">\ud83d\udd17 Registration link</button>` : ""}
+        ${canManage ? `<button class="btn-ghost" id="addMemberBtn">+ Add with login</button>` : ""}
+        ${canManage ? `<button class="btn-primary" id="addPersonBtn">+ Add person</button>` : ""}
       </div>
-    </div>
-    <div style="display:flex; gap:8px; margin-bottom:18px;">
-      <button class="${subTab === "team" ? "btn-primary" : "btn-ghost"}" id="teamTabBtn" style="font-size:13px; padding:6px 14px;">Team</button>
-      <button class="${subTab === "musicians" ? "btn-primary" : "btn-ghost"}" id="musiciansTabBtn" style="font-size:13px; padding:6px 14px;">Musicians</button>
     </div>
     <div id="teamSubContent"></div>
   `;
-  main.querySelector("#teamTabBtn").addEventListener("click", () => renderTeam(main, "team"));
-  main.querySelector("#musiciansTabBtn").addEventListener("click", () => renderTeam(main, "musicians"));
-
-  if (subTab === "musicians") {
-    const sub = main.querySelector("#teamSubContent");
-    sub.innerHTML = `<div id="regCardBox"></div><div id="musiciansBox"></div>`;
-    renderMusicians(sub.querySelector("#musiciansBox"));
-    if (isAdmin) {
-      main.querySelector("#regLinkBtn").addEventListener("click", () => openRegistrationLinkModal());
-      api("/api/member-registrations").catch(() => []).then((regs) => {
-        if (!regs.length) return;
-        const e2 = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-        const box = sub.querySelector("#regCardBox");
-        box.innerHTML = `<div class="card" style="margin-bottom:20px; border-color:#B5541C;">
-          <div class="section-label" style="color:#B5541C;">New artist registrations (${regs.length})</div>
-          <p class="muted small" style="margin-top:-4px;">Submitted through your registration link or the website. Review the details and ID, then approve to add them to your Musicians database.</p>
-          ${regs.map((r) => `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 0; border-top:1px solid #EFE6D6;">
-            <div><b>${e2(r.data.name)}</b> <span class="muted small">\u00b7 ${e2(r.data.role)} \u00b7 ${e2(r.data.city)}${r.data.fee ? ` \u00b7 Fee: ${e2(r.data.fee)}` : ""}${r.duplicateOf ? ` \u00b7 \u26a0 phone matches ${e2(r.duplicateOf.name)}` : ""}</span></div>
-            <button class="btn-primary reg-review-btn" data-reg-id="${r.id}" style="font-size:12.5px; padding:5px 12px;">Review</button></div>`).join("")}
-        </div>`;
-        box.querySelectorAll(".reg-review-btn").forEach((b) => b.addEventListener("click", () => {
-          const reg = regs.find((r) => r.id === b.dataset.regId);
-          if (reg) openRegistrationReviewModal(reg, async () => { renderTeam(main, "musicians"); });
-        }));
-      });
-    }
-    if (canManage) {
-      main.querySelector("#addMusicianBtn").addEventListener("click", () => openMusicianModal(null, () => renderTeam(main, "musicians")));
-    }
-    return;
-  }
 
   const content = main.querySelector("#teamSubContent");
-  const pendingRegs = [];
+  const pendingRegs = isAdmin ? await api("/api/member-registrations").catch(() => []) : [];
   const users = canManage ? await api("/api/users") : [];
   const teamIdsWithLogin = new Set(users.map((u) => u.team_id).filter(Boolean));
   content.innerHTML = `
     ${pendingRegs.length ? `
       <div class="card" style="margin-bottom:20px; border-color:#B5541C;">
         <div class="section-label" style="color:#B5541C;">New artist registrations (${pendingRegs.length})</div>
-        <p class="muted small" style="margin-top:-4px;">Submitted through your registration link. Review the details and ID, then approve to add them to the team.</p>
+        <p class="muted small" style="margin-top:-4px;">Submitted through your registration link or the website. Review the details and ID, then approve to add them to the team as Freelance.</p>
         ${pendingRegs.map((r) => `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 0; border-top:1px solid #EFE6D6;">
           <div><b>${(r.data.name || "").replace(/</g, "&lt;")}</b> <span class="muted small">· ${(r.data.role || "").replace(/</g, "&lt;")} · ${(r.data.city || "").replace(/</g, "&lt;")}${r.duplicateOf ? ` · ⚠ phone matches ${r.duplicateOf.name.replace(/</g, "&lt;")}` : ""}</span></div>
           <button class="btn-primary reg-review-btn" data-reg-id="${r.id}" style="font-size:12.5px; padding:5px 12px;">Review</button></div>`).join("")}
@@ -3465,7 +3430,14 @@ async function renderTeam(main, subTab = "team") {
         <div id="announceList" style="margin-top:12px;"></div>
       </div>
     ` : ""}
-    <input id="teamSearch" type="search" placeholder="🔍 Search team by name, role, city, phone…" style="margin-bottom:12px;" autocomplete="off" />
+    <div class="card" style="margin-bottom:12px; padding:12px 14px;">
+      <input id="teamSearch" type="search" placeholder="🔍 Search by name, instrument, city, phone…" style="margin-bottom:10px;" autocomplete="off" />
+      <div class="row-2" style="grid-template-columns:1fr 1fr 1fr;">
+        <div><label>City</label><select id="teamCityFilter"></select></div>
+        <div><label>Instrument</label><select id="teamInstFilter"></select></div>
+        <div><label>Type</label><select id="teamKindFilter"><option value="">Everyone</option><option value="core">Core</option><option value="freelance">Freelance</option></select></div>
+      </div>
+    </div>
     <div id="teamNoMatch" class="muted small" style="display:none; margin-bottom:10px;">No team member matches that search.</div>
     <div class="team-grid" id="teamGrid"></div>
     ${isAdmin ? `
@@ -3511,8 +3483,8 @@ async function renderTeam(main, subTab = "team") {
       <div class="card team-card" style="cursor:pointer;">
         ${canManage ? `<button class="icon-btn" data-edit-member="${m.id}" style="float:right;">${ICON_EDIT}</button>` : ""}
         <div class="team-avatar">${m.name[0]}</div>
-        <div class="team-name">${m.name}</div>
-        <div class="muted">${m.role || ""}${m.specialty ? ` · ${m.specialty}` : ""}</div>
+        <div class="team-name">${m.name}${m.kind === "freelance" ? ` <span class="mono small" style="background:#EDE7F6; color:#5E4B8B; border-radius:4px; padding:0 6px; font-weight:600;">Freelance</span>` : ""}</div>
+        <div class="muted">${m.role || ""}${m.specialty && m.specialty !== m.role ? ` · ${m.specialty}` : ""}</div>
         ${m.base_city ? `<div class="muted small">📍 ${m.base_city}</div>` : ""}
         ${(m.local_fee || m.outstation_fee) ? `<div class="muted small">${m.local_fee ? `Local ${inr(m.local_fee)}` : ""}${m.local_fee && m.outstation_fee ? " · " : ""}${m.outstation_fee ? `Outstation ${inr(m.outstation_fee)}` : ""}</div>` : ""}
         ${m.phone ? `<div class="muted small">${m.phone}</div>` : ""}
@@ -3539,19 +3511,32 @@ async function renderTeam(main, subTab = "team") {
       }
       openTeamMemberEventsModal(m);
     });
-    card.dataset.search = [m.name, m.role, m.specialty, m.base_city, m.phone, m.email].filter(Boolean).join(" ").toLowerCase();
+    card.dataset.search = [m.name, m.role, m.specialty, m.instruments, m.base_city, m.phone, m.email].filter(Boolean).join(" ").toLowerCase();
+    card.dataset.city = m.base_city || "";
+    card.dataset.kind = m.kind === "freelance" ? "freelance" : "core";
+    card.dataset.inst = (m.instruments || m.specialty || m.role || "").split(/,|&| and /i).map((x) => x.trim().toLowerCase()).filter(Boolean).join("|");
     grid.appendChild(card);
   });
-  main.querySelector("#teamSearch").addEventListener("input", (e) => {
-    const q = e.target.value.trim().toLowerCase();
-    let shown = 0;
-    grid.querySelectorAll(".team-card").forEach((c) => {
-      const hit = !q || (c.dataset.search || "").includes(q);
-      c.style.display = hit ? "" : "none";
-      if (hit) shown++;
-    });
-    main.querySelector("#teamNoMatch").style.display = shown === 0 ? "block" : "none";
-  });
+  {
+    const cities = [...new Set(TEAM.map((m) => m.base_city).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const insts = [...new Map(TEAM.flatMap((m) => (m.instruments || m.specialty || m.role || "").split(/,|&| and /i).map((x) => x.trim()).filter(Boolean)).map((x) => [x.toLowerCase(), x])).values()].sort((a, b) => a.localeCompare(b));
+    main.querySelector("#teamCityFilter").innerHTML = `<option value="">All cities</option>${cities.map((c) => `<option>${c}</option>`).join("")}`;
+    main.querySelector("#teamInstFilter").innerHTML = `<option value="">All instruments</option>${insts.map((c) => `<option>${c}</option>`).join("")}`;
+    const applyTeamFilters = () => {
+      const q = main.querySelector("#teamSearch").value.trim().toLowerCase();
+      const city = main.querySelector("#teamCityFilter").value;
+      const inst = main.querySelector("#teamInstFilter").value.toLowerCase();
+      const kind = main.querySelector("#teamKindFilter").value;
+      let shown = 0;
+      grid.querySelectorAll(".team-card").forEach((c) => {
+        const hit = (!q || (c.dataset.search || "").includes(q)) && (!city || c.dataset.city === city) && (!kind || c.dataset.kind === kind) && (!inst || (c.dataset.inst || "").split("|").includes(inst));
+        c.style.display = hit ? "" : "none";
+        if (hit) shown++;
+      });
+      main.querySelector("#teamNoMatch").style.display = shown === 0 ? "block" : "none";
+    };
+    ["#teamSearch", "#teamCityFilter", "#teamInstFilter", "#teamKindFilter"].forEach((id) => main.querySelector(id).addEventListener(id === "#teamSearch" ? "input" : "change", applyTeamFilters));
+  }
   if (canManage) {
     main.querySelectorAll("[data-edit-member]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -3611,6 +3596,8 @@ async function renderTeam(main, subTab = "team") {
     }
   }
   if (isAdmin) {
+    const regLinkBtn = main.querySelector("#regLinkBtn");
+    if (regLinkBtn) regLinkBtn.addEventListener("click", () => openRegistrationLinkModal());
     main.querySelectorAll(".reg-review-btn").forEach((b) => b.addEventListener("click", () => {
       const reg = pendingRegs.find((r) => r.id === b.dataset.regId);
       if (reg) openRegistrationReviewModal(reg, async () => { TEAM = await api("/api/team"); renderTeam(main, "team"); });
@@ -3618,6 +3605,7 @@ async function renderTeam(main, subTab = "team") {
   }
   if (canManage) {
     main.querySelector("#addMemberBtn").addEventListener("click", () => openAddMemberModal());
+    main.querySelector("#addPersonBtn").addEventListener("click", () => openAddPersonModal(() => renderTeam(main, "team")));
     const tempArtistDirBtn = main.querySelector("#tempArtistDirBtn");
     if (tempArtistDirBtn) {
       tempArtistDirBtn.addEventListener("click", async () => {
@@ -3781,6 +3769,57 @@ function wirePasswordToggles(root) {
       input.type = showing ? "password" : "text";
       btn.textContent = showing ? "Show" : "Hide";
     });
+  });
+}
+
+function openAddPersonModal(onCreated, defaults = {}) {
+  const root = document.getElementById("modalRoot");
+  const isAdmin = CURRENT_USER?.accessLevel === "admin";
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay"><div class="modal-card">
+      <div class="modal-head"><h3>Add a person</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+      <div class="modal-body">
+        <label>Name *</label><input id="apName" />
+        <label>Instruments (comma-separated)</label><input id="apInstruments" placeholder="e.g. Tabla, Dholak" />
+        <div class="row-2">
+          <div><label>Type</label><select id="apKind"><option value="freelance" ${defaults.kind !== "core" ? "selected" : ""}>Freelance (called as needed)</option><option value="core" ${defaults.kind === "core" ? "selected" : ""}>Core (plays with you regularly)</option></select></div>
+          <div><label>Base city</label><input id="apCity" placeholder="e.g. Kolkata" /></div>
+        </div>
+        <div class="row-2">
+          <div><label>Phone / WhatsApp</label><input id="apPhone" type="tel" /></div>
+          <div><label>Email</label><input id="apEmail" type="email" /></div>
+        </div>
+        ${hasAccountsAccess() ? `<div class="row-2" style="margin-top:8px;">
+          <div><label>Local fee (\u20b9)</label><input id="apLocalFee" type="number" /></div>
+          <div><label>Outstation fee (\u20b9)</label><input id="apOutFee" type="number" /></div>
+        </div>` : ""}
+        ${isAdmin ? `<label style="margin-top:8px;">Notes (private)</label><input id="apNotes" placeholder="How you know them, availability\u2026" />` : ""}
+        ${isAdmin ? idUploadFieldsHtml("ap") : ""}
+        <p class="muted small" style="margin-top:8px;">No login is created. You can give them one later from their card.</p>
+      </div>
+      <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="apSave">Add</button></div>
+    </div></div>`;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#apSave").addEventListener("click", async (e) => {
+    const btn = e.currentTarget; if (btn.disabled) return;
+    const name = root.querySelector("#apName").value.trim();
+    if (!name) return alert("Enter a name first.");
+    btn.disabled = true;
+    try {
+      const r = await api("/api/team", { method: "POST", body: JSON.stringify({
+        name, instruments: root.querySelector("#apInstruments").value, kind: root.querySelector("#apKind").value,
+        baseCity: root.querySelector("#apCity").value, phone: root.querySelector("#apPhone").value, email: root.querySelector("#apEmail").value,
+        localFee: root.querySelector("#apLocalFee")?.value || null, outstationFee: root.querySelector("#apOutFee")?.value || null,
+        notes: root.querySelector("#apNotes")?.value,
+      }) });
+      if (isAdmin) { const failed = await uploadPickedIds("ap", r.id); if (failed) alert(`${failed} ID file(s) didn't upload \u2014 you can add them from the person's card.`); }
+      close();
+      TEAM = await api("/api/team");
+      if (onCreated) await onCreated(r.id);
+    } catch (err) { alert(err.message); btn.disabled = false; }
   });
 }
 
@@ -3988,8 +4027,13 @@ function openEditMemberModal(member, linkedUser) {
             <div><label>Role / title</label><input id="emRole" value="${member.role || ""}" /></div>
             <div><label>Specialty (optional)</label><input id="emSpecialty" value="${member.specialty || ""}" placeholder="e.g. Drummer, Photographer" /></div>
           </div>
-          <label>Base city</label>
-          <input id="emBaseCity" value="${member.base_city || ""}" placeholder="e.g. Siliguri" />
+          <label>Instruments (comma-separated \u2014 used by the filters)</label>
+          <input id="emInstruments" value="${String(member.instruments || "").replace(/"/g, "&quot;")}" placeholder="e.g. Tabla, Dholak" />
+          <div class="row-2">
+            <div><label>Type</label><select id="emKind"><option value="core" ${member.kind !== "freelance" ? "selected" : ""}>Core (plays with you regularly)</option><option value="freelance" ${member.kind === "freelance" ? "selected" : ""}>Freelance (called as needed)</option></select></div>
+            <div><label>Base city</label><input id="emBaseCity" value="${member.base_city || ""}" placeholder="e.g. Siliguri" /></div>
+          </div>
+          ${CURRENT_USER?.accessLevel === "admin" ? `<label>Notes (private)</label><input id="emNotes" value="${String(member.notes || "").replace(/"/g, "&quot;")}" placeholder="Fee expectation, how you know them\u2026" />` : ""}
           ${CURRENT_USER?.accessLevel === "admin" ? `<div id="emIdSection" class="card" style="margin-top:12px; padding:10px 12px;"><div class="muted small">Loading ID cards…</div></div><div id="emHistory" class="card" style="margin-top:12px; padding:10px 12px;"><div class="muted small">Loading events…</div></div>` : ""}
           ${hasAccountsAccess() ? `
           <div class="row-2" style="margin-top:8px;">
@@ -4064,6 +4108,9 @@ function openEditMemberModal(member, linkedUser) {
           role: root.querySelector("#emRole").value,
           specialty: root.querySelector("#emSpecialty").value,
           baseCity: root.querySelector("#emBaseCity").value,
+          kind: root.querySelector("#emKind").value,
+          instruments: root.querySelector("#emInstruments").value,
+          notes: root.querySelector("#emNotes")?.value,
           localFee: root.querySelector("#emLocalFee")?.value,
           outstationFee: root.querySelector("#emOutstationFee")?.value,
           phone: root.querySelector("#emPhone").value,
@@ -4607,12 +4654,12 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
   const [assignments, tempArtists, leadExpenses, myReimbursements, myOwnFee, tempArtistDirectory, allMusicians, allDocs] = await Promise.all([
     api(`/api/leads/${leadId}/assignments`),
-    api(`/api/leads/${leadId}/temp-artists`),
+    Promise.resolve([]),
     isAdmin ? api(`/api/expenses?leadId=${leadId}`) : Promise.resolve([]),
     api(`/api/my/reimbursements`).catch(() => []),
     !isAdmin ? api(`/api/my/artist-fee?leadId=${leadId}`).catch(() => null) : Promise.resolve(null),
-    api(`/api/temp-artists`).catch(() => []),
-    api(`/api/musicians`).catch(() => []),
+    Promise.resolve([]),
+    Promise.resolve([]),
     api(`/api/documents`).catch(() => []),
   ]);
   // Riders (Tech / Hospitality) — this event's own copy first, else the general library one.
@@ -4762,7 +4809,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
             // exactly the moments you need the full list in view.
             const startExpanded = assignedCount === 0 || !!autoCheckTeamId;
             const lineupTeam = TEAM.filter((m) => byTeamId[m.id]).map((m) => ({ name: m.name, role: m.role, status: byTeamId[m.id].status, guest: false }));
-            const lineupGuests = tempArtists.map((t) => ({ name: t.name, role: t.description, status: t.status || "pending", guest: true }));
+            const lineupGuests = [];
             const lineupAll = [...lineupTeam, ...lineupGuests];
             const chip = { accepted: ["#E3F4E5", "#1E6B2B", "Accepted"], declined: ["#FBE3DE", "#A6432B", "Declined"], pending: ["#FFF4E5", "#8A5A1F", "Awaiting"], cancel_requested: ["#FFF4E5", "#8A5A1F", "Cancel requested"] };
             const lineupCard = `
@@ -4779,7 +4826,8 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
               <span class="muted" style="font-weight:600; font-size:13px;">(${assignedCount} of ${TEAM.length} assigned${tempArtists.length ? ` \u00b7 guests listed below` : ""})</span>
             </div>
             <div id="teamMembersList" style="display:${startExpanded ? "block" : "none"};">
-              ${TEAM.map((m) => {
+              <input id="teamPickSearch" type="search" placeholder="🔍 Search everyone — name, instrument, city…" style="margin-bottom:8px;" autocomplete="off" />
+              ${TEAM.slice().sort((x, y) => (byTeamId[y.id] ? 1 : 0) - (byTeamId[x.id] ? 1 : 0) || (x.kind === "freelance" ? 1 : 0) - (y.kind === "freelance" ? 1 : 0) || x.name.localeCompare(y.name)).map((m) => {
                 const a = byTeamId[m.id];
                 const existingFee = feeExpenseByTeamId[m.id];
                 const waDigits = (m.phone || "").replace(/\D/g, "");
@@ -4806,13 +4854,13 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                 const isLocalEvent = m.base_city && lead.city && m.base_city.trim().toLowerCase() === lead.city.trim().toLowerCase();
                 const suggestedFee = isLocalEvent ? m.local_fee : m.outstation_fee;
                 return `
-                  <div class="card" style="margin-bottom:6px; padding:8px 12px;">
+                  <div class="card team-pick-row" data-search="${String([m.name, m.role, m.instruments, m.base_city, m.phone].filter(Boolean).join(" ")).toLowerCase().replace(/"/g, "")}" style="margin-bottom:6px; padding:8px 12px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
                       <label style="display:flex; align-items:center; gap:8px; flex:1; min-width:0; cursor:pointer;">
                         <input type="checkbox" class="assign-team-checkbox" data-team-id="${m.id}" ${(a || m.id === autoCheckTeamId) ? "checked" : ""} style="flex-shrink:0;" />
                         <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13.5px;">
-                          <span style="font-weight:600;">${m.name}</span>
-                          <span class="muted">${m.role ? ` · ${m.role}` : ""}${m.base_city ? ` · 📍 ${m.base_city}` : ""}</span>
+                          <span style="font-weight:600;">${m.name}</span>${m.kind === "freelance" ? ` <span class="mono small" style="background:#EDE7F6; color:#5E4B8B; border-radius:4px; padding:0 6px;">Freelance</span>` : ""}
+                          <span class="muted">${m.instruments || m.role ? ` · ${m.instruments || m.role}` : ""}${m.base_city ? ` · 📍 ${m.base_city}` : ""}</span>
                         </span>
                       </label>
                       ${isAdmin
@@ -4852,64 +4900,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
           })()}
           <p class="muted small" style="margin-top:4px;">Not every artist uses their own login — use the status dropdown to record their response yourself.</p>
           ${isAdmin ? `<p class="muted small" style="margin-top:2px;">Enter a fee next to any artist above and it's saved as an expense against this event — no need to add it separately in Accounts.</p>` : ""}
-          <div class="row-2" style="margin-top:10px;">
-            <button class="btn-ghost" id="addMemberInlineBtn">+ Add new member</button>
-            ${unpromotedMusicians.length > 0 ? `<button class="btn-ghost" id="addFromMusicianBtn">🎵 Add from Musicians</button>` : ""}
-          </div>
-          ${unpromotedMusicians.length > 0 ? `
-            <div id="addFromMusicianPanel" style="display:none; margin-top:8px;">
-              <input id="addFromMusicianSearch" type="search" placeholder="🔍 Type to search all ${allMusicians.length} musicians (name, instrument, city, phone)…" autocomplete="off" />
-              <input id="addFromMusicianSelect" type="hidden" value="" />
-              <div id="addFromMusicianResults" style="max-height:220px; overflow:auto; border:1px solid #E9DFCF; border-radius:8px; margin-top:4px; background:#fff;"></div>
-              <div id="addFromMusicianPicked" class="small" style="margin-top:4px; font-weight:600;"></div>
-              ${isAdmin ? `<input id="addFromMusicianFee" type="number" placeholder="Fee ₹ for this gig (optional)" style="margin-top:6px;" />` : ""}
-              <button class="btn-primary full" id="confirmAddGuestMusicianBtn" style="margin-top:6px;">Add as guest for this event (stays in Musicians)</button>
-              <button class="btn-ghost full" id="confirmAddFromMusicianBtn" style="margin-top:6px; font-size:12.5px;">Or make them a Team member & assign</button>
-              <p class="muted small" style="margin-top:4px;">Guests don't join Team — handy for people who won't play with you regularly. Their fee counts toward this event's expenses and their saved ID can go to the client with the travel details.</p>
-            </div>
-          ` : ""}
-
-          <div class="section-label" style="margin-top:16px;">Guest artists (not on your team \u2014 saved in Musicians)</div>
-          <div id="tempArtistList">
-            ${tempArtists.length === 0 ? `<p class="muted small">None added yet.</p>` : tempArtists.map((t) => {
-              const waDigits = (t.phone || "").replace(/\D/g, "");
-              const waMsg = `Hi ${t.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.city ? ` in ${lead.city}` : ""}.${t.confirm_token ? `\n\nPlease accept or decline here: ${window.location.origin}/confirm.html?token=${t.confirm_token}` : " Let us know if you have any questions!"}`;
-              return `
-              <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
-                <div>
-                  <div>${t.name}${t.musician_id ? ` <span class="mono small" style="background:#E4F1F1; color:#1C7A80; border-radius:4px; padding:1px 7px;">Musicians</span>` : ""}${t.description ? ` <span class="muted small">— ${t.description}</span>` : ""}</div>
-                  <div class="muted small">${t.phone ? `${t.phone}` : ""}${t.base_city ? `${t.phone ? " · " : ""}📍 ${t.base_city}` : ""}${isAdmin ? `${(t.phone || t.base_city) ? " · " : ""}${t.fee_amount != null ? `Fee ${inr(t.fee_amount)}${t.fee_paid ? " · Paid" : " · Pending"}` : "No fee recorded"}` : ""}</div>
-                  ${waDigits ? `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp (with accept / decline link)</a>` : ""}
-                  <div style="margin-top:6px;"><select class="ta-status" data-ta-id="${t.id}" style="width:auto; font-size:12.5px;">
-                    ${["pending", "accepted", "declined"].map((st) => `<option value="${st}" ${(t.status || "pending") === st ? "selected" : ""}>${statusLabel[st]}</option>`).join("")}
-                  </select></div>
-                  ${isAdmin ? `
-                    <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
-                      <input type="number" class="ta-fee-input" data-ta-id="${t.id}" placeholder="Fee ₹" value="${t.fee_amount != null ? t.fee_amount : ""}" style="width:100px; font-size:12.5px; padding:4px 6px;" />
-                      <button class="btn-ghost ta-save-fee-btn" data-ta-id="${t.id}" style="font-size:12px; padding:4px 8px;">Save fee</button>
-                      <button class="btn-ghost ta-edit-details-btn" data-ta-id="${t.id}" data-name="${(t.name || "").replace(/"/g, "&quot;")}" data-phone="${(t.phone || "").replace(/"/g, "&quot;")}" data-description="${(t.description || "").replace(/"/g, "&quot;")}" data-base-city="${(t.base_city || "").replace(/"/g, "&quot;")}" style="font-size:12px; padding:4px 8px;">✎ Edit details</button>
-                    </div>
-                  ` : ""}
-                </div>
-                <button class="icon-btn" data-remove-temp-artist="${t.id}">${ICON_X}</button>
-              </div>
-            `;
-            }).join("")}
-          </div>
-          <div class="row-2" style="margin-top:8px;">
-            <input id="taName" placeholder="Name (pick an existing musician or type a new one)" list="tempArtistDirectoryList" />
-            <input id="taPhone" placeholder="Phone" />
-          </div>
-          <datalist id="tempArtistDirectoryList">
-            ${allMusicians.filter((m) => !tempArtists.some((t) => t.musician_id === m.id)).map((m) => `<option value="${String(m.name).replace(/"/g, "&quot;")}"></option>`).join("")}
-          </datalist>
-          <div class="row-2" style="margin-top:8px;">
-            <input id="taDescription" placeholder="Description (e.g. session tabla player)" />
-            <input id="taBaseCity" placeholder="Base city" />
-          </div>
-          ${isAdmin ? `<input id="taFee" type="number" placeholder="Fee ₹ (optional)" style="margin-top:8px;" />` : ""}
-          <button class="btn-ghost full" id="addTempArtistBtn" style="margin-top:8px;">+ Add guest artist</button>
-          <p class="muted small" style="margin-top:4px;">Tip: hitting the overall Save button below also adds this if you've filled it in.${isAdmin ? " Any fee entered here counts toward this event's expenses/profit automatically — no need to add it again under Accounts." : ""}</p>
+          <button class="btn-ghost full" id="addMemberInlineBtn" style="margin-top:10px;">+ Add a new person to the team list</button>
 
           ${isAdmin ? `
             <div class="section-label" style="margin-top:20px;">Other event expenses (travel, venue, decor, etc.)</div>
@@ -5056,7 +5047,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   const shareBtn = root.querySelector("#openTravelShareBtn");
   if (shareBtn) shareBtn.addEventListener("click", () => openTravelShareModal(leadId));
   root.querySelector("#addMemberInlineBtn").addEventListener("click", () => {
-    openAddMemberModal(() => openAssignTeamModal(leadId));
+    openAddPersonModal(async () => { TEAM = await api("/api/team"); openAssignTeamModal(leadId); });
   });
   const teamListToggle = root.querySelector("[data-toggle-team-list]");
   if (teamListToggle) {
@@ -5066,72 +5057,6 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       const expanded = list.style.display !== "none";
       list.style.display = expanded ? "none" : "block";
       caret.textContent = expanded ? "▸" : "▾";
-    });
-  }
-  const addFromMusicianBtn = root.querySelector("#addFromMusicianBtn");
-  if (addFromMusicianBtn) {
-    addFromMusicianBtn.addEventListener("click", () => {
-      const panel = root.querySelector("#addFromMusicianPanel");
-      panel.style.display = panel.style.display === "none" ? "block" : "none";
-    });
-    const mSearch = root.querySelector("#addFromMusicianSearch");
-    const mResults = root.querySelector("#addFromMusicianResults");
-    const mPicked = root.querySelector("#addFromMusicianPicked");
-    const mEsc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-    const drawMusicianResults = () => {
-      const q = mSearch.value.trim().toLowerCase();
-      const guestIds = new Set(tempArtists.map((t) => t.musician_id));
-      const hits = allMusicians
-        .filter((m) => !q || [m.name, m.phone, m.city, ...(m.instruments || [])].filter(Boolean).join(" ").toLowerCase().includes(q))
-        .slice().sort((a, b) => a.name.localeCompare(b.name)).slice(0, 40);
-      mResults.innerHTML = hits.length === 0 ? `<div class="muted small" style="padding:8px 10px;">No musician matches "${mEsc(mSearch.value)}".</div>` : hits.map((m) => {
-        const note = m.team_id ? "in Team \u2014 tick them in the list above" : guestIds.has(m.id) ? "already a guest here" : "";
-        return `<div class="mus-pick" data-id="${m.id}" data-ok="${note ? "" : "1"}" style="padding:7px 10px; border-top:1px solid #F1E9DA; ${note ? "opacity:.5;" : "cursor:pointer;"}">
-          <b>${mEsc(m.name)}</b> <span class="muted small">${mEsc([(m.instruments || []).join(", "), m.city].filter(Boolean).join(" \u00b7 "))}${note ? ` \u00b7 ${note}` : ""}</span></div>`;
-      }).join("");
-      mResults.querySelectorAll(".mus-pick[data-ok='1']").forEach((row) => row.addEventListener("click", () => {
-        const m = allMusicians.find((x) => x.id === row.dataset.id);
-        root.querySelector("#addFromMusicianSelect").value = m.id;
-        mPicked.textContent = `Selected: ${m.name}`;
-        mResults.querySelectorAll(".mus-pick").forEach((r) => (r.style.background = r === row ? "#F6E8D2" : ""));
-      }));
-    };
-    mSearch.addEventListener("input", drawMusicianResults);
-    drawMusicianResults();
-    root.querySelector("#confirmAddGuestMusicianBtn").addEventListener("click", async (e) => {
-      const musicianId = root.querySelector("#addFromMusicianSelect").value;
-      if (!musicianId) return alert("Choose a musician first.");
-      const m = unpromotedMusicians.find((x) => x.id === musicianId);
-      if (!m) return;
-      const btn = e.currentTarget;
-      if (btn.disabled) return;
-      btn.disabled = true;
-      try {
-        const feeEl = root.querySelector("#addFromMusicianFee");
-        await api(`/api/leads/${leadId}/temp-artists`, { method: "POST", body: JSON.stringify({
-          musicianId, name: m.name, phone: m.phone || "", baseCity: m.city || "",
-          description: m.instruments.length ? m.instruments.join(", ") : "",
-          feeAmount: feeEl ? (feeEl.value.trim() || null) : null,
-        }) });
-        openAssignTeamModal(leadId);
-      } catch (err) { alert(err.message); btn.disabled = false; }
-    });
-    root.querySelector("#confirmAddFromMusicianBtn").addEventListener("click", async (e) => {
-      const musicianId = root.querySelector("#addFromMusicianSelect").value;
-      if (!musicianId) return alert("Choose a musician first.");
-      const btn = e.currentTarget;
-      btn.disabled = true;
-      try {
-        const result = await api(`/api/musicians/${musicianId}/promote`, { method: "POST" });
-        TEAM = await api("/api/team");
-        // Reopen with this member pre-checked -- they were just added
-        // specifically to be on this event, so hitting Save should be the
-        // only thing left to do, not hunting for them in the list again.
-        openAssignTeamModal(leadId, result.teamId);
-      } catch (err) {
-        alert(err.message);
-        btn.disabled = false;
-      }
     });
   }
   const addOtherExpenseBtn = root.querySelector("#addOtherExpenseBtn");
@@ -5269,100 +5194,10 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       }
     });
   });
-  root.querySelectorAll("[data-remove-temp-artist]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      await api(`/api/temp-artists/${btn.dataset.removeTempArtist}`, { method: "DELETE" });
-      openAssignTeamModal(leadId);
-    });
-  });
-  root.querySelectorAll(".ta-status").forEach((sel) => sel.addEventListener("change", async () => {
-    try { await api(`/api/temp-artists/${sel.dataset.taId}`, { method: "PATCH", body: JSON.stringify({ status: sel.value }) }); openAssignTeamModal(leadId); }
-    catch (err) { alert(err.message); }
-  }));
-  root.querySelectorAll(".ta-save-fee-btn").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const id = btn.dataset.taId;
-      const input = root.querySelector(`.ta-fee-input[data-ta-id="${id}"]`);
-      try {
-        await api(`/api/temp-artists/${id}`, { method: "PATCH", body: JSON.stringify({ feeAmount: input.value.trim() || null }) });
-        openAssignTeamModal(leadId);
-      } catch (err) {
-        alert(err.message);
-      }
-    });
-  });
-  root.querySelectorAll(".ta-edit-details-btn").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const newName = prompt("Name:", btn.dataset.name || "");
-      if (newName === null) return;
-      const newPhone = prompt("Phone:", btn.dataset.phone || "");
-      if (newPhone === null) return;
-      const newDescription = prompt("Description:", btn.dataset.description || "");
-      if (newDescription === null) return;
-      const newBaseCity = prompt("Base city:", btn.dataset.baseCity || "");
-      if (newBaseCity === null) return;
-      try {
-        await api(`/api/temp-artists/${btn.dataset.taId}`, {
-          method: "PATCH",
-          body: JSON.stringify({ name: newName.trim(), phone: newPhone.trim(), description: newDescription.trim(), baseCity: newBaseCity.trim() }),
-        });
-        openAssignTeamModal(leadId);
-      } catch (err) {
-        alert(err.message);
-      }
-    });
-  });
-
-  // Shared by the dedicated button and the main Save button, so a filled-in
-  // temporary artist is never silently lost just because someone hit Save instead.
-  // isSubmittingTempArtist guards against double-clicks firing two POSTs before
-  // the modal re-renders and clears the form.
-  let isSubmittingTempArtist = false;
-  const submitPendingTempArtist = async () => {
-    const name = root.querySelector("#taName").value.trim();
-    if (!name) return true; // nothing pending — not an error
-    if (isSubmittingTempArtist) return false; // a submission is already in flight
-    isSubmittingTempArtist = true;
-    try {
-      const feeInput = root.querySelector("#taFee");
-      await api(`/api/leads/${leadId}/temp-artists`, {
-        method: "POST",
-        body: JSON.stringify({
-          name,
-          musicianId: (allMusicians.find((m) => m.name.toLowerCase() === name.toLowerCase() && !m.team_id) || {}).id || undefined,
-          phone: root.querySelector("#taPhone").value.trim(),
-          description: root.querySelector("#taDescription").value.trim(),
-          baseCity: root.querySelector("#taBaseCity").value.trim(),
-          feeAmount: feeInput ? (feeInput.value.trim() || null) : null,
-        }),
-      });
-      return true;
-    } catch (err) {
-      alert(err.message);
-      return false;
-    } finally {
-      isSubmittingTempArtist = false;
-    }
-  };
-  root.querySelector("#addTempArtistBtn").addEventListener("click", async (e) => {
-    const btn = e.currentTarget;
-    if (btn.disabled) return;
-    btn.disabled = true;
-    try {
-      if (await submitPendingTempArtist()) openAssignTeamModal(leadId);
-    } finally {
-      btn.disabled = false;
-    }
-  });
-  // Picking a name already in the directory (via the datalist) fills in
-  // their known phone/city/description automatically — no need to retype
-  // details for someone hired before.
-  root.querySelector("#taName").addEventListener("change", (e) => {
-    const match = allMusicians.find((m) => m.name.toLowerCase() === e.target.value.trim().toLowerCase());
-    if (!match) return;
-    if (match.phone) root.querySelector("#taPhone").value = match.phone;
-    if (match.city) root.querySelector("#taBaseCity").value = match.city;
-    if (match.instruments?.length) root.querySelector("#taDescription").value = match.instruments.join(", ");
+  const pickSearch = root.querySelector("#teamPickSearch");
+  if (pickSearch) pickSearch.addEventListener("input", () => {
+    const q = pickSearch.value.trim().toLowerCase();
+    root.querySelectorAll(".team-pick-row").forEach((r) => { r.style.display = !q || r.dataset.search.includes(q) ? "" : "none"; });
   });
 
   // Cap staffing at the committed band size (+1, for a manager/coordinator
@@ -5388,7 +5223,6 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     const checked = [...root.querySelectorAll('input.assign-team-checkbox[data-team-id]:checked')].map((c) => c.dataset.teamId);
     const unchecked = [...root.querySelectorAll('input.assign-team-checkbox[data-team-id]:not(:checked)')].map((c) => c.dataset.teamId);
     try {
-      if (!(await submitPendingTempArtist())) { btn.disabled = false; return; }
       const newlyChecked = checked.filter((id) => !byTeamId[id]);
       if (newlyChecked.length > 0) {
         await api(`/api/leads/${leadId}/assignments`, { method: "POST", body: JSON.stringify({ teamIds: newlyChecked }) });
@@ -5613,9 +5447,9 @@ function openRegistrationReviewModal(reg, onDone) {
         </div>
         <div style="margin-top:10px; font-weight:700;">Documents</div>
         ${reg.files.map((f) => `<div style="font-size:13px; margin-top:4px;">📎 ${esc(f.label)} — <a href="${f.url}" target="_blank" rel="noopener">${esc(f.original_name)}</a></div>`).join("")}
-        <p class="muted small" style="margin-top:12px;">Approving adds them to your Musicians database with their documents saved as travel IDs. You can move them to Team later from there.</p>
+        <p class="muted small" style="margin-top:12px;">Approving adds them to your Team list as Freelance, with their documents saved as travel IDs. You can change them to Core any time from their card.</p>
       </div>
-      <div class="modal-foot"><button class="btn-ghost" id="rvReject" style="color:#A6432B;">Reject</button><button class="btn-primary" id="rvApprove">Approve & add to Musicians</button></div>
+      <div class="modal-foot"><button class="btn-ghost" id="rvReject" style="color:#A6432B;">Reject</button><button class="btn-primary" id="rvApprove">Approve & add to Team</button></div>
     </div></div>`;
   const close = () => (root.innerHTML = "");
   root.querySelector("#closeModal").addEventListener("click", close);

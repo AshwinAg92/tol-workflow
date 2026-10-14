@@ -774,28 +774,60 @@ async function setup() {
     }
   }
 
-  // One-time backfill: the Musicians directory launched empty even though
-  // Team already had people in it, so copy every existing Team member
-  // across (pre-linked via team_id, since they're already in Team) --
-  // asked for directly rather than left for someone to re-type by hand.
-  // Idempotent by name (case-insensitive) so this is safe to leave running
-  // on every startup: it only ever does something the first time.
-  const { rows: teamForMusicianBackfill } = await pool.query("SELECT * FROM team");
-  const { rows: existingMusicianRows } = await pool.query("SELECT LOWER(name) AS name FROM musicians");
-  const existingMusicianNames = new Set(existingMusicianRows.map((r) => r.name));
-  for (const t of teamForMusicianBackfill) {
-    if (existingMusicianNames.has(t.name.toLowerCase())) continue;
-    const instrumentSource = t.specialty || t.role || "";
-    const instruments = instrumentSource.split(/,|&| and /i).map((s) => s.trim()).filter(Boolean);
-    const musicianId = uuid();
-    await pool.query(`
-      INSERT INTO musicians (id, name, phone, city, rate_local, rate_outstation, team_id, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-    `, [musicianId, t.name, t.phone || null, t.base_city || null, t.local_fee || null, t.outstation_fee || null, t.id, new Date().toISOString()]);
-    for (const instrument of instruments) {
-      await pool.query(`INSERT INTO musician_instruments (id, musician_id, instrument) VALUES ($1, $2, $3)`, [uuid(), musicianId, instrument]);
+  // ---- Unify Team + Musicians: Team is the single people list ----
+  // Additive only: nothing in musicians / temp_artists is deleted. Idempotent.
+  await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'core'`);
+  await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS instruments TEXT`);
+  await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS notes TEXT`);
+  await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS legacy_musician_id TEXT`);
+  await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS migrated_assignment_id TEXT`);
+  {
+    const ins = (await pool.query("SELECT musician_id, instrument FROM musician_instruments ORDER BY instrument ASC")).rows;
+    const instOf = (id) => ins.filter((r) => r.musician_id === id).map((r) => r.instrument).join(", ");
+    for (const m of (await pool.query("SELECT * FROM musicians ORDER BY created_at ASC")).rows) {
+      let teamId = m.team_id;
+      if (!teamId) {
+        const done = (await pool.query("SELECT id FROM team WHERE legacy_musician_id = $1", [m.id])).rows[0];
+        if (done) teamId = done.id;
+      }
+      if (teamId) {
+        const t = (await pool.query("SELECT instruments, email, reg_details FROM team WHERE id = $1", [teamId])).rows[0];
+        if (t && !t.instruments && instOf(m.id)) await pool.query("UPDATE team SET instruments = $1 WHERE id = $2", [instOf(m.id), teamId]);
+        if (t && !t.email && m.email) await pool.query("UPDATE team SET email = $1 WHERE id = $2", [m.email, teamId]);
+        if (t && !t.reg_details && m.reg_details) await pool.query("UPDATE team SET reg_details = $1 WHERE id = $2", [m.reg_details, teamId]);
+      } else {
+        teamId = uuid();
+        const instrs = instOf(m.id);
+        await pool.query(`INSERT INTO team (id, name, role, phone, email, specialty, base_city, local_fee, outstation_fee, reg_details, kind, instruments, notes, legacy_musician_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'freelance',$11,$12,$13)`,
+          [teamId, m.name, instrs || "Musician", m.phone || null, m.email || null, instrs || null, m.city || null, m.rate_local || null, m.rate_outstation || null, m.reg_details || null, instrs || null, m.notes || null, m.id]);
+        await pool.query("UPDATE musicians SET team_id = $1 WHERE id = $2", [teamId, m.id]);
+      }
+      // Any IDs stored against the musician move to the team record.
+      await pool.query("UPDATE team_id_docs SET team_id = $1, musician_id = NULL WHERE musician_id = $2", [teamId, m.id]);
+    }
+    // Guest artists become ordinary assignments (same fee expense, same confirm link, same status).
+    for (const g of (await pool.query("SELECT * FROM temp_artists WHERE migrated_assignment_id IS NULL AND musician_id IS NOT NULL ORDER BY created_at ASC")).rows) {
+      const mu = (await pool.query("SELECT team_id FROM musicians WHERE id = $1", [g.musician_id])).rows[0];
+      if (!mu || !mu.team_id) continue;
+      const ex = g.expense_id ? (await pool.query("SELECT id, amount, paid FROM expenses WHERE id = $1", [g.expense_id])).rows[0] : null;
+      let a = (await pool.query("SELECT id FROM event_assignments WHERE lead_id = $1 AND team_id = $2", [g.lead_id, mu.team_id])).rows[0];
+      if (!a) {
+        const id = uuid();
+        await pool.query(`INSERT INTO event_assignments (id, lead_id, team_id, status, paid, fee_amount, created_at, responded_at, confirm_token, note)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [id, g.lead_id, mu.team_id, g.status || "pending", ex ? (ex.paid ? 1 : 0) : 0, ex ? ex.amount : null, g.created_at, g.responded_at || null, g.confirm_token || uuid(), g.note || null]);
+        a = { id };
+      }
+      if (ex) {
+        const other = (await pool.query("SELECT 1 FROM expenses WHERE lead_id = $1 AND team_id = $2 AND id <> $3 LIMIT 1", [g.lead_id, mu.team_id, ex.id])).rows[0];
+        if (!other) await pool.query("UPDATE expenses SET team_id = $1 WHERE id = $2", [mu.team_id, ex.id]);
+      }
+      await pool.query("UPDATE temp_artists SET migrated_assignment_id = $1 WHERE id = $2", [a.id, g.id]);
     }
   }
+
+  // (The old Team->Musicians backfill was removed: Team is now the single people list.)
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS activity_log (
