@@ -5540,7 +5540,8 @@ function openRegistrationReviewModal(reg, onDone) {
         <div class="row-2"><div><label>Role</label><input id="rvRole" value="${esc(d.role)}" /></div><div><label>Base city</label><input id="rvCity" value="${esc(d.city)}" /></div></div>
         <label>Phone</label><input id="rvPhone" value="${esc(d.phone)}" />
         <div class="muted small" style="margin-top:10px; line-height:1.6;">
-          ${[d.email && `Email: ${esc(d.email)}`, d.dob && `DOB: ${esc(d.dob)}`, d.gender && `Gender: ${esc(d.gender)}`, (d.emName || d.emPhone) && `Emergency: ${esc(d.emName)} ${esc(d.emPhone)}`, d.instagram && `Instagram: ${esc(d.instagram)}`, d.fee && `<b>Fee expectation: ${esc(d.fee)}</b>`, d.notes && `Notes: ${esc(d.notes)}`].filter(Boolean).join("<br>")}
+          ${[["Email", d.email], ["DOB", d.dob], ["Gender", d.gender], ["Emergency contact", [d.emName, d.emPhone].filter(Boolean).join(" ")], ["Instagram", d.instagram], ["Fee expectation", d.fee], ["Notes", d.notes]]
+            .map(([k, v]) => `<span${k === "Fee expectation" ? ' style="font-weight:700;"' : ""}>${k}: ${v ? esc(v) : `<i>not provided</i>`}</span>`).join("<br>")}}
         </div>
         <div style="margin-top:10px; font-weight:700;">Documents</div>
         ${reg.files.map((f) => `<div style="font-size:13px; margin-top:4px;">📎 ${esc(f.label)} — <a href="${f.url}" target="_blank" rel="noopener">${esc(f.original_name)}</a></div>`).join("")}
