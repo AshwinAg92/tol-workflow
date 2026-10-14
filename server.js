@@ -166,7 +166,7 @@ function restrictedLeadView(l) {
     event_time: l.event_time, soundcheck_time: l.soundcheck_time, occasion: l.occasion, venue: l.venue,
     combo_group_id: l.combo_group_id, is_combo_primary: l.is_combo_primary, pcs: l.pcs, duration: l.duration,
     sound_manager_name: l.sound_manager_name, sound_manager_phone: l.sound_manager_phone,
-    coordinator_name: l.coordinator_name, coordinator_phone: l.coordinator_phone,
+    coordinator_name: l.coordinator_name, coordinator_phone: l.coordinator_phone, contacts: l.contacts,
   };
 }
 // Events a team member is allotted to (not declined). null = no roster link, i.e. no scoping possible.
@@ -1831,7 +1831,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration", "whatsapp_number",
     "cancellation_reason", "snooze_until", "state", "rate_type", "rate_note", "rate_inclusions", "occasion_other", "not_interested_reason", "is_b2b", "thanked_at",
   ];
-  const sharedFields = ["event_time", "soundcheck_time", "venue", "sound_manager_name", "sound_manager_phone", "coordinator_name", "coordinator_phone"];
+  const sharedFields = ["event_time", "soundcheck_time", "venue", "sound_manager_name", "sound_manager_phone", "coordinator_name", "coordinator_phone", "contacts"];
   if (!hasLeads) {
     const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f === "not_interested_reason" ? "notInterestedReason" : f === "is_b2b" ? "isB2b" : f === "thanked_at" ? "thankedAt" : f);
     const attemptedRestricted = leadsOnlyFields.some((f) => req.body[keyFor(f)] !== undefined);

@@ -202,6 +202,7 @@ async function setup() {
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sound_manager_phone TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS coordinator_name TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS coordinator_phone TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS contacts TEXT`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS feedback (
       id TEXT PRIMARY KEY,
