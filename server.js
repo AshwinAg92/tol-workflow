@@ -3869,6 +3869,7 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
     teamIds.length ? pool.query("SELECT id, team_id, label, original_name, mime_type FROM team_id_docs WHERE team_id = ANY($1) ORDER BY uploaded_at ASC", [teamIds]) : { rows: [] },
     legIds.length ? pool.query("SELECT leg_id, team_id FROM travel_leg_members WHERE leg_id = ANY($1)", [legIds]) : { rows: [] },
   ]);
+  const ticketRows = legIds.length ? (await pool.query("SELECT id, original_name, travel_leg_id FROM documents WHERE travel_leg_id = ANY($1) ORDER BY uploaded_at ASC", [legIds])).rows : [];
   const guestRows = temps.rows.filter((t) => t.musician_id);
   const trav = guestRows.length ? await loadTravellers(leadId, guestRows.map((t) => "g:" + t.id)) : { guests: [] };
   res.json({
@@ -3885,7 +3886,7 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
       })),
     ],
     tempArtists: temps.rows.filter((t) => !t.musician_id).map((t) => t.name),
-    legs: legs.rows.map((l) => ({ ...l, memberIds: members.rows.filter((m) => m.leg_id === l.id).map((m) => m.team_id) })),
+    legs: legs.rows.map((l) => ({ ...l, memberIds: members.rows.filter((m) => m.leg_id === l.id).map((m) => m.team_id), tickets: ticketRows.filter((t) => t.travel_leg_id === l.id).map((t) => ({ id: t.id, name: t.original_name })) })),
     shares: shares.rows.map((s) => ({ token: s.token, teamIds: JSON.parse(s.team_ids || "[]"), createdAt: s.created_at, expiresAt: s.expires_at, revoked: !!s.revoked })),
   });
 });
@@ -3904,8 +3905,8 @@ app.post("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, r
   const token = crypto.randomBytes(24).toString("base64url");
   const now = new Date();
   const expires = new Date(now.getTime() + 15 * 86400000);
-  await pool.query("INSERT INTO travel_shares (token, lead_id, team_ids, created_at, expires_at, created_by) VALUES ($1,$2,$3,$4,$5,$6)",
-    [token, leadId, JSON.stringify(allIds), now.toISOString(), expires.toISOString(), req.user.username || null]);
+  await pool.query("INSERT INTO travel_shares (token, lead_id, team_ids, created_at, expires_at, created_by, include_tickets) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+    [token, leadId, JSON.stringify(allIds), now.toISOString(), expires.toISOString(), req.user.username || null, req.body.includeTickets ? 1 : 0]);
   logActivity(req, `Travel IDs & details link created for ${lead.name} (${allIds.length} traveller${allIds.length > 1 ? "s" : ""})`, leadId);
   res.status(201).json({ token, expiresAt: expires.toISOString() });
 });
@@ -3939,6 +3940,7 @@ app.get("/trip/:token", async (req, res) => {
   const allIds = JSON.parse(s.team_ids || "[]");
   const teamIds = allIds.filter((x) => !String(x).startsWith("g:"));
   const trav = await loadTravellers(s.lead_id, allIds);
+  const ticketDocs = s.include_tickets ? (await pool.query("SELECT id, original_name, mime_type, travel_leg_id FROM documents WHERE travel_leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1) ORDER BY uploaded_at ASC", [s.lead_id])).rows : [];
   const [legs, members] = await Promise.all([
     pool.query("SELECT id, mode, from_city, to_city, departure_at, arrival_at FROM travel_legs WHERE lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [s.lead_id]),
     pool.query("SELECT travel_leg_members.leg_id, team.id AS team_id, team.name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1)", [s.lead_id]),
@@ -3948,7 +3950,8 @@ app.get("/trip/:token", async (req, res) => {
     if (who.length === 0) return "";
     return `<div class="c"><b>${escHtml(l.mode ? l.mode[0].toUpperCase() + l.mode.slice(1) : "Travel")}</b> — ${escHtml(l.from_city || "?")} → ${escHtml(l.to_city || "?")}
       ${l.departure_at ? `<div class="m">Depart: ${escHtml(fmtWall(l.departure_at))}</div>` : ""}${l.arrival_at ? `<div class="m">Arrive: ${escHtml(fmtWall(l.arrival_at))}</div>` : ""}
-      <div style="margin-top:6px">Travelling: ${who.map(escHtml).join(", ")}</div></div>`;
+      <div style="margin-top:6px">Travelling: ${who.map(escHtml).join(", ")}</div>
+      ${ticketDocs.filter((d) => d.travel_leg_id === l.id).map((d) => { const url = `/trip/${encodeURIComponent(req.params.token)}/ticket/${d.id}`; return `<div style="margin-top:8px"><span class="m">\ud83c\udfab ${escHtml(d.original_name)}</span>${/^image\//i.test(d.mime_type || "") && !/hei[cf]/i.test(d.mime_type) ? `<br><img src="${url}" alt="Ticket">` : ""}<br><a href="${url}" target="_blank" rel="noopener">Open ticket</a></div>`; }).join("")}</div>`;
   }).join("");
   const idCards = [...trav.team, ...trav.guests].map((t) => {
     const docs = t.docs;
@@ -3962,6 +3965,17 @@ app.get("/trip/:token", async (req, res) => {
     <div class="m" style="margin-top:6px">Shared by Together, Out Loud for booking tickets. Link valid until ${escHtml(fmtWall(s.expires_at))}.</div>
     <h2>Team travelling (${trav.team.length + trav.guests.length})</h2>${idCards}
     <h2>Travel plan</h2>${legCards || `<div class="c m">Travel plan will be shared shortly.</div>`}`));
+});
+app.get("/trip/:token/ticket/:docId", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  const s = await loadTravelShare(req.params.token);
+  if (!s || !s.include_tickets) return res.status(404).send("Link no longer available");
+  const d = (await pool.query(`SELECT original_name, mime_type, file_data FROM documents WHERE id = $1 AND travel_leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $2)`, [req.params.docId, s.lead_id])).rows[0];
+  if (!d || !d.file_data) return res.status(404).send("File not found");
+  res.setHeader("Content-Type", d.mime_type || "application/octet-stream");
+  res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(d.original_name)}"`);
+  res.send(d.file_data);
 });
 app.get("/trip/:token/id/:docId", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");

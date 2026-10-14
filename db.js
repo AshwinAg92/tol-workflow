@@ -780,6 +780,7 @@ async function setup() {
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS instruments TEXT`);
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS notes TEXT`);
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS legacy_musician_id TEXT`);
+  await pool.query(`ALTER TABLE travel_shares ADD COLUMN IF NOT EXISTS include_tickets INTEGER NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS migrated_assignment_id TEXT`);
   {
     const ins = (await pool.query("SELECT musician_id, instrument FROM musician_instruments ORDER BY instrument ASC")).rows;

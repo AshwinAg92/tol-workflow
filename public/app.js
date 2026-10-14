@@ -5581,6 +5581,7 @@ async function openTravelShareModal(leadId) {
   let msgOverride = null;
   let clientPhone = lead.whatsapp_number || lead.phone || "";
   let busy = false;
+  let includeTickets = true;
   const LINK = "{link}";
 
   const legsFor = () => data.legs.map((l) => ({ ...l, who: data.team.filter((t) => selected.has(t.teamId) && l.memberIds.includes(t.teamId)).map((t) => t.name) }));
@@ -5604,6 +5605,7 @@ async function openTravelShareModal(leadId) {
         `   Travelling: ${l.who.join(", ")}`,
       ]),
       "",
+      ...(includeTickets && legs.some((l) => (l.tickets || []).length) ? ["\ud83c\udfab Tickets already booked are attached in the link below.", ""] : []),
       `🪪 *ID cards + full details (secure link, valid 15 days):*`,
       LINK,
       "",
@@ -5660,7 +5662,9 @@ async function openTravelShareModal(leadId) {
                 <b>${esc(cap(l.mode))}</b> — ${esc(l.from_city || "?")} → ${esc(l.to_city || "?")}
                 <div class="muted small">${l.departure_at ? `Depart ${esc(wall(l.departure_at))}` : "Departure not set"}${l.arrival_at ? ` · Arrive ${esc(wall(l.arrival_at))}` : ""}</div>
                 <div class="small">Travelling: ${l.who.map(esc).join(", ")}</div>
+                ${(l.tickets || []).length ? `<div class="small" style="color:#2F6B3A;">\ud83c\udfab ${l.tickets.map((t) => esc(t.name)).join(", ")}</div>` : ""}
               </div>`).join("")}
+            ${included.some((l) => (l.tickets || []).length) ? `<label class="check-row" style="margin:6px 0 8px;"><input type="checkbox" id="tsIncludeTickets" ${includeTickets ? "checked" : ""} /> \ud83c\udfab Also include the tickets attached to the travel plan (${included.reduce((n, l) => n + (l.tickets || []).length, 0)} file${included.reduce((n, l) => n + (l.tickets || []).length, 0) === 1 ? "" : "s"})</label>` : ""}
             ${people.some((t) => t.guest && selected.has(t.teamId)) ? `<p class="muted small">Guest musicians aren't on the Travel Calendar, so only their ID goes in the link — add their tickets in the message yourself if the client is booking them.</p>` : ""}
             ${excluded.length && included.length ? `<p class="muted small">${excluded.length} other travel entr${excluded.length > 1 ? "ies" : "y"} for this event has none of the selected people, so it is left out.</p>` : ""}
 
@@ -5704,7 +5708,7 @@ async function openTravelShareModal(leadId) {
     if (missing.length && !confirm(`No ID saved for: ${missing.join(", ")}.\n\nSend anyway? The client will see "ID not available" for them.`)) return null;
     const hasLegs = legsFor().some((l) => l.who.length > 0);
     if (!hasLegs && !confirm("No travel details are linked to this event for the selected people. Send with just the IDs?")) return null;
-    const r = await api(`/api/leads/${leadId}/travel-share`, { method: "POST", body: JSON.stringify({ teamIds: ids }) });
+    const r = await api(`/api/leads/${leadId}/travel-share`, { method: "POST", body: JSON.stringify({ teamIds: ids, includeTickets: includeTickets && legsFor().some((l) => l.who.length > 0 && (l.tickets || []).length > 0) }) });
     const link = `${window.location.origin}/trip/${r.token}`;
     text = text.includes(LINK) ? text.replace(LINK, link) : `${text}\n\n🪪 ${link}`;
     return { text, link };
@@ -5721,6 +5725,8 @@ async function openTravelShareModal(leadId) {
       if (cur !== buildMessage()) msgOverride = cur;
     };
     root.querySelector("#tsPhone").addEventListener("input", (e) => { clientPhone = e.target.value; });
+    const tk = root.querySelector("#tsIncludeTickets");
+    if (tk) tk.addEventListener("change", () => { keepInputs(); includeTickets = tk.checked; msgOverride = null; render(); });
     root.querySelectorAll(".ts-pick").forEach((cb) => cb.addEventListener("change", () => {
       keepInputs();
       if (cb.checked) selected.add(cb.dataset.teamId); else selected.delete(cb.dataset.teamId);
