@@ -4124,6 +4124,7 @@ function openEditMemberModal(member, linkedUser) {
           </div>
           ${!linkedUser ? `<div id="emNoLoginBox" class="card" style="margin-top:12px; padding:10px 12px;"><div class="muted small">${member.kind === "freelance" ? "No login needed \u2014 they confirm events through the WhatsApp link." : "No login for this person."}</div><button type="button" class="btn-ghost" id="emShowLogin" style="margin-top:6px;">Give this person a login</button></div>` : ""}
           <div id="emLoginBlock" style="display:${linkedUser ? "block" : "none"};">
+          ${linkedUser && CURRENT_USER?.accessLevel === "admin" && linkedUser.id !== CURRENT_USER?.id ? `<label class="check-row" style="margin:4px 0 10px;"><input type="checkbox" id="emNoLogin" /> No login needed \u2014 remove this person's login (they confirm events via the WhatsApp link)</label>` : ""}
           <div class="row-2">
             <div><label>Username</label><input id="emUsername" value="${linkedUser ? linkedUser.username : ""}" placeholder="${linkedUser ? "" : "Leave blank for no login"}" /></div>
             <div><label>${linkedUser ? "New password (leave blank to keep unchanged)" : "Password"}</label>
@@ -4212,7 +4213,9 @@ function openEditMemberModal(member, linkedUser) {
         : undefined;
       const emPerformerCb = root.querySelector("#emIsPerformer");
       const isPerformer = emPerformerCb ? (accessLevel === "performer" ? false : emPerformerCb.checked) : undefined;
-      if (linkedUser) {
+      if (linkedUser && root.querySelector("#emNoLogin")?.checked) {
+        await api(`/api/users/${linkedUser.id}`, { method: "DELETE" });
+      } else if (linkedUser) {
         await api(`/api/users/${linkedUser.id}`, {
           method: "PATCH",
           body: JSON.stringify({ username, password: password || undefined, accessLevel, permissions, isPerformer }),
