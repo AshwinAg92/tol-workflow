@@ -4505,7 +4505,10 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
             <button class="btn-ghost" id="addContactBtn" style="font-size:12.5px; padding:5px 12px; margin-bottom:10px;">+ Add contact</button>
             ${riderDocs.length === 0 ? `<p class="muted small" style="margin:0;">No riders uploaded yet — once a document labelled "Tech Rider" or "Hospitality Rider" is added under Documents, a send button appears here.</p>` : ""}
           </div>
-          <button class="btn-ghost" id="openTravelPlanFromTeamBtn" style="margin-bottom:12px;">🧳 Travel plan</button>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+            <button class="btn-ghost" id="openTravelPlanFromTeamBtn">🧳 Travel plan</button>
+            ${isAdmin ? `<button class="btn-ghost" id="openTravelShareBtn">🪪 Send IDs & travel details to client</button>` : ""}
+          </div>
           ${isAdmin && leadExpenses.length > 0 ? `
             <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:14px; gap:8px;">
               <div class="card summary-card summary-card-compact"><div class="muted">Total expenses</div><div class="mono big">${inr(totalExpensesAmount)}</div></div>
@@ -4791,6 +4794,8 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     window.location.href = `https://wa.me/?text=${encodeURIComponent(lines)}`;
   });
   root.querySelector("#openTravelPlanFromTeamBtn").addEventListener("click", () => openTravelPlanModal(leadId));
+  const shareBtn = root.querySelector("#openTravelShareBtn");
+  if (shareBtn) shareBtn.addEventListener("click", () => openTravelShareModal(leadId));
   root.querySelector("#addMemberInlineBtn").addEventListener("click", () => {
     openAddMemberModal(() => openAssignTeamModal(leadId));
   });
@@ -5141,6 +5146,231 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       btn.disabled = false;
     }
   });
+}
+
+// ---------- Send team IDs + travel details to the client (for ticket booking) ----------
+async function openTravelShareModal(leadId) {
+  const lead = LEADS.find((l) => l.id === leadId);
+  if (!lead) return;
+  const root = document.getElementById("modalRoot");
+  const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  const wall = (v) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(v || "");
+    if (!m) return v || "";
+    const mon = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][Number(m[2]) - 1];
+    let out = `${Number(m[3])} ${mon} ${m[1]}`;
+    if (m[4]) { const h = Number(m[4]); out += `, ${((h + 11) % 12) + 1}:${m[5]} ${h >= 12 ? "PM" : "AM"}`; }
+    return out;
+  };
+  const cap = (x) => (x ? x[0].toUpperCase() + x.slice(1) : "Travel");
+  let data;
+  try { data = await api(`/api/leads/${leadId}/travel-share`); } catch (err) { return alert(err.message); }
+  let selected = new Set(data.team.filter((t) => t.status !== "declined").map((t) => t.teamId));
+  let msgOverride = null;
+  let clientPhone = lead.whatsapp_number || lead.phone || "";
+  let busy = false;
+  const LINK = "{link}";
+
+  const legsFor = () => data.legs.map((l) => ({ ...l, who: data.team.filter((t) => selected.has(t.teamId) && l.memberIds.includes(t.teamId)).map((t) => t.name) }));
+  const buildMessage = () => {
+    const first = (lead.name || "").split(" ")[0];
+    const people = data.team.filter((t) => selected.has(t.teamId));
+    const legs = legsFor().filter((l) => l.who.length > 0);
+    return [
+      `Hi ${first},`,
+      "",
+      `Here are the travel details and ID cards of our team for *${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.city ? ` in ${lead.city}` : ""}* so you can book the tickets.`,
+      "",
+      `👥 *Team travelling (${people.length}):*`,
+      ...people.map((t, i) => `${i + 1}. ${t.name}${t.role ? ` — ${t.role}` : ""}`),
+      "",
+      legs.length ? "✈️ *Travel plan:*" : "✈️ Travel plan: we will share it shortly.",
+      ...legs.flatMap((l) => [
+        `• ${cap(l.mode)} — ${l.from_city || "?"} → ${l.to_city || "?"}`,
+        ...(l.departure_at ? [`   Depart: ${wall(l.departure_at)}`] : []),
+        ...(l.arrival_at ? [`   Arrive: ${wall(l.arrival_at)}`] : []),
+        `   Travelling: ${l.who.join(", ")}`,
+      ]),
+      "",
+      `🪪 *ID cards + full details (secure link, valid 15 days):*`,
+      LINK,
+      "",
+      "Please confirm once the tickets are booked. Thank you!",
+      "Together, Out Loud",
+    ].join("\n");
+  };
+  const normPhone = (raw) => { const d = (raw || "").replace(/\D/g, ""); return d.length === 10 ? `91${d}` : d; };
+
+  function render() {
+    const people = data.team;
+    const legs = legsFor();
+    const included = legs.filter((l) => l.who.length > 0);
+    const excluded = legs.filter((l) => l.who.length === 0);
+    const missingId = people.filter((t) => selected.has(t.teamId) && t.idDocs.length === 0);
+    const activeShares = data.shares.filter((x) => !x.revoked && new Date(x.expiresAt) > new Date());
+    const msg = msgOverride != null ? msgOverride : buildMessage();
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay">
+        <div class="modal-card" style="width:680px; max-width:96vw;">
+          <div class="modal-head"><h3>🪪 Send IDs & travel details — ${esc(lead.name)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+          <div class="modal-body">
+            <p class="muted small" style="margin:0 0 10px;">Only the team members you tick below are included — nobody else's ID can be reached through the link. The client gets one secure link (valid 15 days, you can revoke it) showing the IDs and the travel plan, plus the same details in the WhatsApp message.</p>
+
+            <div class="section-label">1. Who is travelling</div>
+            ${people.length === 0 ? `<p class="muted small">No team members are assigned to this event yet.</p>` : people.map((t) => `
+              <div class="card" style="padding:10px 12px; margin-bottom:8px;" data-team-id="${t.teamId}">
+                <label style="display:flex; gap:10px; align-items:center; margin:0; cursor:pointer;">
+                  <input type="checkbox" class="ts-pick" data-team-id="${t.teamId}" ${selected.has(t.teamId) ? "checked" : ""} style="width:auto;" />
+                  <span style="font-weight:700;">${esc(t.name)}</span><span class="muted small">${esc(t.role || "")}${t.status === "declined" ? " · declined" : t.status === "pending" ? " · not yet accepted" : ""}</span>
+                </label>
+                <div style="margin:6px 0 0 28px;">
+                  ${t.idDocs.length === 0 ? `<div style="color:#A6432B; font-size:12.5px; margin-bottom:6px;">⚠ No ID card saved yet</div>` : t.idDocs.map((d) => `
+                    <div style="display:flex; gap:8px; align-items:center; font-size:12.5px; margin-bottom:4px;">
+                      <span>✓ ${esc(d.label || d.original_name)}</span>
+                      <a href="${d.url}" target="_blank" rel="noopener">view</a>
+                      <button class="btn-ghost ts-del-id" data-doc-id="${d.id}" style="font-size:11px; padding:1px 7px;">remove</button>
+                    </div>`).join("")}
+                  <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+                    <select class="ts-id-label" data-team-id="${t.teamId}" style="width:auto; font-size:12px;">
+                      ${["Aadhaar", "Passport", "PAN card", "Driving licence", "Voter ID", "Other"].map((o) => `<option>${o}</option>`).join("")}
+                    </select>
+                    <label class="btn-ghost" style="font-size:12px; padding:3px 10px; cursor:pointer; margin:0;">⬆ Upload ID
+                      <input type="file" class="ts-id-file" data-team-id="${t.teamId}" accept="image/*,application/pdf" style="display:none;" />
+                    </label>
+                  </div>
+                </div>
+              </div>`).join("")}
+            ${data.tempArtists.length ? `<p class="small" style="color:#8A5A1F; background:#FFF4E5; padding:8px 10px; border-radius:6px;">Temporary artists (${esc(data.tempArtists.join(", "))}) don't have saved IDs, so they are <b>not</b> in this link — send theirs separately.</p>` : ""}
+
+            <div class="section-label" style="margin-top:14px;">2. Travel details that will be sent</div>
+            ${included.length === 0 ? `<p class="small" style="color:#A6432B;">⚠ No travel entry in the Travel Calendar is linked to this event for the selected people. The message will say the plan will follow. Add it via 🧳 Travel plan first if it should go now.</p>` : included.map((l) => `
+              <div class="card" style="padding:8px 12px; margin-bottom:6px; font-size:13px;">
+                <b>${esc(cap(l.mode))}</b> — ${esc(l.from_city || "?")} → ${esc(l.to_city || "?")}
+                <div class="muted small">${l.departure_at ? `Depart ${esc(wall(l.departure_at))}` : "Departure not set"}${l.arrival_at ? ` · Arrive ${esc(wall(l.arrival_at))}` : ""}</div>
+                <div class="small">Travelling: ${l.who.map(esc).join(", ")}</div>
+              </div>`).join("")}
+            ${excluded.length && included.length ? `<p class="muted small">${excluded.length} other travel entr${excluded.length > 1 ? "ies" : "y"} for this event has none of the selected people, so it is left out.</p>` : ""}
+
+            <div class="section-label" style="margin-top:14px;">3. Send to the client</div>
+            <label>Client WhatsApp number</label>
+            <input id="tsPhone" type="tel" value="${esc(clientPhone)}" placeholder="Client phone" />
+            <label>Message (you can edit it — keep the {link} line)</label>
+            <textarea id="tsMsg" rows="14" style="font-size:13px;">${esc(msg)}</textarea>
+            ${missingId.length ? `<p class="small" style="color:#A6432B;">⚠ No ID saved for: ${missingId.map((t) => esc(t.name)).join(", ")}. Upload above before sending.</p>` : `<p class="small" style="color:#1C7A80;">✓ Every selected person has an ID saved.</p>`}
+
+            ${data.shares.length ? `
+              <div class="section-label" style="margin-top:14px;">Links already sent</div>
+              ${data.shares.map((x) => {
+                const live = !x.revoked && new Date(x.expiresAt) > new Date();
+                const names = data.team.filter((t) => x.teamIds.includes(t.teamId)).map((t) => t.name).join(", ");
+                return `<div class="card" style="padding:8px 12px; margin-bottom:6px; font-size:12.5px;">
+                  <div>${live ? "🟢 Active" : x.revoked ? "⛔ Revoked" : "⌛ Expired"} · created ${esc(wall(x.createdAt))} · for ${esc(names || "—")}</div>
+                  ${live ? `<div style="margin-top:6px; display:flex; gap:6px;"><button class="btn-ghost ts-copy" data-token="${x.token}" style="font-size:12px; padding:3px 9px;">🔗 Copy link</button><button class="btn-ghost ts-revoke" data-token="${x.token}" style="font-size:12px; padding:3px 9px;">Revoke</button></div>` : ""}
+                </div>`;
+              }).join("")}` : ""}
+          </div>
+          <div class="modal-foot">
+            <button class="btn-ghost" id="cancelModal">Close</button>
+            <button class="btn-ghost" id="tsCopyBtn">🔗 Copy message + link</button>
+            <button class="btn-primary" id="tsSendBtn">💬 Send on WhatsApp</button>
+          </div>
+        </div>
+      </div>`;
+    wire();
+  }
+
+  async function reload() { data = await api(`/api/leads/${leadId}/travel-share`); render(); }
+
+  async function createLinkedMessage() {
+    const phoneEl = root.querySelector("#tsPhone");
+    clientPhone = phoneEl.value.trim();
+    let text = root.querySelector("#tsMsg").value;
+    const ids = [...selected];
+    if (ids.length === 0) { alert("Tick at least one team member."); return null; }
+    const missing = data.team.filter((t) => selected.has(t.teamId) && t.idDocs.length === 0).map((t) => t.name);
+    if (missing.length && !confirm(`No ID saved for: ${missing.join(", ")}.\n\nSend anyway? The client will see "ID not available" for them.`)) return null;
+    const hasLegs = legsFor().some((l) => l.who.length > 0);
+    if (!hasLegs && !confirm("No travel details are linked to this event for the selected people. Send with just the IDs?")) return null;
+    const r = await api(`/api/leads/${leadId}/travel-share`, { method: "POST", body: JSON.stringify({ teamIds: ids }) });
+    const link = `${window.location.origin}/trip/${r.token}`;
+    text = text.includes(LINK) ? text.replace(LINK, link) : `${text}\n\n🪪 ${link}`;
+    return { text, link };
+  }
+
+  function wire() {
+    const close = () => openAssignTeamModal(leadId);
+    root.querySelector("#closeModal").addEventListener("click", close);
+    root.querySelector("#cancelModal").addEventListener("click", close);
+    root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+    const keepInputs = () => {
+      clientPhone = root.querySelector("#tsPhone").value;
+      const cur = root.querySelector("#tsMsg").value;
+      if (cur !== buildMessage()) msgOverride = cur;
+    };
+    root.querySelector("#tsPhone").addEventListener("input", (e) => { clientPhone = e.target.value; });
+    root.querySelectorAll(".ts-pick").forEach((cb) => cb.addEventListener("change", () => {
+      keepInputs();
+      if (cb.checked) selected.add(cb.dataset.teamId); else selected.delete(cb.dataset.teamId);
+      msgOverride = null; // who's included changed — rebuild the message so it can't go stale
+      render();
+    }));
+    root.querySelectorAll(".ts-id-file").forEach((inp) => inp.addEventListener("change", async () => {
+      const file = inp.files[0];
+      if (!file) return;
+      keepInputs();
+      const label = root.querySelector(`.ts-id-label[data-team-id="${inp.dataset.teamId}"]`).value;
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("label", label);
+        const resp = await fetch(`/api/team/${inp.dataset.teamId}/id-docs`, { method: "POST", body: fd, credentials: "include" });
+        if (!resp.ok) { let m = "Upload failed"; try { m = (await resp.json()).error || m; } catch {} throw new Error(m); }
+        await reload();
+      } catch (err) { alert(err.message); }
+    }));
+    root.querySelectorAll(".ts-del-id").forEach((b) => b.addEventListener("click", async () => {
+      if (!confirm("Remove this ID card?")) return;
+      keepInputs();
+      await api(`/api/team-id-docs/${b.dataset.docId}`, { method: "DELETE" });
+      await reload();
+    }));
+    root.querySelectorAll(".ts-copy").forEach((b) => b.addEventListener("click", async () => {
+      const link = `${window.location.origin}/trip/${b.dataset.token}`;
+      try { await navigator.clipboard.writeText(link); b.textContent = "✓ Copied"; } catch { prompt("Copy this link:", link); }
+    }));
+    root.querySelectorAll(".ts-revoke").forEach((b) => b.addEventListener("click", async () => {
+      if (!confirm("Revoke this link? The client will no longer be able to open it.")) return;
+      keepInputs();
+      await api(`/api/travel-share/${b.dataset.token}/revoke`, { method: "POST" });
+      await reload();
+    }));
+    root.querySelector("#tsSendBtn").addEventListener("click", async (e) => {
+      if (busy) return;
+      busy = true; e.currentTarget.disabled = true;
+      try {
+        const out = await createLinkedMessage();
+        if (!out) return;
+        const phone = normPhone(clientPhone);
+        if (!phone) { alert("Add the client's WhatsApp number first."); return; }
+        window.location.href = `https://wa.me/${phone}?text=${encodeURIComponent(out.text)}`;
+        await reload();
+      } catch (err) { alert(err.message); }
+      finally { busy = false; const b = root.querySelector("#tsSendBtn"); if (b) b.disabled = false; }
+    });
+    root.querySelector("#tsCopyBtn").addEventListener("click", async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const out = await createLinkedMessage();
+        if (!out) return;
+        try { await navigator.clipboard.writeText(out.text); alert("Copied — paste it into WhatsApp or email."); } catch { prompt("Copy this message:", out.text); }
+        await reload();
+      } catch (err) { alert(err.message); }
+      finally { busy = false; }
+    });
+  }
+
+  render();
 }
 
 // ---------- Travel plan (per-artist, per-event) ----------

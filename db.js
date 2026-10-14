@@ -203,6 +203,28 @@ async function setup() {
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS coordinator_name TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS coordinator_phone TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS contacts TEXT`);
+  // Travel ID cards live in their own table (not `documents`) so they can never
+  // appear in the general documents list or its public file link.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS team_id_docs (
+      id TEXT PRIMARY KEY,
+      team_id TEXT NOT NULL REFERENCES team(id) ON DELETE CASCADE,
+      label TEXT,
+      original_name TEXT NOT NULL,
+      mime_type TEXT,
+      file_data BYTEA,
+      uploaded_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS travel_shares (
+      token TEXT PRIMARY KEY,
+      lead_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+      team_ids TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      revoked INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT
+    );
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS feedback (
       id TEXT PRIMARY KEY,

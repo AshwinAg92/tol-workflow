@@ -3488,6 +3488,154 @@ app.post("/api/documents/:id/attach", requireAuth, requireAnySection(["documents
   logActivity(req, `Attached document "${source.notes || source.original_name}" to ${lead.name}`, leadId);
 });
 
+// ---------- Travel ID cards + client travel-share links ----------
+// ID cards are admin-only and stored apart from `documents`. Clients never get a
+// raw file URL: they get one expiring, revocable page (/trip/:token) that shows
+// only the chosen team members' IDs plus the travel legs linked to that event.
+const ID_DOC_MIMES = /^(image\/(jpeg|png|webp|heic|heif)|application\/pdf)$/i;
+const escHtml = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+app.get("/api/team/:id/id-docs", requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await pool.query("SELECT id, team_id, label, original_name, mime_type, uploaded_at FROM team_id_docs WHERE team_id = $1 ORDER BY uploaded_at ASC", [req.params.id]);
+  res.json(rows.map((d) => ({ ...d, url: `/api/team-id-docs/${d.id}/file` })));
+});
+app.post("/api/team/:id/id-docs", requireAuth, requireAdmin, upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+  if (!ID_DOC_MIMES.test(req.file.mimetype || "")) return res.status(400).json({ error: "Please upload a photo (JPG/PNG) or a PDF." });
+  const member = (await pool.query("SELECT name FROM team WHERE id = $1", [req.params.id])).rows[0];
+  if (!member) return res.status(404).json({ error: "Team member not found" });
+  const id = uuid();
+  await pool.query(
+    "INSERT INTO team_id_docs (id, team_id, label, original_name, mime_type, file_data, uploaded_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+    [id, req.params.id, (req.body.label || "").trim() || null, req.file.originalname, req.file.mimetype, req.file.buffer, new Date().toISOString()]
+  );
+  logActivity(req, `Travel ID uploaded for ${member.name}${req.body.label ? ` (${req.body.label})` : ""}`, null);
+  res.status(201).json({ id });
+});
+app.get("/api/team-id-docs/:docId/file", requireAuth, requireAdmin, async (req, res) => {
+  const d = (await pool.query("SELECT original_name, mime_type, file_data FROM team_id_docs WHERE id = $1", [req.params.docId])).rows[0];
+  if (!d || !d.file_data) return res.status(404).send("File not found");
+  res.setHeader("Content-Type", d.mime_type || "application/octet-stream");
+  res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(d.original_name)}"`);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.send(d.file_data);
+});
+app.delete("/api/team-id-docs/:docId", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM team_id_docs WHERE id = $1", [req.params.docId]);
+  res.status(204).end();
+});
+
+// Everything the "Send IDs & travel details" screen needs, in one call.
+app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, res) => {
+  const leadId = req.params.id;
+  const [assigned, temps, legs, shares] = await Promise.all([
+    pool.query(`SELECT team.id AS team_id, team.name, team.role, team.phone, event_assignments.status
+                FROM event_assignments JOIN team ON team.id = event_assignments.team_id
+                WHERE event_assignments.lead_id = $1 ORDER BY team.name ASC`, [leadId]),
+    pool.query("SELECT name FROM temp_artists WHERE lead_id = $1", [leadId]),
+    pool.query("SELECT id, mode, from_city, to_city, departure_at, arrival_at FROM travel_legs WHERE lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [leadId]),
+    pool.query("SELECT token, team_ids, created_at, expires_at, revoked FROM travel_shares WHERE lead_id = $1 ORDER BY created_at DESC", [leadId]),
+  ]);
+  const teamIds = assigned.rows.map((r) => r.team_id);
+  const legIds = legs.rows.map((l) => l.id);
+  const [ids, members] = await Promise.all([
+    teamIds.length ? pool.query("SELECT id, team_id, label, original_name, mime_type FROM team_id_docs WHERE team_id = ANY($1) ORDER BY uploaded_at ASC", [teamIds]) : { rows: [] },
+    legIds.length ? pool.query("SELECT leg_id, team_id FROM travel_leg_members WHERE leg_id = ANY($1)", [legIds]) : { rows: [] },
+  ]);
+  res.json({
+    team: assigned.rows.map((r) => ({
+      teamId: r.team_id, name: r.name, role: r.role, phone: r.phone, status: r.status,
+      idDocs: ids.rows.filter((d) => d.team_id === r.team_id).map((d) => ({ ...d, url: `/api/team-id-docs/${d.id}/file` })),
+    })),
+    tempArtists: temps.rows.map((t) => t.name),
+    legs: legs.rows.map((l) => ({ ...l, memberIds: members.rows.filter((m) => m.leg_id === l.id).map((m) => m.team_id) })),
+    shares: shares.rows.map((s) => ({ token: s.token, teamIds: JSON.parse(s.team_ids || "[]"), createdAt: s.created_at, expiresAt: s.expires_at, revoked: !!s.revoked })),
+  });
+});
+app.post("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, res) => {
+  const leadId = req.params.id;
+  const teamIds = Array.isArray(req.body.teamIds) ? [...new Set(req.body.teamIds)] : [];
+  if (teamIds.length === 0) return res.status(400).json({ error: "Select at least one team member." });
+  const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [leadId])).rows[0];
+  if (!lead) return res.status(404).json({ error: "Event not found" });
+  // Only people actually assigned to THIS event can ever be included.
+  const ok = (await pool.query("SELECT team_id FROM event_assignments WHERE lead_id = $1 AND team_id = ANY($2)", [leadId, teamIds])).rows.map((r) => r.team_id);
+  if (ok.length !== teamIds.length) return res.status(400).json({ error: "Someone selected isn't assigned to this event." });
+  const token = crypto.randomBytes(24).toString("base64url");
+  const now = new Date();
+  const expires = new Date(now.getTime() + 15 * 86400000);
+  await pool.query("INSERT INTO travel_shares (token, lead_id, team_ids, created_at, expires_at, created_by) VALUES ($1,$2,$3,$4,$5,$6)",
+    [token, leadId, JSON.stringify(teamIds), now.toISOString(), expires.toISOString(), req.user.username || null]);
+  logActivity(req, `Travel IDs & details link created for ${lead.name} (${teamIds.length} traveller${teamIds.length > 1 ? "s" : ""})`, leadId);
+  res.status(201).json({ token, expiresAt: expires.toISOString() });
+});
+app.post("/api/travel-share/:token/revoke", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("UPDATE travel_shares SET revoked = 1 WHERE token = $1", [req.params.token]);
+  res.json({ ok: true });
+});
+
+async function loadTravelShare(token) {
+  const s = (await pool.query("SELECT * FROM travel_shares WHERE token = $1", [token])).rows[0];
+  if (!s || s.revoked || new Date(s.expires_at) < new Date()) return null;
+  return s;
+}
+const fmtWall = (v) => {
+  // Stored as a wall-clock string ("2026-10-20T14:30"); format without any timezone shifting.
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(v || "");
+  if (!m) return v || "";
+  const mon = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][Number(m[2]) - 1];
+  let out = `${Number(m[3])} ${mon} ${m[1]}`;
+  if (m[4]) { const h = Number(m[4]); out += `, ${((h + 11) % 12) + 1}:${m[5]} ${h >= 12 ? "PM" : "AM"}`; }
+  return out;
+};
+app.get("/trip/:token", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  const s = await loadTravelShare(req.params.token);
+  const shell = (body) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Travel details — Together, Out Loud</title>
+<style>body{font-family:Georgia,serif;background:#FBF6EC;color:#3A2A1A;margin:0;padding:18px}.w{max-width:640px;margin:0 auto}h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.06em;color:#8A5A1F}.c{background:#fff;border:1px solid #E9DFCF;border-radius:12px;padding:12px 14px;margin-bottom:10px}.m{color:#7A6A58;font-size:13px}img{max-width:100%;border-radius:8px;border:1px solid #E9DFCF;margin-top:8px}a{color:#B5541C}</style></head><body><div class="w">${body}</div></body></html>`;
+  if (!s) return res.status(404).send(shell(`<h1>This link is no longer available</h1><p class="m">It may have expired or been replaced. Please ask Together, Out Loud for a fresh link.</p>`));
+  const lead = (await pool.query("SELECT name, date, city, event_type, occasion FROM leads WHERE id = $1", [s.lead_id])).rows[0];
+  const teamIds = JSON.parse(s.team_ids || "[]");
+  const [team, ids, legs, members] = await Promise.all([
+    pool.query("SELECT id, name, role FROM team WHERE id = ANY($1) ORDER BY name ASC", [teamIds]),
+    pool.query("SELECT id, team_id, label, original_name, mime_type FROM team_id_docs WHERE team_id = ANY($1) ORDER BY uploaded_at ASC", [teamIds]),
+    pool.query("SELECT id, mode, from_city, to_city, departure_at, arrival_at FROM travel_legs WHERE lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [s.lead_id]),
+    pool.query("SELECT travel_leg_members.leg_id, team.id AS team_id, team.name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1)", [s.lead_id]),
+  ]);
+  const legCards = legs.rows.map((l) => {
+    const who = members.rows.filter((m) => m.leg_id === l.id && teamIds.includes(m.team_id)).map((m) => m.name);
+    if (who.length === 0) return "";
+    return `<div class="c"><b>${escHtml(l.mode ? l.mode[0].toUpperCase() + l.mode.slice(1) : "Travel")}</b> — ${escHtml(l.from_city || "?")} → ${escHtml(l.to_city || "?")}
+      ${l.departure_at ? `<div class="m">Depart: ${escHtml(fmtWall(l.departure_at))}</div>` : ""}${l.arrival_at ? `<div class="m">Arrive: ${escHtml(fmtWall(l.arrival_at))}</div>` : ""}
+      <div style="margin-top:6px">Travelling: ${who.map(escHtml).join(", ")}</div></div>`;
+  }).join("");
+  const idCards = team.rows.map((t) => {
+    const docs = ids.rows.filter((d) => d.team_id === t.id);
+    return `<div class="c"><b>${escHtml(t.name)}</b>${t.role ? ` <span class="m">· ${escHtml(t.role)}</span>` : ""}
+      ${docs.length === 0 ? `<div class="m" style="color:#A6432B">ID not available — we'll send it separately.</div>` : docs.map((d) => {
+        const url = `/trip/${encodeURIComponent(req.params.token)}/id/${d.id}`;
+        return `<div style="margin-top:8px"><span class="m">${escHtml(d.label || d.original_name)}</span>${/^image\//i.test(d.mime_type || "") && !/hei[cf]/i.test(d.mime_type) ? `<br><img src="${url}" alt="ID">` : ""}<br><a href="${url}" target="_blank" rel="noopener">Open / download</a></div>`;
+      }).join("")}</div>`;
+  }).join("");
+  res.send(shell(`<h1>Travel details & IDs</h1><div class="m">${escHtml(lead ? `${lead.name}${lead.city ? " · " + lead.city : ""}${lead.date ? " · " + fmtWall(lead.date) : ""}` : "")}</div>
+    <div class="m" style="margin-top:6px">Shared by Together, Out Loud for booking tickets. Link valid until ${escHtml(fmtWall(s.expires_at))}.</div>
+    <h2>Team travelling (${team.rows.length})</h2>${idCards}
+    <h2>Travel plan</h2>${legCards || `<div class="c m">Travel plan will be shared shortly.</div>`}`));
+});
+app.get("/trip/:token/id/:docId", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  const s = await loadTravelShare(req.params.token);
+  if (!s) return res.status(404).send("Link no longer available");
+  const teamIds = JSON.parse(s.team_ids || "[]");
+  const d = (await pool.query("SELECT original_name, mime_type, file_data, team_id FROM team_id_docs WHERE id = $1", [req.params.docId])).rows[0];
+  if (!d || !d.file_data || !teamIds.includes(d.team_id)) return res.status(404).send("File not found");
+  res.setHeader("Content-Type", d.mime_type || "application/octet-stream");
+  res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(d.original_name)}"`);
+  res.send(d.file_data);
+});
+
 // ---------- Dashboard ----------
 // ---------- Message templates — self-service wording for Follow-up / Tentative / Confirmed / Document-share messages ----------
 app.get("/api/message-templates", requireAuth, async (req, res) => {
