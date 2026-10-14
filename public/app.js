@@ -4019,11 +4019,18 @@ function instrumentPickerHtml(id, current) {
     .forEach((i) => { if (!/^(admin|manager)$/i.test(i) && !all.has(i.toLowerCase())) all.set(i.toLowerCase(), i); });
   const sel = new Set(cur.map((x) => x.toLowerCase()));
   const opts = [...all.values()].sort((a, b) => a.localeCompare(b));
-  return `<div id="${id}" class="inst-picker" style="display:flex; flex-wrap:wrap; gap:6px 12px; margin:4px 0 6px;">${opts.map((i) => `<label class="check-row" style="margin:0;"><input type="checkbox" class="inst-cb" value="${i.replace(/"/g, "&quot;")}" ${sel.has(i.toLowerCase()) ? "checked" : ""} /> ${i.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</label>`).join("")}</div>
-    <div style="display:flex; gap:6px; margin-bottom:8px;"><input id="${id}Other" placeholder="Not in the list? Type it here" style="flex:1;" /><button type="button" class="btn-ghost" id="${id}Add">+ Add</button></div>`;
+  const label = cur.length ? cur.join(", ") : "Select instruments\u2026";
+  return `<details class="inst-dd" id="${id}Dd" style="border:1px solid #E5D3B3; border-radius:12px; background:#fff; margin:4px 0 8px;">
+    <summary id="${id}Sum" style="cursor:pointer; padding:10px 14px; list-style:none; display:flex; justify-content:space-between; gap:8px;"><span id="${id}Label">${label.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</span><span>\u25be</span></summary>
+    <div style="border-top:1px solid #EFE3CC; padding:8px 14px; max-height:240px; overflow:auto;">
+      <div id="${id}" class="inst-picker">${opts.map((i) => `<label class="check-row" style="margin:6px 0; display:flex; gap:10px; align-items:center;"><input type="checkbox" class="inst-cb" value="${i.replace(/"/g, "&quot;")}" ${sel.has(i.toLowerCase()) ? "checked" : ""} style="width:auto;" /> ${i.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</label>`).join("")}</div>
+      <div style="display:flex; gap:6px; margin-top:8px;"><input id="${id}Other" placeholder="Not in the list? Type it here" style="flex:1;" /><button type="button" class="btn-ghost" id="${id}Add">+ Add</button></div>
+    </div></details>`;
 }
 function wireInstrumentPicker(root, id) {
   const box = root.querySelector("#" + id), inp = root.querySelector("#" + id + "Other");
+  const refresh = () => { const v = [...box.querySelectorAll(".inst-cb:checked")].map((c) => c.value).join(", "); root.querySelector("#" + id + "Label").textContent = v || "Select instruments\u2026"; };
+  box.addEventListener("change", refresh);
   root.querySelector("#" + id + "Add").addEventListener("click", () => {
     const v = inp.value.trim().replace(/\s+/g, " ");
     if (!v) return;
@@ -4032,9 +4039,10 @@ function wireInstrumentPicker(root, id) {
     else {
       const l = document.createElement("label"); l.className = "check-row"; l.style.margin = "0";
       const c = document.createElement("input"); c.type = "checkbox"; c.className = "inst-cb"; c.value = v; c.checked = true;
+      l.style.cssText = "margin:6px 0; display:flex; gap:10px; align-items:center;"; c.style.width = "auto";
       l.append(c, " " + v); box.appendChild(l);
     }
-    inp.value = "";
+    inp.value = ""; refresh();
   });
 }
 function readInstrumentPicker(root, id) {
