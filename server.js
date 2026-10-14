@@ -3805,6 +3805,41 @@ app.post("/api/member-registrations/:id/reject", requireAuth, requireAdmin, asyn
   res.json({ ok: true });
 });
 
+// ---------- Personalised event cards (link preview for confirmation messages) ----------
+// WhatsApp can't open a specific chat AND attach an image, so the card is hosted at
+// an unguessable link; WhatsApp turns that link into a rich preview (the wide image).
+const cardUpload = upload.fields([{ name: "portrait", maxCount: 1 }, { name: "wide", maxCount: 1 }]);
+app.post("/api/event-cards", requireAuth, requireAnySection(["leads"]), cardUpload, async (req, res) => {
+  const portrait = req.files?.portrait?.[0], wide = req.files?.wide?.[0];
+  if (!portrait || !wide) return res.status(400).json({ error: "Card images missing" });
+  if (![portrait, wide].every((f) => /^image\/png$/i.test(f.mimetype))) return res.status(400).json({ error: "Card must be PNG" });
+  const token = crypto.randomBytes(16).toString("base64url");
+  await pool.query("INSERT INTO event_cards (token, portrait, wide, title, description, created_at) VALUES ($1,$2,$3,$4,$5,$6)",
+    [token, portrait.buffer, wide.buffer, String(req.body.title || "").slice(0, 120), String(req.body.description || "").slice(0, 240), new Date().toISOString()]);
+  res.status(201).json({ token });
+});
+app.get("/card/:token/:which(portrait|wide).png", async (req, res) => {
+  const row = (await pool.query(`SELECT ${req.params.which} AS img FROM event_cards WHERE token = $1`, [req.params.token])).rows[0];
+  if (!row || !row.img) return res.status(404).send("Not found");
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  res.send(row.img);
+});
+app.get("/card/:token", async (req, res) => {
+  const row = (await pool.query("SELECT title, description FROM event_cards WHERE token = $1", [req.params.token])).rows[0];
+  if (!row) return res.status(404).send("Not found");
+  const host = `https://${req.headers["x-forwarded-host"] || req.get("host")}`;
+  const t = encodeURIComponent(req.params.token);
+  const img = `${host}/card/${t}/wide.png`;
+  res.setHeader("Cache-Control", "no-store");
+  res.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escHtml(row.title)} — Together, Out Loud</title>
+<meta property="og:type" content="website"><meta property="og:site_name" content="Together, Out Loud"><meta property="og:title" content="${escHtml(row.title)}"><meta property="og:description" content="${escHtml(row.description)}">
+<meta property="og:image" content="${img}"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:url" content="${host}/card/${t}">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="${img}">
+<style>body{margin:0;background:#FBF6EC;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px;box-sizing:border-box}img{max-width:100%;max-height:92vh;border-radius:14px;box-shadow:0 8px 30px rgba(60,40,20,.18)}</style></head>
+<body><img src="${host}/card/${t}/portrait.png" alt="${escHtml(row.title)}"></body></html>`);
+});
+
 // ---------- Dashboard ----------
 // ---------- Message templates — self-service wording for Follow-up / Tentative / Confirmed / Document-share messages ----------
 app.get("/api/message-templates", requireAuth, async (req, res) => {

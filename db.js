@@ -203,6 +203,16 @@ async function setup() {
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS contacts TEXT`);
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS reg_details TEXT`);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS event_cards (
+      token TEXT PRIMARY KEY,
+      portrait BYTEA,
+      wide BYTEA,
+      title TEXT,
+      description TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS member_reg_link (
       id TEXT PRIMARY KEY,
       token TEXT NOT NULL,

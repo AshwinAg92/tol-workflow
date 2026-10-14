@@ -669,6 +669,66 @@ async function makeEventCard(lead, kind) {
 
   return new Promise((res) => c.toBlob((b) => res(b), "image/png"));
 }
+// Landscape version (1200x630) used as the link-preview image in WhatsApp.
+async function makeEventCardWide(lead, kind) {
+  const W = 1200, H = 630;
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  const first = (lead.name || "").trim().split(/\s+/)[0] || "there";
+  const experience = packageName(lead.event_type);
+  const dateLong = lead.date ? new Date(lead.date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "";
+  const SERIF = "Georgia, 'Times New Roman', serif", SANS = "'Helvetica Neue', Helvetica, Arial, sans-serif";
+  const confirmed = kind !== "tentative";
+  const bg = g.createLinearGradient(0, 0, 0, H); bg.addColorStop(0, "#FEF6ED"); bg.addColorStop(1, "#F6E0C2");
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  const glow = g.createRadialGradient(W - 100, 80, 10, W - 100, 80, 380);
+  glow.addColorStop(0, "rgba(240,164,56,0.38)"); glow.addColorStop(1, "rgba(240,164,56,0)");
+  g.fillStyle = glow; g.fillRect(0, 0, W, H);
+  g.strokeStyle = "#C1602B"; g.lineWidth = 3; g.strokeRect(24, 24, W - 48, H - 48);
+  g.strokeStyle = "rgba(193,96,43,0.35)"; g.lineWidth = 1.5; g.strokeRect(36, 36, W - 72, H - 72);
+  const center = (txt, y, font, color, spacing) => {
+    g.font = font; g.fillStyle = color; g.textAlign = "center"; g.textBaseline = "alphabetic";
+    if (spacing && "letterSpacing" in g) g.letterSpacing = spacing + "px";
+    g.fillText(txt, W / 2, y);
+    if ("letterSpacing" in g) g.letterSpacing = "0px";
+  };
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = "/logo.png"; });
+    const lh = 92, lw = (img.width / img.height) * lh;
+    g.drawImage(img, W / 2 - lw / 2, 52, lw, lh);
+  } catch { /* fine without logo */ }
+  center("TOGETHER, OUT LOUD", 178, `700 20px ${SANS}`, "#2B2420", 6);
+  center(confirmed ? "YOUR EVENT IS CONFIRMED" : "YOUR DATE IS TENTATIVELY BOOKED", 222, `700 18px ${SANS}`, "#C1602B", 4);
+  const headline = confirmed ? `It's official, ${first}!` : `We're holding your date, ${first}!`;
+  let size = 70; g.font = `700 ${size}px ${SERIF}`;
+  while (g.measureText(headline).width > W - 160 && size > 40) { size -= 3; g.font = `700 ${size}px ${SERIF}`; }
+  center(headline, 312, `700 ${size}px ${SERIF}`, "#2B2420");
+  g.strokeStyle = "#F0A438"; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(W / 2 - 120, 352); g.lineTo(W / 2 - 18, 352); g.moveTo(W / 2 + 18, 352); g.lineTo(W / 2 + 120, 352); g.stroke();
+  g.fillStyle = "#F0A438"; g.beginPath(); g.arc(W / 2, 352, 6, 0, Math.PI * 2); g.fill();
+  let es = 50; g.font = `700 ${es}px ${SERIF}`;
+  while (g.measureText(experience).width > W - 160 && es > 30) { es -= 3; g.font = `700 ${es}px ${SERIF}`; }
+  center(experience, 424, `700 ${es}px ${SERIF}`, "#C1602B");
+  center([dateLong, lead.city].filter(Boolean).join("  ·  "), 478, `600 32px ${SANS}`, "#2B2420");
+  center("With love, Team Together, Out Loud", 560, `italic 400 28px ${SERIF}`, "#8A6A54");
+  return new Promise((res) => c.toBlob((b) => res(b), "image/png"));
+}
+// Uploads the portrait + landscape card and returns the public link whose
+// preview WhatsApp shows inside the chat.
+async function publishEventCard(lead, kind, portraitBlob) {
+  const wide = await makeEventCardWide(lead, kind);
+  const first = (lead.name || "").trim().split(/\s+/)[0] || "";
+  const fd = new FormData();
+  fd.append("portrait", portraitBlob, "card.png");
+  fd.append("wide", wide, "wide.png");
+  fd.append("title", kind === "tentative" ? `${first}, we're holding your date` : `It's official, ${first}!`);
+  fd.append("description", `${packageName(lead.event_type)}${lead.date ? " on " + fmtDate(lead.date) : ""}${lead.city ? " in " + lead.city : ""} — with Together, Out Loud`);
+  const resp = await fetch("/api/event-cards", { method: "POST", body: fd, credentials: "include" });
+  if (!resp.ok) throw new Error("Couldn't publish the card");
+  const { token } = await resp.json();
+  return `${window.location.origin}/card/${token}`;
+}
+
 // Hands the card to the native Share sheet (WhatsApp etc.) with the message as
 // the caption. Returns false where file sharing isn't available (mainly desktop)
 // so the caller can fall back to a plain wa.me text link.
@@ -7796,7 +7856,7 @@ async function openTentativeConfirmInfoModal(lead) {
           ${!(MESSAGE_TEMPLATES.bank_details || "").trim() ? `<p class="muted small" style="color:#B6752C; margin-top:0;">No bank/UPI details on file — add them in Settings so they fill in automatically here.</p>` : ""}
           <textarea id="tiMessage" rows="9" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${message}</textarea>
           <div style="margin-top:12px;">
-            <div class="muted small" style="margin-bottom:6px;">Sent with the message as a personalised card:</div>
+            <div class="muted small" style="margin-bottom:6px;">Shown in WhatsApp as a card preview above your message:</div>
             <img id="cardPreview" alt="" style="width:100%; max-width:300px; border-radius:10px; border:1px solid #EAD9BE; display:none;" />
             <div id="cardLoading" class="muted small">Preparing card…</div>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
@@ -7830,11 +7890,19 @@ async function openTentativeConfirmInfoModal(lead) {
   root.querySelector("#cardDlBtn").addEventListener("click", async () => { await cardReady; if (cardBlob) downloadBlob(cardBlob, `tentative-${(lead.name || "client").split(" ")[0]}.png`); });
   const qrBtn = root.querySelector("#qrBtn");
   if (qrBtn) qrBtn.addEventListener("click", () => shareImageOrOpen(`/api/documents/${MESSAGE_TEMPLATES.bank_qr_document_id}/file`, "payment-qr.png", "Payment QR code for your booking — Together, Out Loud"));
-  if (waLink) root.querySelector("#waBtn").addEventListener("click", async () => {
+  let cardLink = null;
+  if (waLink) root.querySelector("#waBtn").addEventListener("click", async (e) => {
+    const btn = e.currentTarget; if (btn.disabled) return;
     const text = root.querySelector("#tiMessage").value;
-    await cardReady;
-    if (cardBlob && await shareCardBlob(cardBlob, "together-out-loud.png", text)) return;
-    window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(text)}`;
+    btn.disabled = true;
+    try {
+      await cardReady;
+      if (cardBlob && !cardLink) cardLink = await publishEventCard(lead, "tentative", cardBlob);
+    } catch (err) { cardLink = null; }
+    btn.disabled = false;
+    // The card link goes first so WhatsApp builds its preview from the card, not the later links.
+    const full = cardLink ? `${cardLink}\n\n${text}` : text;
+    window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(full)}`;
   });
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
     window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Next steps to confirm your event — Together, Out Loud")}&body=${encodeURIComponent(root.querySelector("#tiMessage").value)}`;
@@ -7898,7 +7966,7 @@ async function openConfirmationMessageModal(lead) {
         <div class="modal-body">
           <textarea id="ceMessage" rows="8" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${message}</textarea>
           <div style="margin-top:12px;">
-            <div class="muted small" style="margin-bottom:6px;">Sent with the message as a personalised card:</div>
+            <div class="muted small" style="margin-bottom:6px;">Shown in WhatsApp as a card preview above your message:</div>
             <img id="cardPreview" alt="" style="width:100%; max-width:300px; border-radius:10px; border:1px solid #EAD9BE; display:none;" />
             <div id="cardLoading" class="muted small">Preparing card…</div>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
@@ -7982,11 +8050,18 @@ async function openConfirmationMessageModal(lead) {
   root.querySelector("#cardDlBtn").addEventListener("click", async () => { await cardReady; if (cardBlob) downloadBlob(cardBlob, `confirmed-${(lead.name || "client").split(" ")[0]}.png`); });
   const qrBtn = root.querySelector("#qrBtn");
   if (qrBtn) qrBtn.addEventListener("click", () => shareImageOrOpen(`/api/documents/${MESSAGE_TEMPLATES.bank_qr_document_id}/file`, "payment-qr.png", "Payment QR code for your booking — Together, Out Loud"));
-  if (waLink) root.querySelector("#waBtn").addEventListener("click", async () => {
+  let cardLink = null;
+  if (waLink) root.querySelector("#waBtn").addEventListener("click", async (e) => {
+    const btn = e.currentTarget; if (btn.disabled) return;
     const text = finalMessage();
-    await cardReady;
-    if (cardBlob && await shareCardBlob(cardBlob, "together-out-loud.png", text)) return;
-    window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(text)}`;
+    btn.disabled = true;
+    try {
+      await cardReady;
+      if (cardBlob && !cardLink) cardLink = await publishEventCard(lead, "confirmed", cardBlob);
+    } catch (err) { cardLink = null; }
+    btn.disabled = false;
+    const full = cardLink ? `${cardLink}\n\n${text}` : text;
+    window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(full)}`;
   });
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
     window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Your event is confirmed — Together, Out Loud")}&body=${encodeURIComponent(finalMessage())}`;
