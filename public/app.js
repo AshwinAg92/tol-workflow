@@ -5309,6 +5309,32 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     });
   }
 
+  // Ticking someone assigns them right away, so their WhatsApp / Copy link buttons
+  // (which need the assignment's confirm link) appear immediately instead of only
+  // after scrolling down to Save and reopening.
+  root.querySelectorAll('input.assign-team-checkbox[data-team-id]').forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      const teamId = cb.dataset.teamId;
+      if (!cb.checked || byTeamId[teamId]) return;
+      cb.disabled = true;
+      try {
+        await api(`/api/leads/${leadId}/assignments`, { method: "POST", body: JSON.stringify({ teamIds: [teamId] }) });
+        if (isAdmin && !feeExpenseByTeamId[teamId]) {
+          const v = Number(root.querySelector(`.member-fee-input[data-team-id="${teamId}"]`)?.value || 0);
+          if (v > 0) {
+            const member = TEAM.find((m) => m.id === teamId);
+            await api("/api/expenses", { method: "POST", body: JSON.stringify({ head: `Artist fee \u2014 ${member?.name || ""}`, amount: v, leadId, teamId, paid: false }) });
+          }
+        }
+        await refreshLeads();
+        openAssignTeamModal(leadId);
+      } catch (err) {
+        cb.checked = false; cb.disabled = false;
+        alert(err.message);
+      }
+    });
+  });
+
   root.querySelector("#submitModal").addEventListener("click", async (e) => {
     const btn = e.currentTarget;
     if (btn.disabled) return;
