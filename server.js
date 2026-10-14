@@ -2649,6 +2649,20 @@ app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_t
   if (!isAdmin && feeAmount !== undefined && feeAmount !== null && feeAmount !== "") {
     return res.status(403).json({ error: "Only an admin can set artist fees" });
   }
+  // Guests live in the Musicians database: reuse a matching musician (same phone or name) or create one.
+  if (!musicianId) {
+    const last10 = (v) => String(v || "").replace(/\D/g, "").slice(-10);
+    const all = (await pool.query("SELECT id, name, phone FROM musicians")).rows;
+    const hit = all.find((m) => last10(phone).length === 10 && last10(m.phone) === last10(phone)) || all.find((m) => m.name.trim().toLowerCase() === String(name).trim().toLowerCase());
+    if (hit) musicianId = hit.id;
+    else {
+      musicianId = uuid();
+      await pool.query("INSERT INTO musicians (id, name, phone, city, notes, created_at) VALUES ($1,$2,$3,$4,$5,$6)",
+        [musicianId, String(name).trim(), phone || null, baseCity || null, description || null, new Date().toISOString()]);
+    }
+    const dup2 = (await pool.query("SELECT 1 FROM temp_artists WHERE lead_id = $1 AND musician_id = $2", [req.params.id, musicianId])).rows[0];
+    if (dup2) return res.status(400).json({ error: "Already added to this event" });
+  }
   const id = uuid();
   const now = new Date().toISOString();
   let expenseId = null;

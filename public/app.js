@@ -3395,7 +3395,6 @@ async function renderTeam(main, subTab = "team") {
       <div><h2>Team</h2><p class="muted">${subTab === "musicians" ? "Your wider pool of musicians — filterable by city and instrument, so you can quickly find who to reach out to." : "Your band's musicians, crew, and staff."}</p></div>
       <div style="display:flex; gap:8px;">
         ${subTab === "musicians" && isAdmin ? `<button class="btn-ghost" id="regLinkBtn">🔗 Registration link</button>` : ""}
-        ${subTab === "team" && canManage ? `<button class="btn-ghost" id="tempArtistDirBtn">📇 Temporary artists</button>` : ""}
         ${subTab === "team" && canManage ? `<button class="btn-primary" id="addMemberBtn">+ Add team member</button>` : ""}
         ${subTab === "musicians" && canManage ? `<button class="btn-primary" id="addMusicianBtn">+ Add musician</button>` : ""}
       </div>
@@ -4859,7 +4858,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
             </div>
           ` : ""}
 
-          <div class="section-label" style="margin-top:16px;">Temporary artists (one-off, this event only)</div>
+          <div class="section-label" style="margin-top:16px;">Guest artists (not on your team \u2014 saved in Musicians)</div>
           <div id="tempArtistList">
             ${tempArtists.length === 0 ? `<p class="muted small">None added yet.</p>` : tempArtists.map((t) => {
               const waDigits = (t.phone || "").replace(/\D/g, "");
@@ -4884,20 +4883,19 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
             }).join("")}
           </div>
           <div class="row-2" style="margin-top:8px;">
-            <input id="taName" placeholder="Name" list="tempArtistDirectoryList" />
+            <input id="taName" placeholder="Name (pick an existing musician or type a new one)" list="tempArtistDirectoryList" />
             <input id="taPhone" placeholder="Phone" />
           </div>
           <datalist id="tempArtistDirectoryList">
-            ${tempArtistDirectory.map((t) => `<option value="${t.name}"></option>`).join("")}
+            ${allMusicians.filter((m) => !tempArtists.some((t) => t.musician_id === m.id)).map((m) => `<option value="${String(m.name).replace(/"/g, "&quot;")}"></option>`).join("")}
           </datalist>
           <div class="row-2" style="margin-top:8px;">
             <input id="taDescription" placeholder="Description (e.g. session tabla player)" />
             <input id="taBaseCity" placeholder="Base city" />
           </div>
           ${isAdmin ? `<input id="taFee" type="number" placeholder="Fee ₹ (optional)" style="margin-top:8px;" />` : ""}
-          <button class="btn-ghost full" id="addTempArtistBtn" style="margin-top:8px;">+ Add temporary artist</button>
+          <button class="btn-ghost full" id="addTempArtistBtn" style="margin-top:8px;">+ Add guest artist</button>
           <p class="muted small" style="margin-top:4px;">Tip: hitting the overall Save button below also adds this if you've filled it in.${isAdmin ? " Any fee entered here counts toward this event's expenses/profit automatically — no need to add it again under Accounts." : ""}</p>
-          ${tempArtistDirectory.length > 0 ? `<button class="btn-ghost full" id="viewTempArtistDirectoryBtn" style="margin-top:6px;">📇 View all past temporary artists (${tempArtistDirectory.length})</button>` : ""}
 
           ${isAdmin ? `
             <div class="section-label" style="margin-top:20px;">Other event expenses (travel, venue, decor, etc.)</div>
@@ -5282,6 +5280,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
         method: "POST",
         body: JSON.stringify({
           name,
+          musicianId: (allMusicians.find((m) => m.name.toLowerCase() === name.toLowerCase() && !m.team_id) || {}).id || undefined,
           phone: root.querySelector("#taPhone").value.trim(),
           description: root.querySelector("#taDescription").value.trim(),
           baseCity: root.querySelector("#taBaseCity").value.trim(),
@@ -5310,14 +5309,12 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   // their known phone/city/description automatically — no need to retype
   // details for someone hired before.
   root.querySelector("#taName").addEventListener("change", (e) => {
-    const match = tempArtistDirectory.find((t) => t.name.toLowerCase() === e.target.value.trim().toLowerCase());
+    const match = allMusicians.find((m) => m.name.toLowerCase() === e.target.value.trim().toLowerCase());
     if (!match) return;
     if (match.phone) root.querySelector("#taPhone").value = match.phone;
-    if (match.baseCity) root.querySelector("#taBaseCity").value = match.baseCity;
-    if (match.description) root.querySelector("#taDescription").value = match.description;
+    if (match.city) root.querySelector("#taBaseCity").value = match.city;
+    if (match.instruments?.length) root.querySelector("#taDescription").value = match.instruments.join(", ");
   });
-  const viewDirectoryBtn = root.querySelector("#viewTempArtistDirectoryBtn");
-  if (viewDirectoryBtn) viewDirectoryBtn.addEventListener("click", () => openTempArtistDirectoryModal(tempArtistDirectory, () => openAssignTeamModal(leadId)));
 
   // Cap staffing at the committed band size (+1, for a manager/coordinator
   // who isn't playing) — cheaper to catch an over-staffed lineup here than

@@ -744,6 +744,27 @@ async function setup() {
   await pool.query(`ALTER TABLE team_id_docs ALTER COLUMN team_id DROP NOT NULL`);
   await pool.query(`ALTER TABLE team_id_docs ADD COLUMN IF NOT EXISTS musician_id TEXT REFERENCES musicians(id) ON DELETE CASCADE`);
 
+  // Temporary artists are now just guest musicians: give every existing temp artist a Musicians
+  // record (matched by phone or name, else created) and link it. Nothing is deleted or changed
+  // on the temp_artists rows (fees/expenses/events stay exactly as they were); idempotent.
+  {
+    const orphans = (await pool.query("SELECT * FROM temp_artists WHERE musician_id IS NULL ORDER BY created_at ASC")).rows;
+    if (orphans.length) {
+      const musRows = (await pool.query("SELECT id, name, phone FROM musicians")).rows;
+      const l10 = (v) => String(v || "").replace(/\D/g, "").slice(-10);
+      for (const t of orphans) {
+        let hit = musRows.find((m) => l10(t.phone).length === 10 && l10(m.phone) === l10(t.phone)) || musRows.find((m) => m.name.trim().toLowerCase() === String(t.name).trim().toLowerCase());
+        if (!hit) {
+          hit = { id: uuid(), name: t.name, phone: t.phone };
+          await pool.query("INSERT INTO musicians (id, name, phone, city, notes, created_at) VALUES ($1,$2,$3,$4,$5,$6)",
+            [hit.id, t.name, t.phone || null, t.base_city || null, t.description || null, t.created_at || new Date().toISOString()]);
+          musRows.push(hit);
+        }
+        await pool.query("UPDATE temp_artists SET musician_id = $1 WHERE id = $2", [hit.id, t.id]);
+      }
+    }
+  }
+
   // One-time backfill: the Musicians directory launched empty even though
   // Team already had people in it, so copy every existing Team member
   // across (pre-linked via team_id, since they're already in Team) --
