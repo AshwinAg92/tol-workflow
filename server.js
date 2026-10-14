@@ -2192,7 +2192,10 @@ async function checkTeamComplete(leadId) {
   try {
     const lead = (await pool.query("SELECT id, name, date, city, stage, team_complete_notified FROM leads WHERE id = $1", [leadId])).rows[0];
     if (!lead) return;
-    const as = (await pool.query("SELECT status FROM event_assignments WHERE lead_id = $1", [leadId])).rows;
+    const as = [
+      ...(await pool.query("SELECT status FROM event_assignments WHERE lead_id = $1", [leadId])).rows,
+      ...(await pool.query("SELECT status FROM temp_artists WHERE lead_id = $1", [leadId])).rows,
+    ];
     const complete = lead.stage === "Confirmed" && as.length > 0 && as.every((a) => a.status === "accepted");
     if (!complete) {
       if (lead.team_complete_notified) await pool.query("UPDATE leads SET team_complete_notified = 0 WHERE id = $1", [leadId]);
@@ -2262,28 +2265,50 @@ app.get("/api/public/assignment/:token", async (req, res) => {
     JOIN leads ON leads.id = event_assignments.lead_id
     WHERE event_assignments.confirm_token = $1
   `, [req.params.token])).rows[0];
-  if (!row) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
+  let guest = null;
+  if (!row) {
+    guest = (await pool.query(`
+      SELECT temp_artists.status, temp_artists.responded_at, temp_artists.note, temp_artists.name AS team_name,
+             leads.name AS client_name, leads.event_type, leads.city, leads.date,
+             leads.venue, leads.event_time, leads.soundcheck_time, leads.pcs
+      FROM temp_artists JOIN leads ON leads.id = temp_artists.lead_id WHERE temp_artists.confirm_token = $1
+    `, [req.params.token])).rows[0];
+  }
+  if (!row && !guest) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
+  const r0 = row || guest;
   res.json({
-    teamName: row.team_name,
-    status: row.status,
-    respondedAt: row.responded_at,
-    note: row.note,
-    clientName: row.client_name,
-    experience: packageName(row.event_type),
-    city: row.city,
-    date: row.date,
-    venue: row.venue,
-    eventTime: row.event_time,
-    soundcheckTime: row.soundcheck_time,
-    pcs: row.pcs,
+    teamName: r0.team_name,
+    status: r0.status,
+    respondedAt: r0.responded_at,
+    note: r0.note,
+    clientName: r0.client_name,
+    experience: packageName(r0.event_type),
+    city: r0.city,
+    date: r0.date,
+    venue: r0.venue,
+    eventTime: r0.event_time,
+    soundcheckTime: r0.soundcheck_time,
+    pcs: r0.pcs,
   });
 });
 
 app.post("/api/public/assignment/:token/respond", async (req, res) => {
   const { status, note } = req.body;
   if (!["accepted", "declined"].includes(status)) return res.status(400).json({ error: "status must be 'accepted' or 'declined'" });
-  const a = (await pool.query("SELECT * FROM event_assignments WHERE confirm_token = $1", [req.params.token])).rows[0];
-  if (!a) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
+  let a = (await pool.query("SELECT * FROM event_assignments WHERE confirm_token = $1", [req.params.token])).rows[0];
+  if (!a) {
+    const g = (await pool.query("SELECT * FROM temp_artists WHERE confirm_token = $1", [req.params.token])).rows[0];
+    if (!g) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
+    await pool.query("UPDATE temp_artists SET status = $1, responded_at = $2, note = $3 WHERE id = $4", [status, new Date().toISOString(), note !== undefined ? (note || null) : g.note, g.id]);
+    const gl = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [g.lead_id])).rows[0];
+    if (gl) {
+      logActivity({ user: null }, `${g.name} (guest) ${status} ${gl.name} (${gl.date}) via confirmation link${note ? " with a note" : ""}`, g.lead_id);
+      await sendPushToAll(`${status === "accepted" ? "\u2705" : "\u274c"} ${g.name} ${status}`, `${gl.name} (${gl.date})${note ? " \u2014 left a note" : ""}`, "/login", { adminOnly: true });
+    }
+    res.json({ status, note: note !== undefined ? (note || null) : g.note });
+    await checkTeamComplete(g.lead_id);
+    return;
+  }
   await pool.query("UPDATE event_assignments SET status = $1, responded_at = $2, note = $3 WHERE id = $4", [
     status, new Date().toISOString(), note !== undefined ? (note || null) : a.note, a.id,
   ]);
@@ -2311,7 +2336,12 @@ app.post("/api/public/assignment/:token/respond", async (req, res) => {
 app.post("/api/public/assignment/:token/note", async (req, res) => {
   const { note } = req.body;
   const a = (await pool.query("SELECT * FROM event_assignments WHERE confirm_token = $1", [req.params.token])).rows[0];
-  if (!a) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
+  if (!a) {
+    const g = (await pool.query("SELECT id FROM temp_artists WHERE confirm_token = $1", [req.params.token])).rows[0];
+    if (!g) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
+    await pool.query("UPDATE temp_artists SET note = $1 WHERE id = $2", [(note || "").trim() || null, g.id]);
+    return res.json({ note: (note || "").trim() || null });
+  }
   await pool.query("UPDATE event_assignments SET note = $1 WHERE id = $2", [(note || "").trim() || null, a.id]);
   res.json({ note: (note || "").trim() || null });
 });
@@ -2675,9 +2705,9 @@ app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_t
     `, [expenseId, req.params.id, `Artist fee — ${name} (guest artist)`, Number(feeAmount), now]);
   }
   await pool.query(`
-    INSERT INTO temp_artists (id, lead_id, name, description, phone, base_city, expense_id, created_at, musician_id)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-  `, [id, req.params.id, name, description || null, phone || null, baseCity || null, expenseId, now, musicianId]);
+    INSERT INTO temp_artists (id, lead_id, name, description, phone, base_city, expense_id, created_at, musician_id, confirm_token, status)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending')
+  `, [id, req.params.id, name, description || null, phone || null, baseCity || null, expenseId, now, musicianId, uuid()]);
   const { rows } = await pool.query(`
     SELECT temp_artists.*, expenses.amount AS fee_amount, expenses.paid AS fee_paid,
       expenses.payment_date AS fee_payment_date, expenses.payment_mode AS fee_payment_mode
@@ -2695,6 +2725,12 @@ app.patch("/api/temp-artists/:id", requireAuth, requireCapability("assign_team")
   if (!artist) return res.status(404).json({ error: "Not found" });
   const { feeAmount, name, phone, description, baseCity } = req.body;
   const isAdmin = req.user.access_level === "admin";
+  if (req.body.status !== undefined) {
+    if (!["pending", "accepted", "declined"].includes(req.body.status)) return res.status(400).json({ error: "status must be 'pending', 'accepted' or 'declined'" });
+    await pool.query("UPDATE temp_artists SET status = $1, responded_at = $2 WHERE id = $3", [req.body.status, req.body.status === "pending" ? null : new Date().toISOString(), artist.id]);
+    logActivity(req, `Marked ${artist.name} (guest) as ${req.body.status}`, artist.lead_id);
+    await checkTeamComplete(artist.lead_id);
+  }
   if (feeAmount !== undefined) {
     if (!isAdmin) return res.status(403).json({ error: "Only an admin can set or change artist fees" });
     if (feeAmount !== null && feeAmount !== "" && (isNaN(Number(feeAmount)) || Number(feeAmount) < 0)) {

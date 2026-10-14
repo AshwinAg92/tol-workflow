@@ -744,6 +744,15 @@ async function setup() {
   await pool.query(`ALTER TABLE team_id_docs ALTER COLUMN team_id DROP NOT NULL`);
   await pool.query(`ALTER TABLE team_id_docs ADD COLUMN IF NOT EXISTS musician_id TEXT REFERENCES musicians(id) ON DELETE CASCADE`);
 
+  // Guest artists confirm/decline through the same no-login link as team members.
+  await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS confirm_token TEXT`);
+  await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'`);
+  await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS responded_at TEXT`);
+  await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS note TEXT`);
+  for (const r of (await pool.query("SELECT id FROM temp_artists WHERE confirm_token IS NULL")).rows) {
+    await pool.query("UPDATE temp_artists SET confirm_token = $1 WHERE id = $2", [uuid(), r.id]);
+  }
+
   // Temporary artists are now just guest musicians: give every existing temp artist a Musicians
   // record (matched by phone or name, else created) and link it. Nothing is deleted or changed
   // on the temp_artists rows (fees/expenses/events stay exactly as they were); idempotent.

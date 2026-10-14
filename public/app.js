@@ -4862,13 +4862,16 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
           <div id="tempArtistList">
             ${tempArtists.length === 0 ? `<p class="muted small">None added yet.</p>` : tempArtists.map((t) => {
               const waDigits = (t.phone || "").replace(/\D/g, "");
-              const waMsg = `Hi ${t.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.city ? ` in ${lead.city}` : ""}. Let us know if you have any questions!`;
+              const waMsg = `Hi ${t.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.city ? ` in ${lead.city}` : ""}.${t.confirm_token ? `\n\nPlease accept or decline here: ${window.location.origin}/confirm.html?token=${t.confirm_token}` : " Let us know if you have any questions!"}`;
               return `
               <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
                 <div>
                   <div>${t.name}${t.musician_id ? ` <span class="mono small" style="background:#E4F1F1; color:#1C7A80; border-radius:4px; padding:1px 7px;">Musicians</span>` : ""}${t.description ? ` <span class="muted small">— ${t.description}</span>` : ""}</div>
                   <div class="muted small">${t.phone ? `${t.phone}` : ""}${t.base_city ? `${t.phone ? " · " : ""}📍 ${t.base_city}` : ""}${isAdmin ? `${(t.phone || t.base_city) ? " · " : ""}${t.fee_amount != null ? `Fee ${inr(t.fee_amount)}${t.fee_paid ? " · Paid" : " · Pending"}` : "No fee recorded"}` : ""}</div>
-                  ${waDigits ? `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>` : ""}
+                  ${waDigits ? `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp (with accept / decline link)</a>` : ""}
+                  <div style="margin-top:6px;"><select class="ta-status" data-ta-id="${t.id}" style="width:auto; font-size:12.5px;">
+                    ${["pending", "accepted", "declined"].map((st) => `<option value="${st}" ${(t.status || "pending") === st ? "selected" : ""}>${statusLabel[st]}</option>`).join("")}
+                  </select></div>
                   ${isAdmin ? `
                     <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
                       <input type="number" class="ta-fee-input" data-ta-id="${t.id}" placeholder="Fee ₹" value="${t.fee_amount != null ? t.fee_amount : ""}" style="width:100px; font-size:12.5px; padding:4px 6px;" />
@@ -5254,6 +5257,10 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       openAssignTeamModal(leadId);
     });
   });
+  root.querySelectorAll(".ta-status").forEach((sel) => sel.addEventListener("change", async () => {
+    try { await api(`/api/temp-artists/${sel.dataset.taId}`, { method: "PATCH", body: JSON.stringify({ status: sel.value }) }); openAssignTeamModal(leadId); }
+    catch (err) { alert(err.message); }
+  }));
   root.querySelectorAll(".ta-save-fee-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const id = btn.dataset.taId;
