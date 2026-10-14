@@ -3764,6 +3764,11 @@ async function regFormPage(req, res, ok) {
   res.setHeader("Cache-Control", "no-store");
   const css = `body{font-family:Georgia,serif;background:#FBF6EC;color:#3A2A1A;margin:0;padding:18px}.w{max-width:560px;margin:0 auto}h1{font-size:23px;margin:0 0 4px}.m{color:#7A6A58;font-size:13px}label{display:block;font-size:13px;color:#7A6A58;margin:14px 0 4px}input,select,textarea{width:100%;box-sizing:border-box;padding:11px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;background:#fff}.r2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.c{background:#fff;border:1px solid #E9DFCF;border-radius:12px;padding:12px 14px;margin-top:12px}button{margin-top:20px;width:100%;padding:13px;border:0;border-radius:10px;background:#B5541C;color:#fff;font:inherit;font-size:16px;cursor:pointer}button:disabled{opacity:.6}.hp{position:absolute;left:-9999px}#err{color:#A6432B;margin-top:12px;font-size:14px}`;
   if (!ok) return res.status(404).send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Registration</title><style>${css}</style></head><body><div class="w"><h1>This link isn't active</h1><p class="m">Please ask Together, Out Loud for a fresh registration link.</p></div></body></html>`);
+  const BASE_INST = ["Vocals", "Keyboard", "Tabla", "Drummer", "Bass Guitar", "Guitar", "Flute", "Octopad", "Dholak", "Violin"];
+  const instRows = (await pool.query("SELECT DISTINCT instrument FROM musician_instruments")).rows.map((r) => r.instrument);
+  const instList = [...new Map([...BASE_INST, ...instRows].filter((i) => i && !/^(admin|manager)$/i.test(i)).map((i) => [i.toLowerCase(), i])).values()].sort((a, b) => a.localeCompare(b));
+  const cityRows = (await pool.query("SELECT DISTINCT city FROM musicians WHERE city IS NOT NULL UNION SELECT DISTINCT base_city FROM team WHERE base_city IS NOT NULL")).rows.map((r) => r.city);
+  const cityList = [...new Map(cityRows.filter(Boolean).map((c) => [c.toLowerCase(), c])).values()].sort((a, b) => a.localeCompare(b));
   const slot = (n, req_, title) => `<div class="c"><div style="font-weight:700">${title}${req_ ? " *" : ""}</div>
     <label>Document type</label><select name="label${n}">${REG_LABELS.map((l, i) => `<option ${(n === 2 && i === 1) || (n === 3 && i === 5) ? "selected" : ""}>${l}</option>`).join("")}</select>
     <label>Photo or PDF</label><input type="file" name="file${n}" accept="image/*,application/pdf" ${req_ ? "required" : ""}></div>`;
@@ -3774,7 +3779,10 @@ async function regFormPage(req, res, ok) {
 <div class="hp"><label>Website</label><input name="website" tabindex="-1" autocomplete="off"></div>
 <label>Full name (exactly as on your ID) *</label><input name="name" required maxlength="120">
 <div class="r2"><div><label>WhatsApp number *</label><input name="phone" type="tel" required maxlength="20"></div><div><label>Email</label><input name="email" type="email" maxlength="120"></div></div>
-<div class="r2"><div><label>Role / instrument *</label><input name="role" required maxlength="80" placeholder="e.g. Tabla, Keyboard"></div><div><label>Base city *</label><input name="city" required maxlength="80"></div></div>
+<label>Instrument(s) / role * <span class="m">(tick all that you play)</span></label>
+<div class="c" style="margin-top:4px;display:grid;grid-template-columns:1fr 1fr;gap:6px 10px">${instList.map((i) => `<label style="display:flex;gap:8px;align-items:center;margin:0;color:#3A2A1A"><input type="checkbox" name="inst" value="${escHtml(i)}" style="width:auto"> ${escHtml(i)}</label>`).join("")}</div>
+<label>Something else? (optional, comma-separated)</label><input name="otherInst" maxlength="80" placeholder="e.g. Sarod">
+<label>Base city *</label><input name="city" required maxlength="80" list="cities" autocomplete="off" placeholder="Start typing and pick your city"><datalist id="cities">${cityList.map((c) => `<option value="${escHtml(c)}"></option>`).join("")}</datalist>
 <div class="r2"><div><label>Date of birth</label><input name="dob" type="date"></div><div><label>Gender (for ticket booking)</label><select name="gender"><option value="">—</option><option>Male</option><option>Female</option><option>Other</option></select></div></div>
 <div class="r2"><div><label>Emergency contact name</label><input name="emName" maxlength="80"></div><div><label>Emergency contact phone</label><input name="emPhone" type="tel" maxlength="20"></div></div>
 <label>Your fee expectation per performance, if any (optional)</label><input name="fee" maxlength="120" placeholder="e.g. ₹5,000 per show, or leave blank">
@@ -3788,6 +3796,7 @@ ${slot(1, true, "ID card")}${slot(2, false, "Second ID (optional)")}${slot(3, fa
 </div><script>
 const f=document.getElementById('f');f.addEventListener('submit',async(e)=>{e.preventDefault();const b=document.getElementById('go'),er=document.getElementById('err');er.textContent='';
 for(const n of [1,2,3]){const fl=f['file'+n].files[0];if(fl&&fl.size>8*1024*1024){er.textContent='Each file must be under 8 MB.';return}}
+if(!f.querySelector('input[name=inst]:checked')&&!f.otherInst.value.trim()){er.textContent='Please tick at least one instrument.';return}
 b.disabled=true;b.textContent='Uploading…';
 try{const r=await fetch(location.pathname,{method:'POST',body:new FormData(f)});const j=await r.json().catch(()=>({}));
 if(!r.ok)throw new Error(j.error||'Something went wrong — please try again.');f.style.display='none';document.querySelector('.m').style.display='none';document.querySelector('h1').style.display='none';document.getElementById('done').style.display='block';window.scrollTo(0,0)}
@@ -3819,12 +3828,17 @@ app.post("/join/:token", regUpload, async (req, res) => {
   if (!link || !link.enabled || link.token !== req.params.token) return res.status(404).json({ error: "This registration link is no longer active." });
   return regSubmit(req, res);
 });
+function regRole(body) {
+  const arr = (v) => (Array.isArray(v) ? v : v ? [v] : []).map((x) => String(x).trim()).filter(Boolean);
+  const all = [...arr(body.inst), ...String(body.otherInst || "").split(",").map((x) => x.trim()).filter(Boolean)];
+  return [...new Set(all)].join(", ").slice(0, 160);
+}
 async function regSubmit(req, res) {
   if (req.body.website) return res.json({ ok: true }); // honeypot — bots fill hidden fields
   if (!regRateOk(String(req.headers["x-forwarded-for"] || req.ip).split(",")[0].trim())) return res.status(429).json({ error: "Too many submissions — please try again later." });
   const t = (k, max = 200) => String(req.body[k] || "").trim().slice(0, max);
   const data = {
-    name: t("name", 120), phone: t("phone", 20), email: t("email", 120), role: t("role", 80), city: t("city", 80),
+    name: t("name", 120), phone: t("phone", 20), email: t("email", 120), role: regRole(req.body), city: t("city", 80),
     dob: t("dob", 12), gender: t("gender", 12), emName: t("emName", 80), emPhone: t("emPhone", 20),
     instagram: t("instagram", 80), fee: t("fee", 120), notes: t("notes", 600),
   };
@@ -3874,12 +3888,19 @@ app.post("/api/member-registrations/:id/approve", requireAuth, requireAdmin, asy
   const name = (b.name || d.name || "").trim();
   if (!name) return res.status(400).json({ error: "Name is required" });
   const musicianId = uuid();
+  // Match existing spellings (case-insensitive) so the Musicians city/instrument filters group them correctly.
+  const knownCities = (await pool.query("SELECT city AS c FROM musicians WHERE city IS NOT NULL UNION SELECT base_city FROM team WHERE base_city IS NOT NULL")).rows.map((r) => r.c);
+  const knownInst = (await pool.query("SELECT DISTINCT instrument FROM musician_instruments")).rows.map((r) => r.instrument);
+  const norm = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const canon = (v, known) => { const n = norm(v); return known.find((k) => norm(k) === n) || String(v || "").trim(); };
+  const INST_ALIAS = { drum: "drummer", drums: "drummer", vocal: "vocals", singer: "vocals", vocalist: "vocals", keys: "keyboard", keyboardist: "keyboard", guitarist: "guitar", "bass": "bass guitar", bassist: "bass guitar" };
+  const canonInst = (v) => canon(INST_ALIAS[norm(v)] || v, knownInst);
   const details = { legalName: d.name, dob: d.dob, gender: d.gender, emergencyName: d.emName, emergencyPhone: d.emPhone, instagram: d.instagram, feeExpectation: d.fee, notes: d.notes };
   const notes = [d.fee ? `Fee expectation: ${d.fee}` : "", d.instagram ? `Instagram: ${d.instagram}` : "", d.notes || ""].filter(Boolean).join(" \u00b7 ");
   await pool.query("INSERT INTO musicians (id, name, phone, city, notes, email, reg_details, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-    [musicianId, name, (b.phone ?? d.phone) || null, (b.baseCity ?? d.city) || null, notes || null, d.email || null, JSON.stringify(details), new Date().toISOString()]);
+    [musicianId, name, (b.phone ?? d.phone) || null, canon((b.baseCity ?? d.city) || "", knownCities) || null, notes || null, d.email || null, JSON.stringify(details), new Date().toISOString()]);
   const role = String((b.role ?? d.role) || "").split(",").map((x) => x.trim()).filter(Boolean);
-  for (const instrument of [...new Set(role)]) {
+  for (const instrument of [...new Set(role.map(canonInst))]) {
     await pool.query("INSERT INTO musician_instruments (id, musician_id, instrument) VALUES ($1,$2,$3)", [uuid(), musicianId, instrument]);
   }
   const files = (await pool.query("SELECT * FROM member_registration_files WHERE registration_id = $1", [reg.id])).rows;
