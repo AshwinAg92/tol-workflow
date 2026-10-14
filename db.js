@@ -706,6 +706,8 @@ async function setup() {
   // reached again later.
   await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS base_city TEXT`);
 
+  await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS musician_id TEXT`);
+
   // A directory of musicians (freelance pool + contacts) — separate from
   // Team, so it can hold anyone you've come across, not just people
   // actively performing with you. Tagged by city and the instrument(s)

@@ -3969,7 +3969,7 @@ function openEditMemberModal(member, linkedUser) {
           </div>
           <label>Base city</label>
           <input id="emBaseCity" value="${member.base_city || ""}" placeholder="e.g. Siliguri" />
-          ${CURRENT_USER?.accessLevel === "admin" ? `<div id="emIdSection" class="card" style="margin-top:12px; padding:10px 12px;"><div class="muted small">Loading ID cards…</div></div>` : ""}
+          ${CURRENT_USER?.accessLevel === "admin" ? `<div id="emIdSection" class="card" style="margin-top:12px; padding:10px 12px;"><div class="muted small">Loading ID cards…</div></div><div id="emHistory" class="card" style="margin-top:12px; padding:10px 12px;"><div class="muted small">Loading events…</div></div>` : ""}
           ${hasAccountsAccess() ? `
           <div class="row-2" style="margin-top:8px;">
             <div><label>Local fee (₹)</label><input id="emLocalFee" type="number" value="${member.local_fee || ""}" placeholder="e.g. 3000" /></div>
@@ -4033,6 +4033,7 @@ function openEditMemberModal(member, linkedUser) {
   root.querySelector("#cancelModal").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
   if (root.querySelector("#emIdSection")) wireMemberIdSection(root.querySelector("#emIdSection"), member);
+  if (root.querySelector("#emHistory")) wireArtistHistory(root.querySelector("#emHistory"), `/api/team/${member.id}/history`);
   root.querySelector("#submitModal").addEventListener("click", async () => {
     try {
       await api(`/api/team/${member.id}`, {
@@ -4600,7 +4601,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     .forEach((d) => { if (!riderDocs.some((r) => (r.notes || "").trim().toLowerCase() === (d.notes || "").trim().toLowerCase())) riderDocs.push(d); });
   // Only musicians not already promoted into Team are offered here — once
   // promoted they show up in the regular Team checklist below like anyone else.
-  const unpromotedMusicians = allMusicians.filter((m) => !m.team_id);
+  const unpromotedMusicians = allMusicians.filter((m) => !m.team_id && !tempArtists.some((t) => t.musician_id === m.id));
   const leadReimbursements = myReimbursements.filter((r) => r.lead_id === leadId);
   const reimbStatusLabel = { 0: "Pending approval", 1: "Approved" };
   const byTeamId = {};
@@ -4829,7 +4830,10 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                 <option value="">Choose a musician…</option>
                 ${unpromotedMusicians.map((m) => `<option value="${m.id}">${m.name}${m.instruments.length > 0 ? ` — ${m.instruments.join(", ")}` : ""}</option>`).join("")}
               </select>
-              <button class="btn-primary full" id="confirmAddFromMusicianBtn" style="margin-top:6px;">Add to Team & assign to this event</button>
+              ${isAdmin ? `<input id="addFromMusicianFee" type="number" placeholder="Fee ₹ for this gig (optional)" style="margin-top:6px;" />` : ""}
+              <button class="btn-primary full" id="confirmAddGuestMusicianBtn" style="margin-top:6px;">Add as guest for this event (stays in Musicians)</button>
+              <button class="btn-ghost full" id="confirmAddFromMusicianBtn" style="margin-top:6px; font-size:12.5px;">Or make them a Team member & assign</button>
+              <p class="muted small" style="margin-top:4px;">Guests don't join Team — handy for people who won't play with you regularly. Their fee counts toward this event's expenses and their saved ID can go to the client with the travel details.</p>
             </div>
           ` : ""}
 
@@ -4868,7 +4872,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
               return `
               <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
                 <div>
-                  <div>${t.name}${t.description ? ` <span class="muted small">— ${t.description}</span>` : ""}</div>
+                  <div>${t.name}${t.musician_id ? ` <span class="mono small" style="background:#E4F1F1; color:#1C7A80; border-radius:4px; padding:1px 7px;">Musicians</span>` : ""}${t.description ? ` <span class="muted small">— ${t.description}</span>` : ""}</div>
                   <div class="muted small">${t.phone ? `${t.phone}` : ""}${t.base_city ? `${t.phone ? " · " : ""}📍 ${t.base_city}` : ""}${isAdmin ? `${(t.phone || t.base_city) ? " · " : ""}${t.fee_amount != null ? `Fee ${inr(t.fee_amount)}${t.fee_paid ? " · Paid" : " · Pending"}` : "No fee recorded"}` : ""}</div>
                   ${waDigits ? `<a class="btn-ghost" href="https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}" style="display:inline-block; margin-top:4px; font-size:12px; padding:3px 8px;">💬 WhatsApp</a>` : ""}
                   ${isAdmin ? `
@@ -5028,6 +5032,24 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     addFromMusicianBtn.addEventListener("click", () => {
       const panel = root.querySelector("#addFromMusicianPanel");
       panel.style.display = panel.style.display === "none" ? "block" : "none";
+    });
+    root.querySelector("#confirmAddGuestMusicianBtn").addEventListener("click", async (e) => {
+      const musicianId = root.querySelector("#addFromMusicianSelect").value;
+      if (!musicianId) return alert("Choose a musician first.");
+      const m = unpromotedMusicians.find((x) => x.id === musicianId);
+      if (!m) return;
+      const btn = e.currentTarget;
+      if (btn.disabled) return;
+      btn.disabled = true;
+      try {
+        const feeEl = root.querySelector("#addFromMusicianFee");
+        await api(`/api/leads/${leadId}/temp-artists`, { method: "POST", body: JSON.stringify({
+          musicianId, name: m.name, phone: m.phone || "", baseCity: m.city || "",
+          description: m.instruments.length ? m.instruments.join(", ") : "",
+          feeAmount: feeEl ? (feeEl.value.trim() || null) : null,
+        }) });
+        openAssignTeamModal(leadId);
+      } catch (err) { alert(err.message); btn.disabled = false; }
     });
     root.querySelector("#confirmAddFromMusicianBtn").addEventListener("click", async (e) => {
       const musicianId = root.querySelector("#addFromMusicianSelect").value;
@@ -5392,6 +5414,24 @@ async function uploadPickedIds(prefix, teamId) {
   if (!inp || !inp.files || inp.files.length === 0) return 0;
   return uploadFilesForMember(teamId, document.getElementById(`${prefix}IdLabel`).value, [...inp.files]);
 }
+// Past + upcoming events for an artist (team member or musician). Admin-only endpoint.
+function wireArtistHistory(box, url) {
+  const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const today = new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
+  api(url).then((rows) => {
+    const day = (r) => String(r.date || "").slice(0, 10);
+    const up = rows.filter((r) => day(r) >= today).sort((a, b) => day(a).localeCompare(day(b)));
+    const past = rows.filter((r) => day(r) < today);
+    const line = (r) => `<div style="display:flex; justify-content:space-between; gap:8px; font-size:12.5px; padding:3px 0; border-top:1px solid #EFE6D6;">
+      <span><b>${esc(r.name)}</b> <span class="muted">${esc(fmtDate(r.date))}${r.city ? " \u00b7 " + esc(r.city) : ""}</span></span>
+      <span class="muted">${r.as === "Guest" ? "Guest" : ""}${r.status === "declined" ? " \u00b7 declined" : r.status === "pending" ? " \u00b7 not accepted yet" : ""}${r.stage && r.stage !== "Confirmed" && r.stage !== "Completed" ? ` \u00b7 ${esc(r.stage)}` : ""}</span></div>`;
+    box.innerHTML = `<div style="font-weight:700; margin-bottom:4px;">\ud83d\udcc5 Events</div>
+      ${rows.length === 0 ? `<div class="muted small">No events yet.</div>` : `
+        <div class="muted small" style="margin-top:4px;">Upcoming (${up.length})</div>${up.length ? up.map(line).join("") : `<div class="muted small">None</div>`}
+        <div class="muted small" style="margin-top:8px;">Past (${past.length})</div>${past.length ? past.map(line).join("") : `<div class="muted small">None</div>`}`}`;
+  }).catch(() => { box.style.display = "none"; });
+}
+
 function wireMemberIdSection(box, member, base = "team") {
   const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
   let details = null;
@@ -5600,7 +5640,7 @@ async function openTravelShareModal(leadId) {
               <div class="card" style="padding:10px 12px; margin-bottom:8px;" data-team-id="${t.teamId}">
                 <label style="display:flex; gap:10px; align-items:center; margin:0; cursor:pointer;">
                   <input type="checkbox" class="ts-pick" data-team-id="${t.teamId}" ${selected.has(t.teamId) ? "checked" : ""} style="width:auto;" />
-                  <span style="font-weight:700;">${esc(t.name)}</span><span class="muted small">${esc(t.role || "")}${t.status === "declined" ? " · declined" : t.status === "pending" ? " · not yet accepted" : ""}</span>
+                  <span style="font-weight:700;">${esc(t.name)}</span><span class="muted small">${esc(t.role || "")}${t.guest ? " · guest musician" : ""}${t.status === "declined" ? " · declined" : t.status === "pending" ? " · not yet accepted" : ""}</span>
                 </label>
                 <div style="margin:6px 0 0 28px;">
                   ${t.idDocs.length === 0 ? `<div style="color:#A6432B; font-size:12.5px; margin-bottom:6px;">⚠ No ID card saved yet</div>` : t.idDocs.map((d) => `
@@ -5628,6 +5668,7 @@ async function openTravelShareModal(leadId) {
                 <div class="muted small">${l.departure_at ? `Depart ${esc(wall(l.departure_at))}` : "Departure not set"}${l.arrival_at ? ` · Arrive ${esc(wall(l.arrival_at))}` : ""}</div>
                 <div class="small">Travelling: ${l.who.map(esc).join(", ")}</div>
               </div>`).join("")}
+            ${people.some((t) => t.guest && selected.has(t.teamId)) ? `<p class="muted small">Guest musicians aren't on the Travel Calendar, so only their ID goes in the link — add their tickets in the message yourself if the client is booking them.</p>` : ""}
             ${excluded.length && included.length ? `<p class="muted small">${excluded.length} other travel entr${excluded.length > 1 ? "ies" : "y"} for this event has none of the selected people, so it is left out.</p>` : ""}
 
             <div class="section-label" style="margin-top:14px;">3. Send to the client</div>
@@ -5702,7 +5743,8 @@ async function openTravelShareModal(leadId) {
         const fd = new FormData();
         fd.append("file", file);
         fd.append("label", label);
-        const resp = await fetch(`/api/team/${inp.dataset.teamId}/id-docs`, { method: "POST", body: fd, credentials: "include" });
+        const person = data.team.find((x) => x.teamId === inp.dataset.teamId);
+        const resp = await fetch(`/api/${person.uploadBase}/${person.uploadId}/id-docs`, { method: "POST", body: fd, credentials: "include" });
         if (!resp.ok) { let m = "Upload failed"; try { m = (await resp.json()).error || m; } catch {} throw new Error(m); }
         await reload();
       } catch (err) { alert(err.message); }
@@ -7394,6 +7436,7 @@ async function renderMusicians(main) {
             ${m.instruments.length === 0 ? `<div class="muted small">No instruments tagged</div>` : ""}
             ${(m.rate_local || m.rate_outstation) ? `<div class="muted small">${m.rate_local ? `Local ${inr(m.rate_local)}` : ""}${m.rate_local && m.rate_outstation ? " · " : ""}${m.rate_outstation ? `Outstation ${inr(m.rate_outstation)}` : ""}</div>` : ""}
             ${m.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${m.notes}</div>` : ""}
+            ${CURRENT_USER?.accessLevel === "admin" ? `<div data-musician-history="${m.id}" style="margin-top:10px; padding:10px; background:#FBF6EC; border-radius:8px; font-size:13px;"><div class="muted small">Loading events…</div></div>` : ""}
             ${CURRENT_USER?.accessLevel === "admin" && !m.team_id ? `<div data-musician-ids="${m.id}" style="margin-top:10px; padding:10px; background:#FBF6EC; border-radius:8px; font-size:13px;"></div>` : ""}
             ${canManage ? `
               <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">
@@ -7412,6 +7455,8 @@ async function renderMusicians(main) {
         details.style.display = expanded ? "none" : "block";
         caret.textContent = expanded ? "▸" : "▾";
         const idBox = card.querySelector(`[data-musician-ids="${m.id}"]`);
+        const hBox = card.querySelector(`[data-musician-history="${m.id}"]`);
+        if (!expanded && hBox && !hBox.dataset.ready) { hBox.dataset.ready = "1"; wireArtistHistory(hBox, `/api/musicians/${m.id}/history`); }
         if (!expanded && idBox && !idBox.dataset.ready) { idBox.dataset.ready = "1"; wireMemberIdSection(idBox, m, "musicians"); }
       });
       listEl.appendChild(card);

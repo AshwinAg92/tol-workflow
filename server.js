@@ -813,6 +813,32 @@ app.delete("/api/musicians/:id", requireAuth, requireAdmin, async (req, res) => 
   res.status(204).end();
 });
 
+// Past + upcoming events for one artist. Team members: events they're assigned to, plus any
+// guest gigs they did before being promoted from Musicians. Musicians: guest gigs, plus their
+// Team assignments if they've been promoted.
+async function artistHistory({ teamId, musicianId }) {
+  const rows = [];
+  if (teamId) {
+    const a = (await pool.query(`SELECT leads.id, leads.name, leads.date, leads.city, leads.event_type, leads.stage, event_assignments.status AS status
+      FROM event_assignments JOIN leads ON leads.id = event_assignments.lead_id WHERE event_assignments.team_id = $1`, [teamId])).rows;
+    a.forEach((r) => rows.push({ ...r, as: "Team" }));
+  }
+  const guestWhere = musicianId ? "ta.musician_id = $1" : "ta.musician_id IN (SELECT id FROM musicians WHERE team_id = $1)";
+  const g = (await pool.query(`SELECT leads.id, leads.name, leads.date, leads.city, leads.event_type, leads.stage
+    FROM temp_artists ta JOIN leads ON leads.id = ta.lead_id WHERE ${guestWhere}`, [musicianId || teamId])).rows;
+  g.forEach((r) => rows.push({ ...r, status: null, as: "Guest" }));
+  const seen = new Set();
+  return rows.filter((r) => { const k = r.id + r.as; if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((x, y) => String(y.date || "").localeCompare(String(x.date || "")));
+}
+app.get("/api/team/:id/history", requireAuth, requireAdmin, async (req, res) => {
+  res.json(await artistHistory({ teamId: req.params.id }));
+});
+app.get("/api/musicians/:id/history", requireAuth, requireAdmin, async (req, res) => {
+  const m = (await pool.query("SELECT team_id FROM musicians WHERE id = $1", [req.params.id])).rows[0];
+  if (!m) return res.status(404).json({ error: "Musician not found" });
+  res.json(await artistHistory({ teamId: m.team_id || null, musicianId: req.params.id }));
+});
 app.get("/api/musicians/:id/id-docs", requireAuth, requireAdmin, async (req, res) => {
   const { rows } = await pool.query("SELECT id, label, original_name, mime_type, uploaded_at FROM team_id_docs WHERE musician_id = $1 ORDER BY uploaded_at ASC", [req.params.id]);
   res.json(rows.map((d) => ({ ...d, url: `/api/team-id-docs/${d.id}/file` })));
@@ -2579,6 +2605,14 @@ app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_t
   if (!lead) return res.status(404).json({ error: "Lead not found" });
   const { name, description, phone, baseCity, feeAmount } = req.body;
   if (!name) return res.status(400).json({ error: "Name is required" });
+  let musicianId = null;
+  if (req.body.musicianId) {
+    const mu = (await pool.query("SELECT id FROM musicians WHERE id = $1", [req.body.musicianId])).rows[0];
+    if (!mu) return res.status(404).json({ error: "Musician not found" });
+    const dup = (await pool.query("SELECT 1 FROM temp_artists WHERE lead_id = $1 AND musician_id = $2", [req.params.id, mu.id])).rows[0];
+    if (dup) return res.status(400).json({ error: "Already added to this event" });
+    musicianId = mu.id;
+  }
   const isAdmin = req.user.access_level === "admin";
   if (!isAdmin && feeAmount !== undefined && feeAmount !== null && feeAmount !== "") {
     return res.status(403).json({ error: "Only an admin can set artist fees" });
@@ -2595,9 +2629,9 @@ app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_t
     `, [expenseId, req.params.id, `Artist fee — ${name} (guest artist)`, Number(feeAmount), now]);
   }
   await pool.query(`
-    INSERT INTO temp_artists (id, lead_id, name, description, phone, base_city, expense_id, created_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-  `, [id, req.params.id, name, description || null, phone || null, baseCity || null, expenseId, now]);
+    INSERT INTO temp_artists (id, lead_id, name, description, phone, base_city, expense_id, created_at, musician_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+  `, [id, req.params.id, name, description || null, phone || null, baseCity || null, expenseId, now, musicianId]);
   const { rows } = await pool.query(`
     SELECT temp_artists.*, expenses.amount AS fee_amount, expenses.paid AS fee_paid,
       expenses.payment_date AS fee_payment_date, expenses.payment_mode AS fee_payment_mode
@@ -3544,6 +3578,26 @@ app.delete("/api/team-id-docs/:docId", requireAuth, requireAdmin, async (req, re
   res.status(204).end();
 });
 
+// Travellers on a share: team members plus guest musicians (picked from the Musicians
+// database for this event). Guest ids look like "g:<temp_artist id>". Guests' IDs live on
+// the musician record (or on the team record if they were promoted to Team later).
+async function loadTravellers(leadId, ids) {
+  const teamIds = ids.filter((x) => !String(x).startsWith("g:"));
+  const guestIds = ids.filter((x) => String(x).startsWith("g:")).map((x) => String(x).slice(2));
+  const team = teamIds.length ? (await pool.query("SELECT id, name, role, phone FROM team WHERE id = ANY($1) ORDER BY name ASC", [teamIds])).rows : [];
+  const teamDocs = teamIds.length ? (await pool.query("SELECT id, team_id, label, original_name, mime_type FROM team_id_docs WHERE team_id = ANY($1) ORDER BY uploaded_at ASC", [teamIds])).rows : [];
+  const guests = guestIds.length ? (await pool.query(
+    `SELECT ta.id, ta.name, ta.description AS role, ta.phone, ta.musician_id, m.team_id AS musician_team_id
+     FROM temp_artists ta JOIN musicians m ON m.id = ta.musician_id WHERE ta.lead_id = $1 AND ta.id = ANY($2) ORDER BY ta.name ASC`, [leadId, guestIds])).rows : [];
+  const mids = guests.map((g) => g.musician_id);
+  const mteams = guests.map((g) => g.musician_team_id).filter(Boolean);
+  const guestDocs = guests.length ? (await pool.query(
+    "SELECT id, team_id, musician_id, label, original_name, mime_type FROM team_id_docs WHERE musician_id = ANY($1) OR team_id = ANY($2) ORDER BY uploaded_at ASC", [mids, mteams])).rows : [];
+  return {
+    team: team.map((t) => ({ ...t, docs: teamDocs.filter((d) => d.team_id === t.id) })),
+    guests: guests.map((g) => ({ ...g, key: "g:" + g.id, docs: guestDocs.filter((d) => d.musician_id === g.musician_id || (g.musician_team_id && d.team_id === g.musician_team_id)) })),
+  };
+}
 // Everything the "Send IDs & travel details" screen needs, in one call.
 app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, res) => {
   const leadId = req.params.id;
@@ -3551,7 +3605,7 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
     pool.query(`SELECT team.id AS team_id, team.name, team.role, team.phone, event_assignments.status
                 FROM event_assignments JOIN team ON team.id = event_assignments.team_id
                 WHERE event_assignments.lead_id = $1 ORDER BY team.name ASC`, [leadId]),
-    pool.query("SELECT name FROM temp_artists WHERE lead_id = $1", [leadId]),
+    pool.query("SELECT id, name, description, phone, musician_id FROM temp_artists WHERE lead_id = $1", [leadId]),
     pool.query("SELECT id, mode, from_city, to_city, departure_at, arrival_at FROM travel_legs WHERE lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [leadId]),
     pool.query("SELECT token, team_ids, created_at, expires_at, revoked FROM travel_shares WHERE lead_id = $1 ORDER BY created_at DESC", [leadId]),
   ]);
@@ -3561,31 +3615,44 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
     teamIds.length ? pool.query("SELECT id, team_id, label, original_name, mime_type FROM team_id_docs WHERE team_id = ANY($1) ORDER BY uploaded_at ASC", [teamIds]) : { rows: [] },
     legIds.length ? pool.query("SELECT leg_id, team_id FROM travel_leg_members WHERE leg_id = ANY($1)", [legIds]) : { rows: [] },
   ]);
+  const guestRows = temps.rows.filter((t) => t.musician_id);
+  const trav = guestRows.length ? await loadTravellers(leadId, guestRows.map((t) => "g:" + t.id)) : { guests: [] };
   res.json({
-    team: assigned.rows.map((r) => ({
-      teamId: r.team_id, name: r.name, role: r.role, phone: r.phone, status: r.status,
-      idDocs: ids.rows.filter((d) => d.team_id === r.team_id).map((d) => ({ ...d, url: `/api/team-id-docs/${d.id}/file` })),
-    })),
-    tempArtists: temps.rows.map((t) => t.name),
+    team: [
+      ...assigned.rows.map((r) => ({
+        teamId: r.team_id, name: r.name, role: r.role, phone: r.phone, status: r.status,
+        uploadBase: "team", uploadId: r.team_id,
+        idDocs: ids.rows.filter((d) => d.team_id === r.team_id).map((d) => ({ ...d, url: `/api/team-id-docs/${d.id}/file` })),
+      })),
+      ...trav.guests.map((g) => ({
+        teamId: g.key, name: g.name, role: g.role, phone: g.phone, status: "confirmed", guest: true,
+        uploadBase: "musicians", uploadId: g.musician_id,
+        idDocs: g.docs.map((d) => ({ ...d, url: `/api/team-id-docs/${d.id}/file` })),
+      })),
+    ],
+    tempArtists: temps.rows.filter((t) => !t.musician_id).map((t) => t.name),
     legs: legs.rows.map((l) => ({ ...l, memberIds: members.rows.filter((m) => m.leg_id === l.id).map((m) => m.team_id) })),
     shares: shares.rows.map((s) => ({ token: s.token, teamIds: JSON.parse(s.team_ids || "[]"), createdAt: s.created_at, expiresAt: s.expires_at, revoked: !!s.revoked })),
   });
 });
 app.post("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, res) => {
   const leadId = req.params.id;
-  const teamIds = Array.isArray(req.body.teamIds) ? [...new Set(req.body.teamIds)] : [];
-  if (teamIds.length === 0) return res.status(400).json({ error: "Select at least one team member." });
+  const allIds = Array.isArray(req.body.teamIds) ? [...new Set(req.body.teamIds.map(String))] : [];
+  const teamIds = allIds.filter((x) => !x.startsWith("g:"));
+  const guestIds = allIds.filter((x) => x.startsWith("g:")).map((x) => x.slice(2));
+  if (allIds.length === 0) return res.status(400).json({ error: "Select at least one person." });
   const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [leadId])).rows[0];
   if (!lead) return res.status(404).json({ error: "Event not found" });
   // Only people actually assigned to THIS event can ever be included.
-  const ok = (await pool.query("SELECT team_id FROM event_assignments WHERE lead_id = $1 AND team_id = ANY($2)", [leadId, teamIds])).rows.map((r) => r.team_id);
-  if (ok.length !== teamIds.length) return res.status(400).json({ error: "Someone selected isn't assigned to this event." });
+  const ok = (teamIds.length ? await pool.query("SELECT team_id FROM event_assignments WHERE lead_id = $1 AND team_id = ANY($2)", [leadId, teamIds]) : { rows: [] }).rows.map((r) => r.team_id);
+  const okGuests = guestIds.length ? (await pool.query("SELECT id FROM temp_artists WHERE lead_id = $1 AND musician_id IS NOT NULL AND id = ANY($2)", [leadId, guestIds])).rows : [];
+  if (ok.length !== teamIds.length || okGuests.length !== guestIds.length) return res.status(400).json({ error: "Someone selected isn't assigned to this event." });
   const token = crypto.randomBytes(24).toString("base64url");
   const now = new Date();
   const expires = new Date(now.getTime() + 15 * 86400000);
   await pool.query("INSERT INTO travel_shares (token, lead_id, team_ids, created_at, expires_at, created_by) VALUES ($1,$2,$3,$4,$5,$6)",
-    [token, leadId, JSON.stringify(teamIds), now.toISOString(), expires.toISOString(), req.user.username || null]);
-  logActivity(req, `Travel IDs & details link created for ${lead.name} (${teamIds.length} traveller${teamIds.length > 1 ? "s" : ""})`, leadId);
+    [token, leadId, JSON.stringify(allIds), now.toISOString(), expires.toISOString(), req.user.username || null]);
+  logActivity(req, `Travel IDs & details link created for ${lead.name} (${allIds.length} traveller${allIds.length > 1 ? "s" : ""})`, leadId);
   res.status(201).json({ token, expiresAt: expires.toISOString() });
 });
 app.post("/api/travel-share/:token/revoke", requireAuth, requireAdmin, async (req, res) => {
@@ -3615,10 +3682,10 @@ app.get("/trip/:token", async (req, res) => {
 <style>body{font-family:Georgia,serif;background:#FBF6EC;color:#3A2A1A;margin:0;padding:18px}.w{max-width:640px;margin:0 auto}h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.06em;color:#8A5A1F}.c{background:#fff;border:1px solid #E9DFCF;border-radius:12px;padding:12px 14px;margin-bottom:10px}.m{color:#7A6A58;font-size:13px}img{max-width:100%;border-radius:8px;border:1px solid #E9DFCF;margin-top:8px}a{color:#B5541C}</style></head><body><div class="w">${body}</div></body></html>`;
   if (!s) return res.status(404).send(shell(`<h1>This link is no longer available</h1><p class="m">It may have expired or been replaced. Please ask Together, Out Loud for a fresh link.</p>`));
   const lead = (await pool.query("SELECT name, date, city, event_type, occasion FROM leads WHERE id = $1", [s.lead_id])).rows[0];
-  const teamIds = JSON.parse(s.team_ids || "[]");
-  const [team, ids, legs, members] = await Promise.all([
-    pool.query("SELECT id, name, role FROM team WHERE id = ANY($1) ORDER BY name ASC", [teamIds]),
-    pool.query("SELECT id, team_id, label, original_name, mime_type FROM team_id_docs WHERE team_id = ANY($1) ORDER BY uploaded_at ASC", [teamIds]),
+  const allIds = JSON.parse(s.team_ids || "[]");
+  const teamIds = allIds.filter((x) => !String(x).startsWith("g:"));
+  const trav = await loadTravellers(s.lead_id, allIds);
+  const [legs, members] = await Promise.all([
     pool.query("SELECT id, mode, from_city, to_city, departure_at, arrival_at FROM travel_legs WHERE lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [s.lead_id]),
     pool.query("SELECT travel_leg_members.leg_id, team.id AS team_id, team.name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1)", [s.lead_id]),
   ]);
@@ -3629,8 +3696,8 @@ app.get("/trip/:token", async (req, res) => {
       ${l.departure_at ? `<div class="m">Depart: ${escHtml(fmtWall(l.departure_at))}</div>` : ""}${l.arrival_at ? `<div class="m">Arrive: ${escHtml(fmtWall(l.arrival_at))}</div>` : ""}
       <div style="margin-top:6px">Travelling: ${who.map(escHtml).join(", ")}</div></div>`;
   }).join("");
-  const idCards = team.rows.map((t) => {
-    const docs = ids.rows.filter((d) => d.team_id === t.id);
+  const idCards = [...trav.team, ...trav.guests].map((t) => {
+    const docs = t.docs;
     return `<div class="c"><b>${escHtml(t.name)}</b>${t.role ? ` <span class="m">· ${escHtml(t.role)}</span>` : ""}
       ${docs.length === 0 ? `<div class="m" style="color:#A6432B">ID not available — we'll send it separately.</div>` : docs.map((d) => {
         const url = `/trip/${encodeURIComponent(req.params.token)}/id/${d.id}`;
@@ -3639,7 +3706,7 @@ app.get("/trip/:token", async (req, res) => {
   }).join("");
   res.send(shell(`<h1>Travel details & IDs</h1><div class="m">${escHtml(lead ? `${lead.name}${lead.city ? " · " + lead.city : ""}${lead.date ? " · " + fmtWall(lead.date) : ""}` : "")}</div>
     <div class="m" style="margin-top:6px">Shared by Together, Out Loud for booking tickets. Link valid until ${escHtml(fmtWall(s.expires_at))}.</div>
-    <h2>Team travelling (${team.rows.length})</h2>${idCards}
+    <h2>Team travelling (${trav.team.length + trav.guests.length})</h2>${idCards}
     <h2>Travel plan</h2>${legCards || `<div class="c m">Travel plan will be shared shortly.</div>`}`));
 });
 app.get("/trip/:token/id/:docId", async (req, res) => {
@@ -3647,9 +3714,10 @@ app.get("/trip/:token/id/:docId", async (req, res) => {
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
   const s = await loadTravelShare(req.params.token);
   if (!s) return res.status(404).send("Link no longer available");
-  const teamIds = JSON.parse(s.team_ids || "[]");
-  const d = (await pool.query("SELECT original_name, mime_type, file_data, team_id FROM team_id_docs WHERE id = $1", [req.params.docId])).rows[0];
-  if (!d || !d.file_data || !teamIds.includes(d.team_id)) return res.status(404).send("File not found");
+  const trav = await loadTravellers(s.lead_id, JSON.parse(s.team_ids || "[]"));
+  const allowed = new Set([...trav.team, ...trav.guests].flatMap((t) => t.docs.map((x) => x.id)));
+  const d = allowed.has(req.params.docId) ? (await pool.query("SELECT original_name, mime_type, file_data FROM team_id_docs WHERE id = $1", [req.params.docId])).rows[0] : null;
+  if (!d || !d.file_data) return res.status(404).send("File not found");
   res.setHeader("Content-Type", d.mime_type || "application/octet-stream");
   res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(d.original_name)}"`);
   res.send(d.file_data);
