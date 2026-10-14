@@ -3385,7 +3385,7 @@ async function renderTeam(main, subTab = "team") {
     <div class="view-head">
       <div><h2>Team</h2><p class="muted">${subTab === "musicians" ? "Your wider pool of musicians — filterable by city and instrument, so you can quickly find who to reach out to." : "Your band's musicians, crew, and staff."}</p></div>
       <div style="display:flex; gap:8px;">
-        ${subTab === "team" && isAdmin ? `<button class="btn-ghost" id="regLinkBtn">🔗 Registration link</button>` : ""}
+        ${subTab === "musicians" && isAdmin ? `<button class="btn-ghost" id="regLinkBtn">🔗 Registration link</button>` : ""}
         ${subTab === "team" && canManage ? `<button class="btn-ghost" id="tempArtistDirBtn">📇 Temporary artists</button>` : ""}
         ${subTab === "team" && canManage ? `<button class="btn-primary" id="addMemberBtn">+ Add team member</button>` : ""}
         ${subTab === "musicians" && canManage ? `<button class="btn-primary" id="addMusicianBtn">+ Add musician</button>` : ""}
@@ -3401,7 +3401,28 @@ async function renderTeam(main, subTab = "team") {
   main.querySelector("#musiciansTabBtn").addEventListener("click", () => renderTeam(main, "musicians"));
 
   if (subTab === "musicians") {
-    renderMusicians(main.querySelector("#teamSubContent"));
+    const sub = main.querySelector("#teamSubContent");
+    sub.innerHTML = `<div id="regCardBox"></div><div id="musiciansBox"></div>`;
+    renderMusicians(sub.querySelector("#musiciansBox"));
+    if (isAdmin) {
+      main.querySelector("#regLinkBtn").addEventListener("click", () => openRegistrationLinkModal());
+      api("/api/member-registrations").catch(() => []).then((regs) => {
+        if (!regs.length) return;
+        const e2 = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+        const box = sub.querySelector("#regCardBox");
+        box.innerHTML = `<div class="card" style="margin-bottom:20px; border-color:#B5541C;">
+          <div class="section-label" style="color:#B5541C;">New artist registrations (${regs.length})</div>
+          <p class="muted small" style="margin-top:-4px;">Submitted through your registration link or the website. Review the details and ID, then approve to add them to your Musicians database.</p>
+          ${regs.map((r) => `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 0; border-top:1px solid #EFE6D6;">
+            <div><b>${e2(r.data.name)}</b> <span class="muted small">\u00b7 ${e2(r.data.role)} \u00b7 ${e2(r.data.city)}${r.data.fee ? ` \u00b7 Fee: ${e2(r.data.fee)}` : ""}${r.duplicateOf ? ` \u00b7 \u26a0 phone matches ${e2(r.duplicateOf.name)}` : ""}</span></div>
+            <button class="btn-primary reg-review-btn" data-reg-id="${r.id}" style="font-size:12.5px; padding:5px 12px;">Review</button></div>`).join("")}
+        </div>`;
+        box.querySelectorAll(".reg-review-btn").forEach((b) => b.addEventListener("click", () => {
+          const reg = regs.find((r) => r.id === b.dataset.regId);
+          if (reg) openRegistrationReviewModal(reg, async () => { renderTeam(main, "musicians"); });
+        }));
+      });
+    }
     if (canManage) {
       main.querySelector("#addMusicianBtn").addEventListener("click", () => openMusicianModal(null, () => renderTeam(main, "musicians")));
     }
@@ -3409,7 +3430,7 @@ async function renderTeam(main, subTab = "team") {
   }
 
   const content = main.querySelector("#teamSubContent");
-  const pendingRegs = isAdmin ? await api("/api/member-registrations").catch(() => []) : [];
+  const pendingRegs = [];
   const users = canManage ? await api("/api/users") : [];
   const teamIdsWithLogin = new Set(users.map((u) => u.team_id).filter(Boolean));
   content.innerHTML = `
@@ -3569,8 +3590,6 @@ async function renderTeam(main, subTab = "team") {
     }
   }
   if (isAdmin) {
-    const regLinkBtn = main.querySelector("#regLinkBtn");
-    if (regLinkBtn) regLinkBtn.addEventListener("click", () => openRegistrationLinkModal());
     main.querySelectorAll(".reg-review-btn").forEach((b) => b.addEventListener("click", () => {
       const reg = pendingRegs.find((r) => r.id === b.dataset.regId);
       if (reg) openRegistrationReviewModal(reg, async () => { TEAM = await api("/api/team"); renderTeam(main, "team"); });
@@ -5355,14 +5374,14 @@ function idUploadFieldsHtml(prefix) {
     <p class="muted small" style="margin:2px 0 0;">Photo or PDF. Only admins can open IDs; they're sent to a client only when you choose to, per event.</p>
   </div>`;
 }
-async function uploadFilesForMember(teamId, label, files) {
+async function uploadFilesForMember(teamId, label, files, base = "team") {
   let failed = 0;
   for (const file of files) {
     try {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("label", label);
-      const resp = await fetch(`/api/team/${teamId}/id-docs`, { method: "POST", body: fd, credentials: "include" });
+      const resp = await fetch(`/api/${base}/${teamId}/id-docs`, { method: "POST", body: fd, credentials: "include" });
       if (!resp.ok) failed++;
     } catch { failed++; }
   }
@@ -5373,13 +5392,13 @@ async function uploadPickedIds(prefix, teamId) {
   if (!inp || !inp.files || inp.files.length === 0) return 0;
   return uploadFilesForMember(teamId, document.getElementById(`${prefix}IdLabel`).value, [...inp.files]);
 }
-function wireMemberIdSection(box, member) {
+function wireMemberIdSection(box, member, base = "team") {
   const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
   let details = null;
   try { details = member.reg_details ? JSON.parse(member.reg_details) : null; } catch { details = null; }
   async function draw() {
     let docs = [];
-    try { docs = await api(`/api/team/${member.id}/id-docs`); } catch { docs = []; }
+    try { docs = await api(`/api/${base}/${member.id}/id-docs`); } catch { docs = []; }
     box.innerHTML = `
       <div style="font-weight:700; margin-bottom:6px;">🪪 ID cards</div>
       ${docs.length === 0 ? `<div style="color:#A6432B; font-size:12.5px; margin-bottom:6px;">⚠ No ID saved yet</div>` : docs.map((d) => `
@@ -5412,7 +5431,7 @@ function wireMemberIdSection(box, member) {
       const files = [...e.target.files];
       if (!files.length) return;
       box.querySelector("#emIdStatus").textContent = "Uploading…";
-      const failed = await uploadFilesForMember(member.id, box.querySelector("#emIdLabel").value, files);
+      const failed = await uploadFilesForMember(member.id, box.querySelector("#emIdLabel").value, files, base);
       if (failed) alert(`${failed} file(s) didn't upload — use a JPG/PNG/PDF under 15 MB.`);
       draw();
     });
@@ -5485,9 +5504,9 @@ function openRegistrationReviewModal(reg, onDone) {
         </div>
         <div style="margin-top:10px; font-weight:700;">Documents</div>
         ${reg.files.map((f) => `<div style="font-size:13px; margin-top:4px;">📎 ${esc(f.label)} — <a href="${f.url}" target="_blank" rel="noopener">${esc(f.original_name)}</a></div>`).join("")}
-        <p class="muted small" style="margin-top:12px;">Approving adds them to your team (no login is created) and saves their documents as travel IDs.</p>
+        <p class="muted small" style="margin-top:12px;">Approving adds them to your Musicians database with their documents saved as travel IDs. You can move them to Team later from there.</p>
       </div>
-      <div class="modal-foot"><button class="btn-ghost" id="rvReject" style="color:#A6432B;">Reject</button><button class="btn-primary" id="rvApprove">Approve & add to team</button></div>
+      <div class="modal-foot"><button class="btn-ghost" id="rvReject" style="color:#A6432B;">Reject</button><button class="btn-primary" id="rvApprove">Approve & add to Musicians</button></div>
     </div></div>`;
   const close = () => (root.innerHTML = "");
   root.querySelector("#closeModal").addEventListener("click", close);
@@ -7375,6 +7394,7 @@ async function renderMusicians(main) {
             ${m.instruments.length === 0 ? `<div class="muted small">No instruments tagged</div>` : ""}
             ${(m.rate_local || m.rate_outstation) ? `<div class="muted small">${m.rate_local ? `Local ${inr(m.rate_local)}` : ""}${m.rate_local && m.rate_outstation ? " · " : ""}${m.rate_outstation ? `Outstation ${inr(m.rate_outstation)}` : ""}</div>` : ""}
             ${m.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${m.notes}</div>` : ""}
+            ${CURRENT_USER?.accessLevel === "admin" && !m.team_id ? `<div data-musician-ids="${m.id}" style="margin-top:10px; padding:10px; background:#FBF6EC; border-radius:8px; font-size:13px;"></div>` : ""}
             ${canManage ? `
               <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">
                 ${!m.team_id ? `<button class="btn-ghost promote-musician-btn" data-musician-id="${m.id}" style="font-size:12px; padding:4px 9px;">+ Add to Team</button>` : ""}
@@ -7391,6 +7411,8 @@ async function renderMusicians(main) {
         const expanded = details.style.display !== "none";
         details.style.display = expanded ? "none" : "block";
         caret.textContent = expanded ? "▸" : "▾";
+        const idBox = card.querySelector(`[data-musician-ids="${m.id}"]`);
+        if (!expanded && idBox && !idBox.dataset.ready) { idBox.dataset.ready = "1"; wireMemberIdSection(idBox, m, "musicians"); }
       });
       listEl.appendChild(card);
     });

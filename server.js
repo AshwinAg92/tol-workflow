@@ -813,6 +813,21 @@ app.delete("/api/musicians/:id", requireAuth, requireAdmin, async (req, res) => 
   res.status(204).end();
 });
 
+app.get("/api/musicians/:id/id-docs", requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await pool.query("SELECT id, label, original_name, mime_type, uploaded_at FROM team_id_docs WHERE musician_id = $1 ORDER BY uploaded_at ASC", [req.params.id]);
+  res.json(rows.map((d) => ({ ...d, url: `/api/team-id-docs/${d.id}/file` })));
+});
+app.post("/api/musicians/:id/id-docs", requireAuth, requireAdmin, upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+  if (!ID_DOC_MIMES.test(req.file.mimetype || "")) return res.status(400).json({ error: "Please upload a photo (JPG/PNG) or a PDF." });
+  const m = (await pool.query("SELECT team_id FROM musicians WHERE id = $1", [req.params.id])).rows[0];
+  if (!m) return res.status(404).json({ error: "Musician not found" });
+  // Already in Team? Keep the ID with the team member so travel sharing finds it.
+  await pool.query("INSERT INTO team_id_docs (id, team_id, musician_id, label, original_name, mime_type, file_data, uploaded_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+    [uuid(), m.team_id || null, m.team_id ? null : req.params.id, (req.body.label || "").trim() || null, req.file.originalname, req.file.mimetype, req.file.buffer, new Date().toISOString()]);
+  res.status(201).json({ ok: true });
+});
+
 // Promotes a musician into Team — creates the team row (no login) and links
 // it back on the musician record. Gated by manage_team (not just the
 // "musicians" section) since it's really a Team-management action.
@@ -827,6 +842,9 @@ app.post("/api/musicians/:id/promote", requireAuth, requireAdmin, async (req, re
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
   `, [teamId, musician.name, instruments.length ? `${instruments.join(", ")} player` : "Musician", musician.phone || null, instruments.join(", ") || null, musician.city || null, musician.rate_local || null, musician.rate_outstation || null]);
   await pool.query("UPDATE musicians SET team_id = $1 WHERE id = $2", [teamId, req.params.id]);
+  // Carry over registration details, email and any saved IDs so nothing is re-entered.
+  await pool.query("UPDATE team SET reg_details = $1, email = COALESCE($2, email) WHERE id = $3", [musician.reg_details || null, musician.email || null, teamId]);
+  await pool.query("UPDATE team_id_docs SET team_id = $1, musician_id = NULL WHERE musician_id = $2", [teamId, req.params.id]);
   logActivity(req, `Added ${musician.name} to Team from the Musicians directory`, null);
   res.status(201).json({ teamId });
 });
@@ -3787,19 +3805,24 @@ app.post("/api/member-registrations/:id/approve", requireAuth, requireAdmin, asy
   const b = req.body || {};
   const name = (b.name || d.name || "").trim();
   if (!name) return res.status(400).json({ error: "Name is required" });
-  const teamId = uuid();
+  const musicianId = uuid();
   const details = { legalName: d.name, dob: d.dob, gender: d.gender, emergencyName: d.emName, emergencyPhone: d.emPhone, instagram: d.instagram, feeExpectation: d.fee, notes: d.notes };
-  await pool.query("INSERT INTO team (id, name, role, phone, email, base_city, reg_details) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-    [teamId, name, (b.role ?? d.role) || null, (b.phone ?? d.phone) || null, d.email || null, (b.baseCity ?? d.city) || null, JSON.stringify(details)]);
+  const notes = [d.fee ? `Fee expectation: ${d.fee}` : "", d.instagram ? `Instagram: ${d.instagram}` : "", d.notes || ""].filter(Boolean).join(" \u00b7 ");
+  await pool.query("INSERT INTO musicians (id, name, phone, city, notes, email, reg_details, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+    [musicianId, name, (b.phone ?? d.phone) || null, (b.baseCity ?? d.city) || null, notes || null, d.email || null, JSON.stringify(details), new Date().toISOString()]);
+  const role = String((b.role ?? d.role) || "").split(",").map((x) => x.trim()).filter(Boolean);
+  for (const instrument of [...new Set(role)]) {
+    await pool.query("INSERT INTO musician_instruments (id, musician_id, instrument) VALUES ($1,$2,$3)", [uuid(), musicianId, instrument]);
+  }
   const files = (await pool.query("SELECT * FROM member_registration_files WHERE registration_id = $1", [reg.id])).rows;
   for (const f of files) {
-    await pool.query("INSERT INTO team_id_docs (id, team_id, label, original_name, mime_type, file_data, uploaded_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-      [uuid(), teamId, f.label, f.original_name, f.mime_type, f.file_data, new Date().toISOString()]);
+    await pool.query("INSERT INTO team_id_docs (id, team_id, musician_id, label, original_name, mime_type, file_data, uploaded_at) VALUES ($1,NULL,$2,$3,$4,$5,$6,$7)",
+      [uuid(), musicianId, f.label, f.original_name, f.mime_type, f.file_data, new Date().toISOString()]);
   }
   await pool.query("DELETE FROM member_registration_files WHERE registration_id = $1", [reg.id]);
-  await pool.query("UPDATE member_registrations SET status = 'approved', team_id = $1 WHERE id = $2", [teamId, reg.id]);
-  logActivity(req, `Artist registration approved: ${name}`, null);
-  res.json({ teamId });
+  await pool.query("UPDATE member_registrations SET status = 'approved' WHERE id = $1", [reg.id]);
+  logActivity(req, `Artist registration approved into Musicians: ${name}`, null);
+  res.json({ musicianId });
 });
 app.post("/api/member-registrations/:id/reject", requireAuth, requireAdmin, async (req, res) => {
   await pool.query("DELETE FROM member_registrations WHERE id = $1 AND status = 'pending'", [req.params.id]);

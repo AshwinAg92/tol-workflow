@@ -734,6 +734,13 @@ async function setup() {
     );
   `);
 
+  // Registration-form details + ID documents can now live on a musician (approved
+  // registrations go to the Musicians directory first, not Team).
+  await pool.query(`ALTER TABLE musicians ADD COLUMN IF NOT EXISTS reg_details TEXT`);
+  await pool.query(`ALTER TABLE musicians ADD COLUMN IF NOT EXISTS email TEXT`);
+  await pool.query(`ALTER TABLE team_id_docs ALTER COLUMN team_id DROP NOT NULL`);
+  await pool.query(`ALTER TABLE team_id_docs ADD COLUMN IF NOT EXISTS musician_id TEXT REFERENCES musicians(id) ON DELETE CASCADE`);
+
   // One-time backfill: the Musicians directory launched empty even though
   // Team already had people in it, so copy every existing Team member
   // across (pre-linked via team_id, since they're already in Team) --
