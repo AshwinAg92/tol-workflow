@@ -196,8 +196,6 @@ async function setup() {
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS feedback_token TEXT`);
   // On-site contacts for an event (venue sound manager / event coordinator) so
   // whoever is managing the day can call or WhatsApp them straight from the app.
-  // Managers' own travel remarks (separate from the admin's private `notes`).
-  await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS manager_notes TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sound_manager_name TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sound_manager_phone TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS coordinator_name TEXT`);
@@ -513,6 +511,8 @@ async function setup() {
     );
   `);
   await pool.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS travel_leg_id TEXT REFERENCES travel_legs(id) ON DELETE CASCADE`);
+  // Managers' own travel remarks (separate from the admin's private `notes`).
+  await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS manager_notes TEXT`);
   // A journey (train/flight/car) can carry several artists at once — this
   // join table is what actually links artists to a leg now. The old
   // single team_id column on travel_legs stays in place (unused going
