@@ -2714,6 +2714,24 @@ async function canViewTravelLegs(user, leadId) {
   return !!a;
 }
 
+// Admins' own travel stays private from managers/staff: legs that only involve admins
+// are hidden, and admins are dropped from the traveller list of mixed legs.
+async function hideAdminTravel(user, legsOut) {
+  if (user.access_level === "admin") return legsOut;
+  const adminTeamIds = new Set((await pool.query("SELECT team_id FROM users WHERE access_level = 'admin' AND team_id IS NOT NULL")).rows.map((r) => r.team_id));
+  if (adminTeamIds.size === 0) return legsOut;
+  return legsOut
+    .filter((l) => !(l.members.length > 0 && l.members.every((m) => adminTeamIds.has(m.teamId))))
+    .map((l) => ({ ...l, members: l.members.filter((m) => !adminTeamIds.has(m.teamId)) }));
+}
+
+async function legIsAdminOnly(user, legId) {
+  if (user.access_level === "admin") return false;
+  const m = (await pool.query("SELECT team_id FROM travel_leg_members WHERE leg_id = $1", [legId])).rows;
+  if (m.length === 0) return false;
+  const admins = new Set((await pool.query("SELECT team_id FROM users WHERE access_level = 'admin' AND team_id IS NOT NULL")).rows.map((r) => r.team_id));
+  return m.every((x) => admins.has(x.team_id));
+}
 app.get("/api/leads/:id/travel-legs", requireAuth, async (req, res) => {
   if (!(await canViewTravelLegs(req.user, req.params.id))) return res.status(403).json({ error: "Not available for this event" });
   const { rows: legs } = await pool.query(`SELECT * FROM travel_legs WHERE lead_id = $1 ORDER BY created_at ASC`, [req.params.id]);
@@ -2722,11 +2740,11 @@ app.get("/api/leads/:id/travel-legs", requireAuth, async (req, res) => {
     pool.query(`SELECT travel_leg_members.leg_id, team.id AS team_id, team.name AS team_name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id = ANY($1)`, [legIds]),
     pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents WHERE travel_leg_id = ANY($1) ORDER BY uploaded_at ASC`, [legIds]),
   ]) : [{ rows: [] }, { rows: [] }];
-  res.json(legs.map((leg) => ({
+  res.json(await hideAdminTravel(req.user, legs.map((leg) => ({
     ...legForUser(leg, req.user),
     members: members.rows.filter((m) => m.leg_id === leg.id).map((m) => ({ teamId: m.team_id, name: m.team_name })),
     tickets: tickets.rows.filter((t) => t.travel_leg_id === leg.id).map((t) => ({ ...t, url: `/api/documents/${t.id}/file` })),
-  })));
+  }))));
 });
 
 // Every travel leg across every event, plus any standalone (no lead) entries
@@ -2744,11 +2762,11 @@ app.get("/api/travel-legs", requireAuth, requireCapability("assign_team"), async
     pool.query(`SELECT travel_leg_members.leg_id, team.id AS team_id, team.name AS team_name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id = ANY($1)`, [legIds]),
     pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents WHERE travel_leg_id = ANY($1) ORDER BY uploaded_at ASC`, [legIds]),
   ]) : [{ rows: [] }, { rows: [] }];
-  res.json(legs.map((leg) => ({
+  res.json(await hideAdminTravel(req.user, legs.map((leg) => ({
     ...legForUser(leg, req.user),
     members: members.rows.filter((m) => m.leg_id === leg.id).map((m) => ({ teamId: m.team_id, name: m.team_name })),
     tickets: tickets.rows.filter((t) => t.travel_leg_id === leg.id).map((t) => ({ ...t, url: `/api/documents/${t.id}/file` })),
-  })));
+  }))));
 });
 
 // Same person, same sector (from -> to), same event = a duplicate travel plan.
@@ -2827,6 +2845,7 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
 app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const leg = (await pool.query("SELECT * FROM travel_legs WHERE id = $1", [req.params.id])).rows[0];
   if (!leg) return res.status(404).json({ error: "Travel leg not found" });
+  if (await legIsAdminOnly(req.user, req.params.id)) return res.status(403).json({ error: "Not available" });
   {
     const curMembers = (await pool.query("SELECT team_id FROM travel_leg_members WHERE leg_id = $1", [req.params.id])).rows.map((r) => r.team_id);
     const fc = req.body.fromCity !== undefined ? req.body.fromCity : leg.from_city;
