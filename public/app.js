@@ -5595,7 +5595,7 @@ async function openTravelShareModal(leadId) {
       `Here are the travel details and ID cards of our team for *${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.city ? ` in ${lead.city}` : ""}* so you can book the tickets.`,
       "",
       `👥 *Team travelling (${people.length}):*`,
-      ...people.map((t, i) => `${i + 1}. ${t.name}${t.role ? ` — ${t.role}` : ""}`),
+      ...people.map((t, i) => `${i + 1}. ${t.name}`),
       "",
       legs.length ? "✈️ *Travel plan:*" : "✈️ Travel plan: we will share it shortly.",
       ...legs.flatMap((l) => [

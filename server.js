@@ -3955,7 +3955,7 @@ app.get("/trip/:token", async (req, res) => {
   }).join("");
   const idCards = [...trav.team, ...trav.guests].map((t) => {
     const docs = t.docs;
-    return `<div class="c"><b>${escHtml(t.name)}</b>${t.role ? ` <span class="m">· ${escHtml(t.role)}</span>` : ""}
+    return `<div class="c"><b>${escHtml(t.name)}</b>
       ${docs.length === 0 ? `<div class="m" style="color:#A6432B">ID not available — we'll send it separately.</div>` : docs.map((d) => {
         const url = `/trip/${encodeURIComponent(req.params.token)}/id/${d.id}`;
         return `<div style="margin-top:8px"><span class="m">${escHtml(d.label || d.original_name)}</span>${/^image\//i.test(d.mime_type || "") && !/hei[cf]/i.test(d.mime_type) ? `<br><img src="${url}" alt="ID">` : ""}<br><a href="${url}" target="_blank" rel="noopener">Open / download</a></div>`;
