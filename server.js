@@ -759,8 +759,14 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   const lastQuoted = (await pool.query("SELECT lead_id, MAX(created_at) AS last_quoted_at, COUNT(*) AS quote_count FROM quotes GROUP BY lead_id")).rows;
   const lastQuotedByLead = {};
   lastQuoted.forEach((q) => (lastQuotedByLead[q.lead_id] = { last_quoted_at: q.last_quoted_at, quote_count: Number(q.quote_count) }));
+  const teamCounts = (await pool.query(`SELECT lead_id, COUNT(*) AS total, COUNT(*) FILTER (WHERE status = 'accepted') AS accepted, COUNT(*) FILTER (WHERE status = 'declined') AS declined FROM event_assignments GROUP BY lead_id`)).rows;
+  const teamByLead = {};
+  teamCounts.forEach((t) => (teamByLead[t.lead_id] = { total: Number(t.total), accepted: Number(t.accepted), declined: Number(t.declined) }));
   const withReceived = rows.map((l) => ({
     ...l,
+    team_total: teamByLead[l.id]?.total || 0,
+    team_accepted: teamByLead[l.id]?.accepted || 0,
+    team_declined: teamByLead[l.id]?.declined || 0,
     received: receivedByLead[l.id] || 0,
     reimbursement_due: dueReimbursementByLead[l.id] || 0,
     last_quoted_at: lastQuotedByLead[l.id]?.last_quoted_at || null,
