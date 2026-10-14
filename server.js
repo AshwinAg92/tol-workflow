@@ -284,8 +284,78 @@ app.use(["/app.js", "/index.html", "/home.html", "/styles.css"], (req, res, next
 // default handling — some WhatsApp builds then refuse to open the link at
 // all ("This link couldn't be opened"). A plain, always-200 response avoids
 // that class of failure entirely.
-app.get("/confirm.html", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "confirm.html"), { acceptRanges: false });
+// Personalised link preview for artists: the card carries their first name + the
+// event (never client name, venue or fees), rendered server-side as a PNG.
+let _resvg = null;
+function renderArtistCardPng(first, experience, dateLong, city) {
+  if (!_resvg) _resvg = require("@resvg/resvg-js").Resvg;
+  const esc = (v) => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const logo = fs.readFileSync(path.join(__dirname, "public", "logo.png")).toString("base64");
+  const fs1 = first.length > 14 ? 58 : 76;
+  const exp = String(experience || "");
+  const es = exp.length > 24 ? 40 : 50;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FEF6ED"/><stop offset="1" stop-color="#F6E0C2"/></linearGradient>
+<radialGradient id="gl" cx="1100" cy="80" r="380" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#F0A438" stop-opacity="0.38"/><stop offset="1" stop-color="#F0A438" stop-opacity="0"/></radialGradient></defs>
+<rect width="1200" height="630" fill="url(#bg)"/><rect width="1200" height="630" fill="url(#gl)"/>
+<rect x="24" y="24" width="1152" height="582" fill="none" stroke="#C1602B" stroke-width="3"/>
+<rect x="36" y="36" width="1128" height="558" fill="none" stroke="#C1602B" stroke-opacity="0.35" stroke-width="1.5"/>
+<image href="data:image/png;base64,${logo}" x="${600 - 45}" y="48" width="90" height="92"/>
+<text x="600" y="176" text-anchor="middle" font-family="Poppins" font-weight="700" font-size="20" letter-spacing="6" fill="#2B2420">TOGETHER, OUT LOUD</text>
+<text x="600" y="218" text-anchor="middle" font-family="Poppins" font-weight="700" font-size="18" letter-spacing="4" fill="#C1602B">YOUR PERFORMANCE</text>
+<text x="600" y="310" text-anchor="middle" font-family="Lora" font-weight="700" font-size="${fs1}" fill="#2B2420">Hi ${esc(first)}!</text>
+<line x1="480" y1="350" x2="582" y2="350" stroke="#F0A438" stroke-width="3"/><line x1="618" y1="350" x2="720" y2="350" stroke="#F0A438" stroke-width="3"/><circle cx="600" cy="350" r="6" fill="#F0A438"/>
+<text x="600" y="422" text-anchor="middle" font-family="Lora" font-weight="700" font-size="${es}" fill="#C1602B">${esc(exp)}</text>
+<text x="600" y="478" text-anchor="middle" font-family="Poppins" font-weight="500" font-size="32" fill="#2B2420">${esc([dateLong, city].filter(Boolean).join("  \u00b7  "))}</text>
+<text x="600" y="556" text-anchor="middle" font-family="Lora" font-style="italic" font-size="28" fill="#8A6A54">Tap to confirm or decline \u2014 Team TOL</text>
+</svg>`;
+  const fontDir = path.join(__dirname, "fonts");
+  const r = new _resvg(svg, { font: { fontFiles: ["Poppins-Bold.ttf", "Poppins-Medium.ttf", "Lora-Variable.ttf", "Lora-Italic-Variable.ttf"].map((f) => path.join(fontDir, f)), loadSystemFonts: false, defaultFontFamily: "Poppins" } });
+  return r.render().asPng();
+}
+async function artistCardInfo(token) {
+  const row = (await pool.query(`SELECT team.name AS team_name, leads.event_type, leads.city, leads.date
+    FROM event_assignments JOIN team ON team.id = event_assignments.team_id JOIN leads ON leads.id = event_assignments.lead_id
+    WHERE event_assignments.confirm_token = $1`, [token])).rows[0];
+  if (!row) return null;
+  const first = String(row.team_name || "").trim().split(/\s+/)[0] || "there";
+  const dateLong = row.date ? new Date(row.date + "T00:00:00Z").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }) : "";
+  return { first, experience: packageName(row.event_type), dateLong, city: row.city || "" };
+}
+app.get("/confirm-card/:token.png", async (req, res) => {
+  try {
+    const info = await artistCardInfo(req.params.token);
+    if (!info) return res.redirect(302, "/og-image.png");
+    const png = renderArtistCardPng(info.first, info.experience, info.dateLong, info.city);
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.send(Buffer.from(png));
+  } catch (err) {
+    console.error("confirm-card error:", err.message);
+    res.redirect(302, "/og-image.png");
+  }
+});
+app.get("/confirm.html", async (req, res) => {
+  const file = path.join(__dirname, "public", "confirm.html");
+  const token = String(req.query.token || "");
+  let info = null;
+  if (token) { try { info = await artistCardInfo(token); } catch { info = null; } }
+  if (!info) return res.sendFile(file, { acceptRanges: false });
+  const host = `https://${req.headers["x-forwarded-host"] || req.get("host")}`;
+  const escA = (v) => String(v || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  const title = `Hi ${info.first} \u2014 confirm your performance`;
+  const desc = `${info.experience}${info.dateLong ? " on " + info.dateLong : ""}${info.city ? " in " + info.city : ""} \u2014 Together, Out Loud`;
+  const img = `${host}/confirm-card/${encodeURIComponent(token)}.png`;
+  let html = fs.readFileSync(file, "utf8");
+  html = html
+    .replace(/(<meta property="og:title" content=")[^"]*/, `$1${escA(title)}`)
+    .replace(/(<meta name="twitter:title" content=")[^"]*/, `$1${escA(title)}`)
+    .replace(/(<meta property="og:description" content=")[^"]*/, `$1${escA(desc)}`)
+    .replace(/(<meta property="og:image" content=")[^"]*/, `$1${img}`)
+    .replace(/(<meta name="twitter:image" content=")[^"]*/, `$1${img}`);
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(html);
 });
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
 // Document files are served from Postgres now — see /api/documents/:id/file below.
