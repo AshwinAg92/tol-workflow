@@ -4859,33 +4859,6 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
             </div>
           ` : ""}
 
-          ${isAdmin ? `
-            <div class="section-label" style="margin-top:20px;">Other event expenses (travel, venue, decor, etc.)</div>
-            <div id="otherExpensesList">
-              ${otherExpenses.length === 0 ? `<p class="muted small">None added yet.</p>` : otherExpenses.map((e) => `
-                <div class="card" style="margin-bottom:8px; padding:10px 14px;">
-                  <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-                    <div style="min-width:0;">
-                      <div class="mono" style="font-size:16px; font-weight:700;">${inr(e.amount)}</div>
-                      <div class="muted small">${e.head} · ${e.paid ? `Paid${e.payment_mode ? ` · ${e.payment_mode}` : ""}` : "Pending"}</div>
-                      ${e.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${e.notes}</div>` : ""}
-                    </div>
-                    <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
-                      <button class="btn-ghost edit-expense-payment-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 8px;">Edit</button>
-                      <button class="btn-ghost remove-other-expense-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 9px; color:#A6432B;">🗑</button>
-                    </div>
-                  </div>
-                  ${expensePaymentForm(e, { editHeadAmount: true })}
-                </div>
-              `).join("")}
-            </div>
-            <div class="row-2" style="margin-top:8px;">
-              <input id="otherExpenseHead" placeholder="e.g. Travel, Venue rental, Decor" />
-              <input id="otherExpenseAmount" type="number" placeholder="Amount ₹" />
-            </div>
-            <button class="btn-ghost full" id="addOtherExpenseBtn" style="margin-top:8px;">+ Add expense</button>
-          ` : ""}
-
           <div class="section-label" style="margin-top:16px;">Temporary artists (one-off, this event only)</div>
           <div id="tempArtistList">
             ${tempArtists.length === 0 ? `<p class="muted small">None added yet.</p>` : tempArtists.map((t) => {
@@ -4925,6 +4898,33 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
           <button class="btn-ghost full" id="addTempArtistBtn" style="margin-top:8px;">+ Add temporary artist</button>
           <p class="muted small" style="margin-top:4px;">Tip: hitting the overall Save button below also adds this if you've filled it in.${isAdmin ? " Any fee entered here counts toward this event's expenses/profit automatically — no need to add it again under Accounts." : ""}</p>
           ${tempArtistDirectory.length > 0 ? `<button class="btn-ghost full" id="viewTempArtistDirectoryBtn" style="margin-top:6px;">📇 View all past temporary artists (${tempArtistDirectory.length})</button>` : ""}
+
+          ${isAdmin ? `
+            <div class="section-label" style="margin-top:20px;">Other event expenses (travel, venue, decor, etc.)</div>
+            <div id="otherExpensesList">
+              ${otherExpenses.length === 0 ? `<p class="muted small">None added yet.</p>` : otherExpenses.map((e) => `
+                <div class="card" style="margin-bottom:8px; padding:10px 14px;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                    <div style="min-width:0;">
+                      <div class="mono" style="font-size:16px; font-weight:700;">${inr(e.amount)}</div>
+                      <div class="muted small">${e.head} · ${e.paid ? `Paid${e.payment_mode ? ` · ${e.payment_mode}` : ""}` : "Pending"}</div>
+                      ${e.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${e.notes}</div>` : ""}
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+                      <button class="btn-ghost edit-expense-payment-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 8px;">Edit</button>
+                      <button class="btn-ghost remove-other-expense-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 9px; color:#A6432B;">🗑</button>
+                    </div>
+                  </div>
+                  ${expensePaymentForm(e, { editHeadAmount: true })}
+                </div>
+              `).join("")}
+            </div>
+            <div class="row-2" style="margin-top:8px;">
+              <input id="otherExpenseHead" placeholder="e.g. Travel, Venue rental, Decor" />
+              <input id="otherExpenseAmount" type="number" placeholder="Amount ₹" />
+            </div>
+            <button class="btn-ghost full" id="addOtherExpenseBtn" style="margin-top:8px;">+ Add expense</button>
+          ` : ""}
 
           <div class="section-label" style="margin-top:16px;">Artist reimbursements</div>
           ${leadReimbursements.length > 0 ? `
