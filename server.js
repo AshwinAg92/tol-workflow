@@ -2462,20 +2462,25 @@ app.get("/api/travel-legs", requireAuth, requireCapability("assign_team"), async
 });
 
 app.post("/api/travel-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
-  const { label, teamIds, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status } = req.body;
+  const { leadId, label, teamIds, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status } = req.body;
   const notes = req.user.access_level === "admin" ? req.body.notes : null;
   const managerNotes = req.body.managerNotes || null;
   if (!label || !label.trim()) return res.status(400).json({ error: "A label is required for manually-logged travel" });
+  let linkLeadId = null;
+  if (leadId) {
+    if (!(await pool.query("SELECT 1 FROM leads WHERE id = $1", [leadId])).rows[0]) return res.status(404).json({ error: "Event not found" });
+    linkLeadId = leadId;
+  }
   const id = uuid();
   const now = new Date().toISOString();
   await pool.query(`
     INSERT INTO travel_legs (id, lead_id, label, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, manager_notes, created_at, updated_at)
-    VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
-  `, [id, label.trim(), mode || null, fromCity || null, toCity || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, managerNotes, now]);
+    VALUES ($1, $13, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+  `, [id, label.trim(), mode || null, fromCity || null, toCity || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, managerNotes, now, linkLeadId]);
   for (const teamId of (Array.isArray(teamIds) ? teamIds : [])) {
     await pool.query(`INSERT INTO travel_leg_members (id, leg_id, team_id) VALUES ($1, $2, $3)`, [uuid(), id, teamId]);
   }
-  logActivity(req, `Travel logged manually: ${label.trim()}`, null);
+  logActivity(req, `Travel logged manually: ${label.trim()}`, linkLeadId);
   res.status(201).json({ id });
 });
 

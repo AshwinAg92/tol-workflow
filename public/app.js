@@ -3235,6 +3235,14 @@ function openStandaloneTravelLegModal(legId, onDone) {
           <div class="modal-body">
             <label>What's this trip for?</label>
             <input id="stlLabel" value="${leg?.label || ""}" placeholder="e.g. Scouting venue in Kolkata" />
+            <label style="margin-top:10px;">Link to an event (optional)</label>
+            <select id="stlLead">
+              <option value="">Not linked to any event</option>
+              ${LEADS.filter((l) => ["Confirmed", "Tentative", "Completed"].includes(l.stage) || l.id === leg?.lead_id)
+                .slice().sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")))
+                .map((l) => `<option value="${l.id}" ${leg?.lead_id === l.id ? "selected" : ""}>${String(l.name).replace(/</g, "&lt;")} \u2014 ${fmtDate(l.date)}${l.city ? ", " + String(l.city).replace(/</g, "&lt;") : ""}${l.stage === "Tentative" ? " (tentative)" : ""}</option>`).join("")}
+            </select>
+            <p class="muted small" style="margin:3px 0 0;">Linked travel shows in that event's Travel plan and goes out with "Send IDs &amp; travel details".</p>
             <label style="margin-top:10px;">Who's travelling? (optional)</label>
             <div class="rate-inclusions-grid" style="margin-bottom:10px;">
               ${TEAM.map((m) => `
@@ -3322,6 +3330,7 @@ function openStandaloneTravelLegModal(legId, onDone) {
         arrivalAt: root.querySelector("#stlArrival").value || null,
         bookingRef: root.querySelector("#stlBookingRef").value.trim() || null,
         status: root.querySelector("#stlStatus").value,
+        leadId: root.querySelector("#stlLead").value || null,
         notes: root.querySelector("#stlNotes")?.value.trim() || null,
         managerNotes: root.querySelector("#stlManagerNotes").value.trim() || null,
       };
