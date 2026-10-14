@@ -6670,23 +6670,31 @@ async function renderDashboard(main) {
     });
   }
 
-  main.querySelector("#dashRefreshBtn").addEventListener("click", async () => {
   const gcalBtn = main.querySelector("#dashGcalSyncBtn");
   if (gcalBtn) gcalBtn.addEventListener("click", async () => {
     const note = main.querySelector("#gcalSyncNote");
-    const show = (html, bg, color) => { note.style.display = "block"; note.style.background = bg; note.style.color = color; note.innerHTML = html; };
+    const show = (html, bg, color, pct) => {
+      note.style.display = "block"; note.style.background = bg; note.style.color = color;
+      note.innerHTML = html + (pct == null ? "" : `<div style="height:6px; border-radius:3px; background:rgba(28,122,128,.18); margin-top:8px; overflow:hidden;"><div style="height:100%; width:${pct}%; background:#1C7A80; transition:width .4s;"></div></div>`);
+      note.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    };
+    const label = gcalBtn.querySelector(".btn-label");
     if (gcalBtn.disabled) return;
     gcalBtn.disabled = true;
+    const origLabel = label ? label.textContent : "";
+    if (label) label.textContent = "Syncing…";
+    show("Checking Google Calendar connection…", "#EEF6F6", "#1C7A80", 3);
     try {
       const st = await api("/api/google-calendar/status");
       if (!st.connected) {
         show("Google Calendar isn't connected. Go to Settings → Google Calendar → Connect, then try again.", "#FDECE6", "#A6432B");
         return;
       }
-      show("Syncing to Google Calendar…", "#EEF6F6", "#1C7A80");
+      show("Starting sync…", "#EEF6F6", "#1C7A80", 8);
       let r = await api("/api/google-calendar/backfill", { method: "POST" });
       while (r.running) {
-        show(`Syncing to Google Calendar… ${r.done} of ${r.total}`, "#EEF6F6", "#1C7A80");
+        if (label) label.textContent = `Syncing ${r.done}/${r.total}`;
+        show(`Syncing to Google Calendar… <b>${r.done} of ${r.total}</b> events`, "#EEF6F6", "#1C7A80", r.total ? Math.max(8, Math.round((r.done / r.total) * 100)) : 100);
         await new Promise((res) => setTimeout(res, 1200));
         r = await api("/api/google-calendar/backfill/status");
       }
@@ -6704,8 +6712,10 @@ async function renderDashboard(main) {
       show("Couldn't sync — " + err.message, "#FDECE6", "#A6432B");
     } finally {
       gcalBtn.disabled = false;
+      if (label) label.textContent = origLabel;
     }
   });
+  main.querySelector("#dashRefreshBtn").addEventListener("click", async () => {
     const btn = main.querySelector("#dashRefreshBtn");
     btn.disabled = true;
     btn.textContent = "🔄 Refreshing…";
