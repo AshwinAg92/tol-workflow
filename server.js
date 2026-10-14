@@ -815,8 +815,17 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   const teamCounts = (await pool.query(`SELECT lead_id, COUNT(*) AS total, COUNT(*) FILTER (WHERE status = 'accepted') AS accepted, COUNT(*) FILTER (WHERE status = 'declined') AS declined FROM event_assignments GROUP BY lead_id`)).rows;
   const teamByLead = {};
   teamCounts.forEach((t) => (teamByLead[t.lead_id] = { total: Number(t.total), accepted: Number(t.accepted), declined: Number(t.declined) }));
+  const travelCounts = (await pool.query(`SELECT travel_legs.lead_id, COUNT(*) AS total,
+      COUNT(*) FILTER (WHERE travel_legs.status IN ('booked','self_arranged')) AS booked,
+      COUNT(*) FILTER (WHERE travel_legs.status = 'self_arranged' OR (travel_legs.status = 'booked' AND EXISTS (SELECT 1 FROM documents d WHERE d.travel_leg_id = travel_legs.id))) AS done
+    FROM travel_legs WHERE travel_legs.lead_id IS NOT NULL GROUP BY travel_legs.lead_id`)).rows;
+  const travelByLead = {};
+  travelCounts.forEach((t) => (travelByLead[t.lead_id] = { total: Number(t.total), booked: Number(t.booked), done: Number(t.done) }));
   const withReceived = rows.map((l) => ({
     ...l,
+    travel_total: travelByLead[l.id]?.total || 0,
+    travel_booked: travelByLead[l.id]?.booked || 0,
+    travel_done: travelByLead[l.id]?.done || 0,
     team_total: teamByLead[l.id]?.total || 0,
     team_accepted: teamByLead[l.id]?.accepted || 0,
     team_declined: teamByLead[l.id]?.declined || 0,

@@ -1892,6 +1892,7 @@ async function renderLeadsLog(main, skipRefresh) {
             </select>
           </div>
           <div class="muted small" style="margin-top:8px;">${packageName(l.event_type)} · ${l.city || "—"} · <span class="mono">${fmtDate(l.date)}</span></div>
+          ${l.stage === "Confirmed" && canAssignTeam() ? `<div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;">` : ""}
           ${l.stage === "Confirmed" && canAssignTeam() ? (() => {
             const total = l.team_total || 0, acc = l.team_accepted || 0, dec = l.team_declined || 0;
             const pending = total - acc - dec;
@@ -1901,11 +1902,25 @@ async function renderLeadsLog(main, skipRefresh) {
             else if (dec > 0) { bg = "#FBE9E5"; fg = "#A6432B"; bd = "#EFC4BA"; icon = "\u26a0\ufe0f"; text = `Team ${acc}/${total} confirmed \u00b7 ${dec} declined`; }
             else { bg = "#FFF3DC"; fg = "#8A5A1F"; bd = "#F0D9A8"; icon = "\u23f3"; text = `Team ${acc}/${total} confirmed \u00b7 ${pending} awaiting`; }
             const pct = total ? Math.round((acc / total) * 100) : 0;
-            return `<div class="assign-team-btn team-status-pill" data-lead-id="${l.id}" title="Open Team & Expenses" style="cursor:pointer; margin-top:8px; display:inline-block; min-width:210px; background:${bg}; color:${fg}; border:1px solid ${bd}; border-radius:999px; padding:6px 14px 7px; font-size:13px; font-weight:600;">
+            return `<div class="assign-team-btn team-status-pill" data-lead-id="${l.id}" title="Open Team & Expenses" style="cursor:pointer; display:inline-block; min-width:210px; background:${bg}; color:${fg}; border:1px solid ${bd}; border-radius:999px; padding:6px 14px 7px; font-size:13px; font-weight:600;">
               <div>${icon} ${text}</div>
               ${total ? `<div style="height:4px; background:rgba(0,0,0,0.08); border-radius:4px; margin-top:5px; overflow:hidden;"><div style="width:${pct}%; height:100%; background:${fg};"></div></div>` : ""}
             </div>`;
           })() : ""}
+          ${l.stage === "Confirmed" && canAssignTeam() ? (() => {
+            const total = l.travel_total || 0, done = l.travel_done || 0, booked = l.travel_booked || 0;
+            let bg, fg, bd, icon, text;
+            if (total === 0) { bg = "#F3EFE9"; fg = "#7A6A5A"; bd = "#E2D9CC"; icon = "\u2708\ufe0f"; text = "No travel plan yet"; }
+            else if (done === total) { bg = "#E4F4E6"; fg = "#1F6B33"; bd = "#B9DEC0"; icon = "\u2705"; text = `Travel complete \u00b7 tickets ${done}/${total}`; }
+            else if (booked < total) { bg = "#FFF3DC"; fg = "#8A5A1F"; bd = "#F0D9A8"; icon = "\u23f3"; text = `Travel ${booked}/${total} booked \u00b7 ${total - booked} not booked`; }
+            else { bg = "#FFF3DC"; fg = "#8A5A1F"; bd = "#F0D9A8"; icon = "\ud83c\udfab"; text = `Travel booked \u00b7 ${total - done} ticket${total - done > 1 ? "s" : ""} pending`; }
+            const pct = total ? Math.round((done / total) * 100) : 0;
+            return `<div class="travel-plan-btn team-status-pill" data-lead-id="${l.id}" title="Open Travel plan" style="cursor:pointer; display:inline-block; min-width:210px; background:${bg}; color:${fg}; border:1px solid ${bd}; border-radius:999px; padding:6px 14px 7px; font-size:13px; font-weight:600;">
+              <div>${icon} ${text}</div>
+              ${total ? `<div style="height:4px; background:rgba(0,0,0,0.08); border-radius:4px; margin-top:5px; overflow:hidden;"><div style="width:${pct}%; height:100%; background:${fg};"></div></div>` : ""}
+            </div>`;
+          })() : ""}
+          ${l.stage === "Confirmed" && canAssignTeam() ? `</div>` : ""}
           ${(() => {
             // If this lead is still just New/Follow-up, warn when someone else
             // has already advanced past that stage for the same date — helps
