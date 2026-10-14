@@ -7901,7 +7901,7 @@ async function openTentativeConfirmInfoModal(lead) {
     } catch (err) { cardLink = null; }
     btn.disabled = false;
     // The card link goes first so WhatsApp builds its preview from the card, not the later links.
-    const full = cardLink ? `${cardLink}\n\n${text}` : text;
+    const full = cardLink ? withCardLinkAtEnd(text, cardLink) : text;
     window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(full)}`;
   });
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
@@ -8060,7 +8060,7 @@ async function openConfirmationMessageModal(lead) {
       if (cardBlob && !cardLink) cardLink = await publishEventCard(lead, "confirmed", cardBlob);
     } catch (err) { cardLink = null; }
     btn.disabled = false;
-    const full = cardLink ? `${cardLink}\n\n${text}` : text;
+    const full = cardLink ? withCardLinkAtEnd(text, cardLink) : text;
     window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(full)}`;
   });
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
@@ -9913,6 +9913,18 @@ function recordTabHistory() {
     try { history.pushState({ tab: currentTab }, ""); } catch (e) {}
   }
 }
+// Put the card link at the very end (after the sign-off). WhatsApp previews the FIRST
+// link in a message, so the footer's website/Instagram links are dropped when a card
+// link is sent — the card page itself carries both.
+function withCardLinkAtEnd(text, link) {
+  const cleaned = String(text)
+    .split("\n")
+    .filter((l) => !/instagram\.com\/togetheroutloudclub|togetheroutloud\.in/i.test(l))
+    .join("\n")
+    .replace(/\s+$/, "");
+  return `${cleaned}\n\n${link}`;
+}
+
 function initBackNavigation() {
   const root = document.getElementById("modalRoot");
   // Popups that refresh themselves after a save (re-render via innerHTML) should

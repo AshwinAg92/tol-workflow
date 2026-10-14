@@ -3836,8 +3836,8 @@ app.get("/card/:token", async (req, res) => {
 <meta property="og:type" content="website"><meta property="og:site_name" content="Together, Out Loud"><meta property="og:title" content="${escHtml(row.title)}"><meta property="og:description" content="${escHtml(row.description)}">
 <meta property="og:image" content="${img}"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:url" content="${host}/card/${t}">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="${img}">
-<style>body{margin:0;background:#FBF6EC;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px;box-sizing:border-box}img{max-width:100%;max-height:92vh;border-radius:14px;box-shadow:0 8px 30px rgba(60,40,20,.18)}</style></head>
-<body><img src="${host}/card/${t}/portrait.png" alt="${escHtml(row.title)}"></body></html>`);
+<style>body{margin:0;background:#FBF6EC;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px;box-sizing:border-box}body{flex-direction:column;gap:14px;font-family:Georgia,serif}img{max-width:100%;max-height:84vh;border-radius:14px;box-shadow:0 8px 30px rgba(60,40,20,.18)}.f{font-size:14px;color:#7a5a3a}.f a{color:#C1602B;text-decoration:none;margin:0 6px}</style></head>
+<body><img src="${host}/card/${t}/portrait.png" alt="${escHtml(row.title)}"><div class="f"><a href="https://www.instagram.com/togetheroutloudclub">Instagram</a>·<a href="https://www.togetheroutloud.in">togetheroutloud.in</a></div></body></html>`);
 });
 
 // ---------- Dashboard ----------
