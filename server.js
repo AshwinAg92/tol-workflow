@@ -313,6 +313,59 @@ function renderArtistCardPng(first, experience, dateLong, city) {
   const r = new _resvg(svg, { font: { fontFiles: ["Poppins-Bold.ttf", "Poppins-Medium.ttf", "Lora-Variable.ttf", "Lora-Italic-Variable.ttf"].map((f) => path.join(fontDir, f)), loadSystemFonts: false, defaultFontFamily: "Poppins" } });
   return r.render().asPng();
 }
+function renderTripCardPng(o) {
+  if (!_resvg) _resvg = require("@resvg/resvg-js").Resvg;
+  const esc = (v) => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const logo = fs.readFileSync(path.join(__dirname, "public", "logo.png")).toString("base64");
+  const name = String(o.client || "");
+  const ns = name.length > 26 ? 44 : name.length > 18 ? 54 : 64;
+  const sub = [o.experience, o.dateLong, o.city].filter(Boolean).join("  \u00b7  ");
+  const routes = (o.routes || []).slice(0, 3);
+  const rowY = routes.length === 1 ? [455] : routes.length === 2 ? [440, 490] : [425, 470, 515];
+  const routeSvg = routes.map((r, i) => { const y = rowY[i]; const [from, to] = String(r.route).split(" \u2192 "); return `<text x="360" y="${y}" text-anchor="end" font-family="Poppins" font-weight="500" font-size="24" fill="#8A6A54">${esc(r.date)}</text><text x="570" y="${y}" text-anchor="end" font-family="Poppins" font-weight="700" font-size="30" fill="#2B2420">${esc(from)}</text><path d="M585 ${y - 10} H625 M613 ${y - 21} L626 ${y - 10} L613 ${y + 1}" fill="none" stroke="#C1602B" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/><text x="642" y="${y}" text-anchor="start" font-family="Poppins" font-weight="700" font-size="30" fill="#2B2420">${esc(to)}</text>`; }).join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FEF6ED"/><stop offset="1" stop-color="#F6E0C2"/></linearGradient>
+<radialGradient id="gl" cx="1100" cy="80" r="380" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#F0A438" stop-opacity="0.38"/><stop offset="1" stop-color="#F0A438" stop-opacity="0"/></radialGradient></defs>
+<rect width="1200" height="630" fill="url(#bg)"/><rect width="1200" height="630" fill="url(#gl)"/>
+<rect x="24" y="24" width="1152" height="582" fill="none" stroke="#C1602B" stroke-width="3"/>
+<rect x="36" y="36" width="1128" height="558" fill="none" stroke="#C1602B" stroke-opacity="0.35" stroke-width="1.5"/>
+<image href="data:image/png;base64,${logo}" x="555" y="48" width="90" height="92"/>
+<text x="600" y="172" text-anchor="middle" font-family="Poppins" font-weight="700" font-size="20" letter-spacing="6" fill="#2B2420">TOGETHER, OUT LOUD</text>
+<text x="600" y="212" text-anchor="middle" font-family="Poppins" font-weight="700" font-size="18" letter-spacing="4" fill="#C1602B">TRAVEL DETAILS &amp; IDS</text>
+<text x="600" y="296" text-anchor="middle" font-family="Lora" font-weight="700" font-size="${ns}" fill="#2B2420">${esc(name)}</text>
+<text x="600" y="346" text-anchor="middle" font-family="Poppins" font-weight="500" font-size="26" fill="#C1602B">${esc(sub)}</text>
+<line x1="480" y1="378" x2="582" y2="378" stroke="#F0A438" stroke-width="3"/><line x1="618" y1="378" x2="720" y2="378" stroke="#F0A438" stroke-width="3"/><circle cx="600" cy="378" r="6" fill="#F0A438"/>
+${routeSvg}
+<text x="600" y="570" text-anchor="middle" font-family="Lora" font-style="italic" font-size="26" fill="#8A6A54">${esc(o.count ? `Team of ${o.count} travelling \u2014 IDs & details inside` : "Travel details inside")}</text>
+</svg>`;
+  const fontDir = path.join(__dirname, "fonts");
+  const r = new _resvg(svg, { font: { fontFiles: ["Poppins-Bold.ttf", "Poppins-Medium.ttf", "Lora-Variable.ttf", "Lora-Italic-Variable.ttf"].map((f) => path.join(fontDir, f)), loadSystemFonts: false, defaultFontFamily: "Poppins" } });
+  return r.render().asPng();
+}
+async function tripCardInfo(token) {
+  const sh = await loadTravelShare(token);
+  if (!sh) return null;
+  const lead = (await pool.query("SELECT name, date, city, event_type FROM leads WHERE id = $1", [sh.lead_id])).rows[0];
+  if (!lead) return null;
+  const ids = JSON.parse(sh.team_ids || "[]");
+  const teamIds = ids.filter((x) => !String(x).startsWith("g:"));
+  const legs = (await pool.query(`SELECT travel_legs.from_city, travel_legs.to_city, travel_legs.departure_at FROM travel_legs
+    WHERE lead_id = $1 AND EXISTS (SELECT 1 FROM travel_leg_members m WHERE m.leg_id = travel_legs.id AND m.team_id = ANY($2))
+    ORDER BY departure_at ASC NULLS LAST, created_at ASC`, [sh.lead_id, teamIds])).rows;
+  const short = (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v || ""); return m ? `${Number(m[3])} ${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][Number(m[2]) - 1]}` : ""; };
+  const routes = legs.filter((l) => l.from_city && l.to_city).map((l) => ({ route: `${String(l.from_city).trim()} \u2192 ${String(l.to_city).trim()}`, date: short(l.departure_at) }));
+  const dateLong = lead.date ? new Date(lead.date + "T00:00:00Z").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }) : "";
+  return { client: lead.name, experience: packageName(lead.event_type), dateLong, city: String(lead.city || "").trim(), count: ids.length, routes };
+}
+app.get("/trip-card/:token.png", async (req, res) => {
+  try {
+    const info = await tripCardInfo(req.params.token);
+    if (!info) return res.redirect(302, "/og-image.png");
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "public, max-age=600");
+    res.send(Buffer.from(renderTripCardPng(info)));
+  } catch (err) { console.error("trip-card error:", err.message); res.redirect(302, "/og-image.png"); }
+});
 async function artistCardInfo(token) {
   const row = (await pool.query(`SELECT team.name AS team_name, leads.event_type, leads.city, leads.date
     FROM event_assignments JOIN team ON team.id = event_assignments.team_id JOIN leads ON leads.id = event_assignments.lead_id
@@ -3968,7 +4021,7 @@ app.get("/trip/:token", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
   const s = await loadTravelShare(req.params.token);
-  const shell = (body) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Travel details — Together, Out Loud</title>
+  const shell = (body, head = "") => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Travel details — Together, Out Loud</title>${head}
 <style>body{font-family:Georgia,serif;background:#FBF6EC;color:#3A2A1A;margin:0;padding:18px}.w{max-width:640px;margin:0 auto}h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.06em;color:#8A5A1F}.c{background:#fff;border:1px solid #E9DFCF;border-radius:12px;padding:12px 14px;margin-bottom:10px}.m{color:#7A6A58;font-size:13px}img{max-width:100%;border-radius:8px;border:1px solid #E9DFCF;margin-top:8px}a{color:#B5541C}</style></head><body><div class="w">${body}</div></body></html>`;
   if (!s) return res.status(404).send(shell(`<h1>This link is no longer available</h1><p class="m">It may have expired or been replaced. Please ask Together, Out Loud for a fresh link.</p>`));
   const lead = (await pool.query("SELECT name, date, city, event_type, occasion FROM leads WHERE id = $1", [s.lead_id])).rows[0];
@@ -3996,11 +4049,16 @@ app.get("/trip/:token", async (req, res) => {
         return `<div style="margin-top:8px"><span class="m">${escHtml(d.label || d.original_name)}</span>${/^image\//i.test(d.mime_type || "") && !/hei[cf]/i.test(d.mime_type) ? `<br><img src="${url}" alt="ID">` : ""}<br><a href="${url}" target="_blank" rel="noopener">Open / download</a></div>`;
       }).join("")}</div>`;
   }).join("");
+  const ogHost = `https://${req.headers["x-forwarded-host"] || req.get("host")}`;
+  const ogImg = `${ogHost}/trip-card/${encodeURIComponent(req.params.token)}.png`;
+  const ogTitle = `Travel details \u2014 ${lead ? lead.name : "your event"}`;
+  const ogDesc = "Team IDs and travel plan, shared by Together, Out Loud for booking tickets.";
+  const ogHead = `<meta property="og:type" content="website"><meta property="og:site_name" content="Together, Out Loud"><meta property="og:title" content="${escHtml(ogTitle)}"><meta property="og:description" content="${escHtml(ogDesc)}"><meta property="og:image" content="${ogImg}"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="${ogImg}">`;
   res.send(shell(`<h1>Travel details & IDs</h1><div class="m">${escHtml(lead ? `${lead.name}${lead.city ? " · " + lead.city : ""}${lead.date ? " · " + fmtWall(lead.date) : ""}` : "")}</div>
     <div class="m" style="margin-top:6px">Shared by Together, Out Loud for booking tickets. Link valid until ${escHtml(fmtWall(s.expires_at))}.</div>
     ${s.note ? `<div class="c" style="margin-top:12px;border-left:4px solid #C1602B"><b>Note from Together, Out Loud</b><div style="margin-top:4px;white-space:pre-wrap">${escHtml(s.note)}</div></div>` : ""}
     <h2>Team travelling (${trav.team.length + trav.guests.length})</h2>${idCards}
-    <h2>Travel plan</h2>${legCards || `<div class="c m">Travel plan will be shared shortly.</div>`}`));
+    <h2>Travel plan</h2>${legCards || `<div class="c m">Travel plan will be shared shortly.</div>`}`, ogHead));
 });
 app.get("/trip/:token/ticket/:docId", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");

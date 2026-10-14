@@ -5635,7 +5635,7 @@ async function openTravelShareModal(leadId) {
     return [
       `Hi ${first},`,
       "",
-      `Here are the travel details and ID cards of our team for *${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.city ? ` in ${lead.city}` : ""}* so you can book the tickets.`,
+      `Here are the travel details and ID cards of our team for *${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.city && lead.city.trim() ? ` in ${lead.city.trim()}` : ""}* so you can book the tickets.`,
       "",
       `👥 *Team travelling (${people.length}):*`,
       ...people.map((t, i) => `${i + 1}. ${t.name}`),
