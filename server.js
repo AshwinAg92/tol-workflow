@@ -2785,7 +2785,7 @@ async function sectorDuplicateNames({ leadId, fromCity, toCity, departureAt, tea
   return [...new Set(rows.filter((r) => norm(r.from_city) === f && norm(r.to_city) === t).map((r) => r.name))];
 }
 function dupTravelMessage(names, fromCity, toCity) {
-  return `${names.join(", ")} already ${names.length > 1 ? "have" : "has"} a travel plan for ${fromCity} \u2192 ${toCity} on this event. Edit that one instead of creating a duplicate.`;
+  return `${names.join(", ")} already ${names.length > 1 ? "have" : "has"} a travel plan for ${String(fromCity).trim()} \u2192 ${String(toCity).trim()} on this event. Edit that one instead of creating a duplicate.`;
 }
 
 app.post("/api/travel-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
