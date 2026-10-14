@@ -3439,7 +3439,7 @@ async function renderTeam(main, subTab = "team") {
       </div>
     </div>
     <div id="teamNoMatch" class="muted small" style="display:none; margin-bottom:10px;">No team member matches that search.</div>
-    <div class="team-grid" id="teamGrid"></div>
+    <div id="teamGrid"></div>
     ${isAdmin ? `
       <div class="section-label" style="margin-top:24px;">Logins</div>
       <div class="table" id="userRows"></div>
@@ -3475,42 +3475,43 @@ async function renderTeam(main, subTab = "team") {
   }
 
   const grid = main.querySelector("#teamGrid");
-  TEAM.forEach((m) => {
-    // The active-shows list is collapsed by default (just the count, as a
-    // toggle) so cards stay compact — expand it in place to see which
-    // shows, without leaving the grid or opening the full events modal.
+  const escT = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  TEAM.slice().sort((a, b) => (a.kind === "freelance" ? 1 : 0) - (b.kind === "freelance" ? 1 : 0) || a.name.localeCompare(b.name)).forEach((m) => {
+    const instList = [...new Map((m.instruments || m.specialty || m.role || "").split(/,|&| and /i).map((x) => x.replace(/ player$/i, "").trim()).filter(Boolean).map((x) => [x.toLowerCase(), x])).values()];
     const card = el(`
-      <div class="card team-card" style="cursor:pointer;">
-        ${canManage ? `<button class="icon-btn" data-edit-member="${m.id}" style="float:right;">${ICON_EDIT}</button>` : ""}
-        <div class="team-avatar">${m.name[0]}</div>
-        <div class="team-name">${m.name}${m.kind === "freelance" ? ` <span class="mono small" style="background:#EDE7F6; color:#5E4B8B; border-radius:4px; padding:0 6px; font-weight:600;">Freelance</span>` : ""}</div>
-        <div class="muted">${m.role || ""}${m.specialty && m.specialty !== m.role ? ` · ${m.specialty}` : ""}</div>
-        ${m.base_city ? `<div class="muted small">📍 ${m.base_city}</div>` : ""}
-        ${(m.local_fee || m.outstation_fee) ? `<div class="muted small">${m.local_fee ? `Local ${inr(m.local_fee)}` : ""}${m.local_fee && m.outstation_fee ? " · " : ""}${m.outstation_fee ? `Outstation ${inr(m.outstation_fee)}` : ""}</div>` : ""}
-        ${m.phone ? `<div class="muted small">${m.phone}</div>` : ""}
-        ${m.email ? `<div class="muted small">${m.email}</div>` : ""}
-        ${m.activeShows.length > 0 ? `
-          <div class="team-count mono" data-toggle-shows="${m.id}" style="cursor:pointer;">▸ ${m.activeShows.length} active show${m.activeShows.length === 1 ? "" : "s"}</div>
-          <div data-shows-list="${m.id}" style="display:none;">
-            ${m.activeShows.map((s) => `<div class="team-lead">› ${s.name}</div>`).join("")}
+      <div class="card team-card" style="margin-bottom:6px; padding:10px 14px;">
+        <div data-toggle-person="${m.id}" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0;">
+            <span class="muted small" data-person-caret="${m.id}">\u25b8</span>
+            <span style="font-weight:600;">${escT(m.name)}</span>
+            ${m.kind === "freelance" ? `<span class="mono small" style="background:#EDE7F6; color:#5E4B8B; border-radius:4px; padding:1px 7px; font-weight:600;">Freelance</span>` : `<span class="mono small" style="background:#E4F1F1; color:#1C7A80; border-radius:4px; padding:1px 7px; font-weight:600;">Core</span>`}
+            ${instList.map((i) => `<span class="mono small" style="background:#FBEFD9; border-radius:4px; padding:1px 7px;">${escT(i)}</span>`).join("")}
           </div>
-        ` : `<div class="team-count mono">0 active shows</div>`}
-        ${canManage && !teamIdsWithLogin.has(m.id) ? `<button class="btn-ghost full" data-add-login="${m.id}" style="margin-top:10px;">+ Add login</button>` : ""}
+          <span class="muted small">${escT([m.phone, m.base_city].filter(Boolean).join(" \u00b7 "))}${m.activeShows.length ? ` \u00b7 ${m.activeShows.length} upcoming` : ""}</span>
+        </div>
+        <div data-person-details="${m.id}" style="display:none; margin-top:10px; padding-top:10px; border-top:1px solid #EEE7D8; font-size:13px; line-height:1.7;">
+          ${m.role ? `<div><span class="muted">Role:</span> ${escT(m.role)}</div>` : ""}
+          ${m.phone ? `<div><span class="muted">Phone:</span> ${escT(m.phone)}</div>` : ""}
+          ${m.email ? `<div><span class="muted">Email:</span> ${escT(m.email)}</div>` : ""}
+          ${m.base_city ? `<div><span class="muted">City:</span> \ud83d\udccd ${escT(m.base_city)}</div>` : ""}
+          ${(m.local_fee || m.outstation_fee) ? `<div><span class="muted">Rates:</span> ${m.local_fee ? `Local ${inr(m.local_fee)}` : ""}${m.local_fee && m.outstation_fee ? " \u00b7 " : ""}${m.outstation_fee ? `Outstation ${inr(m.outstation_fee)}` : ""}</div>` : ""}
+          ${m.notes ? `<div><span class="muted">Notes:</span> ${escT(m.notes)}</div>` : ""}
+          <div style="margin-top:4px;"><span class="muted">Upcoming shows (${m.activeShows.length}):</span> ${m.activeShows.length ? m.activeShows.map((s2) => escT(s2.name)).join(", ") : "none"}</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">
+            <button class="btn-ghost" data-view-events="${m.id}" style="font-size:12px; padding:4px 9px;">\ud83d\udcc5 Events</button>
+            ${canManage ? `<button class="btn-ghost" data-edit-member="${m.id}" style="font-size:12px; padding:4px 9px;">Edit</button>` : ""}
+            ${canManage && !teamIdsWithLogin.has(m.id) ? `<button class="btn-ghost" data-add-login="${m.id}" style="font-size:12px; padding:4px 9px;">+ Add login</button>` : ""}
+          </div>
+        </div>
       </div>
     `);
-    card.addEventListener("click", (e) => {
-      if (e.target.closest("[data-edit-member]") || e.target.closest("[data-add-login]")) return;
-      if (e.target.closest("[data-toggle-shows]")) {
-        const toggle = e.target.closest("[data-toggle-shows]");
-        const list = card.querySelector(`[data-shows-list="${m.id}"]`);
-        const expanded = list.style.display !== "none";
-        list.style.display = expanded ? "none" : "block";
-        toggle.textContent = `${expanded ? "▸" : "▾"} ${m.activeShows.length} active show${m.activeShows.length === 1 ? "" : "s"}`;
-        e.stopPropagation();
-        return;
-      }
-      openTeamMemberEventsModal(m);
+    card.querySelector(`[data-toggle-person="${m.id}"]`).addEventListener("click", () => {
+      const d = card.querySelector(`[data-person-details="${m.id}"]`);
+      const open = d.style.display !== "none";
+      d.style.display = open ? "none" : "block";
+      card.querySelector(`[data-person-caret="${m.id}"]`).textContent = open ? "\u25b8" : "\u25be";
     });
+    card.querySelector(`[data-view-events="${m.id}"]`).addEventListener("click", () => openTeamMemberEventsModal(m));
     card.dataset.search = [m.name, m.role, m.specialty, m.instruments, m.base_city, m.phone, m.email].filter(Boolean).join(" ").toLowerCase();
     card.dataset.city = m.base_city || "";
     card.dataset.kind = m.kind === "freelance" ? "freelance" : "core";
