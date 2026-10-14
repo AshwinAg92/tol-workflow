@@ -6371,9 +6371,11 @@ async function renderDashboard(main) {
       <div><h2>Dashboard</h2><p class="muted">The three things that matter today — click any card to see the list.</p></div>
       <div class="dash-head-actions" style="display:flex; gap:8px;">
         <button class="btn-ghost dash-head-btn" id="dashRefreshBtn" title="Refresh">🔄 <span class="btn-label">Refresh</span></button>
+        ${CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost dash-head-btn" id="dashGcalSyncBtn" title="Push every Confirmed/Completed event to Google Calendar">📅 <span class="btn-label">Sync Google Calendar</span></button>` : ""}
         <button class="btn-ghost dash-head-btn" id="dashExportBtn" title="Export to Excel">⬇ <span class="btn-label">Export to Excel</span></button>
       </div>
     </div>
+    <div id="gcalSyncNote" class="small" style="display:none; margin:-6px 0 12px; padding:8px 12px; border-radius:8px;"></div>
     <div class="card" id="stickyNoteCard" style="margin-bottom:16px; background:#FBF3D9; border-color:#E8D488;">
       <div class="section-label" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
         <span>📌 Sticky note</span>
@@ -6669,6 +6671,41 @@ async function renderDashboard(main) {
   }
 
   main.querySelector("#dashRefreshBtn").addEventListener("click", async () => {
+  const gcalBtn = main.querySelector("#dashGcalSyncBtn");
+  if (gcalBtn) gcalBtn.addEventListener("click", async () => {
+    const note = main.querySelector("#gcalSyncNote");
+    const show = (html, bg, color) => { note.style.display = "block"; note.style.background = bg; note.style.color = color; note.innerHTML = html; };
+    if (gcalBtn.disabled) return;
+    gcalBtn.disabled = true;
+    try {
+      const st = await api("/api/google-calendar/status");
+      if (!st.connected) {
+        show("Google Calendar isn't connected. Go to Settings → Google Calendar → Connect, then try again.", "#FDECE6", "#A6432B");
+        return;
+      }
+      show("Syncing to Google Calendar…", "#EEF6F6", "#1C7A80");
+      let r = await api("/api/google-calendar/backfill", { method: "POST" });
+      while (r.running) {
+        show(`Syncing to Google Calendar… ${r.done} of ${r.total}`, "#EEF6F6", "#1C7A80");
+        await new Promise((res) => setTimeout(res, 1200));
+        r = await api("/api/google-calendar/backfill/status");
+      }
+      // Same-date check on what's in the CRM, since that's what a double booking looks like.
+      const byDate = {};
+      LEADS.filter((l) => l.stage === "Confirmed" && l.date && l.date >= new Date().toISOString().slice(0, 10)).forEach((l) => { (byDate[l.date] = byDate[l.date] || []).push(l); });
+      const clashes = Object.entries(byDate).filter(([, ls]) => new Set(ls.map((l) => (l.name || "").trim().toLowerCase())).size > 1);
+      const base = `✓ Google Calendar is up to date — ${r.created} added, ${r.updated} refreshed${r.failed ? `, ${r.failed} skipped (no date or error)` : ""}.`;
+      if (clashes.length) {
+        show(`${base}<br><b>⚠ Double-booked upcoming dates:</b> ${clashes.map(([d, ls]) => `${fmtDate(d)} — ${ls.map((l) => l.name).join(" & ")}`).join("; ")}`, "#FFF4E5", "#8A5A1F");
+      } else {
+        show(`${base} No double-booked upcoming dates.`, "#EAF5EC", "#1C7A55");
+      }
+    } catch (err) {
+      show("Couldn't sync — " + err.message, "#FDECE6", "#A6432B");
+    } finally {
+      gcalBtn.disabled = false;
+    }
+  });
     const btn = main.querySelector("#dashRefreshBtn");
     btn.disabled = true;
     btn.textContent = "🔄 Refreshing…";
