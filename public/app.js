@@ -5400,6 +5400,7 @@ function wireMemberIdSection(box, member) {
           details.gender ? `Gender: ${esc(details.gender)}` : "",
           details.emergencyName || details.emergencyPhone ? `Emergency: ${esc(details.emergencyName || "")} ${esc(details.emergencyPhone || "")}` : "",
           details.instagram ? `Instagram: ${esc(details.instagram)}` : "",
+          details.feeExpectation ? `Fee expectation: ${esc(details.feeExpectation)}` : "",
           details.notes ? `Notes: ${esc(details.notes)}` : "",
         ].filter(Boolean).join(" · ")}</div>` : ""}`;
     box.querySelectorAll(".id-del").forEach((b) => b.addEventListener("click", async () => {
@@ -5480,7 +5481,7 @@ function openRegistrationReviewModal(reg, onDone) {
         <div class="row-2"><div><label>Role</label><input id="rvRole" value="${esc(d.role)}" /></div><div><label>Base city</label><input id="rvCity" value="${esc(d.city)}" /></div></div>
         <label>Phone</label><input id="rvPhone" value="${esc(d.phone)}" />
         <div class="muted small" style="margin-top:10px; line-height:1.6;">
-          ${[d.email && `Email: ${esc(d.email)}`, d.dob && `DOB: ${esc(d.dob)}`, d.gender && `Gender: ${esc(d.gender)}`, (d.emName || d.emPhone) && `Emergency: ${esc(d.emName)} ${esc(d.emPhone)}`, d.instagram && `Instagram: ${esc(d.instagram)}`, d.notes && `Notes: ${esc(d.notes)}`].filter(Boolean).join("<br>")}
+          ${[d.email && `Email: ${esc(d.email)}`, d.dob && `DOB: ${esc(d.dob)}`, d.gender && `Gender: ${esc(d.gender)}`, (d.emName || d.emPhone) && `Emergency: ${esc(d.emName)} ${esc(d.emPhone)}`, d.instagram && `Instagram: ${esc(d.instagram)}`, d.fee && `<b>Fee expectation: ${esc(d.fee)}</b>`, d.notes && `Notes: ${esc(d.notes)}`].filter(Boolean).join("<br>")}
         </div>
         <div style="margin-top:10px; font-weight:700;">Documents</div>
         ${reg.files.map((f) => `<div style="font-size:13px; margin-top:4px;">📎 ${esc(f.label)} — <a href="${f.url}" target="_blank" rel="noopener">${esc(f.original_name)}</a></div>`).join("")}

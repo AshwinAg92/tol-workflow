@@ -3691,6 +3691,7 @@ async function regFormPage(req, res, ok) {
 <div class="r2"><div><label>Role / instrument *</label><input name="role" required maxlength="80" placeholder="e.g. Tabla, Keyboard"></div><div><label>Base city *</label><input name="city" required maxlength="80"></div></div>
 <div class="r2"><div><label>Date of birth</label><input name="dob" type="date"></div><div><label>Gender (for ticket booking)</label><select name="gender"><option value="">—</option><option>Male</option><option>Female</option><option>Other</option></select></div></div>
 <div class="r2"><div><label>Emergency contact name</label><input name="emName" maxlength="80"></div><div><label>Emergency contact phone</label><input name="emPhone" type="tel" maxlength="20"></div></div>
+<label>Your fee expectation per performance, if any (optional)</label><input name="fee" maxlength="120" placeholder="e.g. ₹5,000 per show, or leave blank">
 <label>Instagram (optional)</label><input name="instagram" maxlength="80" placeholder="@handle">
 <label>Anything else we should know (optional)</label><textarea name="notes" rows="3" maxlength="600"></textarea>
 <h3 style="margin:22px 0 0">Documents</h3><p class="m" style="margin:2px 0 0">A government ID is needed so we can book your tickets. Photos or PDFs, up to 8 MB each.</p>
@@ -3739,7 +3740,7 @@ async function regSubmit(req, res) {
   const data = {
     name: t("name", 120), phone: t("phone", 20), email: t("email", 120), role: t("role", 80), city: t("city", 80),
     dob: t("dob", 12), gender: t("gender", 12), emName: t("emName", 80), emPhone: t("emPhone", 20),
-    instagram: t("instagram", 80), notes: t("notes", 600),
+    instagram: t("instagram", 80), fee: t("fee", 120), notes: t("notes", 600),
   };
   if (!data.name || !data.role || !data.city) return res.status(400).json({ error: "Please fill in name, role and base city." });
   if (data.phone.replace(/\D/g, "").length < 10) return res.status(400).json({ error: "Please enter a valid WhatsApp number." });
@@ -3787,7 +3788,7 @@ app.post("/api/member-registrations/:id/approve", requireAuth, requireAdmin, asy
   const name = (b.name || d.name || "").trim();
   if (!name) return res.status(400).json({ error: "Name is required" });
   const teamId = uuid();
-  const details = { legalName: d.name, dob: d.dob, gender: d.gender, emergencyName: d.emName, emergencyPhone: d.emPhone, instagram: d.instagram, notes: d.notes };
+  const details = { legalName: d.name, dob: d.dob, gender: d.gender, emergencyName: d.emName, emergencyPhone: d.emPhone, instagram: d.instagram, feeExpectation: d.fee, notes: d.notes };
   await pool.query("INSERT INTO team (id, name, role, phone, email, base_city, reg_details) VALUES ($1,$2,$3,$4,$5,$6,$7)",
     [teamId, name, (b.role ?? d.role) || null, (b.phone ?? d.phone) || null, d.email || null, (b.baseCity ?? d.city) || null, JSON.stringify(details)]);
   const files = (await pool.query("SELECT * FROM member_registration_files WHERE registration_id = $1", [reg.id])).rows;
