@@ -2926,8 +2926,9 @@ app.get("/api/team", requireAuth, async (req, res) => {
     ORDER BY leads.date ASC
   `, [today])).rows;
   const showMoney = canSeeMoney(req.user);
-  const team = (await pool.query("SELECT * FROM team")).rows.map(({ local_fee, outstation_fee, ...m }) => ({
+  const team = (await pool.query("SELECT * FROM team")).rows.map(({ local_fee, outstation_fee, reg_details, ...m }) => ({
     ...m,
+    ...(req.user.access_level === "admin" ? { reg_details } : {}),
     ...(showMoney ? { local_fee, outstation_fee } : {}),
     activeShows: assignments.filter((a) => a.team_id === m.id),
   }));
@@ -3634,6 +3635,153 @@ app.get("/trip/:token/id/:docId", async (req, res) => {
   res.setHeader("Content-Type", d.mime_type || "application/octet-stream");
   res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(d.original_name)}"`);
   res.send(d.file_data);
+});
+
+// ---------- Artist self-registration link ----------
+// One reusable link the admin shares. Submissions never create a team member by
+// themselves — they wait in a pending list until an admin approves (or rejects).
+const regAttempts = new Map(); // ip -> [timestamps]
+const regRateOk = (ip) => {
+  const now = Date.now();
+  const list = (regAttempts.get(ip) || []).filter((t) => now - t < 3600000);
+  if (list.length >= 8) { regAttempts.set(ip, list); return false; }
+  list.push(now); regAttempts.set(ip, list); return true;
+};
+async function getRegLink() {
+  return (await pool.query("SELECT * FROM member_reg_link LIMIT 1")).rows[0] || null;
+}
+app.get("/api/member-registration", requireAuth, requireAdmin, async (req, res) => {
+  const link = await getRegLink();
+  const pending = (await pool.query("SELECT COUNT(*) AS c FROM member_registrations WHERE status = 'pending'")).rows[0].c;
+  res.json({ token: link ? link.token : null, enabled: !!(link && link.enabled), pending: Number(pending) });
+});
+app.post("/api/member-registration/enable", requireAuth, requireAdmin, async (req, res) => {
+  const link = await getRegLink();
+  const regenerate = !!req.body.regenerate;
+  if (!link) {
+    await pool.query("INSERT INTO member_reg_link (id, token, enabled, created_at) VALUES ($1,$2,1,$3)", [uuid(), crypto.randomBytes(18).toString("base64url"), new Date().toISOString()]);
+  } else if (regenerate) {
+    await pool.query("UPDATE member_reg_link SET token = $1, enabled = 1 WHERE id = $2", [crypto.randomBytes(18).toString("base64url"), link.id]);
+  } else {
+    await pool.query("UPDATE member_reg_link SET enabled = 1 WHERE id = $1", [link.id]);
+  }
+  const fresh = await getRegLink();
+  res.json({ token: fresh.token, enabled: true });
+});
+app.post("/api/member-registration/disable", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("UPDATE member_reg_link SET enabled = 0");
+  res.json({ ok: true });
+});
+
+const REG_LABELS = ["Aadhaar", "Passport", "PAN card", "Driving licence", "Voter ID", "Other document"];
+app.get("/join/:token", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  const link = await getRegLink();
+  const ok = link && link.enabled && link.token === req.params.token;
+  const css = `body{font-family:Georgia,serif;background:#FBF6EC;color:#3A2A1A;margin:0;padding:18px}.w{max-width:560px;margin:0 auto}h1{font-size:23px;margin:0 0 4px}.m{color:#7A6A58;font-size:13px}label{display:block;font-size:13px;color:#7A6A58;margin:14px 0 4px}input,select,textarea{width:100%;box-sizing:border-box;padding:11px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;background:#fff}.r2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.c{background:#fff;border:1px solid #E9DFCF;border-radius:12px;padding:12px 14px;margin-top:12px}button{margin-top:20px;width:100%;padding:13px;border:0;border-radius:10px;background:#B5541C;color:#fff;font:inherit;font-size:16px;cursor:pointer}button:disabled{opacity:.6}.hp{position:absolute;left:-9999px}#err{color:#A6432B;margin-top:12px;font-size:14px}`;
+  if (!ok) return res.status(404).send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Registration</title><style>${css}</style></head><body><div class="w"><h1>This link isn't active</h1><p class="m">Please ask Together, Out Loud for a fresh registration link.</p></div></body></html>`);
+  const slot = (n, req_, title) => `<div class="c"><div style="font-weight:700">${title}${req_ ? " *" : ""}</div>
+    <label>Document type</label><select name="label${n}">${REG_LABELS.map((l, i) => `<option ${(n === 2 && i === 1) || (n === 3 && i === 5) ? "selected" : ""}>${l}</option>`).join("")}</select>
+    <label>Photo or PDF</label><input type="file" name="file${n}" accept="image/*,application/pdf" ${req_ ? "required" : ""}></div>`;
+  res.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Join Together, Out Loud</title><style>${css}</style></head><body><div class="w">
+<h1>Join Together, Out Loud</h1><p class="m">Artist registration. Please fill this in once — your details go only to our team and are used for bookings and travel.</p>
+<form id="f" autocomplete="on">
+<div class="hp"><label>Website</label><input name="website" tabindex="-1" autocomplete="off"></div>
+<label>Full name (exactly as on your ID) *</label><input name="name" required maxlength="120">
+<div class="r2"><div><label>WhatsApp number *</label><input name="phone" type="tel" required maxlength="20"></div><div><label>Email</label><input name="email" type="email" maxlength="120"></div></div>
+<div class="r2"><div><label>Role / instrument *</label><input name="role" required maxlength="80" placeholder="e.g. Tabla, Keyboard"></div><div><label>Base city *</label><input name="city" required maxlength="80"></div></div>
+<div class="r2"><div><label>Date of birth</label><input name="dob" type="date"></div><div><label>Gender (for ticket booking)</label><select name="gender"><option value="">—</option><option>Male</option><option>Female</option><option>Other</option></select></div></div>
+<div class="r2"><div><label>Emergency contact name</label><input name="emName" maxlength="80"></div><div><label>Emergency contact phone</label><input name="emPhone" type="tel" maxlength="20"></div></div>
+<label>Instagram (optional)</label><input name="instagram" maxlength="80" placeholder="@handle">
+<label>Anything else we should know (optional)</label><textarea name="notes" rows="3" maxlength="600"></textarea>
+<h3 style="margin:22px 0 0">Documents</h3><p class="m" style="margin:2px 0 0">A government ID is needed so we can book your tickets. Photos or PDFs, up to 8 MB each.</p>
+${slot(1, true, "ID card")}${slot(2, false, "Second ID (optional)")}${slot(3, false, "Other document (optional)")}
+<label style="display:flex;gap:10px;align-items:flex-start;margin-top:18px"><input type="checkbox" name="consent" required style="width:auto;margin-top:3px"> <span>I agree to share these details and documents with Together, Out Loud for event bookings and travel.</span></label>
+<div id="err"></div><button id="go" type="submit">Submit registration</button></form>
+<div id="done" style="display:none"><h1>Thank you!</h1><p>Your details have been received. The Together, Out Loud team will review them and get in touch.</p></div>
+</div><script>
+const f=document.getElementById('f');f.addEventListener('submit',async(e)=>{e.preventDefault();const b=document.getElementById('go'),er=document.getElementById('err');er.textContent='';
+for(const n of [1,2,3]){const fl=f['file'+n].files[0];if(fl&&fl.size>8*1024*1024){er.textContent='Each file must be under 8 MB.';return}}
+b.disabled=true;b.textContent='Uploading…';
+try{const r=await fetch(location.pathname,{method:'POST',body:new FormData(f)});const j=await r.json().catch(()=>({}));
+if(!r.ok)throw new Error(j.error||'Something went wrong — please try again.');f.style.display='none';document.querySelector('.m').style.display='none';document.querySelector('h1').style.display='none';document.getElementById('done').style.display='block';window.scrollTo(0,0)}
+catch(x){er.textContent=x.message;b.disabled=false;b.textContent='Submit registration'}});
+</script></body></html>`);
+});
+app.post("/join/:token", upload.fields([{ name: "file1", maxCount: 1 }, { name: "file2", maxCount: 1 }, { name: "file3", maxCount: 1 }]), async (req, res) => {
+  const link = await getRegLink();
+  if (!link || !link.enabled || link.token !== req.params.token) return res.status(404).json({ error: "This registration link is no longer active." });
+  if (req.body.website) return res.json({ ok: true }); // honeypot — bots fill hidden fields
+  if (!regRateOk(String(req.headers["x-forwarded-for"] || req.ip).split(",")[0].trim())) return res.status(429).json({ error: "Too many submissions — please try again later." });
+  const t = (k, max = 200) => String(req.body[k] || "").trim().slice(0, max);
+  const data = {
+    name: t("name", 120), phone: t("phone", 20), email: t("email", 120), role: t("role", 80), city: t("city", 80),
+    dob: t("dob", 12), gender: t("gender", 12), emName: t("emName", 80), emPhone: t("emPhone", 20),
+    instagram: t("instagram", 80), notes: t("notes", 600),
+  };
+  if (!data.name || !data.role || !data.city) return res.status(400).json({ error: "Please fill in name, role and base city." });
+  if (data.phone.replace(/\D/g, "").length < 10) return res.status(400).json({ error: "Please enter a valid WhatsApp number." });
+  if (!req.body.consent) return res.status(400).json({ error: "Please tick the consent box." });
+  const files = [1, 2, 3].map((n) => ({ n, f: (req.files?.["file" + n] || [])[0] })).filter((x) => x.f);
+  if (!files.length || !files.some((x) => x.n === 1)) return res.status(400).json({ error: "Please attach a photo or PDF of your ID." });
+  for (const { f } of files) {
+    if (!ID_DOC_MIMES.test(f.mimetype || "")) return res.status(400).json({ error: "Documents must be photos (JPG/PNG) or PDFs." });
+    if (f.size > 8 * 1024 * 1024) return res.status(400).json({ error: "Each file must be under 8 MB." });
+  }
+  const id = uuid();
+  await pool.query("INSERT INTO member_registrations (id, data, status, created_at) VALUES ($1,$2,'pending',$3)", [id, JSON.stringify(data), new Date().toISOString()]);
+  for (const { n, f } of files) {
+    const label = REG_LABELS.includes(String(req.body["label" + n])) ? String(req.body["label" + n]) : "Other document";
+    await pool.query("INSERT INTO member_registration_files (id, registration_id, label, original_name, mime_type, file_data) VALUES ($1,$2,$3,$4,$5,$6)", [uuid(), id, label, f.originalname, f.mimetype, f.buffer]);
+  }
+  res.status(201).json({ ok: true });
+});
+
+app.get("/api/member-registrations", requireAuth, requireAdmin, async (req, res) => {
+  const regs = (await pool.query("SELECT * FROM member_registrations WHERE status = 'pending' ORDER BY created_at ASC")).rows;
+  const files = regs.length ? (await pool.query("SELECT id, registration_id, label, original_name, mime_type FROM member_registration_files WHERE registration_id = ANY($1)", [regs.map((r) => r.id)])).rows : [];
+  const team = (await pool.query("SELECT id, name, phone FROM team")).rows;
+  const last10 = (v) => (v || "").replace(/\D/g, "").slice(-10);
+  res.json(regs.map((r) => {
+    const data = JSON.parse(r.data);
+    const dup = team.find((m) => last10(m.phone) && last10(m.phone) === last10(data.phone));
+    return { id: r.id, createdAt: r.created_at, data, duplicateOf: dup ? { id: dup.id, name: dup.name } : null,
+      files: files.filter((f) => f.registration_id === r.id).map((f) => ({ ...f, url: `/api/member-registrations/${r.id}/file/${f.id}` })) };
+  }));
+});
+app.get("/api/member-registrations/:id/file/:fid", requireAuth, requireAdmin, async (req, res) => {
+  const d = (await pool.query("SELECT original_name, mime_type, file_data FROM member_registration_files WHERE id = $1 AND registration_id = $2", [req.params.fid, req.params.id])).rows[0];
+  if (!d) return res.status(404).send("File not found");
+  res.setHeader("Content-Type", d.mime_type || "application/octet-stream");
+  res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(d.original_name)}"`);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.send(d.file_data);
+});
+app.post("/api/member-registrations/:id/approve", requireAuth, requireAdmin, async (req, res) => {
+  const reg = (await pool.query("SELECT * FROM member_registrations WHERE id = $1 AND status = 'pending'", [req.params.id])).rows[0];
+  if (!reg) return res.status(404).json({ error: "Already handled or not found" });
+  const d = JSON.parse(reg.data);
+  const b = req.body || {};
+  const name = (b.name || d.name || "").trim();
+  if (!name) return res.status(400).json({ error: "Name is required" });
+  const teamId = uuid();
+  const details = { legalName: d.name, dob: d.dob, gender: d.gender, emergencyName: d.emName, emergencyPhone: d.emPhone, instagram: d.instagram, notes: d.notes };
+  await pool.query("INSERT INTO team (id, name, role, phone, email, base_city, reg_details) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+    [teamId, name, (b.role ?? d.role) || null, (b.phone ?? d.phone) || null, d.email || null, (b.baseCity ?? d.city) || null, JSON.stringify(details)]);
+  const files = (await pool.query("SELECT * FROM member_registration_files WHERE registration_id = $1", [reg.id])).rows;
+  for (const f of files) {
+    await pool.query("INSERT INTO team_id_docs (id, team_id, label, original_name, mime_type, file_data, uploaded_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      [uuid(), teamId, f.label, f.original_name, f.mime_type, f.file_data, new Date().toISOString()]);
+  }
+  await pool.query("DELETE FROM member_registration_files WHERE registration_id = $1", [reg.id]);
+  await pool.query("UPDATE member_registrations SET status = 'approved', team_id = $1 WHERE id = $2", [teamId, reg.id]);
+  logActivity(req, `Artist registration approved: ${name}`, null);
+  res.json({ teamId });
+});
+app.post("/api/member-registrations/:id/reject", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM member_registrations WHERE id = $1 AND status = 'pending'", [req.params.id]);
+  res.json({ ok: true });
 });
 
 // ---------- Dashboard ----------

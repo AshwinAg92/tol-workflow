@@ -203,6 +203,30 @@ async function setup() {
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS coordinator_name TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS coordinator_phone TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS contacts TEXT`);
+  await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS reg_details TEXT`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS member_reg_link (
+      id TEXT PRIMARY KEY,
+      token TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS member_registrations (
+      id TEXT PRIMARY KEY,
+      data TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      team_id TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS member_registration_files (
+      id TEXT PRIMARY KEY,
+      registration_id TEXT NOT NULL REFERENCES member_registrations(id) ON DELETE CASCADE,
+      label TEXT,
+      original_name TEXT NOT NULL,
+      mime_type TEXT,
+      file_data BYTEA
+    );
+  `);
   // Travel ID cards live in their own table (not `documents`) so they can never
   // appear in the general documents list or its public file link.
   await pool.query(`

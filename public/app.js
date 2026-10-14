@@ -3213,6 +3213,7 @@ async function renderTeam(main, subTab = "team") {
     <div class="view-head">
       <div><h2>Team</h2><p class="muted">${subTab === "musicians" ? "Your wider pool of musicians — filterable by city and instrument, so you can quickly find who to reach out to." : "Your band's musicians, crew, and staff."}</p></div>
       <div style="display:flex; gap:8px;">
+        ${subTab === "team" && isAdmin ? `<button class="btn-ghost" id="regLinkBtn">🔗 Registration link</button>` : ""}
         ${subTab === "team" && canManage ? `<button class="btn-ghost" id="tempArtistDirBtn">📇 Temporary artists</button>` : ""}
         ${subTab === "team" && canManage ? `<button class="btn-primary" id="addMemberBtn">+ Add team member</button>` : ""}
         ${subTab === "musicians" && canManage ? `<button class="btn-primary" id="addMusicianBtn">+ Add musician</button>` : ""}
@@ -3236,9 +3237,18 @@ async function renderTeam(main, subTab = "team") {
   }
 
   const content = main.querySelector("#teamSubContent");
+  const pendingRegs = isAdmin ? await api("/api/member-registrations").catch(() => []) : [];
   const users = canManage ? await api("/api/users") : [];
   const teamIdsWithLogin = new Set(users.map((u) => u.team_id).filter(Boolean));
   content.innerHTML = `
+    ${pendingRegs.length ? `
+      <div class="card" style="margin-bottom:20px; border-color:#B5541C;">
+        <div class="section-label" style="color:#B5541C;">New artist registrations (${pendingRegs.length})</div>
+        <p class="muted small" style="margin-top:-4px;">Submitted through your registration link. Review the details and ID, then approve to add them to the team.</p>
+        ${pendingRegs.map((r) => `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 0; border-top:1px solid #EFE6D6;">
+          <div><b>${(r.data.name || "").replace(/</g, "&lt;")}</b> <span class="muted small">· ${(r.data.role || "").replace(/</g, "&lt;")} · ${(r.data.city || "").replace(/</g, "&lt;")}${r.duplicateOf ? ` · ⚠ phone matches ${r.duplicateOf.name.replace(/</g, "&lt;")}` : ""}</span></div>
+          <button class="btn-primary reg-review-btn" data-reg-id="${r.id}" style="font-size:12.5px; padding:5px 12px;">Review</button></div>`).join("")}
+      </div>` : ""}
     ${isAdmin && LEADS.some((l) => l.is_seed) ? `
       <div class="card" style="margin-bottom:20px; border-color:#A6432B;">
         <div class="section-label" style="color:#A6432B;">Going live</div>
@@ -3385,6 +3395,14 @@ async function renderTeam(main, subTab = "team") {
         }
       });
     }
+  }
+  if (isAdmin) {
+    const regLinkBtn = main.querySelector("#regLinkBtn");
+    if (regLinkBtn) regLinkBtn.addEventListener("click", () => openRegistrationLinkModal());
+    main.querySelectorAll(".reg-review-btn").forEach((b) => b.addEventListener("click", () => {
+      const reg = pendingRegs.find((r) => r.id === b.dataset.regId);
+      if (reg) openRegistrationReviewModal(reg, async () => { TEAM = await api("/api/team"); renderTeam(main, "team"); });
+    }));
   }
   if (canManage) {
     main.querySelector("#addMemberBtn").addEventListener("click", () => openAddMemberModal());
@@ -3587,6 +3605,7 @@ function openAddMemberModal(onCreated) {
             <div><label>Outstation fee (₹)</label><input id="nmOutstationFee" type="number" placeholder="e.g. 5000" /></div>
           </div>
           <p class="muted small" style="margin:2px 0 0;">Auto-suggested when assigning them to an event, based on whether the event city matches their base city.</p>` : ""}
+          ${CURRENT_USER?.accessLevel === "admin" ? idUploadFieldsHtml("nm") : ""}
           <label style="margin-top:8px;">Phone</label>
           <input id="nmPhone" placeholder="e.g. 9876543210" />
           <p class="muted small" style="margin:4px 0 0;">Username and password default to this phone number — change them below if you'd like something else.</p>
@@ -3654,6 +3673,8 @@ function openAddMemberModal(onCreated) {
           isPerformer,
         }),
       });
+      const idFailed = await uploadPickedIds("nm", result.teamId);
+      if (idFailed) alert(`Member added, but some ID files didn't upload (${idFailed}). Open Edit on their card to add them again.`);
       const teamData = await api("/api/team");
       TEAM = teamData;
       close();
@@ -3757,6 +3778,7 @@ function openEditMemberModal(member, linkedUser) {
           </div>
           <label>Base city</label>
           <input id="emBaseCity" value="${member.base_city || ""}" placeholder="e.g. Siliguri" />
+          ${CURRENT_USER?.accessLevel === "admin" ? `<div id="emIdSection" class="card" style="margin-top:12px; padding:10px 12px;"><div class="muted small">Loading ID cards…</div></div>` : ""}
           ${hasAccountsAccess() ? `
           <div class="row-2" style="margin-top:8px;">
             <div><label>Local fee (₹)</label><input id="emLocalFee" type="number" value="${member.local_fee || ""}" placeholder="e.g. 3000" /></div>
@@ -3819,6 +3841,7 @@ function openEditMemberModal(member, linkedUser) {
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#cancelModal").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  if (root.querySelector("#emIdSection")) wireMemberIdSection(root.querySelector("#emIdSection"), member);
   root.querySelector("#submitModal").addEventListener("click", async () => {
     try {
       await api(`/api/team/${member.id}`, {
@@ -5145,6 +5168,170 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       alert(err.message);
       btn.disabled = false;
     }
+  });
+}
+
+// ---------- Team ID cards (Team tab) + artist registration link ----------
+const ID_LABELS = ["Aadhaar", "Passport", "PAN card", "Driving licence", "Voter ID", "Other"];
+function idUploadFieldsHtml(prefix) {
+  return `<div style="margin-top:10px;">
+    <label>ID card for travel (optional — can be added later)</label>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <select id="${prefix}IdLabel" style="width:auto;">${ID_LABELS.map((o) => `<option>${o}</option>`).join("")}</select>
+      <input id="${prefix}IdFiles" type="file" multiple accept="image/*,application/pdf" style="flex:1; min-width:160px;" />
+    </div>
+    <p class="muted small" style="margin:2px 0 0;">Photo or PDF. Only admins can open IDs; they're sent to a client only when you choose to, per event.</p>
+  </div>`;
+}
+async function uploadFilesForMember(teamId, label, files) {
+  let failed = 0;
+  for (const file of files) {
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("label", label);
+      const resp = await fetch(`/api/team/${teamId}/id-docs`, { method: "POST", body: fd, credentials: "include" });
+      if (!resp.ok) failed++;
+    } catch { failed++; }
+  }
+  return failed;
+}
+async function uploadPickedIds(prefix, teamId) {
+  const inp = document.getElementById(`${prefix}IdFiles`);
+  if (!inp || !inp.files || inp.files.length === 0) return 0;
+  return uploadFilesForMember(teamId, document.getElementById(`${prefix}IdLabel`).value, [...inp.files]);
+}
+function wireMemberIdSection(box, member) {
+  const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  let details = null;
+  try { details = member.reg_details ? JSON.parse(member.reg_details) : null; } catch { details = null; }
+  async function draw() {
+    let docs = [];
+    try { docs = await api(`/api/team/${member.id}/id-docs`); } catch { docs = []; }
+    box.innerHTML = `
+      <div style="font-weight:700; margin-bottom:6px;">🪪 ID cards</div>
+      ${docs.length === 0 ? `<div style="color:#A6432B; font-size:12.5px; margin-bottom:6px;">⚠ No ID saved yet</div>` : docs.map((d) => `
+        <div style="display:flex; gap:8px; align-items:center; font-size:12.5px; margin-bottom:4px;">
+          <span>✓ ${esc(d.label || d.original_name)}</span><a href="${d.url}" target="_blank" rel="noopener">view</a>
+          <button class="btn-ghost id-del" data-id="${d.id}" type="button" style="font-size:11px; padding:1px 7px;">remove</button>
+        </div>`).join("")}
+      <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+        <select id="emIdLabel" style="width:auto; font-size:12px;">${ID_LABELS.map((o) => `<option>${o}</option>`).join("")}</select>
+        <label class="btn-ghost" style="font-size:12px; padding:3px 10px; cursor:pointer; margin:0;">⬆ Upload ID
+          <input id="emIdFile" type="file" multiple accept="image/*,application/pdf" style="display:none;" /></label>
+        <span id="emIdStatus" class="muted small"></span>
+      </div>
+      ${details ? `<div class="muted small" style="margin-top:8px; line-height:1.5;">
+        <b>From registration form:</b> ${[
+          details.legalName ? `Name on ID: ${esc(details.legalName)}` : "",
+          details.dob ? `DOB: ${esc(details.dob)}` : "",
+          details.gender ? `Gender: ${esc(details.gender)}` : "",
+          details.emergencyName || details.emergencyPhone ? `Emergency: ${esc(details.emergencyName || "")} ${esc(details.emergencyPhone || "")}` : "",
+          details.instagram ? `Instagram: ${esc(details.instagram)}` : "",
+          details.notes ? `Notes: ${esc(details.notes)}` : "",
+        ].filter(Boolean).join(" · ")}</div>` : ""}`;
+    box.querySelectorAll(".id-del").forEach((b) => b.addEventListener("click", async () => {
+      if (!confirm("Remove this ID card?")) return;
+      await api(`/api/team-id-docs/${b.dataset.id}`, { method: "DELETE" });
+      draw();
+    }));
+    box.querySelector("#emIdFile").addEventListener("change", async (e) => {
+      const files = [...e.target.files];
+      if (!files.length) return;
+      box.querySelector("#emIdStatus").textContent = "Uploading…";
+      const failed = await uploadFilesForMember(member.id, box.querySelector("#emIdLabel").value, files);
+      if (failed) alert(`${failed} file(s) didn't upload — use a JPG/PNG/PDF under 15 MB.`);
+      draw();
+    });
+  }
+  draw();
+}
+
+async function openRegistrationLinkModal() {
+  const root = document.getElementById("modalRoot");
+  let info;
+  try { info = await api("/api/member-registration"); } catch (err) { return alert(err.message); }
+  const linkOf = (t) => `${window.location.origin}/join/${t}`;
+  function draw() {
+    const active = info.token && info.enabled;
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay"><div class="modal-card">
+        <div class="modal-head"><h3>🔗 Artist registration link</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body">
+          <p class="muted small" style="margin-top:0;">Share this link with any artist you want to add. They fill in their own details and upload their ID. Nothing is added to your team until you approve it here in the Team tab.</p>
+          ${active ? `
+            <label>Link</label>
+            <input id="regLinkInput" readonly value="${linkOf(info.token)}" onclick="this.select()" />
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+              <button class="btn-primary" id="regCopyBtn">🔗 Copy link</button>
+              <button class="btn-ghost" id="regWaBtn">💬 Share on WhatsApp</button>
+            </div>
+            <p class="muted small" style="margin-top:14px;">${info.pending ? `${info.pending} registration(s) waiting for your review in the Team tab.` : "No registrations waiting."}</p>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:6px;">
+              <button class="btn-ghost" id="regDisableBtn" style="font-size:12.5px;">Turn link off</button>
+              <button class="btn-ghost" id="regRegenBtn" style="font-size:12.5px;">Make a new link (old one stops working)</button>
+            </div>` : `
+            <p>${info.token ? "The link is currently turned off." : "No link created yet."}</p>
+            <button class="btn-primary" id="regEnableBtn">${info.token ? "Turn link on" : "Create registration link"}</button>`}
+        </div>
+        <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
+      </div></div>`;
+    const close = () => (root.innerHTML = "");
+    root.querySelector("#closeModal").addEventListener("click", close);
+    root.querySelector("#cancelModal").addEventListener("click", close);
+    root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+    const act = async (path, body) => { try { const r = await api(path, { method: "POST", body: JSON.stringify(body || {}) }); if (r.token) info.token = r.token; info.enabled = path.endsWith("disable") ? false : true; draw(); } catch (err) { alert(err.message); } };
+    root.querySelector("#regEnableBtn")?.addEventListener("click", () => act("/api/member-registration/enable"));
+    root.querySelector("#regDisableBtn")?.addEventListener("click", () => act("/api/member-registration/disable"));
+    root.querySelector("#regRegenBtn")?.addEventListener("click", () => { if (confirm("The old link will stop working. Continue?")) act("/api/member-registration/enable", { regenerate: true }); });
+    root.querySelector("#regCopyBtn")?.addEventListener("click", async (e) => {
+      try { await navigator.clipboard.writeText(linkOf(info.token)); e.currentTarget.textContent = "✓ Copied"; } catch { prompt("Copy this link:", linkOf(info.token)); }
+    });
+    root.querySelector("#regWaBtn")?.addEventListener("click", () => {
+      const msg = `Hi! Please fill in this short form with your details and upload your ID so we can add you to the Together, Out Loud team:\n\n${linkOf(info.token)}\n\nThank you!`;
+      window.location.href = `https://wa.me/?text=${encodeURIComponent(msg)}`;
+    });
+  }
+  draw();
+}
+
+function openRegistrationReviewModal(reg, onDone) {
+  const root = document.getElementById("modalRoot");
+  const d = reg.data;
+  const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay"><div class="modal-card">
+      <div class="modal-head"><h3>Review registration</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+      <div class="modal-body">
+        ${reg.duplicateOf ? `<p class="small" style="background:#FFF4E5; color:#8A5A1F; padding:8px 10px; border-radius:6px;">⚠ This phone number already belongs to <b>${esc(reg.duplicateOf.name)}</b> in your team. Reject this if it's the same person.</p>` : ""}
+        <label>Name</label><input id="rvName" value="${esc(d.name)}" />
+        <div class="row-2"><div><label>Role</label><input id="rvRole" value="${esc(d.role)}" /></div><div><label>Base city</label><input id="rvCity" value="${esc(d.city)}" /></div></div>
+        <label>Phone</label><input id="rvPhone" value="${esc(d.phone)}" />
+        <div class="muted small" style="margin-top:10px; line-height:1.6;">
+          ${[d.email && `Email: ${esc(d.email)}`, d.dob && `DOB: ${esc(d.dob)}`, d.gender && `Gender: ${esc(d.gender)}`, (d.emName || d.emPhone) && `Emergency: ${esc(d.emName)} ${esc(d.emPhone)}`, d.instagram && `Instagram: ${esc(d.instagram)}`, d.notes && `Notes: ${esc(d.notes)}`].filter(Boolean).join("<br>")}
+        </div>
+        <div style="margin-top:10px; font-weight:700;">Documents</div>
+        ${reg.files.map((f) => `<div style="font-size:13px; margin-top:4px;">📎 ${esc(f.label)} — <a href="${f.url}" target="_blank" rel="noopener">${esc(f.original_name)}</a></div>`).join("")}
+        <p class="muted small" style="margin-top:12px;">Approving adds them to your team (no login is created) and saves their documents as travel IDs.</p>
+      </div>
+      <div class="modal-foot"><button class="btn-ghost" id="rvReject" style="color:#A6432B;">Reject</button><button class="btn-primary" id="rvApprove">Approve & add to team</button></div>
+    </div></div>`;
+  const close = () => (root.innerHTML = "");
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#rvApprove").addEventListener("click", async (e) => {
+    const btn = e.currentTarget; if (btn.disabled) return; btn.disabled = true;
+    try {
+      await api(`/api/member-registrations/${reg.id}/approve`, { method: "POST", body: JSON.stringify({
+        name: root.querySelector("#rvName").value, role: root.querySelector("#rvRole").value,
+        baseCity: root.querySelector("#rvCity").value, phone: root.querySelector("#rvPhone").value,
+      }) });
+      close(); await onDone();
+    } catch (err) { alert(err.message); btn.disabled = false; }
+  });
+  root.querySelector("#rvReject").addEventListener("click", async () => {
+    if (!confirm("Reject and delete this registration, including the uploaded documents?")) return;
+    try { await api(`/api/member-registrations/${reg.id}/reject`, { method: "POST" }); close(); await onDone(); } catch (err) { alert(err.message); }
   });
 }
 
