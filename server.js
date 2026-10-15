@@ -2147,6 +2147,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   // server-side (never trust a client-supplied clock) so "last followed up"
   // stays accurate regardless of who's clicking it or from where.
   let autoMovedToNotInterested = false;
+  let autoMovedThreshold = 3;
   if (hasLeads && req.body.logFollowup === true) {
     values.push(new Date().toISOString());
     updates.push(`last_followup_at = $${values.length}`);
@@ -2170,6 +2171,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     const autoCloseThreshold = Number.isInteger(parsedThreshold) && parsedThreshold > 0 ? parsedThreshold : 3;
     if (autoCloseEnabled && newFollowupCount >= autoCloseThreshold && req.body.stage === undefined && ["New", "Follow-up"].includes(lead.stage)) {
       autoMovedToNotInterested = true;
+      autoMovedThreshold = autoCloseThreshold;
       values.push("Not Interested");
       updates.push(`stage = $${values.length}`);
       const autoNote = `[Auto] Moved to Not Interested — ${autoCloseThreshold} follow-up${autoCloseThreshold === 1 ? "" : "s"} sent with no response (as of ${new Date().toISOString().slice(0, 10)}).`;
@@ -2238,7 +2240,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   } else if (req.body.advance !== undefined && Number(req.body.advance) !== Number(lead.advance || 0)) {
     logActivity(req, `Payment recorded for ${lead.name}: ₹${Number(req.body.advance).toLocaleString("en-IN")} received`, lead.id);
   } else if (autoMovedToNotInterested) {
-    logActivity(req, `${lead.name}: ${lead.stage} → Not Interested (auto — 3 follow-ups, no response)`, lead.id);
+    logActivity(req, `${lead.name}: ${lead.stage} → Not Interested (auto — ${autoMovedThreshold} follow-up${autoMovedThreshold === 1 ? "" : "s"}, no response)`, lead.id);
   }
 });
 
