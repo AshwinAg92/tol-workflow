@@ -730,6 +730,134 @@ async function publishEventCard(lead, kind, portraitBlob) {
   return `${window.location.origin}/card/${token}`;
 }
 
+// ---------- Quotation card ----------
+// Branded card sent with a quotation: the client's first name, the experience,
+// the key details and the quoted amount. Portrait (1080x1350) for the card page
+// and a landscape (1200x630) version for the WhatsApp link preview.
+function quoteCardFields(f) {
+  const inr = (v) => (v === undefined || v === null || v === "" || isNaN(Number(v))) ? "" : "₹" + Number(v).toLocaleString("en-IN") + "/-";
+  const rows = [];
+  if (f.eventDate) rows.push(["Date", f.eventDate]);
+  if (f.location) rows.push(["Venue", f.location]);
+  if (f.guests) rows.push(["Guests", String(f.guests)]);
+  if (f.pcs) rows.push(["Musicians", String(f.pcs)]);
+  if (f.duration && f.format && !/pheras/i.test(f.format)) rows.push(["Duration", String(f.duration)]);
+  return { rows, amount: inr(f.charges), b2b: f.isB2b ? inr(f.b2bCharges) : "" };
+}
+function cardRoundRect(g, x, y, w, h, r) {
+  g.beginPath();
+  g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+}
+async function makeQuoteCard(lead, f, wide) {
+  const W = wide ? 1200 : 1080, H = wide ? 630 : 1350;
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  const first = (lead.name || "").trim().split(/\s+/)[0] || "there";
+  const experience = f.format || packageName(lead.event_type);
+  const { rows, amount, b2b } = quoteCardFields(f);
+  const SERIF = "Georgia, 'Times New Roman', serif", SANS = "'Helvetica Neue', Helvetica, Arial, sans-serif";
+  const bg = g.createLinearGradient(0, 0, 0, H); bg.addColorStop(0, "#FEF6ED"); bg.addColorStop(1, "#F6E0C2");
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  const glow = g.createRadialGradient(W - 110, 120, 10, W - 110, 120, wide ? 380 : 460);
+  glow.addColorStop(0, "rgba(240,164,56,0.38)"); glow.addColorStop(1, "rgba(240,164,56,0)");
+  g.fillStyle = glow; g.fillRect(0, 0, W, H);
+  const m = wide ? 24 : 44;
+  g.strokeStyle = "#C1602B"; g.lineWidth = 3; g.strokeRect(m, m, W - 2 * m, H - 2 * m);
+  g.strokeStyle = "rgba(193,96,43,0.35)"; g.lineWidth = 1.5; g.strokeRect(m + 14, m + 14, W - 2 * m - 28, H - 2 * m - 28);
+  const center = (txt, y, font, color, spacing, x) => {
+    g.font = font; g.fillStyle = color; g.textAlign = "center"; g.textBaseline = "alphabetic";
+    if (spacing && "letterSpacing" in g) g.letterSpacing = spacing + "px";
+    g.fillText(txt, x === undefined ? W / 2 : x, y);
+    if ("letterSpacing" in g) g.letterSpacing = "0px";
+  };
+  const fit = (txt, size, min, maxW, weight, fam) => {
+    g.font = `${weight} ${size}px ${fam}`;
+    while (g.measureText(txt).width > maxW && size > min) { size -= 2; g.font = `${weight} ${size}px ${fam}`; }
+    return size;
+  };
+  const ornament = (y, half) => {
+    g.strokeStyle = "#F0A438"; g.lineWidth = 3;
+    g.beginPath(); g.moveTo(W / 2 - half, y); g.lineTo(W / 2 - 18, y); g.moveTo(W / 2 + 18, y); g.lineTo(W / 2 + half, y); g.stroke();
+    g.fillStyle = "#F0A438"; g.beginPath(); g.arc(W / 2, y, 6, 0, Math.PI * 2); g.fill();
+  };
+  let logo = null;
+  try { logo = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = "/logo.png"; }); } catch { /* fine without */ }
+
+  if (wide) {
+    // Left: greeting; right: the amount panel.
+    if (logo) { const lh = 84, lw = (logo.width / logo.height) * lh; g.drawImage(logo, 80, 62, lw, lh); }
+    g.textAlign = "left";
+    g.font = `700 18px ${SANS}`; g.fillStyle = "#2B2420"; if ("letterSpacing" in g) g.letterSpacing = "5px"; g.fillText("TOGETHER, OUT LOUD", 80, 196); if ("letterSpacing" in g) g.letterSpacing = "0px";
+    g.font = `700 17px ${SANS}`; g.fillStyle = "#C1602B"; if ("letterSpacing" in g) g.letterSpacing = "4px"; g.fillText("YOUR QUOTATION", 80, 250); if ("letterSpacing" in g) g.letterSpacing = "0px";
+    const hl = `Hi ${first},`;
+    let s = fit(hl, 64, 36, 560, 700, SERIF); g.fillStyle = "#2B2420"; g.textAlign = "left"; g.fillText(hl, 80, 330);
+    const sub = "here's your quote";
+    s = fit(sub, 48, 30, 560, 700, SERIF); g.fillStyle = "#2B2420"; g.fillText(sub, 80, 392);
+    s = fit(experience, 38, 24, 560, 700, SERIF); g.fillStyle = "#C1602B"; g.fillText(experience, 80, 456);
+    g.font = `500 24px ${SANS}`; g.fillStyle = "#8A6A54";
+    g.fillText([f.eventDate, f.location].filter(Boolean).join("  ·  ").slice(0, 46), 80, 504);
+    // Amount panel
+    const px = 700, py = 120, pw = 420, ph = 390;
+    cardRoundRect(g, px, py, pw, ph, 28); g.fillStyle = "rgba(255,255,255,0.72)"; g.fill();
+    g.strokeStyle = "rgba(193,96,43,0.4)"; g.lineWidth = 2; g.stroke();
+    center("PERFORMANCE CHARGES", py + 70, `700 18px ${SANS}`, "#8A6A54", 4, px + pw / 2);
+    const amt = amount || "To be shared";
+    fit(amt, 84, 36, pw - 60, 700, SERIF); center(amt, py + 170, g.font, "#C1602B", 0, px + pw / 2);
+    if (b2b) center(`B2B rate  ${b2b}`, py + 222, `600 26px ${SANS}`, "#2B2420", 0, px + pw / 2);
+    const meta = [f.pcs ? `${f.pcs} musicians` : "", f.guests ? `${f.guests} guests` : ""].filter(Boolean).join("  ·  ");
+    if (meta) center(meta, py + 290, `500 24px ${SANS}`, "#4A3A30", 0, px + pw / 2);
+    center("Valid for 7 days", py + 340, `italic 400 24px ${SERIF}`, "#8A6A54", 0, px + pw / 2);
+    center("With love, Team Together, Out Loud", 570, `italic 400 24px ${SERIF}`, "#8A6A54");
+    return new Promise((res) => c.toBlob((b) => res(b), "image/png"));
+  }
+
+  if (logo) { const lh = 110, lw = (logo.width / logo.height) * lh; g.drawImage(logo, W / 2 - lw / 2, 80, lw, lh); }
+  center("TOGETHER, OUT LOUD", 238, `700 26px ${SANS}`, "#2B2420", 7);
+  center("YOUR QUOTATION", 296, `700 22px ${SANS}`, "#C1602B", 5);
+  let hs = fit(`Hi ${first},`, 88, 52, W - 200, 700, SERIF); center(`Hi ${first},`, 384, g.font, "#2B2420");
+  center("here's your quote", 384 + 84, `700 ${Math.min(hs, 76)}px ${SERIF}`, "#2B2420");
+  ornament(520, 140);
+  fit(experience, 56, 34, W - 200, 700, SERIF); center(experience, 592, g.font, "#C1602B");
+
+  // Details panel
+  const px = 120, pw = W - 240, rowH = 52, py = 636;
+  const ph = 170 + (b2b ? 56 : 0) + rows.length * rowH + 24;
+  cardRoundRect(g, px, py, pw, ph, 30); g.fillStyle = "rgba(255,255,255,0.74)"; g.fill();
+  g.strokeStyle = "rgba(193,96,43,0.4)"; g.lineWidth = 2; g.stroke();
+  center("PERFORMANCE CHARGES", py + 46, `700 20px ${SANS}`, "#8A6A54", 4);
+  const amt = amount || "To be shared";
+  fit(amt, 92, 44, pw - 80, 700, SERIF); center(amt, py + 140, g.font, "#C1602B");
+  let ry = py + 170;
+  if (b2b) { center(`B2B rate  ${b2b}`, py + 172, `600 28px ${SANS}`, "#2B2420"); ry += 56; }
+  g.strokeStyle = "rgba(193,96,43,0.25)"; g.lineWidth = 1.5;
+  rows.forEach(([k, v]) => {
+    ry += rowH;
+    g.beginPath(); g.moveTo(px + 40, ry - rowH + 10); g.lineTo(px + pw - 40, ry - rowH + 10); g.stroke();
+    g.textAlign = "left"; g.font = `600 21px ${SANS}`; g.fillStyle = "#8A6A54";
+    if ("letterSpacing" in g) g.letterSpacing = "2px"; g.fillText(k.toUpperCase(), px + 48, ry - 8); if ("letterSpacing" in g) g.letterSpacing = "0px";
+    g.textAlign = "right"; fit(v, 30, 20, pw - 300, 600, SANS); g.fillStyle = "#2B2420"; g.fillText(v, px + pw - 48, ry - 7);
+  });
+  center("Valid for 7 days \u00B7 confirm with an advance to block your date", H - 162, `italic 400 26px ${SERIF}`, "#4A3A30");
+  center("With love,", H - 124, `italic 400 26px ${SERIF}`, "#8A6A54");
+  center("Team Together, Out Loud", H - 86, `700 32px ${SERIF}`, "#2B2420");
+  return new Promise((res) => c.toBlob((b) => res(b), "image/png"));
+}
+async function publishQuoteCard(lead, f) {
+  const [portrait, wide] = await Promise.all([makeQuoteCard(lead, f, false), makeQuoteCard(lead, f, true)]);
+  const first = (lead.name || "").trim().split(/\s+/)[0] || "";
+  const { amount } = quoteCardFields(f);
+  const fd = new FormData();
+  fd.append("portrait", portrait, "card.png");
+  fd.append("wide", wide, "wide.png");
+  fd.append("title", `${first}, here's your quotation`);
+  fd.append("description", `${f.format || packageName(lead.event_type)}${amount ? " — " + amount : ""}${f.location ? " in " + f.location : ""} — with Together, Out Loud`);
+  const resp = await fetch("/api/event-cards", { method: "POST", body: fd, credentials: "include" });
+  if (!resp.ok) throw new Error("Couldn't publish the card");
+  const { token } = await resp.json();
+  return `${window.location.origin}/card/${token}`;
+}
+
 // Hands the card to the native Share sheet (WhatsApp etc.) with the message as
 // the caption. Returns false where file sharing isn't available (mainly desktop)
 // so the caller can fall back to a plain wa.me text link.
@@ -2563,6 +2691,7 @@ async function renderQuotation(main) {
         <textarea id="qBody" rows="18" style="width:100%; font-family:'JetBrains Mono',monospace; font-size:12.5px; padding:10px; border:1px solid #DDD5C4; border-radius:6px;"></textarea>
         <button class="btn-primary full" id="sendQuoteBtn" style="margin-top:12px;">💬 Mark as quoted & prepare messages</button>
         <button class="btn-ghost full" id="downloadQuotePdfBtn" style="margin-top:8px;">📄 Download quote as PDF</button>
+        <button class="btn-ghost full" id="quoteCardBtn" style="margin-top:8px;">🖼️ Preview / download quote card</button>
         <div id="sendStatus"></div>
       </div>
     </div>
@@ -2782,6 +2911,18 @@ async function renderQuotation(main) {
       });
       await refreshLeads();
 
+      // Branded quote card: its link goes at the end of the WhatsApp message so
+      // WhatsApp shows the card as the preview. If it fails, the text still goes.
+      let cardLink = null;
+      try { cardLink = await publishQuoteCard(result.lead, quoteFormFields()); } catch (e) { cardLink = null; }
+      if (cardLink && result.whatsapp.link) {
+        const dg = (result.lead.whatsapp_number || result.lead.phone || "").replace(/\D/g, "");
+        if (dg) result.whatsapp.link = `https://wa.me/${dg}?text=${encodeURIComponent(withCardLinkAtEnd(body, cardLink))}`;
+      }
+      if (cardLink && result.mailto.link && result.lead.email) {
+        result.mailto.link = `mailto:${result.lead.email}?subject=${encodeURIComponent(subject || "Quotation — Together, Out Loud")}&body=${encodeURIComponent(withCardLinkAtEnd(body, cardLink))}`;
+      }
+
       const waHtml = result.whatsapp.link
         ? `<div class="email-status sent">💬 Opened WhatsApp for ${result.lead.phone} — <a href="${result.whatsapp.link}">click here</a> if it didn't open</div>`
         : `<div class="email-status unsent">💬 Couldn't prepare WhatsApp message — ${result.whatsapp.reason}</div>`;
@@ -2801,6 +2942,48 @@ async function renderQuotation(main) {
       btn.disabled = false;
       btn.textContent = "💬 Mark as quoted & prepare messages";
     }
+  });
+
+  function quoteFormFields() {
+    const lead = LEADS.find((l) => l.id === leadSelect.value);
+    return {
+      format: packageName(main.querySelector("#qPackage").value),
+      location: main.querySelector("#qLocation").value,
+      eventDate: main.querySelector("#qDate").value,
+      guests: main.querySelector("#qGuests").value,
+      duration: main.querySelector("#qDuration").value,
+      pcs: main.querySelector("#qSet").value,
+      charges: main.querySelector("#qCharges").value,
+      isB2b: !!(lead && lead.is_b2b),
+      b2bCharges: main.querySelector("#qB2bCharges").value,
+    };
+  }
+  main.querySelector("#quoteCardBtn").addEventListener("click", async () => {
+    if (!validateQuoteFields()) return;
+    const lead = LEADS.find((l) => l.id === leadSelect.value);
+    if (!lead) return;
+    const btn = main.querySelector("#quoteCardBtn");
+    btn.disabled = true; btn.textContent = "Preparing card…";
+    try {
+      const blob = await makeQuoteCard(lead, quoteFormFields(), false);
+      const url = URL.createObjectURL(blob);
+      const root = document.getElementById("modalRoot");
+      root.innerHTML = `
+        <div class="modal-overlay" id="overlay">
+          <div class="modal-card" style="width:460px; max-width:96vw;">
+            <div class="modal-head"><h3>Quote card</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+            <div class="modal-body">
+              <img id="qcImg" src="${url}" alt="Quote card" style="width:100%; border-radius:8px; border:1px solid #E5DFD1;">
+              <button class="btn-primary full" id="qcDl" style="margin-top:10px;">⬇️ Download image</button>
+            </div>
+          </div>
+        </div>`;
+      const close = () => { root.innerHTML = ""; URL.revokeObjectURL(url); };
+      root.querySelector("#closeModal").addEventListener("click", close);
+      root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+      root.querySelector("#qcDl").addEventListener("click", () => downloadBlob(blob, `quote-${(lead.name || "client").split(" ")[0]}.png`));
+    } catch (e) { alert("Couldn't prepare the card"); }
+    finally { btn.disabled = false; btn.textContent = "🖼️ Preview / download quote card"; }
   });
 
   main.querySelector("#downloadQuotePdfBtn").addEventListener("click", async () => {
