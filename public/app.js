@@ -11189,41 +11189,63 @@ async function renderMyRevenue(main) {
   const byMonth = months.map((m) => ({ m, v: sum(receivedItems.filter((i) => monthKey(i) === m)) }));
   const maxV = Math.max(1, ...byMonth.map((x) => x.v));
   const mLabel = (m) => new Date(m + "-01T00:00:00").toLocaleDateString("en-GB", { month: "short" });
+  const statusOf = (i) => i.received ? "received" : i.amount == null ? "nofee" : i.date < today ? "due" : "upcoming";
+  const fyMonths = Array.from(new Set(items.map((i) => i.date.slice(0, 7)))).sort().reverse();
+  const f = renderMyRevenue._f || (renderMyRevenue._f = { q: "", st: "all", m: "" });
+  const matchSt = (i, k = f.st) => k === "all" || (k === "due" ? !i.received && i.amount != null : k === "upcoming" ? i.date >= today : i.received);
   const row = (i) => {
-    const noFee = i.amount == null;
-    const tag = i.received
-      ? `<span class="tag" style="color:#1C7A80;">✓ Received${i.paid ? "" : " (by you)"}</span>`
-      : noFee ? `<span class="tag muted">Fee not set yet</span>`
-      : i.date < today ? `<span class="tag" style="color:#A6432B;">Awaiting payment</span>` : `<span class="tag" style="color:#B6752C;">Upcoming</span>`;
-    const btn = noFee || i.paid ? "" : `<button class="btn-ghost rev-toggle" data-id="${i.expense_id}" data-on="${i.member_received ? 0 : 1}" style="font-size:12.5px; padding:4px 10px;">${i.member_received ? "Undo received" : "Mark received"}</button>`;
-    return `<div class="list-row" style="grid-template-columns:100px 1fr 100px 150px 130px; row-gap:2px;">
-      <span class="mono">${fmtDate(i.date)}</span>
-      <span>${esc(i.lead_name)}${i.occasion ? ` <span class="muted small">— ${esc(i.occasion)}</span>` : ""}<div class="muted small">${esc(i.city || "")}${i.status === "pending" ? " · not yet accepted" : ""}</div></span>
-      <span class="mono"><b>${noFee ? "—" : inr(i.amount)}</b></span>${tag}<span>${btn}</span></div>`;
+    const st = statusOf(i), noFee = i.amount == null;
+    const tag = { received: `<span class="tag" style="color:#1C7A80;">✓ Received${i.paid ? "" : " (by you)"}</span>`,
+      nofee: `<span class="tag muted">Fee not set yet</span>`,
+      due: `<span class="tag" style="color:#A6432B;">Not received</span>`,
+      upcoming: `<span class="tag" style="color:#B6752C;">Upcoming</span>` }[st];
+    const btn = noFee || i.paid ? "" : `<button class="btn-ghost rev-toggle" data-id="${i.expense_id}" data-on="${i.member_received ? 0 : 1}" style="font-size:12.5px; padding:4px 10px;">${i.member_received ? "Undo" : "Mark received"}</button>`;
+    return `<div class="list-row" style="display:block; padding:10px 12px;">
+      <div style="display:flex; justify-content:space-between; gap:10px; align-items:baseline;"><b>${esc(i.lead_name)}</b><span class="mono"><b>${noFee ? "—" : inr(i.amount)}</b></span></div>
+      <div class="muted small">${fmtDate(i.date)}${i.city ? " · " + esc(i.city) : ""}${i.occasion ? " · " + esc(i.occasion) : ""}${i.status === "pending" ? " · not yet accepted" : ""}</div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px;">${tag}${btn}</div></div>`;
   };
-  const section = (title, arr, empty) => `<div class="section-label" style="margin-top:18px;">${title}</div><div class="list">${arr.length ? arr.map(row).join("") : `<div class="board-empty">${empty}</div>`}</div>`;
+  const draw = () => {
+    const q = f.q.trim().toLowerCase();
+    let list = items.filter((i) => matchSt(i) && (!f.m || i.date.slice(0, 7) === f.m) &&
+      (!q || (i.lead_name + " " + (i.city || "") + " " + (i.occasion || "")).toLowerCase().includes(q)));
+    const up = list.filter((i) => i.date >= today).sort((a, b) => a.date.localeCompare(b.date));
+    const past = list.filter((i) => i.date < today).sort((a, b) => b.date.localeCompare(a.date));
+    main.querySelector("#revList").innerHTML = list.length
+      ? [up.length ? `<div class="section-label" style="margin-top:10px;">Upcoming (${up.length})</div>${up.map(row).join("")}` : "",
+         past.length ? `<div class="section-label" style="margin-top:10px;">Past (${past.length})</div>${past.map(row).join("")}` : ""].join("")
+      : `<div class="board-empty">Nothing matches</div>`;
+    main.querySelectorAll(".rev-toggle").forEach((bt) => bt.addEventListener("click", async () => {
+      bt.disabled = true;
+      try { await api(`/api/my/revenue/${bt.dataset.id}/received`, { method: "POST", body: JSON.stringify({ received: bt.dataset.on === "1" }) }); } catch (e) { alert(e.message || "Couldn't save"); }
+      renderMyRevenue(main);
+    }));
+  };
+  const cnt = (k) => items.filter((i) => matchSt(i, k)).length;
   main.innerHTML = `
-    <div class="view-head"><div><h2>My Revenue</h2><p class="muted">Your own fees for every event — past and upcoming. If you've been paid and it isn't ticked, mark it received.</p></div></div>
-    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px;">
-      <div class="card"><div class="muted small">Received (all time)</div><div style="font-size:22px; font-weight:700; color:#1C7A80;">${inr(sum(receivedItems))}</div></div>
-      <div class="card"><div class="muted small">Received this month</div><div style="font-size:22px; font-weight:700;">${inr(sum(receivedItems.filter((i) => monthKey(i) === thisMonth)))}</div></div>
-      <div class="card"><div class="muted small">Past events, not received</div><div style="font-size:22px; font-weight:700; color:#A6432B;">${inr(sum(pastDue))}</div></div>
-      <div class="card"><div class="muted small">Coming up</div><div style="font-size:22px; font-weight:700; color:#B6752C;">${inr(sum(upcoming))}</div></div>
+    <div class="view-head"><div><h2>My Revenue</h2><p class="muted">Your own fees. If you've been paid and it isn't ticked, mark it received.</p></div></div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px;">
+      <div class="card"><div class="muted small">Received (all time)</div><div style="font-size:20px; font-weight:700; color:#1C7A80;">${inr(sum(receivedItems))}</div></div>
+      <div class="card"><div class="muted small">Received this month</div><div style="font-size:20px; font-weight:700;">${inr(sum(receivedItems.filter((i) => monthKey(i) === thisMonth)))}</div></div>
+      <div class="card"><div class="muted small">Past, not received</div><div style="font-size:20px; font-weight:700; color:#A6432B;">${inr(sum(pastDue))}</div></div>
+      <div class="card"><div class="muted small">Coming up</div><div style="font-size:20px; font-weight:700; color:#B6752C;">${inr(sum(upcoming))}</div></div>
     </div>
-    <div class="card" style="margin-top:14px;">
-      <div class="section-label">Received — last 6 months</div>
-      <div style="display:flex; gap:10px; align-items:flex-end; height:120px;">
-        ${byMonth.map((x) => `<div style="flex:1; text-align:center;"><div class="small mono">${x.v ? inr(x.v) : ""}</div><div style="height:${Math.max(3, Math.round((x.v / maxV) * 80))}px; background:${x.v ? "#1C7A80" : "#E6DFD0"}; border-radius:4px 4px 0 0;"></div><div class="muted small">${mLabel(x.m)}</div></div>`).join("")}
+    <details class="card" style="margin-top:12px;"><summary class="section-label" style="cursor:pointer;">Received — last 6 months</summary>
+      <div style="display:flex; gap:6px; align-items:flex-end; height:120px; margin-top:8px;">
+        ${byMonth.map((x) => `<div style="flex:1; text-align:center; min-width:0;"><div style="font-size:10px;" class="mono">${x.v ? inr(x.v) : ""}</div><div style="height:${Math.max(3, Math.round((x.v / maxV) * 70))}px; background:${x.v ? "#1C7A80" : "#E6DFD0"}; border-radius:4px 4px 0 0;"></div><div class="muted small">${mLabel(x.m)}</div></div>`).join("")}
+      </div></details>
+    <div style="position:sticky; top:0; background:#FFF6EC; padding:10px 0 6px; z-index:2; margin-top:8px;">
+      <input id="revQ" type="search" placeholder="Search event, city, occasion…" value="${esc(f.q)}" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:8px; font-size:16px; box-sizing:border-box;" />
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; align-items:center;">
+        ${[["all", "All"], ["due", "Not received"], ["upcoming", "Upcoming"], ["received", "Received"]].map(([k, l]) => `<button class="btn-ghost rev-chip" data-k="${k}" style="font-size:12.5px; padding:5px 11px;${f.st === k ? " background:#F3E3C6; font-weight:700;" : ""}">${l} (${cnt(k)})</button>`).join("")}
+        <select id="revM" style="padding:6px; font-size:14px; margin-left:auto;"><option value="">All months</option>${fyMonths.map((m) => `<option value="${m}"${f.m === m ? " selected" : ""}>${new Date(m + "-01T00:00:00").toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</option>`).join("")}</select>
       </div>
     </div>
-    ${section("⚠ Past events — not received yet", pastDue, "Nothing pending — you're all caught up")}
-    ${section("Upcoming", upcoming.concat(items.filter((i) => i.amount == null && i.date >= today)), "No upcoming fees")}
-    ${section("✓ Received", receivedItems.slice().reverse(), "Nothing received yet")}`;
-  main.querySelectorAll(".rev-toggle").forEach((b) => b.addEventListener("click", async () => {
-    b.disabled = true;
-    try { await api(`/api/my/revenue/${b.dataset.id}/received`, { method: "POST", body: JSON.stringify({ received: b.dataset.on === "1" }) }); } catch (e) { alert(e.message || "Couldn't save"); }
-    renderMyRevenue(main);
-  }));
+    <div class="list" id="revList"></div>`;
+  main.querySelector("#revQ").addEventListener("input", (e) => { f.q = e.target.value; draw(); });
+  main.querySelector("#revM").addEventListener("change", (e) => { f.m = e.target.value; draw(); });
+  main.querySelectorAll(".rev-chip").forEach((c) => c.addEventListener("click", () => { f.st = c.dataset.k; renderMyRevenue(main); }));
+  draw();
 }
 
 // ---------- My Cash — private income / expense / investment / savings tracker ----------
