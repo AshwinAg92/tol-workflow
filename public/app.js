@@ -6426,6 +6426,7 @@ async function openTravelShareModal(leadId) {
                     <select class="ts-id-label" data-team-id="${t.teamId}" style="width:auto; font-size:12px;">
                       ${["Aadhaar", "Passport", "PAN card", "Driving licence", "Voter ID", "Other"].map((o) => `<option>${o}</option>`).join("")}
                     </select>
+                    <input class="ts-id-other" data-team-id="${t.teamId}" placeholder="Type the document name" style="display:none; width:150px; font-size:12px; padding:5px 8px;" />
                     <label class="btn-ghost" style="font-size:12px; padding:3px 10px; cursor:pointer; margin:0;">⬆ Upload ID
                       <input type="file" class="ts-id-file" data-team-id="${t.teamId}" accept="image/*,application/pdf" style="display:none;" />
                     </label>
@@ -6559,11 +6560,21 @@ async function openTravelShareModal(leadId) {
       msgOverride = null; // who's included changed — rebuild the message so it can't go stale
       render();
     }));
+    root.querySelectorAll(".ts-id-label").forEach((sel) => sel.addEventListener("change", () => {
+      const box = root.querySelector(`.ts-id-other[data-team-id="${sel.dataset.teamId}"]`);
+      box.style.display = sel.value === "Other" ? "inline-block" : "none";
+      if (sel.value === "Other") box.focus();
+    }));
     root.querySelectorAll(".ts-id-file").forEach((inp) => inp.addEventListener("change", async () => {
       const file = inp.files[0];
       if (!file) return;
       keepInputs();
-      const label = root.querySelector(`.ts-id-label[data-team-id="${inp.dataset.teamId}"]`).value;
+      let label = root.querySelector(`.ts-id-label[data-team-id="${inp.dataset.teamId}"]`).value;
+      if (label === "Other") {
+        const typed = (root.querySelector(`.ts-id-other[data-team-id="${inp.dataset.teamId}"]`).value || "").trim();
+        if (!typed) { inp.value = ""; return alert("Please type the document name in the box next to 'Other'."); }
+        label = typed.slice(0, 60);
+      }
       try {
         const fd = new FormData();
         fd.append("file", file);
@@ -9240,6 +9251,7 @@ function openNewLeadModal(opts = {}) {
             <div><label>No. of guests</label><select id="mGuests"><option value="">Not specified</option>${CONFIG.guestRanges.map((g) => `<option value="${g}">${g}</option>`).join("")}</select></div>
             <div><label>Occasion</label><select id="mOccasion"><option value="" disabled selected hidden>Choose an occasion…</option>${CONFIG.occasions.map((o) => `<option value="${o}">${o}</option>`).join("")}</select></div>
           </div>
+          <div id="mOccasionOtherWrap" style="display:none; margin-top:8px;"><label>Please specify the occasion</label><input id="mOccasionOther" placeholder="e.g. Housewarming, Anniversary, Corporate offsite…" /></div>
           <div class="row-2" id="mPcsRow">
             <div><label>Pcs (No. of Musicians)</label><input id="mPcs" type="number" placeholder="e.g. 5" /></div>
             <div></div>
@@ -9304,6 +9316,11 @@ function openNewLeadModal(opts = {}) {
   root.querySelector("#mIsCombo").addEventListener("change", (e) => {
     root.querySelector("#comboFinalRateField").style.display = (e.target.checked && root.querySelector("#mAlreadyConfirmed").checked) ? "" : "none";
   });
+  root.querySelector("#mOccasion").addEventListener("change", (e) => {
+    const wrap = root.querySelector("#mOccasionOtherWrap");
+    wrap.style.display = e.target.value === "Other" ? "block" : "none";
+    if (e.target.value === "Other") root.querySelector("#mOccasionOther").focus();
+  });
   root.querySelector("#mType").addEventListener("change", (e) => {
     root.querySelector("#mPcsRow").style.display = e.target.value === "pheras" ? "none" : "";
   });
@@ -9337,6 +9354,7 @@ function openNewLeadModal(opts = {}) {
           finalAmount: root.querySelector("#mComboFinalRate").value ? Number(root.querySelector("#mComboFinalRate").value) : null,
           guestRange: root.querySelector("#mGuests").value || null,
           occasion: root.querySelector("#mOccasion").value || null,
+          occasionOther: root.querySelector("#mOccasion").value === "Other" ? (root.querySelector("#mOccasionOther").value.trim() || null) : null,
           alreadyConfirmed,
           advanceAmount: root.querySelector("#mComboAdvanceAmount").value ? Number(root.querySelector("#mComboAdvanceAmount").value) : null,
           advanceDate: root.querySelector("#mComboAdvanceDate").value || null,
@@ -9365,6 +9383,7 @@ function openNewLeadModal(opts = {}) {
         budget: root.querySelector("#mBudget").value ? Number(root.querySelector("#mBudget").value) : null,
         guestRange: root.querySelector("#mGuests").value || null,
         occasion: root.querySelector("#mOccasion").value || null,
+        occasionOther: root.querySelector("#mOccasion").value === "Other" ? (root.querySelector("#mOccasionOther").value.trim() || null) : null,
         venue: root.querySelector("#mVenue").value || null,
         pcs: root.querySelector("#mPcs").value || null,
         isEventManager: isB2b,
@@ -9427,6 +9446,7 @@ function openQuickConfirmModal() {
               <div><label>Occasion</label><select id="qcOccasion"><option value="">Not specified</option>${CONFIG.occasions.map((o) => `<option value="${o}">${o}</option>`).join("")}</select></div>
               <div><label>No. of guests</label><select id="qcGuests"><option value="">Not specified</option>${CONFIG.guestRanges.map((g) => `<option value="${g}">${g}</option>`).join("")}</select></div>
             </div>
+            <div id="qcOccasionOtherWrap" style="display:none; margin-top:8px;"><label>Please specify the occasion</label><input id="qcOccasionOther" placeholder="e.g. Housewarming, Anniversary, Corporate offsite…" /></div>
             <div class="row-2" id="qcPcsRow">
               <div><label>Pcs (No. of Musicians)</label><input id="qcPcs" type="number" /></div>
               <div></div>
@@ -9475,6 +9495,8 @@ function openQuickConfirmModal() {
     q("#qcCity").value = l.city || "";
     q("#qcState").value = l.state || "";
     q("#qcOccasion").value = l.occasion || "";
+    q("#qcOccasionOther").value = l.occasion === "Other" ? (l.occasion_other || "") : "";
+    q("#qcOccasionOtherWrap").style.display = l.occasion === "Other" ? "block" : "none";
     q("#qcGuests").value = l.guest_range || "";
     q("#qcPcs").value = l.pcs || "";
     q("#qcVenue").value = "";
@@ -9486,6 +9508,7 @@ function openQuickConfirmModal() {
   }
 
   q("#qcSearch").addEventListener("input", () => { picked = null; q("#qcForm").style.display = "none"; q("#submitModal").disabled = true; renderResults(); });
+  q("#qcOccasion").addEventListener("change", (e) => { q("#qcOccasionOtherWrap").style.display = e.target.value === "Other" ? "block" : "none"; if (e.target.value === "Other") q("#qcOccasionOther").focus(); });
   q("#qcType").addEventListener("change", (e) => { q("#qcPcsRow").style.display = e.target.value === "pheras" ? "none" : ""; });
   q("#qcSearch").focus();
 
@@ -9510,6 +9533,7 @@ function openQuickConfirmModal() {
           date,
           guestRange: q("#qcGuests").value || null,
           occasion: q("#qcOccasion").value || null,
+          occasionOther: q("#qcOccasion").value === "Other" ? (q("#qcOccasionOther").value.trim() || null) : null,
           venue: q("#qcVenue").value || null,
           pcs: q("#qcPcs").value || null,
           isEventManager: !!picked.is_b2b,

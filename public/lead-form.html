@@ -180,6 +180,7 @@
         <div class="q">
           <label class="qlabel">What is the occasion? <span class="opt">(optional)</span></label>
           <select id="occasion"></select>
+          <input id="occasionOther" type="text" maxlength="200" placeholder="Please tell us the occasion" style="display:none; margin-top:8px;" />
         </div>
 
         <div class="q">
@@ -212,6 +213,7 @@
         <div class="q">
           <label class="qlabel">How did you hear about us?</label>
           <select id="howHeard" required></select>
+          <input id="howHeardOther" type="text" maxlength="200" placeholder="Please tell us how you heard about us" style="display:none; margin-top:8px;" />
         </div>
 
         <div class="q">
@@ -382,6 +384,14 @@
       return byName ? byName.code : text.trim();
     }
 
+    // Whenever "Other" is chosen, a box appears so the person can say what they mean.
+    const showOtherBox = (sel, boxId) => sel.addEventListener("change", () => {
+      const box = document.getElementById(boxId);
+      box.style.display = sel.value === "Other" ? "block" : "none";
+      if (sel.value === "Other") box.focus();
+    });
+    showOtherBox(occasionSelect, "occasionOther");
+    showOtherBox(howHeardSelect, "howHeardOther");
     fetch("/api/config").then(r => r.json()).then(cfg => {
       experienceSelect.innerHTML = cfg.experiences.map(e => `<option value="${e.id}">${e.name}</option>`).join("");
       occasionSelect.innerHTML = cfg.occasions.map(o => `<option value="${o}">${o}</option>`).join("");
@@ -419,9 +429,11 @@
         state: document.getElementById("state").value,
         date: document.getElementById("date").value,
         occasion: occasionSelect.value,
+        occasionOther: occasionSelect.value === "Other" ? document.getElementById("occasionOther").value.trim() : "",
         guestRange: guestRangeSelect.value,
         details: document.getElementById("details").value,
         howHeard: howHeardSelect.value,
+        howHeardOther: howHeardSelect.value === "Other" ? document.getElementById("howHeardOther").value.trim() : "",
         whatsappOptin: true,
         whatsappNumber: whatsappSame ? fullPhone : waFullPhone,
         altDate: document.getElementById("altDate").value || null,

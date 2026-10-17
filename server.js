@@ -1193,8 +1193,11 @@ app.post("/api/leads", async (req, res) => {
   const {
     name, phone, email, eventType, city, state, date, budget, notes,
     venue, occasion, guestRange, details, howHeard, whatsappOptin, altDate, whatsappNumber, pcs,
-    isEventManager, managerCompany, managerCity, managerInstagram,
+    isEventManager, managerCompany, managerCity, managerInstagram, occasionOther, howHeardOther,
   } = req.body;
+  // "Other" always comes with a free-text detail.
+  const occasionOtherClean = occasion === "Other" ? (String(occasionOther || "").trim().slice(0, 200) || null) : null;
+  const howHeardClean = howHeard === "Other" && String(howHeardOther || "").trim() ? `Other \u2014 ${String(howHeardOther).trim().slice(0, 200)}` : (howHeard || null);
   if (!name || !eventType || !date) {
     return res.status(400).json({ error: "name, eventType, and date are required" });
   }
@@ -1237,13 +1240,13 @@ app.post("/api/leads", async (req, res) => {
   await pool.query(`
     INSERT INTO leads (
       id, name, phone, email, event_type, city, state, date, budget, stage, advance, notes, created_at,
-      venue, occasion, guest_range, details, how_heard, whatsapp_optin, alt_date, whatsapp_number, pcs, is_b2b
+      venue, occasion, guest_range, details, how_heard, whatsapp_optin, alt_date, whatsapp_number, pcs, is_b2b, occasion_other
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'New', 0, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'New', 0, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
   `, [
     id, name, phone || null, email || null, eventType, city || null, state || null, date, budget || null, autoNote || notes || null, new Date().toISOString(),
     venue || null, occasion || null, guestRange || null,
-    details || null, howHeard || null, whatsappOptin ? 1 : 0, altDate || null, whatsappNumber || null, pcs || null, isEventManager ? 1 : 0,
+    details || null, howHeardClean, whatsappOptin ? 1 : 0, altDate || null, whatsappNumber || null, pcs || null, isEventManager ? 1 : 0, occasionOtherClean,
   ]);
   const created = (await pool.query("SELECT * FROM leads WHERE id = $1", [id])).rows[0];
   res.status(201).json(created);
@@ -2117,7 +2120,8 @@ app.delete("/api/gallery/:id", requireAuth, requireAdmin, async (req, res) => {
 // amount, so Accounts/profit totals aren't double-counted across the group —
 // the others just point back to it for display.
 app.post("/api/leads/combo", requireAuth, requireSection("leads"), async (req, res) => {
-  const { name, phone, email, city, occasion, guestRange, events, budget, finalAmount, alreadyConfirmed, advanceAmount, advanceDate, advanceMode, isB2b } = req.body;
+  const { name, phone, email, city, occasion, guestRange, events, budget, finalAmount, alreadyConfirmed, advanceAmount, advanceDate, advanceMode, isB2b, occasionOther } = req.body;
+  const occasionOtherClean = occasion === "Other" ? (String(occasionOther || "").trim().slice(0, 200) || null) : null;
   if (!canSeeMoney(req.user) && (alreadyConfirmed || finalAmount || advanceAmount)) return res.status(403).json({ error: "Confirming with amounts needs Accounts access" });
   if (!name) return res.status(400).json({ error: "Name is required" });
   if (!Array.isArray(events) || events.length < 2) return res.status(400).json({ error: "Provide at least two format/date combinations for a combo booking" });
@@ -2133,16 +2137,16 @@ app.post("/api/leads/combo", requireAuth, requireSection("leads"), async (req, r
     await pool.query(`
       INSERT INTO leads (
         id, name, phone, email, event_type, city, date, budget, stage, advance,
-        quote_amount, final_amount, occasion, guest_range, combo_group_id, is_combo_primary, created_at, is_b2b
+        quote_amount, final_amount, occasion, guest_range, combo_group_id, is_combo_primary, created_at, is_b2b, occasion_other
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,$12,$13,$14,$15,$16,$17)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,$12,$13,$14,$15,$16,$17,$18)
     `, [
       id, name, phone || null, email || null, events[i].eventType, city || null, events[i].date,
       isPrimary ? (budget || null) : null,
       alreadyConfirmed ? "Confirmed" : "New",
       isPrimary ? (budget || null) : null,
       isPrimary && alreadyConfirmed ? (finalAmount || null) : null,
-      occasion || null, guestRange || null, comboGroupId, isPrimary ? 1 : 0, now, isB2b ? 1 : 0,
+      occasion || null, guestRange || null, comboGroupId, isPrimary ? 1 : 0, now, isB2b ? 1 : 0, occasionOtherClean,
     ]);
     createdIds.push(id);
   }
