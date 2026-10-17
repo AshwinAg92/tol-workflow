@@ -3710,6 +3710,21 @@ async function renderTravelCalendar(main) {
     return evs.filter((l) => tcCtx.assignments.some((a) => a.lead_id === l.id && a.status !== "declined" && travelCalSelectedIds.has(a.team_id)));
   }
 
+  // One pill per day + direction + route + mode, with everyone on that route named. If the team splits
+  // onto different routes the same day, each route gets its own pill.
+  function journeyPills(evs) {
+    const map = new Map();
+    evs.forEach(({ leg, kind }) => {
+      const derivedReturn = kind === "return" && leg.leg_type !== "return";
+      const from = derivedReturn ? leg.to_city : leg.from_city, to = derivedReturn ? leg.from_city : leg.to_city;
+      const route = [from, to].filter(Boolean).join(" → ");
+      const key = [kind, normCity(from), normCity(to), leg.mode || ""].join("|");
+      let g = map.get(key);
+      if (!g) { g = { leg, kind, route, names: [] }; map.set(key, g); }
+      (leg.members || []).forEach((m) => { if (m.name && !g.names.includes(m.name)) g.names.push(m.name); });
+    });
+    return [...map.values()];
+  }
   const firstNames = (leg) => (leg.members || []).map((m) => String(m.name || "").split(" ")[0]).filter(Boolean).join(", ");
   const pillText = (leg) => `${firstNames(leg) ? firstNames(leg) + " · " : ""}${legLabel(leg)}`;
   function legLabel(leg) { return leg.lead_id ? `${leg.lead_name}${leg.lead_city ? ` (${leg.lead_city})` : ""}` : (leg.label || "Travel"); }
@@ -3755,8 +3770,8 @@ async function renderTravelCalendar(main) {
           ${d ? `<div class="cal-day">${d}</div>` : ""}
           ${dayEvents.map((l) => { const gap = eventTravelGaps(l, legs, tcCtx.assignments).length > 0; return `
             <div class="cal-event tc-event" data-event-id="${l.id}" style="cursor:pointer; background:#1F6F43;" title="Event: ${String(l.name).replace(/"/g, "")}${gap ? " — travel not planned for someone" : ""}">🎤 ${l.name}${gap ? " ⚠" : ""}</div>`; }).join("")}
-          ${evs.map(({ leg, kind }) => `
-            <div class="cal-event" data-leg-id="${leg.id}" style="cursor:pointer; ${kind === "return" ? "background:#8A5FA8;" : kind === "onward" ? "background:#C1602B;" : ""}" title="${(leg.members || []).map((m) => m.name).join(", ")} — ${[leg.from_city, leg.to_city].filter(Boolean).join(" → ")} — ${legLabel(leg)}${kind === "return" ? " — Return" : kind === "onward" ? " — Onward" : " — Going"}">${kind === "return" ? "⬅ " : kind === "onward" ? "🔗 " : "➡ "}${pillText(leg)}</div>
+          ${journeyPills(evs).map((g) => `
+            <div class="cal-event" data-leg-id="${g.leg.id}" style="cursor:pointer; white-space:normal; line-height:1.25; ${g.kind === "return" ? "background:#8A5FA8;" : g.kind === "onward" ? "background:#C1602B;" : ""}" title="${g.names.join(", ")} — ${g.route || "route not set"} — ${legLabel(g.leg)} — ${g.kind === "return" ? "Return" : g.kind === "onward" ? "Onward" : "Going"}">${g.kind === "return" ? "⬅ " : g.kind === "onward" ? "🔗 " : "➡ "}<b>${g.route || legLabel(g.leg)}</b><br><span style="opacity:.92;">${g.names.map((n) => n.split(" ")[0]).join(", ")}</span></div>
           `).join("")}
         </div>
       `));
