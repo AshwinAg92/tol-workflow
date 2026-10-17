@@ -821,8 +821,32 @@ app.get("/api/leads", requireAuth, async (req, res) => {
     FROM travel_legs WHERE travel_legs.lead_id IS NOT NULL GROUP BY travel_legs.lead_id`)).rows;
   const travelByLead = {};
   travelCounts.forEach((t) => (travelByLead[t.lead_id] = { total: Number(t.total), booked: Number(t.booked), done: Number(t.done) }));
+  // Admin-only: other events' travel that overlaps a still-open lead's date, so a
+  // new enquiry for a day the team is already on the road gets flagged. Managers
+  // never get this (it would expose admin travel).
+  const travelClashByLead = {};
+  if (req.user.access_level === "admin") {
+    const legRows = (await pool.query(`SELECT tl.lead_id, tl.from_city, tl.to_city,
+        LEFT(tl.departure_at, 10) AS d1, LEFT(COALESCE(NULLIF(tl.arrival_at, ''), tl.departure_at), 10) AS d2,
+        l.name AS lead_name, l.combo_group_id
+      FROM travel_legs tl JOIN leads l ON l.id = tl.lead_id
+      WHERE tl.departure_at IS NOT NULL AND tl.departure_at <> ''`)).rows;
+    rows.forEach((l) => {
+      if (!l.date || !["New", "Follow-up", "Interested", "Tentative"].includes(l.stage)) return;
+      const seen = new Set();
+      const hits = legRows.filter((g) => {
+        if (g.lead_id === l.id || (l.combo_group_id && g.combo_group_id === l.combo_group_id)) return false;
+        const end = g.d2 && g.d2 >= g.d1 ? g.d2 : g.d1;
+        if (!(g.d1 <= l.date && l.date <= end)) return false;
+        if (seen.has(g.lead_id)) return false;
+        seen.add(g.lead_id); return true;
+      });
+      if (hits.length) travelClashByLead[l.id] = hits.slice(0, 2).map((g) => ({ lead: g.lead_name, from: (g.from_city || "").trim(), to: (g.to_city || "").trim(), start: g.d1, end: g.d2 && g.d2 >= g.d1 ? g.d2 : g.d1 }));
+    });
+  }
   const withReceived = rows.map((l) => ({
     ...l,
+    travel_clash: travelClashByLead[l.id] || null,
     travel_total: travelByLead[l.id]?.total || 0,
     travel_booked: travelByLead[l.id]?.booked || 0,
     travel_done: travelByLead[l.id]?.done || 0,
@@ -1166,7 +1190,13 @@ app.post("/api/leads", async (req, res) => {
   ]);
   const created = (await pool.query("SELECT * FROM leads WHERE id = $1", [id])).rows[0];
   res.status(201).json(created);
-  logActivity({ user: null }, `New query received: ${name} — ${packageName(eventType)}${city ? ` in ${city}` : ""}`, id);
+  // Date already held by another open lead? Say so in the alert + log (the lead card also shows it live).
+  let clashNote = "";
+  try {
+    const held = (await pool.query("SELECT name, stage FROM leads WHERE date = $1 AND id <> $2 AND stage IN ('New','Follow-up','Interested','Tentative','Confirmed') LIMIT 3", [date, id])).rows;
+    if (held.length) clashNote = ` ⚠️ Same date as ${held.map((h) => `${h.name} (${h.stage})`).join(", ")}`;
+  } catch (e) { /* non-fatal */ }
+  logActivity({ user: null }, `New query received: ${name} — ${packageName(eventType)}${city ? ` in ${city}` : ""}${clashNote}`, id);
 
   // Submitted by an Event Manager / Artist Manager on a client's behalf —
   // save them to the B2B directory so future outreach (rate cards, etc.)
@@ -1184,7 +1214,7 @@ app.post("/api/leads", async (req, res) => {
   pool.query(`
     INSERT INTO admin_notifications (id, message, assignment_id, audience, created_at)
     VALUES ($1, $2, NULL, 'admin', $3)
-  `, [uuid(), `New query: ${name} — ${packageName(eventType)}${city ? ` in ${city}` : ""}, wants ${date}`, new Date().toISOString()]
+  `, [uuid(), `New query: ${name} — ${packageName(eventType)}${city ? ` in ${city}` : ""}, wants ${date}${clashNote}`, new Date().toISOString()]
   ).catch((err) => console.error("Failed to create new-lead notification:", err.message));
 
   sendNewLeadEmail(created).catch((err) => console.error("New-lead email failed (not fatal):", err.message));
@@ -4171,9 +4201,10 @@ async function regFormPage(req, res, ok) {
 <div class="hp"><label>Website</label><input name="website" tabindex="-1" autocomplete="off"></div>
 <label>Full name (exactly as on your ID) *</label><input name="name" required maxlength="120">
 <div class="r2"><div><label>WhatsApp number *</label><input name="phone" type="tel" required maxlength="20"></div><div><label>Email</label><input name="email" type="email" maxlength="120"></div></div>
-<label>Instrument(s) / role * <span class="m">(tick all that you play)</span></label>
-<div class="c" style="margin-top:4px;display:grid;grid-template-columns:1fr 1fr;gap:6px 10px">${instList.map((i) => `<label style="display:flex;gap:8px;align-items:center;margin:0;color:#3A2A1A"><input type="checkbox" name="inst" value="${escHtml(i)}" style="width:auto"> ${escHtml(i)}</label>`).join("")}</div>
-<label>Something else? (optional, comma-separated)</label><input name="otherInst" maxlength="80" placeholder="e.g. Sarod">
+<label>Instrument(s) / role * <span class="m">(pick all that you play)</span></label>
+<details id="instDd" class="c" style="margin-top:4px;padding:0"><summary style="cursor:pointer;list-style:none;padding:11px 12px;display:flex;justify-content:space-between;gap:8px;align-items:center"><span id="instSel" style="color:#7A6A5A">Choose from the list</span><span aria-hidden="true">&#9662;</span></summary>
+<div style="border-top:1px solid #E6D9C4;padding:10px 12px;display:grid;grid-template-columns:1fr 1fr;gap:8px 10px;max-height:260px;overflow:auto">${instList.map((i) => `<label style="display:flex;gap:8px;align-items:center;margin:0;color:#3A2A1A"><input type="checkbox" name="inst" value="${escHtml(i)}" style="width:auto"> ${escHtml(i)}</label>`).join("")}</div></details>
+<label>Not in the list? (optional, comma-separated)</label><input name="otherInst" maxlength="80" placeholder="e.g. Sarod">
 <label>Base city *</label><input name="city" required maxlength="80" list="cities" autocomplete="off" placeholder="Start typing and pick your city"><datalist id="cities">${cityList.map((c) => `<option value="${escHtml(c)}"></option>`).join("")}</datalist>
 <div class="r2"><div><label>Date of birth</label><input name="dob" type="date"></div><div><label>Gender (for ticket booking)</label><select name="gender"><option value="">—</option><option>Male</option><option>Female</option><option>Other</option></select></div></div>
 <div class="r2"><div><label>Emergency contact name</label><input name="emName" maxlength="80"></div><div><label>Emergency contact phone</label><input name="emPhone" type="tel" maxlength="20"></div></div>
@@ -4186,9 +4217,9 @@ ${slot(1, true, "ID card")}${slot(2, false, "Second ID (optional)")}${slot(3, fa
 <div id="err"></div><button id="go" type="submit">Submit registration</button></form>
 <div id="done" style="display:none"><h1>Thank you!</h1><p>Your details have been received. The Together, Out Loud team will review them and get in touch.</p></div>
 </div><script>
-const f=document.getElementById('f');f.addEventListener('submit',async(e)=>{e.preventDefault();const b=document.getElementById('go'),er=document.getElementById('err');er.textContent='';
+const f=document.getElementById('f');const instSel=document.getElementById('instSel');f.addEventListener('change',(e)=>{if(e.target.name==='inst'){const v=[...f.querySelectorAll('input[name=inst]:checked')].map(x=>x.value);instSel.textContent=v.length?v.join(', '):'Choose from the list';instSel.style.color=v.length?'#2B2420':'#7A6A5A'}});f.addEventListener('submit',async(e)=>{e.preventDefault();const b=document.getElementById('go'),er=document.getElementById('err');er.textContent='';
 for(const n of [1,2,3]){const fl=f['file'+n].files[0];if(fl&&fl.size>8*1024*1024){er.textContent='Each file must be under 8 MB.';return}}
-if(!f.querySelector('input[name=inst]:checked')&&!f.otherInst.value.trim()){er.textContent='Please tick at least one instrument.';return}
+if(!f.querySelector('input[name=inst]:checked')&&!f.otherInst.value.trim()){er.textContent='Please pick at least one instrument.';return}
 b.disabled=true;b.textContent='Uploading…';
 try{const r=await fetch(location.pathname,{method:'POST',body:new FormData(f)});const j=await r.json().catch(()=>({}));
 if(!r.ok)throw new Error(j.error||'Something went wrong — please try again.');f.style.display='none';document.querySelector('.m').style.display='none';document.querySelector('h1').style.display='none';document.getElementById('done').style.display='block';window.scrollTo(0,0)}

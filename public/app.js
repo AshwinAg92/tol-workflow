@@ -17,15 +17,138 @@ let leadsQuoteDateFilter = "";
 let leadsSortBy = "date";
 let leadsB2bOnly = false;
 let leadsClashOnly = false;
+let leadsDueOnly = false;
 
 // Other leads that fall on the same event date as this one — Confirmed, Tentative,
 // Interested, Follow-up and New all count (not Not Interested / Completed). The
 // other legs of the same combo booking share a date on purpose, so they're skipped.
 const CLASH_STAGES = ["New", "Follow-up", "Interested", "Tentative", "Confirmed"];
+function clashesOnDate(date, excludeId, comboGroupId) {
+  if (!date) return [];
+  return LEADS.filter((o) => o.id !== excludeId && o.date === date && CLASH_STAGES.includes(o.stage)
+    && !(comboGroupId && o.combo_group_id === comboGroupId));
+}
 function dateClashes(lead) {
   if (!lead || !lead.date) return [];
-  return LEADS.filter((o) => o.id !== lead.id && o.date === lead.date && CLASH_STAGES.includes(o.stage)
-    && !(lead.combo_group_id && o.combo_group_id === lead.combo_group_id));
+  return clashesOnDate(lead.date, lead.id, lead.combo_group_id);
+}
+const OPEN_STAGES = ["New", "Follow-up", "Interested", "Tentative"];
+function blockedOn(date) {
+  return date ? BLOCKED_DATES.find((b) => date >= b.start_date && date <= b.end_date) : null;
+}
+function travelClashText(lead) {
+  if (!lead || !Array.isArray(lead.travel_clash) || !lead.travel_clash.length) return "";
+  return lead.travel_clash.map((t) => `${t.lead}${t.from || t.to ? ` (${[t.from, t.to].filter(Boolean).join(" \u2192 ")}, ${fmtDate(t.start)}${t.end !== t.start ? "\u2013" + fmtDate(t.end) : ""})` : ""}`).join(", ");
+}
+// Every date-related heads-up for a lead, as plain lines.
+function dateWarningLines(lead) {
+  const lines = [];
+  const c = clashSummary(lead);
+  if (c) lines.push(`Same date as ${c}`);
+  const b = blockedOn(lead && lead.date);
+  if (b) lines.push(`This date is blocked${b.reason ? " (" + b.reason + ")" : ""}`);
+  const t = travelClashText(lead);
+  if (t) lines.push(`Team is travelling for ${t}`);
+  return lines;
+}
+// Live warning under the Event date field of the New / Edit lead forms.
+function wireDateWarn(root, excludeId, comboGroupId) {
+  const input = root.querySelector("#mDate");
+  if (!input) return;
+  const row = input.closest(".row-2") || input.parentElement;
+  const box = document.createElement("div");
+  box.id = "mDateWarn";
+  row.insertAdjacentElement("afterend", box);
+  const update = () => {
+    const d = input.value;
+    const clashes = clashesOnDate(d, excludeId, comboGroupId);
+    const b = blockedOn(d);
+    const lines = [];
+    if (clashes.length) lines.push(`Already on this date: ${clashes.map((o) => `${o.name} (${o.stage}${o.city ? ", " + o.city : ""})`).join(", ")}`);
+    if (b) lines.push(`This date is blocked${b.reason ? " (" + b.reason + ")" : ""}`);
+    box.innerHTML = lines.length ? `<div style="background:#FFF4E5; color:#8A5A1F; padding:6px 10px; border-radius:6px; font-size:12.5px; margin:-4px 0 10px;">${lines.map((l) => "\u26A0\uFE0F " + l).join("<br>")}</div>` : "";
+  };
+  input.addEventListener("input", update);
+  input.addEventListener("change", update);
+  update();
+}
+// Is this lead due a nudge today? Never followed up / 3+ days quiet, or its quote is about to lapse.
+function quoteExpiry(lead) {
+  if (!lead || !lead.last_quoted_at || !lead.quote_amount || !OPEN_STAGES.includes(lead.stage)) return null;
+  const age = Math.floor((Date.now() - new Date(lead.last_quoted_at).getTime()) / 86400000);
+  if (age < 5) return null;
+  return age >= 7 ? { expired: true, text: age === 7 ? "Quote expires today" : `Quote expired ${age - 7} day${age - 7 === 1 ? "" : "s"} ago` } : { expired: false, text: `Quote expires in ${7 - age} day${7 - age === 1 ? "" : "s"}` };
+}
+function isDueToday(lead) {
+  if (!OPEN_STAGES.includes(lead.stage)) return false;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  if (lead.date && lead.date < todayStr && lead.stage !== "Tentative") return false;
+  if (lead.snooze_until && lead.snooze_until > todayStr) return false;
+  return !lead.last_followup_at || daysSince(lead.last_followup_at) >= 3 || !!quoteExpiry(lead);
+}
+// Pull the fields back out of a saved quote's text so the card can be rebuilt on a resend.
+function parseQuoteBody(body, q) {
+  const grab = (re) => { const m = re.exec(body || ""); return m ? m[1].replace(/\*/g, "").trim() : ""; };
+  const f = {
+    format: packageName(q.event_type), location: grab(/Location:\*?\s*(.+)/i), eventDate: grab(/Date:\*?\s*(.+)/i),
+    guests: grab(/Guests:\*?\s*(.+)/i), duration: grab(/Duration:\*?\s*(.+)/i), pcs: grab(/\(No\. of Musicians\):\s*(.+)/i),
+    charges: q.amount, isB2b: false, b2bCharges: "",
+  };
+  const m = /\u20B9([\d,]+)\/-\s*\(B2C\)\s*\u00B7\s*\u20B9([\d,]+)\/-\s*\(B2B\)/.exec(body || "");
+  if (m) { f.isB2b = true; f.charges = m[1].replace(/,/g, ""); f.b2bCharges = m[2].replace(/,/g, ""); }
+  return f;
+}
+// Other open leads still sitting on a date that has just been taken by `lead`.
+function releaseCandidates(lead) {
+  return dateClashes(lead).filter((o) => OPEN_STAGES.includes(o.stage));
+}
+function openReleaseDateModal(lead) {
+  const others = releaseCandidates(lead);
+  if (!others.length) return;
+  const root = document.getElementById("modalRoot");
+  const msgFor = (o) => fillTemplate(MESSAGE_TEMPLATES.date_released || TEMPLATE_META.date_released.default, {
+    firstName: (o.name || "").split(" ")[0] || "there", experience: packageName(o.event_type), date: fmtDate(o.date),
+  });
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card" style="max-width:460px;">
+        <div class="modal-head"><h3>Release ${fmtDate(lead.date)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body">
+          <p class="muted small" style="margin-top:0;">${lead.name} is ${lead.stage} for this date. Let the others know it's gone, then move them to Not Interested.</p>
+          ${others.map((o) => `
+            <div class="dash-list-item" style="display:flex; align-items:center; gap:8px; justify-content:space-between;">
+              <label style="display:flex; align-items:center; gap:8px; margin:0; flex:1;">
+                <input type="checkbox" class="rel-cb" data-id="${o.id}" checked style="width:18px; height:18px;" />
+                <span><b>${o.name}</b><br><span class="muted small">${o.stage}${o.city ? " \u00B7 " + o.city : ""}</span></span>
+              </label>
+              ${(o.whatsapp_number || o.phone) ? `<button class="btn-ghost rel-wa" data-id="${o.id}" style="font-size:12px; padding:4px 10px;">\uD83D\uDCAC Tell ${(o.name || "").split(" ")[0]}</button>` : ""}
+            </div>`).join("")}
+        </div>
+        <div class="modal-foot">
+          <button class="btn-ghost" id="cancelModal">Not now</button>
+          <button class="btn-primary" id="relMoveBtn">Move selected to Not Interested</button>
+        </div>
+      </div>
+    </div>`;
+  const close = () => { root.innerHTML = ""; renderMain(); };
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cancelModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelectorAll(".rel-wa").forEach((b) => b.addEventListener("click", () => {
+    const o = others.find((x) => x.id === b.dataset.id); if (!o) return;
+    const dg = (o.whatsapp_number || o.phone || "").replace(/\D/g, "");
+    if (dg) window.open(`https://wa.me/${dg}?text=${encodeURIComponent(msgFor(o))}`, "_blank");
+  }));
+  root.querySelector("#relMoveBtn").addEventListener("click", async () => {
+    const ids = [...root.querySelectorAll(".rel-cb:checked")].map((c) => c.dataset.id);
+    if (!ids.length) return close();
+    const btn = root.querySelector("#relMoveBtn"); btn.disabled = true; btn.textContent = "Moving\u2026";
+    try {
+      for (const id of ids) await api(`/api/leads/${id}`, { method: "PATCH", body: JSON.stringify({ stage: "Not Interested", notInterestedReason: "Date not available / clashed" }) });
+      await refreshLeads();
+    } catch (err) { alert(err.message); }
+    close();
+  });
 }
 function clashSummary(lead) {
   return dateClashes(lead).map((o) => `${o.name} (${o.stage}${o.city ? ", " + o.city : ""})`).join(", ");
@@ -1871,6 +1994,7 @@ async function renderLeadsLog(main, skipRefresh) {
     .filter((l) => !leadsDateFilter || l.date === leadsDateFilter)
     .filter((l) => !leadsQuoteDateFilter || (l.last_quoted_at || "").slice(0, 10) === leadsQuoteDateFilter)
     .filter((l) => !leadsB2bOnly || l.is_b2b)
+    .filter((l) => !leadsDueOnly || isDueToday(l))
     .filter((l) => !leadsClashOnly || (l.date && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) && dateClashes(l).length > 0));
   const filtered = leadsFilter === "all" ? baseFiltered : baseFiltered.filter((l) => l.event_type === leadsFilter);
   const countFor = (id) => baseFiltered.filter((l) => l.event_type === id).length;
@@ -1923,7 +2047,8 @@ async function renderLeadsLog(main, skipRefresh) {
         </select>
         <button class="btn-ghost${leadsB2bOnly ? " filter-chip-active" : ""}" id="leadsB2bToggle" style="${leadsB2bOnly ? "background:#8A5FA8; color:#fff; border-color:#8A5FA8;" : ""}">🏢 B2B only</button>
         ${(() => { const n = LEADS.filter((l) => l.date && l.date >= todayStr && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) && dateClashes(l).length > 0).length; return `<button class="btn-ghost${leadsClashOnly ? " filter-chip-active" : ""}" id="leadsClashToggle" style="${leadsClashOnly ? "background:#C1602B; color:#fff; border-color:#C1602B;" : n ? "color:#8A5A1F; border-color:#E8C48A;" : ""}">⚠️ Same-date clashes${n ? ` (${n})` : ""}</button>`; })()}
-        ${(leadsSearch || leadsOnlyId || leadsCityFilter || leadsDateFilter || leadsQuoteDateFilter || leadsStageFilter !== "all" || leadsB2bOnly || leadsClashOnly) ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
+        ${(() => { const n = LEADS.filter(isDueToday).length; return `<button class="btn-ghost${leadsDueOnly ? " filter-chip-active" : ""}" id="leadsDueToggle" style="${leadsDueOnly ? "background:#1C7A80; color:#fff; border-color:#1C7A80;" : ""}" title="Open leads never followed up, quiet for 3+ days, or with a quote about to lapse. Snoozed leads are left out.">\uD83D\uDCDE Today's follow-ups${n ? ` (${n})` : ""}</button>`; })()}
+        ${(leadsSearch || leadsOnlyId || leadsCityFilter || leadsDateFilter || leadsQuoteDateFilter || leadsStageFilter !== "all" || leadsB2bOnly || leadsClashOnly || leadsDueOnly) ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
       </div>
     </div>
 
@@ -1968,8 +2093,9 @@ async function renderLeadsLog(main, skipRefresh) {
   main.querySelector("#leadsSortSelect").addEventListener("change", (e) => { leadsSortBy = e.target.value; renderLeadsLog(main, true); });
   main.querySelector("#leadsB2bToggle").addEventListener("click", () => { leadsB2bOnly = !leadsB2bOnly; renderLeadsLog(main, true); });
   main.querySelector("#leadsClashToggle").addEventListener("click", () => { leadsClashOnly = !leadsClashOnly; renderLeadsLog(main, true); });
+  main.querySelector("#leadsDueToggle").addEventListener("click", () => { leadsDueOnly = !leadsDueOnly; renderLeadsLog(main, true); });
   const clearAllBtn = main.querySelector("#clearAllFilters");
-  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsOnlyId = ""; leadsCityFilter = ""; leadsDateFilter = ""; leadsQuoteDateFilter = ""; leadsStageFilter = "all"; leadsB2bOnly = false; leadsClashOnly = false; renderLeadsLog(main, true); });
+  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsOnlyId = ""; leadsCityFilter = ""; leadsDateFilter = ""; leadsQuoteDateFilter = ""; leadsStageFilter = "all"; leadsB2bOnly = false; leadsClashOnly = false; leadsDueOnly = false; renderLeadsLog(main, true); });
 
   const filterRow = main.querySelector("#filterRow");
   const allChip = el(`<button class="filter-chip${leadsFilter === "all" ? " filter-chip-active" : ""}">All <span class="mono">${baseFiltered.length}</span></button>`);
@@ -1985,6 +2111,11 @@ async function renderLeadsLog(main, skipRefresh) {
   if (!skipRefresh) leadsSelected.clear();
   const rows = main.querySelector("#leadsRows");
   const sorted = filtered.slice().sort((a, b) => {
+    if (leadsDueOnly) {
+      const ca = dateClashes(a).length > 0 ? 0 : 1, cb = dateClashes(b).length > 0 ? 0 : 1;
+      if (ca !== cb) return ca - cb;
+      return new Date(a.date || "9999-12-31") - new Date(b.date || "9999-12-31");
+    }
     if (leadsSortBy === "followup") {
       // Never-contacted leads first, then longest-since-last-followup first.
       const aTime = a.last_followup_at ? new Date(a.last_followup_at).getTime() : -Infinity;
@@ -2076,6 +2207,8 @@ async function renderLeadsLog(main, skipRefresh) {
           })() : ""}
           ${l.stage === "Confirmed" && canAssignTeam() ? (() => {
             const total = l.travel_total || 0, done = l.travel_done || 0, booked = l.travel_booked || 0;
+            // A home-city (Siliguri) event with no legs doesn't need a reminder to plan travel.
+            if (total === 0 && (l.city || "").trim().toLowerCase() === "siliguri") return "";
             let bg, fg, bd, icon, text;
             if (total === 0) { bg = "#F3EFE9"; fg = "#7A6A5A"; bd = "#E2D9CC"; icon = "\u2708\ufe0f"; text = "No travel plan yet"; }
             else if (done === total) { bg = "#E4F4E6"; fg = "#1F6B33"; bd = "#B9DEC0"; icon = "\u2705"; text = `Travel complete \u00b7 tickets ${done}/${total}`; }
@@ -2089,18 +2222,35 @@ async function renderLeadsLog(main, skipRefresh) {
           })() : ""}
           ${l.stage === "Confirmed" && canAssignTeam() ? `</div>` : ""}
           ${(() => {
-            // Warn on any open lead (New, Follow-up, Interested, Tentative) when
-            // another lead already sits on the same date.
-            if (!["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) || !l.date) return "";
-            const clashes = dateClashes(l);
-            if (!clashes.length) return "";
-            const askable = clashes.filter((o) => ["Interested", "Tentative"].includes(o.stage) && (o.whatsapp_number || o.phone)).slice(0, 3);
-            return `<div class="date-clash-warning" style="background:#FFF4E5; color:#8A5A1F; padding:6px 10px; border-radius:6px; font-size:12.5px; margin-top:6px;">⚠️ Same date as ${clashSummary(l)}
-              ${askable.length && ["New", "Follow-up"].includes(l.stage) ? `<div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">${askable.map((o) => `<button class="btn-ghost ask-date-confirm-btn" data-conflict-id="${o.id}" style="font-size:12px; padding:4px 10px;">💬 Ask ${(o.name || "").split(" ")[0]} to confirm</button>`).join("")}</div>` : ""}
-            </div>`;
+            // Date heads-ups on any open lead: another lead on the same date, a
+            // blocked date, or the team travelling for another event.
+            const isOpen = ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage);
+            const clashes = isOpen ? dateClashes(l) : [];
+            const lines = isOpen && l.date ? dateWarningLines(l) : [];
+            const releasable = l.stage === "Confirmed" && hasLeadsAccess() ? releaseCandidates(l) : [];
+            let out = "";
+            if (lines.length) {
+              const askable = clashes.filter((o) => ["Interested", "Tentative"].includes(o.stage) && (o.whatsapp_number || o.phone)).slice(0, 3);
+              out += `<div class="date-clash-warning" style="background:#FFF4E5; color:#8A5A1F; padding:6px 10px; border-radius:6px; font-size:12.5px; margin-top:6px;">${lines.map((x) => "\u26A0\uFE0F " + x).join("<br>")}
+                ${askable.length && ["New", "Follow-up"].includes(l.stage) ? `<div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">${askable.map((o) => `<button class="btn-ghost ask-date-confirm-btn" data-conflict-id="${o.id}" style="font-size:12px; padding:4px 10px;">\uD83D\uDCAC Ask ${(o.name || "").split(" ")[0]} to confirm</button>`).join("")}</div>` : ""}
+              </div>`;
+            }
+            if (releasable.length) {
+              out += `<div class="date-release-banner" style="background:#EAF5F0; color:#1C5E55; padding:6px 10px; border-radius:6px; font-size:12.5px; margin-top:6px; display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+                <span>\uD83D\uDCE4 ${releasable.length} other lead${releasable.length > 1 ? "s" : ""} still open on this date (${releasable.map((o) => o.name.split(" ")[0]).slice(0, 3).join(", ")})</span>
+                <button class="btn-ghost release-date-btn" data-lead-id="${l.id}" style="font-size:12px; padding:4px 10px;">Release this date</button>
+              </div>`;
+            }
+            return out;
           })()}
           <div class="muted small">Submitted ${fmtDateTime(l.created_at)}</div>
           ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}${l.last_quoted_at ? ` <span class="muted">— sent ${fmtDate(l.last_quoted_at.slice(0, 10))}</span>` : ""}${l.quote_count > 1 ? ` <span class="muted">(${l.quote_count} quotes sent — see history in Quotation)</span>` : ""}</div>` : ""}
+          ${(() => {
+            const qe = quoteExpiry(l);
+            if (!qe) return "";
+            return `<div class="quote-expiry" style="margin-top:6px; font-size:12.5px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; color:${qe.expired ? "#A6432B" : "#8A5A1F"};">${qe.expired ? "\u26A0\uFE0F" : "\u23F3"} ${qe.text}
+              ${hasLeadsAccess() ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}" style="font-size:12px; padding:3px 10px;">\u21BB Re-quote</button>` : ""}</div>`;
+          })()}
           ${hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) ? (() => {
             const todayStr = new Date().toISOString().slice(0, 10);
             const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
@@ -2239,6 +2389,14 @@ async function renderLeadsLog(main, skipRefresh) {
       const digitsOnly = (other.whatsapp_number || other.phone || "").replace(/\D/g, "");
       if (!digitsOnly) return;
       window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
+    });
+  });
+
+  main.querySelectorAll(".release-date-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
+      if (lead) openReleaseDateModal(lead);
     });
   });
 
@@ -2647,7 +2805,16 @@ function openQuoteViewModal(q) {
       setTimeout(() => { if (btn) btn.textContent = "Copy text"; }, 1500);
     });
     const waBtn = root.querySelector("#resendWaBtn");
-    if (waBtn) waBtn.addEventListener("click", () => window.location.href = `https://wa.me/${digits}?text=${encodeURIComponent(q.body)}`);
+    if (waBtn) waBtn.addEventListener("click", async () => {
+      // Rebuild the branded card from the saved quote so a resend carries it too.
+      waBtn.disabled = true; waBtn.textContent = "Preparing\u2026";
+      let text = q.body;
+      try {
+        const link = await publishQuoteCard({ name: q.lead_name, event_type: q.event_type }, parseQuoteBody(q.body, q));
+        text = withCardLinkAtEnd(q.body, link);
+      } catch (e) { /* send as plain text */ }
+      window.location.href = `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+    });
     root.querySelector("#editQuoteBtn").addEventListener("click", () => { editing = true; draw(); });
     root.querySelector("#deleteQuoteBtn").addEventListener("click", async () => {
       if (!confirm("Delete this quote? This can't be undone.")) return;
@@ -5814,9 +5981,13 @@ function openRegistrationReviewModal(reg, onDone) {
         <label>Name</label><input id="rvName" value="${esc(d.name)}" />
         <div class="row-2"><div><label>Role</label><input id="rvRole" value="${esc(d.role)}" /></div><div><label>Base city</label><input id="rvCity" value="${esc(d.city)}" /></div></div>
         <label>Phone</label><input id="rvPhone" value="${esc(d.phone)}" />
+        <div id="rvFeeBox" style="margin-top:12px; background:#FFF6DD; border:1px solid #F0D9A8; border-radius:8px; padding:8px 12px;">
+          <div class="muted small" style="font-weight:600; letter-spacing:.04em;">\uD83D\uDCB0 FEE EXPECTATION (per performance)</div>
+          <div style="font-size:16px; font-weight:700; color:#8A5A1F;">${d.fee ? esc(d.fee) : `<span class="muted" style="font-weight:400; font-size:13px;"><i>Not stated \u2014 agree it when you first book them</i></span>`}</div>
+        </div>
         <div class="muted small" style="margin-top:10px; line-height:1.6;">
-          ${[["Email", d.email], ["DOB", d.dob], ["Gender", d.gender], ["Emergency contact", [d.emName, d.emPhone].filter(Boolean).join(" ")], ["Instagram", d.instagram], ["Fee expectation", d.fee], ["Notes", d.notes]]
-            .map(([k, v]) => `<span${k === "Fee expectation" ? ' style="font-weight:700;"' : ""}>${k}: ${v ? esc(v) : `<i>not provided</i>`}</span>`).join("<br>")}}
+          ${[["Email", d.email], ["DOB", d.dob], ["Gender", d.gender], ["Emergency contact", [d.emName, d.emPhone].filter(Boolean).join(" ")], ["Instagram", d.instagram], ["Notes", d.notes]]
+            .map(([k, v]) => `<span>${k}: ${v ? esc(v) : `<i>not provided</i>`}</span>`).join("<br>")}
         </div>
         <div style="margin-top:10px; font-weight:700;">Documents</div>
         ${reg.files.map((f) => `<div style="font-size:13px; margin-top:4px;">📎 ${esc(f.label)} — <a href="${f.url}" target="_blank" rel="noopener">${esc(f.original_name)}</a></div>`).join("")}
@@ -8718,6 +8889,7 @@ function openNewLeadModal(opts = {}) {
   addComboRow();
   addComboRow();
   root.querySelector("#addComboRowBtn").addEventListener("click", addComboRow);
+  wireDateWarn(root, null, null);
 
   root.querySelector("#mIsCombo").addEventListener("change", (e) => {
     root.querySelector("#singleEventFields").style.display = e.target.checked ? "none" : "";
@@ -9020,6 +9192,7 @@ function openEditLeadModal(leadId) {
   root.querySelector("#mOccasion").addEventListener("change", (e) => {
     root.querySelector("#mOccasionOtherWrap").style.display = e.target.value === "Other" ? "block" : "none";
   });
+  wireDateWarn(root, lead.id, lead.combo_group_id);
   root.querySelector("#submitModal").addEventListener("click", async () => {
     const name = root.querySelector("#mName").value.trim();
     if (!name) return alert("Name is required.");
@@ -9071,6 +9244,12 @@ const TEMPLATE_META = {
     description: "Sent from the same \"💬 Follow up\" button, but for Tentative leads instead.",
     placeholders: ["firstName", "experience", "dateClause"],
     default: "Hi {firstName}, following up on your {experience}{dateClause} — we've tentatively held this date for you with Together, Out Loud. Let us know if you'd like to go ahead so we can lock it in for you!\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
+  },
+  date_released: {
+    label: "Date no longer available",
+    description: "Sent from the \"Release this date\" popup to leads whose date has just been taken by another confirmed/tentative booking.",
+    placeholders: ["firstName", "experience", "date"],
+    default: "Hi {firstName}, thank you for your interest in {experience} on {date} with Together, Out Loud. Unfortunately that date has now been booked for another event, so we won't be able to hold it. If you have a flexible or alternate date, we'd love to make it work \u2014 just let us know!\n\n\uD83D\uDCF7 instagram.com/togetheroutloudclub | \uD83C\uDF10 togetheroutloud.in",
   },
   date_hold_check: {
     label: "Date confirmation request",
