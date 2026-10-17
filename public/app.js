@@ -3462,8 +3462,12 @@ function artistEventTravel(lead, teamId, legsAll) {
   const base = m?.base_city || "";
   const moves = artistMoves(teamId, legsAll, base);
   const D = lead.date;
-  const goingIn = moves.filter((x) => x.leg.lead_id === lead.id && !x.derived && (x.type === "going" || x.type === "onward"));
+  // An onward journey logged on this event that leaves after the event day (or from this event's city on the day) is a departure, not an arrival.
+  const leavesHere = (x) => x.type === "onward" && x.leg.lead_id === lead.id && normCity(x.to) !== normCity(lead.city)
+    && (x.date > D || (x.date === D && normCity(x.from) === normCity(lead.city)));
+  const goingIn = moves.filter((x) => x.leg.lead_id === lead.id && !x.derived && (x.type === "going" || x.type === "onward") && !leavesHere(x));
   const returnOut = moves.filter((x) => (x.leg.lead_id === lead.id && (x.type === "return" || x.derived))
+    || leavesHere(x)
     || (x.type === "onward" && x.leg.lead_id !== lead.id && x.date >= D && x.date <= addDaysYmd(D, 4)));
   const posOn = (n) => { let c = base; moves.forEach((x) => { if (x.date <= n && x.to) c = x.to; }); return c; };
   const nights = [];
@@ -3473,7 +3477,9 @@ function artistEventTravel(lead, teamId, legsAll) {
     const end = lastRet && lastRet >= D ? lastRet : D;
     for (let n = start, guard = 0; n <= end && guard < 40; n = addDaysYmd(n, 1), guard++) {
       const c = posOn(n);
-      if (c && (!base || normCity(c) !== normCity(base))) nights.push({ date: n, city: c });
+      // home = their base city, or wherever their first journey started (people type codes like NJP for Siliguri)
+      const isHome = c && ((base && normCity(c) === normCity(base)) || normCity(c) === normCity(goingIn[0].from));
+      if (c && !isHome) nights.push({ date: n, city: c });
     }
   }
   const eventNight = start ? posOn(D) : (base || "");
@@ -3487,37 +3493,73 @@ function eventCrewIds(lead, legsAll, assignments) {
   return [...ids];
 }
 
-// The travel picture for an event: night-stay city on top, then each artist's going / return / stay.
+// The travel picture for an event, grouped the way you book it: one line per journey (date + sector),
+// with every traveller's name together, then the nights away grouped by date and city.
 function eventTravelHtml(lead, legsAll, assignments, opts = {}) {
   const esc = (v) => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
   const ids = eventCrewIds(lead, legsAll, assignments);
   if (!ids.length) return `<p class="muted small">No crew allotted yet, so no travel to show.</p>`;
   const info = ids.map((id) => artistEventTravel(lead, id, legsAll));
-  const legLine = (x, labelType, extra) => {
+  const nameOf = (a) => a.member?.name || "Unknown";
+  const typeOrder = { going: 0, onward: 1, return: 2 };
+
+  // 1. Journeys: same date + same sector + same mode = one line, all names together
+  const groups = new Map();
+  const addMove = (a, x, type) => {
     const l = x.leg;
-    const route = [x.from || l.from_city, x.to || l.to_city].filter(Boolean).join(" → ");
-    const st = l.status === "not_booked" ? `<span style="color:#B6752C; font-weight:600;">not booked</span>` : `<span style="color:#1C7A80;">${TRAVEL_STATUS_LABELS[l.status] || l.status}</span>`;
-    const tk = (l.tickets || []).length ? ` · 🎫 ${(l.tickets || []).length}` : "";
-    return `<div class="small" style="margin:2px 0;">${legTypeBadge(labelType)}<b>${dayShort(x.date)}</b> · ${esc(route) || "route not set"} · ${esc(TRAVEL_MODE_LABELS[l.mode] || "mode not set")} · ${st}${tk}${extra || ""}</div>`;
-  };
-  // Night of the event, grouped by city
-  const byCity = {};
-  info.forEach((a) => { const c = a.local ? "Home (local)" : (a.eventNight || "city not known yet"); (byCity[c] = byCity[c] || []).push(a.member?.name || "?"); });
-  const stayTop = `<div style="padding:8px 10px; background:#EEF4FB; border-radius:8px; margin-bottom:8px;"><b>🌙 Night stay — ${dayShort(lead.date)}:</b> ${Object.entries(byCity).map(([c, ns]) => `<b>${esc(c)}</b> <span class="muted small">(${esc(ns.join(", "))})</span>`).join(" · ")}</div>`;
-  const rows = info.map((a) => {
-    const name = esc(a.member?.name || "Unknown");
-    const head = `<div style="font-weight:600;">${name} <span class="muted small" style="font-weight:400;">${a.base ? "📍 " + esc(a.base) : ""}</span></div>`;
-    let body = "";
-    if (a.local) body = `<div class="small muted" style="margin:2px 0;">🏠 Local — no travel, home for the night</div>`;
-    else {
-      body += a.goingIn.length ? a.goingIn.map((x) => legLine(x, x.type)).join("") : `<div class="small" style="margin:2px 0; color:#A6432B;">${legTypeBadge("going")}⚠ not planned</div>`;
-      if (a.returnOut.length) body += a.returnOut.map((x) => legLine(x, x.type === "onward" ? "onward" : "return", x.type === "onward" && x.leg.lead_id !== lead.id ? ` · <span class="muted">for ${esc(LEADS.find((e) => e.id === x.leg.lead_id)?.name || "next event")}</span>` : (x.derived ? ` <span class="muted">(return date of the round trip)</span>` : ""))).join("");
-      else if (a.goingIn.length) body += `<div class="small" style="margin:2px 0; color:#A6432B;">${legTypeBadge("return")}⚠ no way back planned</div>`;
-      body += `<div class="small" style="margin:2px 0;">🌙 ${a.nights.length ? a.nights.map((n) => `${dayShort(n.date)} <b>${esc(n.city)}</b>`).join(" · ") : `<span class="muted">${a.goingIn.length ? "no nights away" : "—"}</span>`}</div>`;
+    const from = x.from || l.from_city || "", to = x.to || l.to_city || "";
+    const key = [x.date, type, normCity(from), normCity(to), l.mode || ""].join("|");
+    let g = groups.get(key);
+    if (!g) {
+      const forName = type === "onward" && l.lead_id !== lead.id ? (LEADS.find((e) => e.id === l.lead_id)?.name || "next event") : "";
+      g = { date: x.date, type, from, to, mode: l.mode, people: [], tickets: 0, forName };
+      groups.set(key, g);
     }
-    return `<div class="dash-list-item">${head}${body}</div>`;
+    if (!g.people.some((p) => p.name === nameOf(a))) { g.people.push({ name: nameOf(a), status: l.status }); g.tickets += (l.tickets || []).length; }
+  };
+  info.forEach((a) => {
+    if (a.local) return;
+    a.goingIn.forEach((x) => addMove(a, x, x.type));
+    a.returnOut.forEach((x) => addMove(a, x, x.type === "onward" ? "onward" : "return"));
+  });
+  const list = [...groups.values()].sort((p, q) => p.date.localeCompare(q.date) || typeOrder[p.type] - typeOrder[q.type]);
+  const statusHtml = (st) => st === "not_booked" ? `<span style="color:#B6752C; font-weight:600;">not booked</span>` : `<span style="color:#1C7A80; font-weight:600;">${esc(TRAVEL_STATUS_LABELS[st] || st)}</span>`;
+  const journeys = list.map((g) => {
+    const route = [g.from, g.to].filter(Boolean).join(" → ") || "route not set";
+    const sts = [...new Set(g.people.map((p) => p.status))];
+    const names = g.people.map((p) => esc(p.name)).join(", ");
+    const statusLine = sts.length === 1
+      ? statusHtml(sts[0])
+      : sts.map((st) => `${statusHtml(st)}: ${esc(g.people.filter((p) => p.status === st).map((p) => p.name).join(", "))}`).join(" · ");
+    return `<div style="padding:7px 0; border-bottom:1px solid var(--line, #E8E2D4);">
+      <div class="small">${legTypeBadge(g.type)}<b>${dayShort(g.date)}</b> · <b>${esc(route)}</b> · ${esc(TRAVEL_MODE_LABELS[g.mode] || "mode not set")}${g.tickets ? ` · 🎫 ${g.tickets}` : ""}${g.forName ? ` · <span class="muted">for ${esc(g.forName)}</span>` : ""}</div>
+      <div style="margin-top:3px;">👥 <b>${names}</b> <span class="muted small">(${g.people.length})</span></div>
+      <div class="small" style="margin-top:2px;">${statusLine}</div>
+    </div>`;
   }).join("");
-  return stayTop + rows;
+
+  // 2. Flags, grouped by what is missing
+  const noGoing = info.filter((a) => !a.local && a.goingIn.length === 0).map(nameOf);
+  const noBack = info.filter((a) => a.missingReturn).map(nameOf);
+  const locals = info.filter((a) => a.local).map(nameOf);
+  const flags = [
+    noGoing.length ? `<div class="small" style="margin:5px 0; color:#A6432B;">⚠ <b>Going not planned:</b> ${esc(noGoing.join(", "))}</div>` : "",
+    noBack.length ? `<div class="small" style="margin:5px 0; color:#A6432B;">⚠ <b>No way back planned:</b> ${esc(noBack.join(", "))}</div>` : "",
+    locals.length ? `<div class="small muted" style="margin:5px 0;">🏠 <b>Local, no travel:</b> ${esc(locals.join(", "))}</div>` : "",
+  ].join("");
+
+  // 3. Night stay: one line per date + city with every name staying there
+  const nightMap = new Map();
+  info.forEach((a) => {
+    if (a.local) { const k = lead.date + "|home"; const g = nightMap.get(k) || { date: lead.date, city: "Home (local)", names: [], home: true }; g.names.push(nameOf(a)); nightMap.set(k, g); return; }
+    a.nights.forEach((n) => { const k = n.date + "|" + normCity(n.city); const g = nightMap.get(k) || { date: n.date, city: n.city, names: [] }; g.names.push(nameOf(a)); nightMap.set(k, g); });
+    if (!a.goingIn.length && !a.nights.length) { const k = lead.date + "|unknown"; const g = nightMap.get(k) || { date: lead.date, city: "city not known yet", names: [], unknown: true }; g.names.push(nameOf(a)); nightMap.set(k, g); }
+  });
+  const nightList = [...nightMap.values()].sort((p, q) => p.date.localeCompare(q.date) || (p.home ? 1 : 0) - (q.home ? 1 : 0));
+  const nights = nightList.map((g) => `<div class="small" style="padding:4px 0;">🌙 <b>${dayShort(g.date)}</b> · <b>${esc(g.city)}</b> — ${esc(g.names.join(", "))}${g.date === lead.date && !g.home && !g.unknown ? ` <span class="muted">(event night)</span>` : ""}</div>`).join("");
+
+  const head = (t) => `<div class="muted small" style="margin:10px 0 2px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;">${t}</div>`;
+  return `${head("Journeys")}${journeys || `<p class="muted small">No journeys logged yet.</p>`}${flags}${head("Night stay")}${nights || `<p class="muted small">—</p>`}`;
 }
 
 // ---- Travel Calendar helpers: events alongside journeys, previous-event note, gaps and clashes ----
