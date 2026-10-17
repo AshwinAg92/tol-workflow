@@ -332,7 +332,6 @@ const NAV = [
   { id: "accounts", label: "Accounts" },
   { id: "tasks", label: "Tasks & Chats" },
   { id: "calendar", label: "Calendar" },
-  { id: "crewboard", label: "Crew & Travel" },
   { id: "travelcal", label: "Travel Calendar" },
   { id: "documents", label: "Documents" },
   { id: "b2b", label: "B2B Contacts" },
@@ -352,7 +351,6 @@ const NAV_GROUPS = {
   myevents: "Pipeline",
   tasks: "Operations",
   calendar: "Operations",
-  crewboard: "Operations",
   travelcal: "Operations",
   documents: "Operations",
   b2b: "Operations",
@@ -1478,7 +1476,7 @@ function renderNav() {
   const perms = CURRENT_USER?.accessLevel === "staff" ? CURRENT_USER.permissions : null;
   let visibleNav = NAV.filter((n) => {
     if (n.id === "settings" || n.id === "website") return CURRENT_USER?.accessLevel === "admin";
-    if (n.id === "travelcal" || n.id === "crewboard") return canAssignTeam();
+    if (n.id === "travelcal") return canAssignTeam();
     if (n.id === "quotation") return hasAccountsAccess() && (!Array.isArray(perms) || perms.includes("quotation"));
     // Team tab (and the Musicians pool inside it) is admin-only for now — a manager
     // shouldn't be able to browse the wider musician pool. Re-open later by relaxing this.
@@ -3446,228 +3444,6 @@ async function renderCalendar(main) {
 }
 
 // ---------- Travel Calendar ----------
-// ---------- Crew & Travel board ----------
-// One screen to plan who goes to which event and how they travel: the previous event's
-// travellers sit right on each card, clashes are shown (and blocked) on the artist chips,
-// and travel is planned on the same card instead of in a second calendar.
-let crewBoardFilter = "all";
-const crewPick = {};         // leadId -> Set of artists picked but not yet allotted
-const crewJourneyOpen = {};  // leadId -> artists pre-selected in the open "add journey" form
-
-async function renderCrewBoard(main) {
-  main.innerHTML = `<div class="view-head"><div><h2>Crew &amp; Travel</h2></div></div><p class="muted">Loading…</p>`;
-  let board, legs;
-  try {
-    [board, legs] = await Promise.all([api("/api/crew-board"), api("/api/travel-legs"), refreshLeads()]);
-  } catch (err) {
-    main.innerHTML = `<div class="view-head"><div><h2>Crew &amp; Travel</h2></div></div><p class="muted small">Couldn't load the board. Try again.</p>`;
-    return;
-  }
-  const h = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-  const today = new Date().toISOString().slice(0, 10);
-  const norm = (v) => String(v || "").trim().toLowerCase();
-  const tm = (id) => TEAM.find((m) => m.id === id);
-  const tname = (id) => tm(id)?.name || "Unknown";
-  const allEvents = LEADS.filter((l) => ["Confirmed", "Completed"].includes(l.stage) && l.date).sort((a, b) => a.date.localeCompare(b.date));
-  const upcoming = allEvents.filter((l) => l.date >= today);
-  const asgFor = (leadId) => board.assignments.filter((a) => a.lead_id === leadId);
-  const legsFor = (leadId) => legs.filter((l) => l.lead_id === leadId);
-  const prevOf = (lead) => { let p = null; allEvents.forEach((e) => { if (e.date < lead.date && (!p || e.date >= p.date)) p = e; }); return p; };
-  const dayDiff = (a, b) => Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000);
-  const wk = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short" });
-  const sameCombo = (leadA, otherId) => { const o = LEADS.find((x) => x.id === otherId); return !!(leadA.combo_group_id && o && o.combo_group_id === leadA.combo_group_id); };
-  const clashFor = (teamId, lead) => board.busy.find((b) => b.teamId === teamId && b.leadId !== lead.id && b.from <= lead.date && lead.date <= b.to && !sameCombo(lead, b.leadId));
-  // Who was with us on the immediately previous event: travellers if travel was logged, else its crew.
-  const lastTimeSet = (prev) => {
-    if (!prev) return { ids: new Set(), kind: "" };
-    const trav = new Set(); legsFor(prev.id).forEach((l) => (l.members || []).forEach((m) => trav.add(m.teamId)));
-    if (trav.size) return { ids: trav, kind: "Travelled" };
-    const crew = new Set(asgFor(prev.id).filter((a) => a.status !== "declined").map((a) => a.team_id));
-    return { ids: crew, kind: "Crew" };
-  };
-  const stIcon = { accepted: "✓", pending: "⏳", declined: "✕", cancel_requested: "⚠" };
-  const stColor = { accepted: "#1C7A80", pending: "#B6752C", declined: "#A6432B", cancel_requested: "#A6432B" };
-
-  function reasonsFor(lead) {
-    const out = [];
-    const as = asgFor(lead.id);
-    const active = as.filter((a) => a.status !== "declined");
-    if (as.length === 0) out.push("No crew allotted yet");
-    const pend = as.filter((a) => a.status === "pending").length;
-    if (pend) out.push(`${pend} awaiting response`);
-    const dec = as.filter((a) => a.status === "declined").length;
-    if (dec) out.push(`${dec} declined — replace`);
-    const lg = legsFor(lead.id);
-    const travelling = new Set(); lg.forEach((l) => (l.members || []).forEach((m) => travelling.add(m.teamId)));
-    const needTravel = active.filter((a) => { const bc = norm(tm(a.team_id)?.base_city), ec = norm(lead.city); return bc && ec && bc !== ec && !travelling.has(a.team_id); }).map((a) => tname(a.team_id));
-    if (needTravel.length) out.push(`Travel not planned: ${needTravel.join(", ")}`);
-    const nb = lg.filter((l) => l.status === "not_booked").length;
-    if (nb) out.push(`${nb} journey${nb > 1 ? "s" : ""} not booked`);
-    return out;
-  }
-
-  function cardHtml(lead) {
-    const as = asgFor(lead.id), lg = legsFor(lead.id);
-    const prev = prevOf(lead), last = lastTimeSet(prev);
-    const picks = crewPick[lead.id] || new Set();
-    const byTeam = {}; as.forEach((a) => (byTeam[a.team_id] = a));
-    const reasons = reasonsFor(lead);
-    const accepted = as.filter((a) => a.status === "accepted").length;
-    const booked = lg.filter((l) => l.status !== "not_booked").length;
-    const inDays = dayDiff(today, lead.date);
-    const chip = (m) => {
-      const a = byTeam[m.id], clash = !a && clashFor(m.id, lead), picked = picks.has(m.id), was = last.ids.has(m.id);
-      const tag = was ? `<span style="font-size:10px; color:#C1602B; margin-left:4px;" title="${last.kind} on the previous event">${last.kind === "Travelled" ? "✈" : "↺"} last time</span>` : "";
-      if (a) return `<button class="cb-chip" data-act="unallot" data-asg="${a.id}" data-name="${h(m.name)}" title="Allotted — click to remove" style="border:1.5px solid ${stColor[a.status] || "#999"}; background:#fff; color:${stColor[a.status] || "#333"};">${stIcon[a.status] || ""} ${h(m.name)}${tag}</button>`;
-      if (clash) return `<button class="cb-chip" disabled title="Clash: ${h(clash.label)} (${clash.kind})" style="border:1px dashed #C9BFA8; background:#F5F1E8; color:#9A907B; cursor:not-allowed;">${h(m.name)} <span style="font-size:10px;">⛔ ${h(clash.label)}</span></button>`;
-      return `<button class="cb-chip" data-act="pick" data-lead="${lead.id}" data-team="${m.id}" style="border:1.5px solid ${picked ? "#C1602B" : "#D9CFBB"}; background:${picked ? "#FBE9DD" : "#fff"}; color:#3D3427;">${picked ? "＋ " : ""}${h(m.name)}${tag}</button>`;
-    };
-    const jOpen = crewJourneyOpen[lead.id];
-    const crewForJourney = as.filter((a) => a.status !== "declined");
-    const baseCities = jOpen ? [...new Set(jOpen.map((id) => tm(id)?.base_city).filter(Boolean))] : [];
-    const journeyForm = jOpen ? `
-      <div class="cb-journey" data-lead="${lead.id}" style="margin-top:10px; padding:10px; border:1.5px solid #C1602B; border-radius:10px; background:#FFFBF6;">
-        <div style="font-weight:600; margin-bottom:6px;">Add a journey</div>
-        <div class="muted small" style="margin-bottom:4px;">Who is travelling together</div>
-        <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
-          ${crewForJourney.map((a) => `<label style="display:flex; align-items:center; gap:4px; margin:0; font-size:13px;"><input type="checkbox" class="cb-jm" value="${a.team_id}" ${jOpen.includes(a.team_id) ? "checked" : ""}/> ${h(tname(a.team_id))}${tm(a.team_id)?.base_city ? ` <span class="muted small">(${h(tm(a.team_id).base_city)})</span>` : ""}</label>`).join("") || `<span class="muted small">Allot crew first.</span>`}
-        </div>
-        <div class="row-2">
-          <select class="cb-jmode"><option value="">Mode</option>${Object.entries(TRAVEL_MODE_LABELS).map(([id, l]) => `<option value="${id}">${l}</option>`).join("")}</select>
-          <select class="cb-jstatus">${Object.entries(TRAVEL_STATUS_LABELS).map(([id, l]) => `<option value="${id}">${l}</option>`).join("")}</select>
-        </div>
-        <div class="row-2" style="margin-top:6px;">
-          <input class="cb-jfrom" placeholder="From city" value="${h(baseCities.length === 1 ? baseCities[0] : "")}" />
-          <input class="cb-jto" placeholder="To city" value="${h(lead.city || "")}" />
-        </div>
-        <div class="row-2" style="margin-top:6px;">
-          <div><label class="muted small">Departure</label><input class="cb-jdep" type="date" value="${h(lead.date)}" /></div>
-          <div><label class="muted small">Arrival</label><input class="cb-jarr" type="date" value="${h(lead.date)}" /></div>
-        </div>
-        <div class="muted small cb-jerr" style="color:#A6432B; margin-top:6px;"></div>
-        <div style="display:flex; gap:8px; margin-top:8px;">
-          <button class="btn-primary" data-act="savejourney" data-lead="${lead.id}" style="font-size:13px; padding:6px 14px;">Save journey</button>
-          <button class="btn-ghost" data-act="canceljourney" data-lead="${lead.id}" style="font-size:13px; padding:6px 14px;">Cancel</button>
-        </div>
-      </div>` : "";
-    return `
-      <div class="card cb-card" data-lead-card="${lead.id}" style="margin-bottom:14px;">
-        <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:baseline;">
-          <div><b style="font-size:16px;">${h(lead.name)}</b> <span class="muted small">· ${h(lead.event_type ? packageName(lead.event_type) : "")}${lead.city ? " · " + h(lead.city) : ""}</span></div>
-          <div style="font-weight:600;">${wk(lead.date)}, ${fmtDate(lead.date)} <span class="muted small">(${inDays === 0 ? "today" : inDays + " day" + (inDays === 1 ? "" : "s")})</span></div>
-        </div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; margin:8px 0;">
-          <span class="cb-pill">Crew ${accepted}/${as.length} accepted</span>
-          <span class="cb-pill">Travel ${booked}/${lg.length} booked</span>
-          ${reasons.length ? `<span class="cb-pill" style="background:#FBE9DD; color:#A6432B;">Needs action: ${reasons.length}</span>` : `<span class="cb-pill" style="background:#E3F1EE; color:#1C7A80;">All set</span>`}
-        </div>
-        <div class="cb-prev muted small" style="padding:8px 10px; background:#F7F3EA; border-radius:8px;">
-          ${prev ? `<b>Previous event:</b> ${h(prev.name)} · ${fmtDate(prev.date)}${prev.city ? " · " + h(prev.city) : ""} <span>(${dayDiff(prev.date, lead.date)} day${dayDiff(prev.date, lead.date) === 1 ? "" : "s"} before)</span><br>
-          ${last.ids.size ? `${last.kind === "Travelled" ? "✈ Travelled" : "↺ Crew (no travel logged)"}: <b>${[...last.ids].map((id) => h(tname(id))).join(", ")}</b>` : "No crew or travel recorded for it."}` : "No earlier event on record."}
-        </div>
-        <div class="muted small" style="margin:10px 0 4px;">Crew — tap a name to pick, then allot. ⛔ = already committed on this date.</div>
-        <div style="display:flex; flex-wrap:wrap; gap:6px;">${TEAM.map(chip).join("")}</div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; align-items:center;">
-          <button class="btn-primary" data-act="allot" data-lead="${lead.id}" data-plan="0" ${picks.size ? "" : "disabled"} style="font-size:13px; padding:6px 14px;">Allot ${picks.size || ""}</button>
-          <button class="btn-ghost" data-act="allot" data-lead="${lead.id}" data-plan="1" ${picks.size ? "" : "disabled"} style="font-size:13px; padding:6px 14px;">Allot + plan travel</button>
-          <button class="btn-ghost" data-act="openjourney" data-lead="${lead.id}" ${as.length ? "" : "disabled"} style="font-size:13px; padding:6px 14px;">+ Journey</button>
-          <button class="btn-ghost" data-act="details" data-lead="${lead.id}" style="font-size:13px; padding:6px 14px;">Event details &amp; tickets</button>
-        </div>
-        ${journeyForm}
-        ${lg.length ? `<div style="margin-top:10px;">${lg.map((l) => `
-          <div class="dash-list-item" style="display:flex; justify-content:space-between; gap:8px; align-items:center; flex-wrap:wrap;">
-            <span>${l.mode ? (TRAVEL_MODE_LABELS[l.mode] || l.mode) : "Journey"}: <b>${h(l.from_city || "?")} → ${h(l.to_city || "?")}</b> <span class="muted small">${l.departure_at ? fmtDate(l.departure_at.slice(0, 10)) : "date not set"} · ${(l.members || []).map((m) => h(m.name)).join(", ") || "no one"}</span></span>
-            <span style="display:flex; gap:6px; align-items:center;"><span class="cb-pill" style="${l.status === "not_booked" ? "background:#FBE9DD; color:#A6432B;" : "background:#E3F1EE; color:#1C7A80;"}">${TRAVEL_STATUS_LABELS[l.status] || l.status}</span>${l.status === "not_booked" ? `<button class="btn-ghost" data-act="booked" data-leg="${l.id}" style="font-size:12px; padding:3px 10px;">Mark booked</button>` : ""}</span>
-          </div>`).join("")}</div>` : ""}
-        ${reasons.length ? `<ul class="muted small" style="margin:10px 0 0; padding-left:18px; color:#A6432B;">${reasons.map((r) => `<li>${h(r)}</li>`).join("")}</ul>` : ""}
-      </div>`;
-  }
-
-  const needing = upcoming.filter((l) => reasonsFor(l).length);
-  const shown = crewBoardFilter === "needs" ? needing : upcoming;
-  main.innerHTML = `
-    <style>
-      .cb-chip{font-size:13px; padding:5px 11px; border-radius:999px; cursor:pointer; font-family:inherit;}
-      .cb-pill{font-size:12px; padding:2px 10px; border-radius:999px; background:#F1EBDD; color:#5A4E3A;}
-    </style>
-    <div class="view-head"><div><h2>Crew &amp; Travel</h2><p class="muted">Plan who goes and how they travel — with the previous event's travellers and clashes right on each card.</p></div></div>
-    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px;">
-      <button class="btn-${crewBoardFilter === "all" ? "primary" : "ghost"}" data-filter="all" style="font-size:13px; padding:5px 14px;">All upcoming (${upcoming.length})</button>
-      <button class="btn-${crewBoardFilter === "needs" ? "primary" : "ghost"}" data-filter="needs" style="font-size:13px; padding:5px 14px;">Needs action (${needing.length})</button>
-      <select id="cbTimeline" style="margin-left:auto; max-width:220px;"><option value="">Artist timeline…</option>${TEAM.map((m) => `<option value="${m.id}">${h(m.name)}</option>`).join("")}</select>
-    </div>
-    ${shown.length ? shown.map(cardHtml).join("") : `<p class="muted">${crewBoardFilter === "needs" ? "Nothing needs action right now." : "No upcoming confirmed events."}</p>`}`;
-
-  const rerender = () => renderCrewBoard(main);
-  main.querySelectorAll("[data-filter]").forEach((b) => b.addEventListener("click", () => { crewBoardFilter = b.dataset.filter; rerender(); }));
-  main.querySelector("#cbTimeline").addEventListener("change", (e) => { if (e.target.value) openArtistTimeline(e.target.value, board, tname, h); e.target.value = ""; });
-  main.querySelectorAll("[data-act]").forEach((btn) => btn.addEventListener("click", async () => {
-    const act = btn.dataset.act, leadId = btn.dataset.lead;
-    try {
-      if (act === "pick") {
-        const s = crewPick[leadId] || (crewPick[leadId] = new Set());
-        s.has(btn.dataset.team) ? s.delete(btn.dataset.team) : s.add(btn.dataset.team);
-        return rerender();
-      }
-      if (act === "unallot") {
-        if (!confirm(`Remove ${btn.dataset.name} from this event?`)) return;
-        await api(`/api/assignments/${btn.dataset.asg}`, { method: "DELETE" });
-        return rerender();
-      }
-      if (act === "allot") {
-        const ids = [...(crewPick[leadId] || [])];
-        if (!ids.length) return;
-        await api(`/api/leads/${leadId}/assignments`, { method: "POST", body: JSON.stringify({ teamIds: ids }) });
-        delete crewPick[leadId];
-        if (btn.dataset.plan === "1") crewJourneyOpen[leadId] = ids;
-        return rerender();
-      }
-      if (act === "openjourney") {
-        crewJourneyOpen[leadId] = asgFor(leadId).filter((a) => a.status !== "declined").map((a) => a.team_id);
-        return rerender();
-      }
-      if (act === "canceljourney") { delete crewJourneyOpen[leadId]; return rerender(); }
-      if (act === "savejourney") {
-        const f = btn.closest(".cb-journey");
-        const teamIds = [...f.querySelectorAll(".cb-jm:checked")].map((c) => c.value);
-        const errEl = f.querySelector(".cb-jerr");
-        if (!teamIds.length) { errEl.textContent = "Pick who is travelling."; return; }
-        try {
-          await api(`/api/leads/${leadId}/travel-legs`, { method: "POST", body: JSON.stringify({
-            teamIds, mode: f.querySelector(".cb-jmode").value || null, status: f.querySelector(".cb-jstatus").value,
-            fromCity: f.querySelector(".cb-jfrom").value.trim() || null, toCity: f.querySelector(".cb-jto").value.trim() || null,
-            departureAt: f.querySelector(".cb-jdep").value || null, arrivalAt: f.querySelector(".cb-jarr").value || null,
-          }) });
-        } catch (err) { errEl.textContent = err.message || "Couldn't save."; return; }
-        delete crewJourneyOpen[leadId];
-        return rerender();
-      }
-      if (act === "booked") {
-        await api(`/api/travel-legs/${btn.dataset.leg}`, { method: "PATCH", body: JSON.stringify({ status: "booked" }) });
-        return rerender();
-      }
-      if (act === "details") return openAssignTeamModal(leadId);
-    } catch (err) { alert(err.message || "Something went wrong."); }
-  }));
-}
-
-function openArtistTimeline(teamId, board, tname, h) {
-  const today = new Date().toISOString().slice(0, 10);
-  const end = new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
-  const items = board.busy.filter((b) => b.teamId === teamId && b.to >= today && b.from <= end).sort((a, b) => a.from.localeCompare(b.from));
-  const root = document.getElementById("modalRoot");
-  root.innerHTML = `
-    <div class="modal-overlay" id="overlay"><div class="modal-card" style="max-width:480px;">
-      <div class="modal-head"><h3>${h(tname(teamId))} — next 60 days</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
-      <div class="modal-body">
-        ${items.length ? items.map((b) => `<div class="dash-list-item"><b>${b.from === b.to ? fmtDate(b.from) : fmtDate(b.from) + " → " + fmtDate(b.to)}</b><br><span class="muted small">${b.kind === "event" ? "🎤 Event" : "✈ Travel"} · ${h(b.label)}</span></div>`).join("") : `<p class="muted">Free for the next 60 days — nothing allotted and no travel.</p>`}
-      </div>
-    </div></div>`;
-  const close = () => { root.innerHTML = ""; };
-  root.querySelector("#closeModal").addEventListener("click", close);
-  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
-}
-
 async function renderTravelCalendar(main) {
   main.innerHTML = `<div class="view-head"><div><h2>Travel Calendar</h2></div></div><p class="muted">Loading…</p>`;
   let legs;
@@ -10825,7 +10601,6 @@ function renderMain() {
   else if (currentTab === "myevents") renderMyEvents(main);
   else if (currentTab === "settings") renderSettings(main);
   else if (currentTab === "travelcal") renderTravelCalendar(main);
-  else if (currentTab === "crewboard") renderCrewBoard(main);
   else if (currentTab === "website") renderWebsiteContent(main);
 }
 
