@@ -11780,4 +11780,48 @@ if ("serviceWorker" in navigator) {
   initLogoNav();
   initGlobalSearch();
   initBackNavigation();
+  if (CURRENT_USER.accessLevel === "admin") startClientAlerts();
 })();
+
+// ---- Client activity alerts: toast + browser-tab badge anywhere in the CRM, dashboard refresh when it is open ----
+function startClientAlerts() {
+  const isClientAlert = (n) => /^(\ud83d\udcac|\ud83d\udcce) Client /.test(n.message || "");
+  const seen = new Set();
+  let primed = false, unseen = 0;
+  const baseTitle = document.title;
+  const stripTags = (h) => { const d = document.createElement("div"); d.innerHTML = h; return d.textContent || ""; };
+  const toast = (text) => {
+    let host = document.getElementById("clientToastHost");
+    if (!host) {
+      host = document.createElement("div"); host.id = "clientToastHost";
+      host.style.cssText = "position:fixed; top:14px; right:14px; z-index:99999; display:flex; flex-direction:column; gap:8px; max-width:340px;";
+      document.body.appendChild(host);
+    }
+    const t = document.createElement("div");
+    t.style.cssText = "background:#3A2A1A; color:#fff; padding:12px 14px; border-radius:12px; box-shadow:0 6px 24px rgba(0,0,0,.25); font-size:14px; cursor:pointer; border-left:5px solid #F0A438;";
+    t.textContent = text;
+    t.addEventListener("click", () => { t.remove(); currentTab = "dashboard"; renderNav(); renderMain(); });
+    host.appendChild(t);
+    setTimeout(() => t.remove(), 12000);
+  };
+  const setBadge = () => { document.title = unseen ? `(${unseen}) ${baseTitle}` : baseTitle; };
+  window.addEventListener("focus", () => { unseen = 0; setBadge(); });
+  async function check() {
+    if (document.hidden && primed) { /* still check: the tab badge is the point when the tab is in the background */ }
+    let list;
+    try { list = await api("/api/admin/notifications"); } catch { return; }
+    const fresh = list.filter((n) => !seen.has(n.id));
+    list.forEach((n) => seen.add(n.id));
+    if (!primed) { primed = true; return; }
+    const alerts = fresh.filter(isClientAlert);
+    if (!fresh.length) return;
+    alerts.forEach((n) => toast(stripTags(n.message)));
+    if (alerts.length) { unseen += alerts.length; setBadge(); }
+    // Dashboard open: show the new alert in its Notifications card (don't interrupt typing).
+    const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    if (currentTab === "dashboard" && !typing && !document.querySelector("#modalRoot .modal-overlay")) renderMain();
+  }
+  check();
+  setInterval(check, 20000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
+}

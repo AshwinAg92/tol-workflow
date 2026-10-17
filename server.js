@@ -1274,7 +1274,7 @@ app.post("/api/leads", async (req, res) => {
   pool.query(`
     INSERT INTO admin_notifications (id, message, assignment_id, audience, created_at)
     VALUES ($1, $2, NULL, 'admin', $3)
-  `, [uuid(), `New query: ${name} — ${packageName(eventType)}${city ? ` in ${city}` : ""}, wants ${date}${clashNote}`, new Date().toISOString()]
+  `, [uuid(), `New query: ${escHtml(name)} — ${packageName(eventType)}${city ? ` in ${city}` : ""}, wants ${date}${clashNote}`, new Date().toISOString()]
   ).catch((err) => console.error("Failed to create new-lead notification:", err.message));
 
   sendNewLeadEmail(created).catch((err) => console.error("New-lead email failed (not fatal):", err.message));
@@ -4222,6 +4222,13 @@ async function attachClientFileToLeg(fileId, legId) {
   return { ok: true };
 }
 const legTitle = (l) => `${l.mode ? l.mode[0].toUpperCase() + l.mode.slice(1) : "Travel"} \u00b7 ${l.from_city || "?"} \u2192 ${l.to_city || "?"}${l.departure_at ? " \u00b7 " + fmtWall(String(l.departure_at).slice(0, 10)) : ""}`;
+// Dashboard alert (the flashing Notifications card) + activity-register line for anything the client does on their link.
+// Callers pass already-escaped text; the dashboard renders these messages as HTML.
+function notifyAdminOfClientActivity(message, leadId, activityText) {
+  pool.query("INSERT INTO admin_notifications (id, message, assignment_id, audience, created_at) VALUES ($1,$2,NULL,'admin',$3)",
+    [uuid(), message, new Date().toISOString()]).catch((e) => console.error("client-activity notification failed:", e.message));
+  try { logActivity({ user: null }, activityText, leadId); } catch (e) { /* non-fatal */ }
+}
 async function threadFor(leadId) {
   const [messages, files] = await Promise.all([
     pool.query("SELECT id, sender, sender_name, body, created_at, read_by_team FROM travel_share_messages WHERE lead_id = $1 ORDER BY created_at ASC", [leadId]),
@@ -4250,6 +4257,7 @@ app.post("/trip/:token/message", async (req, res) => {
     [uuid(), s.lead_id, req.params.token, name, body, new Date().toISOString()]);
   const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [s.lead_id])).rows[0];
   sendPushToAll("\ud83d\udcac Client message", `${lead ? lead.name : "Event"}${name ? " \u2014 " + name : ""}: ${body.slice(0, 90)}`, "/login", { adminOnly: true }).catch(() => {});
+  notifyAdminOfClientActivity(`\ud83d\udcac Client message \u2014 ${escHtml(lead ? lead.name : "Event")}${name ? " (" + escHtml(name) + ")" : ""}: \u201c${escHtml(body.slice(0, 120))}${body.length > 120 ? "\u2026" : ""}\u201d`, s.lead_id, `Client message on travel link: ${lead ? lead.name : ""}`);
   res.status(201).json({ ok: true });
 });
 app.post("/trip/:token/upload", (req, res, next) => {
@@ -4273,6 +4281,7 @@ app.post("/trip/:token/upload", (req, res, next) => {
   if (wantLeg) { try { await attachClientFileToLeg(fileId, wantLeg); } catch (e) { console.error("attach client file:", e.message); } }
   const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [s.lead_id])).rows[0];
   sendPushToAll("\ud83d\udcce Client uploaded a file", `${lead ? lead.name : "Event"}: ${req.file.originalname}`, "/login", { adminOnly: true }).catch(() => {});
+  notifyAdminOfClientActivity(`\ud83d\udcce Client uploaded \u201c${escHtml(label || req.file.originalname)}\u201d \u2014 ${escHtml(lead ? lead.name : "Event")}${name ? " (" + escHtml(name) + ")" : ""}`, s.lead_id, `Client uploaded a file on travel link: ${lead ? lead.name : ""} \u2014 ${req.file.originalname}`);
   res.status(201).json({ ok: true });
 });
 app.get("/trip/:token/file/:fileId", async (req, res) => {
