@@ -10231,10 +10231,13 @@ async function renderSettings(main) {
       <div class="section-label">Data backup</div>
       <p class="muted small" style="margin-top:-4px;">A full export of every lead, payment, expense, quote, team assignment, and task is emailed to togetheroutloudclub@gmail.com automatically on the 1st of each month. You can also get one right now:</p>
       <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px;">
-        <a class="btn-ghost" href="/api/admin/backup" id="downloadBackupBtn">⬇ Download now</a>
+        <a class="btn-ghost" href="/api/admin/backup" id="downloadBackupBtn">⬇ Spreadsheet</a>
+        <a class="btn-ghost" href="/api/admin/backup/full" id="downloadFullBackupBtn" title="Every table and every uploaded file — restorable">⬇ Full backup (everything)</a>
         <button class="btn-primary" id="emailBackupBtn">✉️ Email it to me now</button>
         <span class="muted small" id="backupSentNote" style="display:none; color:#1C7A80;">Sent ✓</span>
       </div>
+      <div class="muted small" style="margin-top:12px;"><b>Automatic safety copies</b> — saved before each new version of the app goes live (last 5 kept):</div>
+      <div id="snapshotList" class="muted small" style="margin-top:4px;">Loading…</div>
     </div>
 
     <div class="card" style="margin-bottom:16px;">
@@ -10475,6 +10478,11 @@ async function renderSettings(main) {
   pricingEditor.dataset.currentPkg = pricingSelect.value;
   renderPricingEditor();
 
+  api("/api/admin/snapshots").then((rows) => {
+    const box = main.querySelector("#snapshotList");
+    if (!box) return;
+    box.innerHTML = rows.length ? rows.map((r) => `<div>${fmtDateTime(r.created_at)} · version ${String(r.commit_sha || "").slice(0, 7)} · ${Math.round((r.size_bytes || 0) / 1024)} KB — <a href="/api/admin/snapshots/${r.id}/download">download</a></div>`).join("") : "None yet — the first one is taken the next time the app updates.";
+  }).catch(() => {});
   main.querySelector("#emailBackupBtn").addEventListener("click", async () => {
     const btn = main.querySelector("#emailBackupBtn");
     btn.disabled = true;

@@ -34,6 +34,7 @@ const webpush = require("web-push");
 const XLSX = require("xlsx");
 const { v4: uuid } = require("uuid");
 const { pool, ready } = require("./db");
+const { buildFullBackup } = require("./backup-core");
 const { STAGES, PACKAGES, ADDONS, PRICING, TEAM, EXPERIENCES, OCCASIONS, GUEST_RANGES, HOW_HEARD } = require("./config");
 
 // ---------- Auth ----------
@@ -4680,9 +4681,37 @@ function getMailTransport() {
   });
 }
 
-async function sendNewLeadEmail(lead) {
+// Railway blocks outbound SMTP, so mail goes through Resend's HTTPS API when RESEND_API_KEY is set,
+// with SMTP only as a fallback. Attachments: [{ filename, content: Buffer }].
+async function sendMailSmart({ to, subject, text, attachments = [] }) {
+  const errs = [];
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const r = await fetch(process.env.RESEND_API_URL || "https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: process.env.RESEND_FROM || "Together Out Loud <onboarding@resend.dev>",
+          to: Array.isArray(to) ? to : [to], subject, text,
+          attachments: attachments.map((a) => ({ filename: a.filename, content: Buffer.from(a.content).toString("base64") })),
+        }),
+      });
+      if (r.ok) return "resend";
+      errs.push(`Resend: ${r.status} ${(await r.text()).slice(0, 200)}`);
+    } catch (e) { errs.push(`Resend: ${e.message}`); }
+  }
   const transport = getMailTransport();
-  if (!transport) return; // email not configured — the in-app notification still covers it
+  if (transport) {
+    try {
+      await transport.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, text, attachments });
+      return "smtp";
+    } catch (e) { errs.push(`SMTP: ${e.message}`); }
+  }
+  throw new Error(errs.length ? errs.join(" | ") : "Email isn't configured (set RESEND_API_KEY, or SMTP_HOST/SMTP_USER/SMTP_PASS).");
+}
+
+async function sendNewLeadEmail(lead) {
+  if (!process.env.RESEND_API_KEY && !getMailTransport()) return; // email not configured — the in-app notification still covers it
   const to = process.env.TEAM_NOTIFY_EMAIL || process.env.BACKUP_EMAIL || "togetheroutloudclub@gmail.com";
   const lines = [
     `Name: ${lead.name}`,
@@ -4696,8 +4725,7 @@ async function sendNewLeadEmail(lead) {
     lead.budget ? `Budget: ₹${Number(lead.budget).toLocaleString("en-IN")}` : null,
     lead.details ? `\nTheir notes: ${lead.details}` : null,
   ].filter(Boolean);
-  await transport.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+  await sendMailSmart({
     to,
     subject: `New query — ${lead.name} (${packageName(lead.event_type)})`,
     text: lines.join("\n"),
@@ -4705,18 +4733,21 @@ async function sendNewLeadEmail(lead) {
 }
 
 async function sendBackupEmail(recipient) {
-  const transport = getMailTransport();
-  if (!transport) throw new Error("Email isn't configured (SMTP_HOST/SMTP_USER/SMTP_PASS missing) — set those in Railway's Variables tab first.");
   const to = recipient || process.env.BACKUP_EMAIL || "togetheroutloudclub@gmail.com";
   if (!to) throw new Error("No recipient email configured.");
   const buffer = await buildBackupWorkbook();
   const today = new Date().toISOString().slice(0, 10);
-  await transport.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+  const attachments = [{ filename: `tol-backup-${today}.xlsx`, content: buffer }];
+  // The complete, restorable copy (every table; uploaded files left out here to keep the email small).
+  try {
+    const full = await buildFullBackup(pool, { includeFiles: false });
+    if (full.length < 15 * 1024 * 1024) attachments.push({ filename: `tol-full-backup-${today}.json.gz`, content: full });
+  } catch (err) { console.error("Full backup attachment skipped:", err.message); }
+  await sendMailSmart({
     to,
     subject: `Together, Out Loud — data backup (${today})`,
-    text: "Attached is a full export of all leads, payments, expenses, team, quotes, assignments, tasks, and activity as of today.",
-    attachments: [{ filename: `tol-backup-${today}.xlsx`, content: buffer }],
+    text: "Attached: a spreadsheet of leads, payments, expenses, team, quotes, assignments, tasks and activity, plus the full restorable backup (.json.gz) with every table.",
+    attachments,
   });
 }
 
@@ -4750,6 +4781,33 @@ app.get("/api/admin/backup", requireAuth, requireAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Everything, including uploaded files — restorable with scripts/restore-backup.js.
+app.get("/api/admin/backup/full", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const buffer = await buildFullBackup(pool, { includeFiles: true });
+    const today = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "application/gzip");
+    res.setHeader("Content-Disposition", `attachment; filename="tol-full-backup-${today}.json.gz"`);
+    res.send(buffer);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/snapshots", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT id, created_at, commit_sha, size_bytes FROM data_snapshots ORDER BY id DESC");
+    res.json(rows);
+  } catch { res.json([]); }
+});
+app.get("/api/admin/snapshots/:id/download", requireAuth, requireAdmin, async (req, res) => {
+  const row = (await pool.query("SELECT created_at, data FROM data_snapshots WHERE id = $1", [req.params.id])).rows[0];
+  if (!row) return res.status(404).json({ error: "Snapshot not found" });
+  res.setHeader("Content-Type", "application/gzip");
+  res.setHeader("Content-Disposition", `attachment; filename="tol-snapshot-${row.created_at.slice(0, 10)}-${req.params.id}.json.gz"`);
+  res.send(row.data);
 });
 
 app.post("/api/admin/backup/email", requireAuth, requireAdmin, async (req, res) => {

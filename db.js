@@ -1,4 +1,5 @@
 const { Pool } = require("pg");
+const { preUpgradeSnapshot } = require("./backup-core");
 const bcrypt = require("bcryptjs");
 const { v4: uuid } = require("uuid");
 const fs = require("fs");
@@ -39,6 +40,7 @@ pool.on("error", (err) => {
 });
 
 async function setup() {
+  await preUpgradeSnapshot(pool); // safety copy of existing data before this version changes anything
   await pool.query(`
     CREATE TABLE IF NOT EXISTS leads (
       id TEXT PRIMARY KEY,
@@ -171,6 +173,26 @@ async function setup() {
     );
   `);
 
+  await pool.query(`CREATE TABLE IF NOT EXISTS site_content (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL,
+      updated_at TEXT
+    )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS travel_legs (
+      id TEXT PRIMARY KEY,
+      lead_id TEXT REFERENCES leads(id) ON DELETE CASCADE,
+      team_id TEXT REFERENCES team(id),
+      mode TEXT,
+      from_city TEXT,
+      to_city TEXT,
+      departure_at TEXT,
+      arrival_at TEXT,
+      booking_ref TEXT,
+      status TEXT NOT NULL DEFAULT 'not_booked',
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
   // Real migrations for columns added AFTER the tables already existed in
   // production — CREATE TABLE IF NOT EXISTS is a no-op for existing tables,
   // so any new column must be added explicitly here or it silently never
