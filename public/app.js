@@ -9454,8 +9454,8 @@ function openQuickConfirmModal() {
     q("#qcResults").innerHTML = matches.length
       ? matches.map((l) => `
           <button class="btn-ghost qc-result" data-id="${l.id}" style="display:block; width:100%; text-align:left; margin-bottom:6px; padding:8px 10px;">
-            <b>${esc(l.name)}</b>
-            <div class="muted small">${esc(packageName(l.event_type))}${l.city ? ` · ${esc(l.city)}` : ""} · last ${fmtDate(l.date)}</div>
+            <b>${esc(l.name)}</b> <span class="mono small" style="background:${l.is_b2b ? "#8A5FA8" : "#1F6F43"}; color:#fff; border-radius:4px; padding:1px 6px; font-size:10.5px; font-weight:600; vertical-align:middle;">${l.is_b2b ? "B2B" : "B2C"}</span>
+            <div class="muted small">${esc(packageName(l.event_type))}${l.city ? ` · ${esc(l.city)}` : ""}</div>
           </button>`).join("")
       : `<div class="muted small">No past client matches "${esc(q("#qcSearch").value.trim())}". Use "+ New lead" for someone new.</div>`;
     q("#qcResults").querySelectorAll(".qc-result").forEach((btn) => btn.addEventListener("click", () => pick(clients.find((c) => c.id === btn.dataset.id))));
