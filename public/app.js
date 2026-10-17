@@ -1477,6 +1477,7 @@ function renderNav() {
   let visibleNav = NAV.filter((n) => {
     if (n.id === "settings" || n.id === "website") return CURRENT_USER?.accessLevel === "admin";
     if (n.id === "travelcal") return canAssignTeam();
+    if (n.id === "quotation") return hasAccountsAccess() && (!Array.isArray(perms) || perms.includes("quotation"));
     // Team tab (and the Musicians pool inside it) is admin-only for now — a manager
     // shouldn't be able to browse the wider musician pool. Re-open later by relaxing this.
     if (n.id === "team") return CURRENT_USER?.accessLevel === "admin";
@@ -1852,11 +1853,11 @@ async function openLeadDetailModal(lead) {
             ].filter(Boolean).map(([label, value]) => `<div style="margin-bottom:3px;"><span class="muted small">${label}:</span> ${value}</div>`).join("") || `<p class="muted small">Nothing else submitted.</p>`}
           </div>
           ${lead.notes ? `<div class="lead-detail-section"><div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Sticky note</div><div style="padding:8px 10px; background:#FBF3D9; border-radius:6px;">📌 ${lead.notes}</div></div>` : ""}
-          <div class="lead-detail-section">
+          ${hasAccountsAccess() ? `<div class="lead-detail-section">
             <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Quotes sent</div>
             <div id="leadDetailQuotes"><p class="muted small">Loading…</p></div>
-          </div>
-          ${["Tentative", "Confirmed", "Completed"].includes(lead.stage) ? `
+          </div>` : ""}
+          ${hasAccountsAccess() && ["Tentative", "Confirmed", "Completed"].includes(lead.stage) ? `
             <div class="lead-detail-section">
               <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Financials</div>
               <div class="lead-card-financials" style="margin-top:0; ${lead.reimbursement_due ? "grid-template-columns:repeat(2,1fr);" : ""}">
@@ -1880,7 +1881,7 @@ async function openLeadDetailModal(lead) {
         <div class="modal-foot">
           <button class="btn-ghost" id="cancelModal">Close</button>
           ${hasLeadsAccess() && lead.stage !== "Completed" ? `<button class="btn-ghost" id="detailEditBtn">✎ Edit</button>` : ""}
-          ${["New", "Follow-up", "Interested", "Tentative"].includes(lead.stage) ? `<button class="btn-primary" id="detailQuoteBtn">Quote</button>` : ""}
+          ${hasAccountsAccess() && ["New", "Follow-up", "Interested", "Tentative"].includes(lead.stage) ? `<button class="btn-primary" id="detailQuoteBtn">Quote</button>` : ""}
         </div>
       </div>
     </div>
@@ -1900,7 +1901,7 @@ async function openLeadDetailModal(lead) {
     renderMain();
   });
 
-  try {
+  if (hasAccountsAccess()) try {
     const allQuotes = await api("/api/quotes");
     const quotesForLead = allQuotes.filter((q) => q.lead_id === lead.id);
     const container = root.querySelector("#leadDetailQuotes");
@@ -2006,7 +2007,7 @@ async function renderLeadsLog(main, skipRefresh) {
         <h2>Leads</h2>
         <p class="muted">Every query received, across every format.</p>
       </div>
-      <div style="display:flex; gap:8px; flex-wrap:wrap;"><button class="btn-ghost" id="quickConfirmBtn">⚡ Quick confirm</button><button class="btn-primary" id="newLeadBtn">+ New lead</button></div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">${hasAccountsAccess() ? `<button class="btn-ghost" id="quickConfirmBtn">⚡ Quick confirm</button>` : ""}<button class="btn-primary" id="newLeadBtn">+ New lead</button></div>
     </div>
 
     <div class="card" style="margin-bottom:18px;">
@@ -2186,7 +2187,7 @@ async function renderLeadsLog(main, skipRefresh) {
               </div>
             </div>
             <select class="stage-select" data-lead-id="${l.id}" style="color:${STAGE_COLOR[l.stage]}; flex-shrink:0; width:auto;">
-              ${CONFIG.stages.filter((s) => s !== "Completed" || s === l.stage).map((s) => `<option value="${s}" ${s === l.stage ? "selected" : ""}>${s}</option>`).join("")}
+              ${CONFIG.stages.filter((s) => (s !== "Completed" || s === l.stage) && (hasAccountsAccess() || !["Confirmed", "Tentative"].includes(s) || s === l.stage)).map((s) => `<option value="${s}" ${s === l.stage ? "selected" : ""}>${s}</option>`).join("")}
             </select>
           </div>
           <div class="muted small" style="margin-top:8px;">${packageName(l.event_type)} · ${l.city || "—"} · <span class="mono">${fmtDate(l.date)}</span></div>
@@ -2249,7 +2250,7 @@ async function renderLeadsLog(main, skipRefresh) {
             const qe = quoteExpiry(l);
             if (!qe) return "";
             return `<div class="quote-expiry" style="margin-top:6px; font-size:12.5px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; color:${qe.expired ? "#A6432B" : "#8A5A1F"};">${qe.expired ? "\u26A0\uFE0F" : "\u23F3"} ${qe.text}
-              ${hasLeadsAccess() ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}" style="font-size:12px; padding:3px 10px;">\u21BB Re-quote</button>` : ""}</div>`;
+              ${hasLeadsAccess() && hasAccountsAccess() ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}" style="font-size:12px; padding:3px 10px;">\u21BB Re-quote</button>` : ""}</div>`;
           })()}
           ${hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) ? (() => {
             const todayStr = new Date().toISOString().slice(0, 10);
@@ -2299,7 +2300,7 @@ async function renderLeadsLog(main, skipRefresh) {
             </div>
           ` : (l.notes ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#FBEFD9; border-radius:4px;">📝 ${l.notes}</div>` : "")}
           ${l.stage === "Cancelled" && l.cancellation_reason ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#F7E4DF; border-radius:4px; color:#A6432B;">❌ Cancelled: ${l.cancellation_reason}</div>` : ""}
-          ${hasRateInfo ? `
+          ${hasRateInfo && hasAccountsAccess() ? `
             <div class="lead-card-financials" style="${displayReimbursementDue ? "grid-template-columns:repeat(2,1fr);" : ""}">
               <div><span class="muted small">${l.stage === "Tentative" ? "Rate held" : "Final"}</span><div class="mono">${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
               ${displayReimbursementDue ? `<div><span class="muted small">Reimbursement due</span><div class="mono" style="color:#B6752C;">+ ${inr(displayReimbursementDue)}</div></div>` : ""}
@@ -2313,12 +2314,12 @@ async function renderLeadsLog(main, skipRefresh) {
           ` : ""}
           <div class="lead-card-actions">
             <button class="btn-ghost lead-detail-btn" data-lead-id="${l.id}">📋 Details</button>
-            ${l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative" ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
+            ${hasAccountsAccess() && (l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative") ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
             ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative" || l.stage === "Not Interested") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
-            ${l.stage === "Tentative" && hasLeadsAccess() ? `<button class="btn-ghost tentative-confirm-info-btn" data-lead-id="${l.id}">📨 Send confirm details</button>` : ""}
+            ${l.stage === "Tentative" && hasLeadsAccess() && hasAccountsAccess() ? `<button class="btn-ghost tentative-confirm-info-btn" data-lead-id="${l.id}">📨 Send confirm details</button>` : ""}
             ${l.phone ? `<button class="btn-ghost contact-lead-btn" data-phone="${l.phone}">📞 Contact</button>` : ""}
             ${isConfirmedOrDone && hasAccountsAccess() ? `<button class="btn-ghost payments-btn" data-lead-id="${l.id}">💰 Payments</button>` : ""}
-            ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost confirmation-msg-btn" data-lead-id="${l.id}">✅ Confirmation msg</button>` : ""}
+            ${isConfirmedOrDone && hasLeadsAccess() && hasAccountsAccess() ? `<button class="btn-ghost confirmation-msg-btn" data-lead-id="${l.id}">✅ Confirmation msg</button>` : ""}
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team & Expenses</button>` : ""}
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost travel-plan-btn" data-lead-id="${l.id}">🧳 Travel</button>` : ""}
             ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost lead-documents-btn" data-lead-id="${l.id}">📄 Documents</button>` : ""}
@@ -2650,7 +2651,7 @@ async function renderLeadsLog(main, skipRefresh) {
   });
 
   main.querySelector("#newLeadBtn").addEventListener("click", openNewLeadModal);
-  main.querySelector("#quickConfirmBtn").addEventListener("click", openQuickConfirmModal);
+  main.querySelector("#quickConfirmBtn")?.addEventListener("click", openQuickConfirmModal);
   main.querySelector("#copyLinkBtn").addEventListener("click", () => {
     navigator.clipboard.writeText(shareLink);
     const btn = main.querySelector("#copyLinkBtn");
@@ -3268,7 +3269,7 @@ function wireCalendarGrid(container) {
       const dateStr = d ? `${calYear}-${String(calMonth).padStart(2, "0")}-${String(d).padStart(2, "0")}` : null;
       const blocked = dateStr ? isDateBlocked(dateStr) : null;
       const todayStr = new Date().toISOString().slice(0, 10);
-      const canQuickAdd = !!d && !blocked && evs.length === 0 && dateStr >= todayStr && hasLeadsAccess();
+      const canQuickAdd = !!d && !blocked && evs.length === 0 && dateStr >= todayStr && hasLeadsAccess() && hasAccountsAccess();
       calCells.appendChild(el(`
         <div class="cal-cell${d ? "" : " cal-cell-empty"}"${canQuickAdd ? ` data-quick-add="${dateStr}" title="Add an event on this date"` : ""}${blocked ? ` style="background:repeating-linear-gradient(45deg, #E5DFD1, #E5DFD1 6px, #DCD4C0 6px, #DCD4C0 12px);"` : canQuickAdd ? ` style="cursor:pointer;"` : ""}>
           ${d ? `<div class="cal-day">${d}</div>` : ""}
@@ -3456,7 +3457,7 @@ async function renderTravelCalendar(main) {
   // person isn't on the team roster (e.g. an admin who doesn't perform),
   // fall back to showing everyone (null = no filter) instead of an empty calendar.
   if (travelCalSelectedIds === undefined) {
-    travelCalSelectedIds = CURRENT_USER?.teamId && TEAM.some((m) => m.id === CURRENT_USER.teamId)
+    travelCalSelectedIds = CURRENT_USER?.accessLevel !== "admin" && canAssignTeam() ? null : CURRENT_USER?.teamId && TEAM.some((m) => m.id === CURRENT_USER.teamId)
       ? new Set([CURRENT_USER.teamId])
       : null;
   }
@@ -8043,7 +8044,7 @@ async function renderDocuments(main) {
   const eventLeads = LEADS.filter((l) => l.stage === "Confirmed" || l.stage === "Completed").slice().sort((a, b) => new Date(a.date) - new Date(b.date));
   main.innerHTML = `
     <div class="view-head"><div><h2>Documents</h2><p class="muted">General files, plus files kept against a specific confirmed event — tag riders/contracts and send them straight to the client.</p></div></div>
-    <div class="card" style="margin-bottom:16px;">
+    ${hasAccountsAccess() ? `<div class="card" style="margin-bottom:16px;">
       <div class="section-label">Send a rate card</div>
       <p class="muted small" style="margin-top:-4px;">For contacts who haven't submitted an enquiry — event planners, agencies, or anyone wanting your rates for future reference. Shows both B2C and B2B pricing plus full terms &amp; conditions. No lead is created; this just builds a PDF and opens WhatsApp.</p>
       <div class="row-2">
@@ -8052,7 +8053,7 @@ async function renderDocuments(main) {
       </div>
       <button class="btn-primary full" id="rcSendBtn" style="margin-top:10px;">📄 Generate & send on WhatsApp</button>
       <p class="muted small" id="rcStatus" style="margin-top:6px;"></p>
-    </div>
+    </div>` : ""}
     <div class="card" style="margin-bottom:16px;">
       <div class="section-label">Upload a file</div>
       <div class="upload-form">
@@ -8163,7 +8164,7 @@ async function renderDocuments(main) {
     });
   });
 
-  main.querySelector("#rcSendBtn").addEventListener("click", async () => {
+  main.querySelector("#rcSendBtn")?.addEventListener("click", async () => {
     const name = main.querySelector("#rcName").value.trim();
     const phone = main.querySelector("#rcPhone").value.trim();
     const digitsOnly = phone.replace(/\D/g, "");
@@ -8843,7 +8844,7 @@ function openNewLeadModal(opts = {}) {
           </div>
           <label>Venue (optional)</label>
           <input id="mVenue" placeholder="e.g. Radhika Function Hall, MG Road" />
-          <label class="check-row" style="margin-top:10px;">
+          <label class="check-row" style="margin-top:10px;${hasAccountsAccess() ? "" : " display:none;"}">
             <input type="checkbox" id="mAlreadyConfirmed" />
             <span>Already confirmed — skip straight to Confirmed (e.g. someone you know called and booked directly)</span>
           </label>
@@ -9157,9 +9158,9 @@ function openEditLeadModal(leadId) {
             <div><label>State</label><input id="mState" value="${lead.state || ""}" placeholder="e.g. West Bengal" /></div>
             <div><label>Event date</label><input id="mDate" type="date" value="${lead.date || ""}" /></div>
           </div>
-          <div class="row-2">
+          ${hasAccountsAccess() ? `<div class="row-2">
             <div><label>Quoted amount (₹)</label><input id="mQuoteAmount" type="number" value="${lead.quote_amount || ""}" placeholder="e.g. 150000" /></div>
-          </div>
+          </div>` : ""}
           <div class="row-2">
             <div><label>No. of guests</label><select id="mGuests"><option value="">Not specified</option>${CONFIG.guestRanges.map((g) => `<option value="${g}" ${g === lead.guest_range ? "selected" : ""}>${g}</option>`).join("")}</select></div>
             <div><label>Occasion</label><select id="mOccasion"><option value="" disabled ${!lead.occasion ? "selected" : ""} hidden>Choose an occasion…</option>${CONFIG.occasions.map((o) => `<option value="${o}" ${o === lead.occasion ? "selected" : ""}>${o}</option>`).join("")}</select></div>
@@ -9170,7 +9171,7 @@ function openEditLeadModal(leadId) {
           </div>
           <label>Band size (Pcs)</label>
           <input id="mPcs" type="number" min="1" value="${lead.pcs || ""}" placeholder="e.g. 4" />
-          ${["Tentative", "Confirmed", "Completed"].includes(lead.stage) ? `
+          ${hasAccountsAccess() && ["Tentative", "Confirmed", "Completed"].includes(lead.stage) ? `
             <label>${lead.stage === "Tentative" ? "Tentative rate held (₹)" : "Final confirmed amount (₹)"}</label>
             <input id="mFinalAmount" type="number" value="${lead.final_amount || ""}" placeholder="e.g. 150000" />
             <label style="margin-top:10px;">This rate is —</label>
@@ -9211,7 +9212,7 @@ function openEditLeadModal(leadId) {
           city: root.querySelector("#mCity").value.trim() || null,
           state: root.querySelector("#mState").value.trim() || null,
           date: root.querySelector("#mDate").value || lead.date,
-          quoteAmount: root.querySelector("#mQuoteAmount").value ? Number(root.querySelector("#mQuoteAmount").value) : null,
+          ...(root.querySelector("#mQuoteAmount") ? { quoteAmount: root.querySelector("#mQuoteAmount").value ? Number(root.querySelector("#mQuoteAmount").value) : null } : {}),
           guestRange: root.querySelector("#mGuests").value || null,
           occasion: root.querySelector("#mOccasion").value || null,
           occasionOther: root.querySelector("#mOccasion").value === "Other" ? (root.querySelector("#mOccasionOther").value.trim() || null) : null,

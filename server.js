@@ -160,6 +160,19 @@ function requireCapability(capability) {
 // since anyone can read raw API responses in their browser. Every route that can
 // carry money strips it unless the user has the matching section.
 const canSeeMoney = (user) => userHasSection(user, "accounts");
+// Money on a lead row (what the client budgeted / was quoted / pays). Anyone without
+// Accounts access (a manager, say) never receives these, whichever endpoint asks.
+const LEAD_MONEY_FIELDS = ["quote_amount", "final_amount", "budget", "advance", "advance_date", "received", "reimbursement_due"];
+function stripLeadMoney(l, user) {
+  if (!l || canSeeMoney(user)) return l;
+  const o = { ...l };
+  LEAD_MONEY_FIELDS.forEach((k) => delete o[k]);
+  return o;
+}
+function requireMoneyAccess(req, res, next) {
+  if (canSeeMoney(req.user)) return next();
+  return res.status(403).json({ error: "Amounts and quotes are only available with Accounts access" });
+}
 function restrictedLeadView(l) {
   return {
     id: l.id, name: l.name, date: l.date, city: l.city, event_type: l.event_type, stage: l.stage,
@@ -735,7 +748,7 @@ app.get("/api/config", async (req, res) => {
   // add-on rates and the pricing matrix only go to logged-in people who quote or
   // handle money.
   const viewer = await getSessionUser(req);
-  const seesRates = !!viewer && (userHasSection(viewer, "leads") || userHasSection(viewer, "quotation") || userHasSection(viewer, "accounts"));
+  const seesRates = !!viewer && userHasSection(viewer, "accounts");
   if (!seesRates) {
     return res.json({
       stages: STAGES,
@@ -865,15 +878,23 @@ app.get("/api/leads", requireAuth, async (req, res) => {
     try { perms = req.user.permissions ? JSON.parse(req.user.permissions) : null; } catch { perms = null; }
     if (perms && !perms.includes("leads")) hasLeadsAccess = false;
   }
-  if (hasLeadsAccess) return res.json(withReceived);
+  if (hasLeadsAccess) return res.json(withReceived.map((l) => stripLeadMoney(l, req.user)));
   // Restricted staff (e.g. a manager who can assign team but not view the pipeline)
   // still need basic event info for the calendar and team assignment — nothing sensitive.
   // And if they're on the team roster themselves, only the events they've been
   // allotted (and haven't declined) — not the whole company calendar.
   let visible = withReceived;
-  const mineIds = await assignedLeadIdSet(req.user);
-  if (mineIds) visible = withReceived.filter((l) => mineIds.has(l.id));
-  res.json(visible.map(restrictedLeadView));
+  if (userHasSection(req.user, "assign_team")) {
+    // Someone who plans the team needs every confirmed event to plan it for — operations details only.
+    visible = withReceived.filter((l) => ["Confirmed", "Completed"].includes(l.stage));
+  } else {
+    const mineIds = await assignedLeadIdSet(req.user);
+    if (mineIds) visible = withReceived.filter((l) => mineIds.has(l.id));
+  }
+  const withCounts = userHasSection(req.user, "assign_team")
+    ? (l) => ({ ...restrictedLeadView(l), team_total: l.team_total, team_accepted: l.team_accepted, team_declined: l.team_declined, travel_total: l.travel_total, travel_booked: l.travel_booked, travel_done: l.travel_done })
+    : restrictedLeadView;
+  res.json(visible.map(withCounts));
 });
 
 // Public lead-capture endpoint — this is the form link you'd share with a new query.
@@ -2061,6 +2082,7 @@ app.delete("/api/gallery/:id", requireAuth, requireAdmin, async (req, res) => {
 // the others just point back to it for display.
 app.post("/api/leads/combo", requireAuth, requireSection("leads"), async (req, res) => {
   const { name, phone, email, city, occasion, guestRange, events, budget, finalAmount, alreadyConfirmed, advanceAmount, advanceDate, advanceMode, isB2b } = req.body;
+  if (!canSeeMoney(req.user) && (alreadyConfirmed || finalAmount || advanceAmount)) return res.status(403).json({ error: "Confirming with amounts needs Accounts access" });
   if (!name) return res.status(400).json({ error: "Name is required" });
   if (!Array.isArray(events) || events.length < 2) return res.status(400).json({ error: "Provide at least two format/date combinations for a combo booking" });
   for (const e of events) {
@@ -2145,6 +2167,10 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     if (attemptedRestricted) return res.status(403).json({ error: "You don't have permission to update those fields" });
   }
 
+  // Amounts are Accounts-only: a manager can't set or change anything financial.
+  if (!canSeeMoney(req.user) && ["quoteAmount", "finalAmount", "advance", "advanceDate", "rateType"].some((k) => req.body[k] !== undefined)) {
+    return res.status(403).json({ error: "Amounts can only be changed with Accounts access" });
+  }
   if (req.body.advanceDate) {
     const today = new Date().toISOString().slice(0, 10);
     if (req.body.advanceDate > today) return res.status(400).json({ error: "Advance received date can't be in the future" });
@@ -2249,7 +2275,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   }
 
   const updatedLead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
-  res.json(hasLeads ? updatedLead : restrictedLeadView(updatedLead));
+  res.json(hasLeads ? stripLeadMoney(updatedLead, req.user) : restrictedLeadView(updatedLead));
   syncLeadToGoogleCalendar(updatedLead).catch((err) => console.error("Google Calendar sync error:", err.message));
   checkTeamComplete(updatedLead.id); // a lead that just became Confirmed with everyone already accepted is "complete"
 
@@ -2309,7 +2335,7 @@ app.delete("/api/leads/:id", requireAuth, requireAdmin, async (req, res) => {
 // change wording, amount, or anything else himself without needing a code
 // change). This endpoint just records the amount + stage, and turns the
 // final text into a WhatsApp link and a mailto link.
-app.post("/api/leads/:id/quote", requireAuth, requireAnySection(["leads", "quotation"]), async (req, res) => {
+app.post("/api/leads/:id/quote", requireAuth, requireAnySection(["leads", "quotation"]), requireMoneyAccess, async (req, res) => {
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
@@ -2356,7 +2382,7 @@ app.post("/api/leads/:id/quote", requireAuth, requireAnySection(["leads", "quota
 });
 
 // History of every quote ever sent, newest first — so Ashwin can see what's gone to whom.
-app.get("/api/quotes", requireAuth, requireAnySection(["leads", "quotation"]), async (req, res) => {
+app.get("/api/quotes", requireAuth, requireAnySection(["leads", "quotation"]), requireMoneyAccess, async (req, res) => {
   const { rows } = await pool.query(`
     SELECT quotes.*, leads.name AS lead_name, leads.phone AS lead_phone, leads.email AS lead_email
     FROM quotes JOIN leads ON leads.id = quotes.lead_id
@@ -2369,7 +2395,7 @@ app.get("/api/quotes", requireAuth, requireAnySection(["leads", "quotation"]), a
 // "sent" forever — purely informational, doesn't touch the lead's stage.
 // Also lets a quote sent by mistake (wrong amount, typo, etc.) be corrected
 // in place rather than living on in the history forever.
-app.patch("/api/quotes/:id", requireAuth, requireAnySection(["leads", "quotation"]), async (req, res) => {
+app.patch("/api/quotes/:id", requireAuth, requireAnySection(["leads", "quotation"]), requireMoneyAccess, async (req, res) => {
   const { status, amount, subject, body } = req.body;
   const updates = [];
   const values = [];
@@ -2400,7 +2426,7 @@ app.patch("/api/quotes/:id", requireAuth, requireAnySection(["leads", "quotation
 
 // Removes a quote sent by mistake (duplicate send, wrong lead, testing) —
 // doesn't touch the lead itself, just its quote history.
-app.delete("/api/quotes/:id", requireAuth, requireAnySection(["leads", "quotation"]), async (req, res) => {
+app.delete("/api/quotes/:id", requireAuth, requireAnySection(["leads", "quotation"]), requireMoneyAccess, async (req, res) => {
   const { rows } = await pool.query("DELETE FROM quotes WHERE id = $1 RETURNING id", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "Quote not found" });
   res.status(204).end();
@@ -3416,7 +3442,8 @@ app.get("/api/calendar", requireAuth, async (req, res) => {
     const d = new Date(l.date + "T00:00:00");
     return (!year || d.getFullYear() === Number(year)) && (!month || d.getMonth() + 1 === Number(month));
   });
-  if (userHasSection(req.user, "leads")) return res.json(filtered);
+  if (userHasSection(req.user, "leads")) return res.json(filtered.map((l) => stripLeadMoney(l, req.user)));
+  if (userHasSection(req.user, "assign_team")) return res.json(filtered.map(restrictedLeadView));
   const mineIds = await assignedLeadIdSet(req.user);
   res.json((mineIds ? filtered.filter((l) => mineIds.has(l.id)) : filtered).map(restrictedLeadView));
 });
@@ -4449,7 +4476,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
   // No Leads access (e.g. a manager): no pipeline, no totals, no outstanding —
   // just their own upcoming events and tasks.
   if (!userHasSection(req.user, "leads")) {
-    const mineIds = await assignedLeadIdSet(req.user);
+    const mineIds = userHasSection(req.user, "assign_team") ? null : await assignedLeadIdSet(req.user);
     const upcomingAll = (await pool.query(`SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1 ORDER BY date ASC`, [today])).rows
       .filter((l) => !mineIds || mineIds.has(l.id));
     const allTasks = (await pool.query(`SELECT * FROM tasks WHERE done = 0 AND (due_date <= $1 OR due_date IS NULL) ORDER BY due_date ASC LIMIT 8`, [weekAhead])).rows;
@@ -4491,15 +4518,17 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
   const stageCounts = {};
   stageCountsRes.rows.forEach((r) => { stageCounts[r.stage] = Number(r.c); });
 
+  const money = canSeeMoney(req.user);
+  const sm = (rows) => rows.map((l) => stripLeadMoney(l, req.user));
   res.json({
-    upcomingEvents: upcomingRes.rows,
+    upcomingEvents: sm(upcomingRes.rows),
     upcomingEventsCount: Number(upcomingCountRes.rows[0].c),
-    pendingFollowUps: followUpsRes.rows,
+    pendingFollowUps: sm(followUpsRes.rows),
     tasksDueSoon: tasksRes.rows,
     newLeadsCount: Number(newLeadsRes.rows[0].c),
-    tentativeBookings: tentativeRes.rows,
-    interestedLeads: interestedRes.rows,
-    outstanding: totalQuoted - totalReceived + totalReimbursementDue,
+    tentativeBookings: sm(tentativeRes.rows),
+    interestedLeads: sm(interestedRes.rows),
+    outstanding: money ? totalQuoted - totalReceived + totalReimbursementDue : 0,
     stageCounts,
   });
 });
