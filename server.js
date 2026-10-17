@@ -202,6 +202,8 @@ async function assignmentInManagerScope(user, assignmentId) {
   const a = (await pool.query("SELECT lead_id FROM event_assignments WHERE id = $1", [assignmentId])).rows[0];
   return !a || (await leadInManagerScope(user, a.lead_id));
 }
+const LEG_TYPES_OK = ["going", "return", "onward"];
+const cleanLegType = (v) => (LEG_TYPES_OK.includes(v) ? v : null);
 const scopeDeny = (res) => res.status(403).json({ error: "You can only manage events allotted to you" });
 // Travel notes are the admin's private remarks — nobody else gets them.
 // Managers (assign_team) additionally see the manager_notes they and other managers write.
@@ -2913,9 +2915,9 @@ app.post("/api/travel-legs", requireAuth, requireCapability("assign_team"), asyn
   const id = uuid();
   const now = new Date().toISOString();
   await pool.query(`
-    INSERT INTO travel_legs (id, lead_id, label, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, manager_notes, created_at, updated_at)
-    VALUES ($1, $13, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
-  `, [id, label.trim(), mode || null, fromCity || null, toCity || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, managerNotes, now, linkLeadId]);
+    INSERT INTO travel_legs (id, lead_id, label, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, manager_notes, created_at, updated_at, leg_type)
+    VALUES ($1, $13, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $14)
+  `, [id, label.trim(), mode || null, fromCity || null, toCity || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, managerNotes, now, linkLeadId, cleanLegType(req.body.legType)]);
   for (const teamId of (Array.isArray(teamIds) ? teamIds : [])) {
     await pool.query(`INSERT INTO travel_leg_members (id, leg_id, team_id) VALUES ($1, $2, $3)`, [uuid(), id, teamId]);
   }
@@ -2928,6 +2930,7 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Event not found" });
   const { teamIds, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status } = req.body;
+  const legType = cleanLegType(req.body.legType);
   const notes = req.user.access_level === "admin" ? req.body.notes : null;
   const managerNotes = req.body.managerNotes || null;
   if (!Array.isArray(teamIds) || teamIds.length === 0) return res.status(400).json({ error: "Select at least one artist" });
@@ -2935,9 +2938,9 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
   const id = uuid();
   const now = new Date().toISOString();
   await pool.query(`
-    INSERT INTO travel_legs (id, lead_id, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, manager_notes, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
-  `, [id, req.params.id, mode || null, fromCity || null, toCity || lead.city || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, managerNotes, now]);
+    INSERT INTO travel_legs (id, lead_id, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, manager_notes, created_at, updated_at, leg_type)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13)
+  `, [id, req.params.id, mode || null, fromCity || null, toCity || lead.city || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, managerNotes, now, legType]);
   for (const teamId of teamIds) {
     await pool.query(`INSERT INTO travel_leg_members (id, leg_id, team_id) VALUES ($1, $2, $3)`, [uuid(), id, teamId]);
   }
@@ -2967,14 +2970,14 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
     const dups = await sectorDuplicateNames({ leadId: lid || null, fromCity: fc, toCity: tc, departureAt: req.body.departureAt !== undefined ? req.body.departureAt : leg.departure_at, teamIds: Array.isArray(req.body.teamIds) ? req.body.teamIds : curMembers, excludeLegId: req.params.id });
     if (dups.length) return res.status(400).json({ error: dupTravelMessage(dups, fc, tc) });
   }
-  const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "manager_notes", "label", "lead_id"];
-  const keyFor = (f) => (f === "manager_notes" ? "managerNotes" : f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f === "lead_id" ? "leadId" : f);
+  const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "manager_notes", "label", "lead_id", "leg_type"];
+  const keyFor = (f) => (f === "manager_notes" ? "managerNotes" : f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f === "lead_id" ? "leadId" : f === "leg_type" ? "legType" : f);
   const updates = [];
   const values = [];
   fields.forEach((f) => {
     if (f === "notes" && req.user.access_level !== "admin") return; // admin-only remarks
     const key = keyFor(f);
-    if (req.body[key] !== undefined) { values.push(req.body[key]); updates.push(`${f} = $${values.length}`); }
+    if (req.body[key] !== undefined) { values.push(f === "leg_type" ? cleanLegType(req.body[key]) : req.body[key]); updates.push(`${f} = $${values.length}`); }
   });
   if (updates.length > 0) {
     values.push(new Date().toISOString());

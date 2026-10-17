@@ -545,6 +545,8 @@ async function setup() {
   await pool.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS travel_leg_id TEXT REFERENCES travel_legs(id) ON DELETE CASCADE`);
   // Managers' own travel remarks (separate from the admin's private `notes`).
   await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS manager_notes TEXT`);
+  // Direction of a journey: going (to the event), return (home after) or onward (straight to the next event).
+  await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS leg_type TEXT`);
   // A journey (train/flight/car) can carry several artists at once — this
   // join table is what actually links artists to a leg now. The old
   // single team_id column on travel_legs stays in place (unused going

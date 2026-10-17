@@ -1931,25 +1931,10 @@ async function openLeadDetailModal(lead) {
 
   if (isConfirmedOrDone && canAssignTeam()) {
     try {
-      const legs = await api(`/api/leads/${lead.id}/travel-legs`);
+      const [allLegs, tctx] = await Promise.all([api("/api/travel-legs"), api("/api/travel-context").catch(() => ({ assignments: [] }))]);
       const container = root.querySelector("#leadDetailTravel");
       if (!container) return; // modal closed while loading
-      container.innerHTML = legs.length === 0
-        ? `<p class="muted small">No travel added yet.</p>`
-        : legs.map((leg) => {
-            const names = leg.members.map((m) => m.name).join(", ") || "No one added yet";
-            const statusColor = leg.status === "not_booked" ? "#B6752C" : "#1C7A80";
-            const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
-            return `
-              <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
-                <div>
-                  <div>${names}</div>
-                  <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${route ? ` · ${route}` : ""}${leg.tickets.length > 0 ? ` · ${leg.tickets.length} ticket${leg.tickets.length === 1 ? "" : "s"}` : ""}</div>
-                </div>
-                <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
-              </div>
-            `;
-          }).join("");
+      container.innerHTML = eventTravelHtml(lead, allLegs, tctx.assignments);
       container.innerHTML += `<button class="btn-ghost full" id="leadDetailManageTravelBtn" style="margin-top:8px;">Manage travel plan</button>`;
       root.querySelector("#leadDetailManageTravelBtn").addEventListener("click", () => { close(); openTravelPlanModal(lead.id); });
     } catch (err) {
@@ -3444,6 +3429,97 @@ async function renderCalendar(main) {
 }
 
 // ---------- Travel Calendar ----------
+// ---- Journey direction (Going / Return / Onward), per-artist travel summary and night stays ----
+const LEG_TYPES = {
+  going: { label: "➡ Going", color: "#1F6F43" },
+  return: { label: "⬅ Return", color: "#8A5FA8" },
+  onward: { label: "🔗 Onward", color: "#C1602B" },
+};
+const legTypeBadge = (type) => LEG_TYPES[type] ? `<span style="display:inline-block; font-size:11px; font-weight:600; color:#fff; background:${LEG_TYPES[type].color}; border-radius:999px; padding:1px 8px; margin-right:4px;">${LEG_TYPES[type].label}</span>` : "";
+const legTypeOptionsHtml = (selected) => Object.entries(LEG_TYPES).map(([id, t]) => `<option value="${id}" ${(selected || "going") === id ? "selected" : ""}>${t.label}${id === "onward" ? " (straight from the previous event)" : ""}</option>`).join("");
+const ymd = (v) => (v ? String(v).slice(0, 10) : "");
+const normCity = (v) => String(v || "").trim().toLowerCase();
+const dayShort = (d) => (d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "—");
+// UTC arithmetic on purpose: local midnight + 1 day, converted to UTC, lands on the same date in timezones ahead of UTC (e.g. India).
+const addDaysYmd = (d, n) => new Date(new Date(d + "T00:00:00Z").getTime() + n * 86400000).toISOString().slice(0, 10);
+
+// Every move one artist makes: a journey moves them on its departure date; a round trip (a "going"
+// journey that also has a return date) moves them back on that date.
+function artistMoves(teamId, legsAll, baseCity) {
+  const moves = [];
+  legsAll.filter((l) => (l.members || []).some((m) => m.teamId === teamId)).forEach((leg) => {
+    const type = leg.leg_type || "going";
+    const dep = ymd(leg.departure_at), arr = ymd(leg.arrival_at);
+    if (dep) moves.push({ date: dep, from: leg.from_city || "", to: leg.to_city || "", type, leg, derived: false });
+    if (type === "going" && arr && arr !== dep) moves.push({ date: arr, from: leg.to_city || "", to: leg.from_city || baseCity || "", type: "return", leg, derived: true });
+  });
+  return moves.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// Going / return / night stays for one artist at one event.
+function artistEventTravel(lead, teamId, legsAll) {
+  const m = TEAM.find((x) => x.id === teamId);
+  const base = m?.base_city || "";
+  const moves = artistMoves(teamId, legsAll, base);
+  const D = lead.date;
+  const goingIn = moves.filter((x) => x.leg.lead_id === lead.id && !x.derived && (x.type === "going" || x.type === "onward"));
+  const returnOut = moves.filter((x) => (x.leg.lead_id === lead.id && (x.type === "return" || x.derived))
+    || (x.type === "onward" && x.leg.lead_id !== lead.id && x.date >= D && x.date <= addDaysYmd(D, 4)));
+  const posOn = (n) => { let c = base; moves.forEach((x) => { if (x.date <= n && x.to) c = x.to; }); return c; };
+  const nights = [];
+  const start = goingIn.length ? goingIn[0].date : "";
+  if (start) {
+    const lastRet = returnOut.length ? returnOut[returnOut.length - 1].date : "";
+    const end = lastRet && lastRet >= D ? lastRet : D;
+    for (let n = start, guard = 0; n <= end && guard < 40; n = addDaysYmd(n, 1), guard++) {
+      const c = posOn(n);
+      if (c && (!base || normCity(c) !== normCity(base))) nights.push({ date: n, city: c });
+    }
+  }
+  const eventNight = start ? posOn(D) : (base || "");
+  const local = !!base && normCity(base) === normCity(lead.city) && goingIn.length === 0;
+  return { member: m, base, goingIn, returnOut, nights, eventNight, local, missingReturn: goingIn.length > 0 && returnOut.length === 0 };
+}
+
+function eventCrewIds(lead, legsAll, assignments) {
+  const ids = new Set(assignments.filter((a) => a.lead_id === lead.id && a.status !== "declined").map((a) => a.team_id));
+  legsAll.filter((l) => l.lead_id === lead.id).forEach((l) => (l.members || []).forEach((x) => ids.add(x.teamId)));
+  return [...ids];
+}
+
+// The travel picture for an event: night-stay city on top, then each artist's going / return / stay.
+function eventTravelHtml(lead, legsAll, assignments, opts = {}) {
+  const esc = (v) => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const ids = eventCrewIds(lead, legsAll, assignments);
+  if (!ids.length) return `<p class="muted small">No crew allotted yet, so no travel to show.</p>`;
+  const info = ids.map((id) => artistEventTravel(lead, id, legsAll));
+  const legLine = (x, labelType, extra) => {
+    const l = x.leg;
+    const route = [x.from || l.from_city, x.to || l.to_city].filter(Boolean).join(" → ");
+    const st = l.status === "not_booked" ? `<span style="color:#B6752C; font-weight:600;">not booked</span>` : `<span style="color:#1C7A80;">${TRAVEL_STATUS_LABELS[l.status] || l.status}</span>`;
+    const tk = (l.tickets || []).length ? ` · 🎫 ${(l.tickets || []).length}` : "";
+    return `<div class="small" style="margin:2px 0;">${legTypeBadge(labelType)}<b>${dayShort(x.date)}</b> · ${esc(route) || "route not set"} · ${esc(TRAVEL_MODE_LABELS[l.mode] || "mode not set")} · ${st}${tk}${extra || ""}</div>`;
+  };
+  // Night of the event, grouped by city
+  const byCity = {};
+  info.forEach((a) => { const c = a.local ? "Home (local)" : (a.eventNight || "city not known yet"); (byCity[c] = byCity[c] || []).push(a.member?.name || "?"); });
+  const stayTop = `<div style="padding:8px 10px; background:#EEF4FB; border-radius:8px; margin-bottom:8px;"><b>🌙 Night stay — ${dayShort(lead.date)}:</b> ${Object.entries(byCity).map(([c, ns]) => `<b>${esc(c)}</b> <span class="muted small">(${esc(ns.join(", "))})</span>`).join(" · ")}</div>`;
+  const rows = info.map((a) => {
+    const name = esc(a.member?.name || "Unknown");
+    const head = `<div style="font-weight:600;">${name} <span class="muted small" style="font-weight:400;">${a.base ? "📍 " + esc(a.base) : ""}</span></div>`;
+    let body = "";
+    if (a.local) body = `<div class="small muted" style="margin:2px 0;">🏠 Local — no travel, home for the night</div>`;
+    else {
+      body += a.goingIn.length ? a.goingIn.map((x) => legLine(x, x.type)).join("") : `<div class="small" style="margin:2px 0; color:#A6432B;">${legTypeBadge("going")}⚠ not planned</div>`;
+      if (a.returnOut.length) body += a.returnOut.map((x) => legLine(x, x.type === "onward" ? "onward" : "return", x.type === "onward" && x.leg.lead_id !== lead.id ? ` · <span class="muted">for ${esc(LEADS.find((e) => e.id === x.leg.lead_id)?.name || "next event")}</span>` : (x.derived ? ` <span class="muted">(return date of the round trip)</span>` : ""))).join("");
+      else if (a.goingIn.length) body += `<div class="small" style="margin:2px 0; color:#A6432B;">${legTypeBadge("return")}⚠ no way back planned</div>`;
+      body += `<div class="small" style="margin:2px 0;">🌙 ${a.nights.length ? a.nights.map((n) => `${dayShort(n.date)} <b>${esc(n.city)}</b>`).join(" · ") : `<span class="muted">${a.goingIn.length ? "no nights away" : "—"}</span>`}</div>`;
+    }
+    return `<div class="dash-list-item">${head}${body}</div>`;
+  }).join("");
+  return stayTop + rows;
+}
+
 // ---- Travel Calendar helpers: events alongside journeys, previous-event note, gaps and clashes ----
 function eventPrevOf(lead) {
   let p = null;
@@ -3498,13 +3574,8 @@ function openTravelEventModal(lead, legsAll, ctx, onClose) {
       <div class="modal-head"><h3>${esc(lead.name)} <span class="muted" style="font-weight:400; font-size:14px;">${lead.city ? "(" + esc(lead.city) + ", " : "("}${fmtDate(lead.date)})</span></h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
       <div class="modal-body">
         ${prevEventNoteHtml(lead, legsAll, ctx.assignments)}
-        <div class="muted small" style="margin:12px 0 4px; font-weight:600; text-transform:uppercase;">Crew for this event</div>
-        ${crew.length ? crew.map((a) => {
-          const m = TEAM.find((x) => x.id === a.team_id);
-          const mine = evLegs.filter((l) => (l.members || []).some((x) => x.teamId === a.team_id));
-          const gap = gaps.includes(m?.name);
-          return `<div class="dash-list-item" style="display:flex; justify-content:space-between; gap:8px;"><span><b>${esc(m?.name || "Unknown")}</b> <span class="muted small">${m?.base_city ? "📍 " + esc(m.base_city) : ""}</span></span><span class="small"><span style="color:${stColor[a.status] || "#666"};">${a.status === "cancel_requested" ? "cancel requested" : a.status}</span> · ${mine.length ? `✈ ${mine.map((l) => (l.status === "not_booked" ? "not booked" : "booked")).join(", ")}` : gap ? `<span style="color:#A6432B; font-weight:600;">⚠ no travel planned</span>` : `<span class="muted">local</span>`}</span></div>`;
-        }).join("") : `<p class="muted small">No one allotted yet.</p>`}
+        <div class="muted small" style="margin:12px 0 4px; font-weight:600; text-transform:uppercase;">Travel &amp; stay</div>
+        ${eventTravelHtml(lead, legsAll, ctx.assignments)}
       </div>
       <div class="modal-foot"><button class="btn-ghost" id="evAllot">Allot crew</button><button class="btn-primary" id="evTravel">Plan travel</button></div>
     </div></div>`;
@@ -3613,8 +3684,9 @@ async function renderTravelCalendar(main) {
           (eventsByDay[d.getDate()] = eventsByDay[d.getDate()] || []).push({ leg, kind });
         }
       };
-      addOn(leg.departure_at, "depart");
-      if (leg.arrival_at && leg.arrival_at.slice(0, 10) !== (leg.departure_at || "").slice(0, 10)) addOn(leg.arrival_at, "return");
+      const single = leg.leg_type === "return" || leg.leg_type === "onward";
+      addOn(leg.departure_at, single ? leg.leg_type : "depart");
+      if (!single && leg.arrival_at && leg.arrival_at.slice(0, 10) !== (leg.departure_at || "").slice(0, 10)) addOn(leg.arrival_at, "return");
     });
     const showEvents = {};
     visibleEvents().forEach((l) => {
@@ -3633,7 +3705,7 @@ async function renderTravelCalendar(main) {
           ${dayEvents.map((l) => { const gap = eventTravelGaps(l, legs, tcCtx.assignments).length > 0; return `
             <div class="cal-event tc-event" data-event-id="${l.id}" style="cursor:pointer; background:#1F6F43;" title="Event: ${String(l.name).replace(/"/g, "")}${gap ? " — travel not planned for someone" : ""}">🎤 ${l.name}${gap ? " ⚠" : ""}</div>`; }).join("")}
           ${evs.map(({ leg, kind }) => `
-            <div class="cal-event" data-leg-id="${leg.id}" style="cursor:pointer; ${kind === "return" ? "background:#8A5FA8;" : ""}" title="${legLabel(leg)}${kind === "return" ? " — Return" : ""}">${kind === "return" ? "↩ " : ""}${legLabel(leg)}</div>
+            <div class="cal-event" data-leg-id="${leg.id}" style="cursor:pointer; ${kind === "return" ? "background:#8A5FA8;" : kind === "onward" ? "background:#C1602B;" : ""}" title="${legLabel(leg)}${kind === "return" ? " — Return" : kind === "onward" ? " — Onward to this event" : " — Going"}">${kind === "return" ? "⬅ " : kind === "onward" ? "🔗 " : "➡ "}${legLabel(leg)}</div>
           `).join("")}
         </div>
       `));
@@ -3678,6 +3750,7 @@ async function renderTravelCalendar(main) {
             <div style="font-weight:600;">🎤 ${l.name}${l.city ? ` <span class="muted small" style="font-weight:400;">· ${l.city}</span>` : ""}</div>
             <div class="small" style="margin-top:2px;">${crew.length ? crew.map((a) => `<span style="color:${stColor[a.status] || "#666"}; margin-right:8px;">${TEAM.find((m) => m.id === a.team_id)?.name || "?"}${a.status === "pending" ? " ⏳" : a.status === "declined" ? " ✕" : a.status === "accepted" ? " ✓" : ""}</span>`).join("") : `<span style="color:#A6432B;">No crew allotted yet</span>`}</div>
             ${gaps.length ? `<div class="small" style="color:#A6432B; font-weight:600; margin-top:2px;">⚠ No travel planned: ${gaps.join(", ")}</div>` : ""}
+            ${(() => { const rows = eventCrewIds(l, legs, tcCtx.assignments).map((id) => { const a = artistEventTravel(l, id, legs); const nm = a.member?.name || "?"; if (a.local) return `<div class="small muted">${nm}: 🏠 local</div>`; if (!a.goingIn.length) return ""; return `<div class="small">${nm}: ${a.goingIn.map((x) => `➡ ${dayShort(x.date)}`).join(", ")} · ${a.returnOut.length ? a.returnOut.map((x) => `${x.type === "onward" ? "🔗" : "⬅"} ${dayShort(x.date)}`).join(", ") : `<span style="color:#A6432B;">⬅ ⚠ none</span>`} · 🌙 ${a.nights.length ? [...new Set(a.nights.map((n) => n.city))].join("/") : "—"}</div>`; }).filter(Boolean); return rows.length ? `<div style="margin-top:4px;">${rows.join("")}</div>` : ""; })()}
             <div style="margin-top:6px;">${prevEventNoteHtml(l, legs, tcCtx.assignments)}</div>
           </div>
         </div>`);
@@ -3709,7 +3782,7 @@ async function renderTravelCalendar(main) {
           </div>
           <div style="flex:1; min-width:0;">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
-              <div style="font-weight:600;">${route || legLabel(leg)}</div>
+              <div style="font-weight:600;">${legTypeBadge(leg.leg_type)}${route || legLabel(leg)}</div>
               <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
             </div>
             <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${leg.arrival_at && leg.departure_at ? ` · returns ${new Date(leg.arrival_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : ""}</div>
@@ -3804,6 +3877,8 @@ function openStandaloneTravelLegModal(legId, onDone) {
                 </label>
               `).join("")}
             </div>
+            <label>This journey is</label>
+            <select id="stlLegType" style="margin-bottom:8px;">${legTypeOptionsHtml(leg ? leg.leg_type : "going")}</select>
             <div class="row-2">
               <div><label>Mode</label><select id="stlMode">
                 <option value="">Not set</option>
@@ -3875,6 +3950,7 @@ function openStandaloneTravelLegModal(legId, onDone) {
       const payload = {
         label,
         teamIds,
+        legType: root.querySelector("#stlLegType").value || null,
         mode: root.querySelector("#stlMode").value || null,
         fromCity: root.querySelector("#stlFromCity").value.trim() || null,
         toCity: root.querySelector("#stlToCity").value.trim() || null,
@@ -5294,7 +5370,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   const _prevScroll = _prevCard ? _prevCard.scrollTop : 0;
   const lead = LEADS.find((l) => l.id === leadId);
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
-  const [assignments, tempArtists, leadExpenses, myReimbursements, myOwnFee, tempArtistDirectory, allMusicians, allDocs, travelCtx] = await Promise.all([
+  const [assignments, tempArtists, leadExpenses, myReimbursements, myOwnFee, tempArtistDirectory, allMusicians, allDocs, travelCtx, travelLegsAll] = await Promise.all([
     api(`/api/leads/${leadId}/assignments`),
     Promise.resolve([]),
     isAdmin ? api(`/api/expenses?leadId=${leadId}`) : Promise.resolve([]),
@@ -5304,6 +5380,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     Promise.resolve([]),
     api(`/api/documents`).catch(() => []),
     api(`/api/travel-context`).catch(() => ({ busy: [] })),
+    api(`/api/travel-legs`).catch(() => []),
   ]);
   // Riders (Tech / Hospitality) — this event's own copy first, else the general library one.
   const riderDocs = [];
@@ -5462,7 +5539,12 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                 <span><b>${String(x.name).replace(/</g, "&lt;")}</b>${x.role ? ` <span class="muted small">\u00b7 ${String(x.role).replace(/</g, "&lt;")}</span>` : ""}${x.guest ? ` <span class="mono small" style="background:#E4F1F1; color:#1C7A80; border-radius:4px; padding:0 6px;">Guest</span>` : ""}</span>
                 <span class="small" style="background:${c[0]}; color:${c[1]}; border-radius:10px; padding:1px 9px; white-space:nowrap;">${c[2]}</span></div>`; }).join("")}
             </div>`;
-            return lineupCard + `
+            const travelCard = assignments.length || travelLegsAll.some((l) => l.lead_id === leadId) ? `
+            <div class="card" style="margin:8px 0; padding:12px 14px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;"><div style="font-weight:700;">\u2708 Travel plan for this event</div><button class="btn-ghost" id="assignOpenTravelBtn" style="font-size:12px; padding:3px 10px;">Manage travel</button></div>
+              ${eventTravelHtml(lead, travelLegsAll, travelCtx.assignments || assignments.map((a) => ({ lead_id: leadId, team_id: a.team_id, status: a.status })))}
+            </div>` : "";
+            return lineupCard + travelCard + `
             <div data-toggle-team-list style="cursor:pointer; display:flex; align-items:center; gap:8px; background:#FBEFD9; border-radius:8px; padding:10px 14px; margin:16px 0 8px; font-weight:700; font-size:14.5px; color:#2A2620;">
               <span data-team-list-caret style="font-size:12px;">${startExpanded ? "▾" : "▸"}</span>
               <span>Team members</span>
@@ -5860,6 +5942,8 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       });
     });
   }
+
+  root.querySelector("#assignOpenTravelBtn")?.addEventListener("click", () => openTravelPlanModal(leadId));
 
   // Ticking someone assigns them right away, so their WhatsApp / Copy link buttons
   // (which need the assignment's confirm link) appear immediately instead of only
@@ -6401,9 +6485,17 @@ async function openTravelPlanModal(leadId) {
     api(`/api/leads/${leadId}/assignments`),
   ]);
   let prevNoteHtml = "";
+  let onwardHint = { type: "going", fromCity: "", text: "" };
   try {
     const [allLegs, ctx] = await Promise.all([api("/api/travel-legs"), api("/api/travel-context")]);
     prevNoteHtml = `<div style="margin-bottom:10px;">${prevEventNoteHtml(lead, allLegs, ctx.assignments)}</div>`;
+    // If part of this crew was at an event just before this one, they're probably travelling on from it.
+    const prev = eventPrevOf(lead);
+    if (prev && lead.date && prev.date >= addDaysYmd(lead.date, -3)) {
+      const prevCrew = new Set(ctx.assignments.filter((a) => a.lead_id === prev.id && a.status !== "declined").map((a) => a.team_id));
+      const shared = assignments.filter((a) => prevCrew.has(a.team_id)).map((a) => a.team_name);
+      if (shared.length) onwardHint = { type: "onward", fromCity: prev.city || "", text: `Suggested <b>Onward</b>: ${shared.join(", ")} ${shared.length > 1 ? "were" : "was"} at ${prev.name}${prev.city ? " (" + prev.city + ")" : ""} just before this event.` };
+    }
   } catch { /* the note is a nice-to-have */ }
   let addingNew = false;
   let editingLegId = null;
@@ -6420,7 +6512,7 @@ async function openTravelPlanModal(leadId) {
       <div class="card" style="margin-bottom:10px;">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
           <div>
-            <div style="font-weight:600;">${names}</div>
+            <div style="font-weight:600;">${legTypeBadge(leg.leg_type)}${names}</div>
             <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${route ? ` · ${route}` : ""}</div>
           </div>
           <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
@@ -6465,6 +6557,9 @@ async function openTravelPlanModal(leadId) {
             </label>
           `).join("")}
         </div>
+        <label>This journey is</label>
+        <select id="${prefix}LegType" style="margin-bottom:4px;">${legTypeOptionsHtml(leg ? leg.leg_type : onwardHint.type)}</select>
+        ${isNew && onwardHint.text ? `<div class="muted small" style="margin-bottom:8px;">${onwardHint.text}</div>` : `<div style="margin-bottom:8px;"></div>`}
         <div class="row-2">
           <div><label>Mode</label><select id="${prefix}Mode">
             <option value="">Not set</option>
@@ -6475,7 +6570,7 @@ async function openTravelPlanModal(leadId) {
           </select></div>
         </div>
         <div class="row-2">
-          <div><label>From city</label><input id="${prefix}FromCity" value="${leg?.from_city || ""}" placeholder="e.g. Siliguri" /></div>
+          <div><label>From city</label><input id="${prefix}FromCity" value="${leg?.from_city || (isNew && onwardHint.type === "onward" ? onwardHint.fromCity : "")}" placeholder="e.g. Siliguri" /></div>
           <div><label>To city</label><input id="${prefix}ToCity" value="${leg?.to_city || lead.city || ""}" placeholder="e.g. ${lead.city || "event city"}" /></div>
         </div>
         <div class="row-2">
@@ -6616,6 +6711,7 @@ async function openTravelPlanModal(leadId) {
         if (teamIds.length === 0) return alert("Tick at least one artist for this journey.");
         const payload = {
           teamIds,
+          legType: root.querySelector(`#${prefix}LegType`).value || null,
           mode: root.querySelector(`#${prefix}Mode`).value || null,
           fromCity: root.querySelector(`#${prefix}FromCity`).value.trim() || null,
           toCity: root.querySelector(`#${prefix}ToCity`).value.trim() || null,
