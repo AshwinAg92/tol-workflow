@@ -4784,7 +4784,19 @@ app.get("/api/admin/backup", requireAuth, requireAdmin, async (req, res) => {
 });
 
 // Everything, including uploaded files — restorable with scripts/restore-backup.js.
-app.get("/api/admin/backup/full", requireAuth, requireAdmin, async (req, res) => {
+// The desktop auto-backup script has no browser login, so this one read-only route also accepts
+// a long secret (BACKUP_TOKEN in Railway Variables) as "Authorization: Bearer <token>".
+function backupTokenOrAdmin(req, res, next) {
+  const m = /^Bearer (.+)$/.exec(req.headers.authorization || "");
+  const want = process.env.BACKUP_TOKEN || "";
+  if (m && want.length >= 32) {
+    const a = Buffer.from(m[1]), b = Buffer.from(want);
+    if (a.length === b.length && require("crypto").timingSafeEqual(a, b)) return next();
+    return res.status(401).json({ error: "Invalid backup token" });
+  }
+  return requireAuth(req, res, () => requireAdmin(req, res, next));
+}
+app.get("/api/admin/backup/full", backupTokenOrAdmin, async (req, res) => {
   try {
     const buffer = await buildFullBackup(pool, { includeFiles: true });
     const today = new Date().toISOString().slice(0, 10);
