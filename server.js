@@ -387,14 +387,30 @@ async function tripCardInfo(token) {
   const dateLong = lead.date ? new Date(lead.date + "T00:00:00Z").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }) : "";
   return { client: lead.name, experience: packageName(lead.event_type), dateLong, city: String(lead.city || "").trim(), count: ids.length, routes };
 }
+// WhatsApp's crawler often will not follow a redirect for an image, so on any problem serve the default
+// share image directly with a 200, and keep rendered cards in a small in-memory cache.
+function sendDefaultOgImage(res) {
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "public, max-age=300");
+  res.sendFile(path.join(__dirname, "public", "og-image.png"));
+}
+const _cardCache = new Map();
+function cachedCard(key, render) {
+  const hit = _cardCache.get(key);
+  if (hit) return hit;
+  const png = Buffer.from(render());
+  _cardCache.set(key, png);
+  if (_cardCache.size > 200) _cardCache.delete(_cardCache.keys().next().value);
+  return png;
+}
 app.get("/trip-card/:token.png", async (req, res) => {
   try {
     const info = await tripCardInfo(req.params.token);
-    if (!info) return res.redirect(302, "/og-image.png");
+    if (!info) return sendDefaultOgImage(res);
     res.setHeader("Content-Type", "image/png");
     res.setHeader("Cache-Control", "public, max-age=600");
-    res.send(Buffer.from(renderTripCardPng(info)));
-  } catch (err) { console.error("trip-card error:", err.message); res.redirect(302, "/og-image.png"); }
+    res.send(cachedCard("trip:" + JSON.stringify(info), () => renderTripCardPng(info)));
+  } catch (err) { console.error("trip-card error:", err.message); sendDefaultOgImage(res); }
 });
 async function artistCardInfo(token) {
   const row = (await pool.query(`SELECT team.name AS team_name, leads.event_type, leads.city, leads.date
@@ -408,14 +424,14 @@ async function artistCardInfo(token) {
 app.get("/confirm-card/:token.png", async (req, res) => {
   try {
     const info = await artistCardInfo(req.params.token);
-    if (!info) return res.redirect(302, "/og-image.png");
-    const png = renderArtistCardPng(info.first, info.experience, info.dateLong, info.city);
+    if (!info) return sendDefaultOgImage(res);
+    const png = cachedCard("confirm:" + JSON.stringify(info), () => renderArtistCardPng(info.first, info.experience, info.dateLong, info.city));
     res.setHeader("Content-Type", "image/png");
     res.setHeader("Cache-Control", "public, max-age=3600");
-    res.send(Buffer.from(png));
+    res.send(png);
   } catch (err) {
     console.error("confirm-card error:", err.message);
-    res.redirect(302, "/og-image.png");
+    sendDefaultOgImage(res);
   }
 });
 app.get("/confirm.html", async (req, res) => {
@@ -435,7 +451,8 @@ app.get("/confirm.html", async (req, res) => {
     .replace(/(<meta name="twitter:title" content=")[^"]*/, `$1${escA(title)}`)
     .replace(/(<meta property="og:description" content=")[^"]*/, `$1${escA(desc)}`)
     .replace(/(<meta property="og:image" content=")[^"]*/, `$1${img}`)
-    .replace(/(<meta name="twitter:image" content=")[^"]*/, `$1${img}`);
+    .replace(/(<meta name="twitter:image" content=")[^"]*/, `$1${img}`)
+    .replace(/(<meta property="og:image:height" content="630" \/>)/, `$1\n  <meta property="og:image:type" content="image/png" />\n  <meta property="og:image:secure_url" content="${img}" />\n  <meta property="og:image:alt" content="${escA(title)}" />`);
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
   res.send(html);
