@@ -3644,7 +3644,7 @@ async function renderTravelCalendar(main) {
   // person isn't on the team roster (e.g. an admin who doesn't perform),
   // fall back to showing everyone (null = no filter) instead of an empty calendar.
   if (travelCalSelectedIds === undefined) {
-    travelCalSelectedIds = CURRENT_USER?.accessLevel !== "admin" && canAssignTeam() ? null : CURRENT_USER?.teamId && TEAM.some((m) => m.id === CURRENT_USER.teamId)
+    travelCalSelectedIds = (CURRENT_USER?.accessLevel === "admin" || canAssignTeam()) ? null : CURRENT_USER?.teamId && TEAM.some((m) => m.id === CURRENT_USER.teamId)
       ? new Set([CURRENT_USER.teamId])
       : null;
   }
@@ -3681,6 +3681,7 @@ async function renderTravelCalendar(main) {
         </div>
       </div>
     </div>
+    <div id="travelCalHidden"></div>
     <div class="card">${calendarGridMarkup()}</div>
     <div class="section-label" style="margin-top:20px;">Upcoming events</div>
     <div id="travelCalEvents"></div>
@@ -3709,6 +3710,8 @@ async function renderTravelCalendar(main) {
     return evs.filter((l) => tcCtx.assignments.some((a) => a.lead_id === l.id && a.status !== "declined" && travelCalSelectedIds.has(a.team_id)));
   }
 
+  const firstNames = (leg) => (leg.members || []).map((m) => String(m.name || "").split(" ")[0]).filter(Boolean).join(", ");
+  const pillText = (leg) => `${firstNames(leg) ? firstNames(leg) + " · " : ""}${legLabel(leg)}`;
   function legLabel(leg) { return leg.lead_id ? `${leg.lead_name}${leg.lead_city ? ` (${leg.lead_city})` : ""}` : (leg.label || "Travel"); }
 
   function redraw() {
@@ -3735,6 +3738,12 @@ async function renderTravelCalendar(main) {
       const d = new Date(l.date + "T00:00:00");
       if (d.getFullYear() === travelCalYear && d.getMonth() === travelCalMonth - 1) (showEvents[d.getDate()] = showEvents[d.getDate()] || []).push(l);
     });
+    // Tell the person when the filter is hiding other people's journeys this month.
+    const inMonth = (v) => { if (!v) return false; const d = new Date(v); return d.getFullYear() === travelCalYear && d.getMonth() === travelCalMonth - 1; };
+    const hiddenN = legs.filter((l) => !visible.includes(l) && (inMonth(l.departure_at) || inMonth(l.arrival_at))).length;
+    const hiddenEl = main.querySelector("#travelCalHidden");
+    hiddenEl.innerHTML = hiddenN ? `<div class="small" style="margin-bottom:8px; padding:8px 12px; background:#FFF3DC; border-radius:8px;">👁 Showing only <b>${filterSummaryText()}</b> — ${hiddenN} other journey${hiddenN === 1 ? "" : "s"} this month hidden. <a href="#" id="travelCalShowAll" style="font-weight:600;">Show everyone</a></div>` : "";
+    hiddenEl.querySelector("#travelCalShowAll")?.addEventListener("click", (e) => { e.preventDefault(); main.querySelector("#travelCalSelectAllBtn").click(); });
     main.querySelector("#calMonthLabel").textContent = first.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
     const calCells = main.querySelector("#calCells");
     calCells.innerHTML = "";
@@ -3747,7 +3756,7 @@ async function renderTravelCalendar(main) {
           ${dayEvents.map((l) => { const gap = eventTravelGaps(l, legs, tcCtx.assignments).length > 0; return `
             <div class="cal-event tc-event" data-event-id="${l.id}" style="cursor:pointer; background:#1F6F43;" title="Event: ${String(l.name).replace(/"/g, "")}${gap ? " — travel not planned for someone" : ""}">🎤 ${l.name}${gap ? " ⚠" : ""}</div>`; }).join("")}
           ${evs.map(({ leg, kind }) => `
-            <div class="cal-event" data-leg-id="${leg.id}" style="cursor:pointer; ${kind === "return" ? "background:#8A5FA8;" : kind === "onward" ? "background:#C1602B;" : ""}" title="${legLabel(leg)}${kind === "return" ? " — Return" : kind === "onward" ? " — Onward to this event" : " — Going"}">${kind === "return" ? "⬅ " : kind === "onward" ? "🔗 " : "➡ "}${legLabel(leg)}</div>
+            <div class="cal-event" data-leg-id="${leg.id}" style="cursor:pointer; ${kind === "return" ? "background:#8A5FA8;" : kind === "onward" ? "background:#C1602B;" : ""}" title="${(leg.members || []).map((m) => m.name).join(", ")} — ${[leg.from_city, leg.to_city].filter(Boolean).join(" → ")} — ${legLabel(leg)}${kind === "return" ? " — Return" : kind === "onward" ? " — Onward" : " — Going"}">${kind === "return" ? "⬅ " : kind === "onward" ? "🔗 " : "➡ "}${pillText(leg)}</div>
           `).join("")}
         </div>
       `));
