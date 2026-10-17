@@ -202,6 +202,10 @@ async function setup() {
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS team_id TEXT REFERENCES team(id)`);
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payment_date TEXT`);
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payment_mode TEXT`);
+  // Crew member's own "I received this" confirmation — separate from the admin's `paid`,
+  // so a missed admin update never leaves the member's revenue picture wrong.
+  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS member_received INTEGER NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS member_received_at TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS advance_date TEXT`);
   // Which sidebar sections a user has pinned to their own "Favourites" group
   // at the top of the nav — a personal preference, stored as a JSON array
@@ -592,6 +596,28 @@ async function setup() {
     await pool.query("UPDATE leads SET is_seed = 1 WHERE name = ANY($1::text[])", [demoLeadNames]);
   }
 
+  // Private per-login money tracker (income / expense / investment / savings).
+  // Only ever read through /api/my/cash filtered by the logged-in user — admin has no view of it.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS personal_cash (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      entry_date TEXT NOT NULL,
+      notes TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
+  // "Note for Admin" box on a team member's dashboard — one living note per login.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_notes (
+      user_id TEXT PRIMARY KEY REFERENCES users(id),
+      content TEXT,
+      updated_at TEXT
+    );
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS sticky_notes (
       user_id TEXT PRIMARY KEY REFERENCES users(id),

@@ -4806,6 +4806,88 @@ app.put("/api/my/sticky-note", requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Note for Admin — a living note on a team member's dashboard, readable by admin ----------
+app.get("/api/my/admin-note", requireAuth, async (req, res) => {
+  const row = (await pool.query("SELECT content, updated_at FROM admin_notes WHERE user_id = $1", [req.user.id])).rows[0];
+  res.json({ content: row?.content || "", updatedAt: row?.updated_at || null });
+});
+app.put("/api/my/admin-note", requireAuth, async (req, res) => {
+  const content = String((req.body || {}).content || "").slice(0, 5000);
+  await pool.query(`INSERT INTO admin_notes (user_id, content, updated_at) VALUES ($1,$2,$3)
+    ON CONFLICT (user_id) DO UPDATE SET content = $2, updated_at = $3`, [req.user.id, content, new Date().toISOString()]);
+  res.json({ ok: true });
+});
+app.get("/api/admin/team-notes", requireAuth, requireAdmin, async (req, res) => {
+  const rows = (await pool.query(`
+    SELECT n.user_id, n.content, n.updated_at, u.username, t.name
+    FROM admin_notes n JOIN users u ON u.id = n.user_id LEFT JOIN team t ON t.id = u.team_id
+    WHERE TRIM(COALESCE(n.content, '')) <> '' ORDER BY n.updated_at DESC`)).rows;
+  res.json(rows.map((r) => ({ userId: r.user_id, name: r.name || r.username, content: r.content, updatedAt: r.updated_at })));
+});
+
+// ---------- My revenue — a team member's OWN fees only, past and upcoming ----------
+// Never exposes anyone else's fee or any client payment. "Received" counts when the admin has
+// marked it paid OR the member has confirmed receipt themselves.
+const FEE_HEAD = "Artist fee — %";
+app.get("/api/my/revenue", requireAuth, async (req, res) => {
+  if (!req.user.team_id) return res.json({ items: [] });
+  const { rows } = await pool.query(`
+    SELECT ea.id AS assignment_id, ea.status, l.id AS lead_id, l.name AS lead_name, l.date, l.city, l.stage, l.occasion,
+      ex.id AS expense_id, ex.amount, ex.paid, ex.member_received, ex.member_received_at, ex.payment_date, ex.payment_mode
+    FROM event_assignments ea
+    JOIN leads l ON l.id = ea.lead_id
+    LEFT JOIN LATERAL (
+      SELECT * FROM expenses e WHERE e.lead_id = ea.lead_id AND e.team_id = ea.team_id AND e.head LIKE $2 AND e.approved = 1
+      ORDER BY e.created_at ASC LIMIT 1) ex ON TRUE
+    WHERE ea.team_id = $1 AND ea.status <> 'declined' AND l.stage IN ('Confirmed','Completed')
+    ORDER BY l.date ASC`, [req.user.team_id, FEE_HEAD]);
+  res.json({ items: rows.map((r) => ({ ...r, received: !!(r.paid || r.member_received) })) });
+});
+app.post("/api/my/revenue/:expenseId/received", requireAuth, async (req, res) => {
+  const ex = (await pool.query("SELECT * FROM expenses WHERE id = $1", [req.params.expenseId])).rows[0];
+  if (!ex || !req.user.team_id || ex.team_id !== req.user.team_id || !String(ex.head).startsWith("Artist fee — ")) {
+    return res.status(404).json({ error: "Not found" });
+  }
+  if (ex.paid) return res.json({ ok: true, alreadyPaid: true });
+  const on = !!(req.body || {}).received;
+  await pool.query("UPDATE expenses SET member_received = $1, member_received_at = $2 WHERE id = $3",
+    [on ? 1 : 0, on ? new Date().toISOString() : null, ex.id]);
+  res.json({ ok: true });
+  if (on) {
+    try {
+      const lead = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [ex.lead_id])).rows[0];
+      const member = (await pool.query("SELECT name FROM team WHERE id = $1", [ex.team_id])).rows[0];
+      if (lead && member) {
+        await pool.query("INSERT INTO admin_notifications (id, message, assignment_id, audience, created_at) VALUES ($1,$2,NULL,'admin',$3)",
+          [uuid(), `💰 ${escHtml(member.name)} marked their fee received for ${escHtml(lead.name)} (${escHtml(lead.date)}) — ${ex.amount != null ? "₹" + Number(ex.amount).toLocaleString("en-IN") + " — " : ""}you haven't marked it paid yet. Please check Accounts.`, new Date().toISOString()]);
+        await sendPushToAll("💰 Fee marked received", `${member.name} — ${lead.name} (${lead.date}). Not yet marked paid on your side.`, "/login", { adminOnly: true });
+      }
+    } catch (err) { console.error("revenue received notify failed (not fatal):", err.message); }
+  }
+});
+
+// ---------- Private cash manager — strictly the logged-in user's own entries ----------
+const CASH_KINDS = ["income", "expense", "investment", "savings"];
+app.get("/api/my/cash", requireAuth, async (req, res) => {
+  res.json((await pool.query("SELECT id, kind, title, amount, entry_date, notes FROM personal_cash WHERE user_id = $1 ORDER BY entry_date DESC, created_at DESC", [req.user.id])).rows);
+});
+app.post("/api/my/cash", requireAuth, async (req, res) => {
+  const { kind, title, amount, date, notes } = req.body || {};
+  const amt = Math.round(Number(amount));
+  if (!CASH_KINDS.includes(kind)) return res.status(400).json({ error: "Pick a type" });
+  if (!String(title || "").trim()) return res.status(400).json({ error: "Add a short title" });
+  if (!Number.isFinite(amt) || amt <= 0) return res.status(400).json({ error: "Enter an amount above 0" });
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(date || "") ? date : new Date().toISOString().slice(0, 10);
+  const id = uuid();
+  await pool.query("INSERT INTO personal_cash (id, user_id, kind, title, amount, entry_date, notes, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+    [id, req.user.id, kind, String(title).trim().slice(0, 120), amt, d, String(notes || "").slice(0, 500) || null, new Date().toISOString()]);
+  res.status(201).json({ id });
+});
+app.delete("/api/my/cash/:id", requireAuth, async (req, res) => {
+  await pool.query("DELETE FROM personal_cash WHERE id = $1 AND user_id = $2", [req.params.id, req.user.id]);
+  res.status(204).end();
+});
+
 app.get("/api/dashboard", requireAuth, async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const weekAhead = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);

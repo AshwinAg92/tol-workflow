@@ -349,6 +349,8 @@ const NAV_GROUPS = {
   quotation: "Pipeline",
   accounts: "Pipeline",
   myevents: "Pipeline",
+  myrevenue: "Pipeline",
+  mycash: "Pipeline",
   tasks: "Operations",
   calendar: "Operations",
   travelcal: "Operations",
@@ -1485,6 +1487,13 @@ function renderNav() {
   });
   if (CURRENT_USER?.isPerformer && CURRENT_USER.accessLevel !== "performer") {
     visibleNav = [visibleNav[0], { id: "myevents", label: "My Events" }, ...visibleNav.slice(1)];
+  }
+  // Personal tools for any non-admin login that's tied to a team member: their own
+  // revenue (fees) and a private cash tracker. Neither shows company money.
+  if (CURRENT_USER && CURRENT_USER.accessLevel !== "admin" && CURRENT_USER.teamId) {
+    const at = visibleNav.findIndex((n) => n.id === "myevents");
+    const extra = [{ id: "myrevenue", label: "My Revenue" }, { id: "mycash", label: "My Cash" }];
+    visibleNav = at >= 0 ? [...visibleNav.slice(0, at + 1), ...extra, ...visibleNav.slice(at + 1)] : [visibleNav[0], ...extra, ...visibleNav.slice(1)];
   }
   if (!visibleNav.some((n) => n.id === currentTab)) currentTab = "dashboard";
 
@@ -7516,7 +7525,7 @@ function renderTodaysActivityCard(main, activity, flashIds = new Set()) {
 async function renderDashboard(main) {
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
   const canCoordinate = isAdmin || canAssignTeam();
-  const [data, announcements, teamNotifs, activity, stickyNote, websiteTraffic, travelLegs] = await Promise.all([
+  const [data, announcements, teamNotifs, activity, stickyNote, websiteTraffic, travelLegs, adminNote, teamNotes] = await Promise.all([
     api("/api/dashboard"),
     api("/api/announcements"),
     canCoordinate ? api("/api/admin/notifications") : Promise.resolve([]),
@@ -7524,6 +7533,8 @@ async function renderDashboard(main) {
     api("/api/my/sticky-note").catch(() => ({ content: "" })),
     isAdmin ? api("/api/website-traffic").catch(() => null) : Promise.resolve(null),
     canAssignTeam() ? api("/api/travel-legs").catch(() => []) : Promise.resolve([]),
+    isAdmin ? Promise.resolve({ content: "" }) : api("/api/my/admin-note").catch(() => ({ content: "" })),
+    isAdmin ? api("/api/admin/team-notes").catch(() => []) : Promise.resolve([]),
   ]);
   main.innerHTML = `
     <div class="view-head">
@@ -7542,6 +7553,18 @@ async function renderDashboard(main) {
       </div>
       <textarea id="stickyNoteInput" rows="3" placeholder="Jot something down for yourself…" style="width:100%; padding:8px 10px; border:1px solid #E0CE8A; border-radius:6px; font-family:inherit; font-size:16px; background:#FFFDF6; resize:vertical;">${stickyNote.content || ""}</textarea>
     </div>
+    ${CURRENT_USER.accessLevel !== "admin" ? `
+    <div class="card" id="adminNoteCard" style="margin-bottom:16px; background:#E8F3F3; border-color:#9CCBCB;">
+      <div class="section-label" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <span>📝 Note for Admin</span>
+        <span class="muted small" id="adminNoteStatus" style="font-weight:400;"></span>
+      </div>
+      <textarea id="adminNoteInput" rows="3" placeholder="Something you want Admin to know — no need to call or WhatsApp. It saves as you type." style="width:100%; padding:8px 10px; border:1px solid #9CCBCB; border-radius:6px; font-family:inherit; font-size:16px; background:#F7FCFC; resize:vertical;">${(adminNote.content || "").replace(/&/g, "&amp;").replace(/</g, "&lt;")}</textarea>
+    </div>` : teamNotes.length ? `
+    <div class="card" id="teamNotesCard" style="margin-bottom:16px; background:#E8F3F3; border-color:#9CCBCB;">
+      <div class="section-label">📝 Notes from the team</div>
+      ${teamNotes.map((n) => `<div style="padding:6px 0; border-top:1px solid #CFE5E5;"><b>${String(n.name).replace(/&/g, "&amp;").replace(/</g, "&lt;")}</b> <span class="muted small">· ${fmtDate((n.updatedAt || "").slice(0, 10))}</span><div style="white-space:pre-wrap;">${String(n.content).replace(/&/g, "&amp;").replace(/</g, "&lt;")}</div></div>`).join("")}
+    </div>` : ""}
     <div class="card" id="pushNotifBanner" style="margin-bottom:16px; display:none;"></div>
     ${!canCoordinate ? `
       <div class="card" style="margin-bottom:16px;">
@@ -7735,6 +7758,19 @@ async function renderDashboard(main) {
   `;
 
   wireCalendarGrid(main.querySelector("#dashCalCard"));
+  {
+    const an = main.querySelector("#adminNoteInput"), anSt = main.querySelector("#adminNoteStatus");
+    if (an) {
+      let t = null;
+      const save = async () => {
+        anSt.textContent = "Saving…";
+        try { await api("/api/my/admin-note", { method: "PUT", body: JSON.stringify({ content: an.value }) }); anSt.textContent = "Saved ✓ — Admin can see this"; }
+        catch { anSt.textContent = "Couldn't save"; }
+      };
+      an.addEventListener("input", () => { anSt.textContent = ""; clearTimeout(t); t = setTimeout(save, 800); });
+      an.addEventListener("blur", () => { if (t) { clearTimeout(t); t = null; save(); } });
+    }
+  }
   {
     const noteInput = main.querySelector("#stickyNoteInput");
     const noteStatus = main.querySelector("#stickyNoteStatus");
@@ -11081,6 +11117,8 @@ function renderMain() {
   else if (currentTab === "team" || currentTab === "musicians") renderTeam(main, currentTab === "musicians" ? "musicians" : "team");
   else if (currentTab === "accounts") renderAccounts(main);
   else if (currentTab === "myevents") renderMyEvents(main);
+  else if (currentTab === "myrevenue") renderMyRevenue(main);
+  else if (currentTab === "mycash") renderMyCash(main);
   else if (currentTab === "settings") renderSettings(main);
   else if (currentTab === "travelcal") renderTravelCalendar(main);
   else if (currentTab === "website") renderWebsiteContent(main);
@@ -11133,6 +11171,104 @@ async function handleLogout() {
 }
 
 // ---------- My Events (for a Staff/Admin account that's also flagged as a performer) ----------
+// ---------- My Revenue — a team member's own fees, past and upcoming ----------
+async function renderMyRevenue(main) {
+  main.innerHTML = `<div class="view-head"><div><h2>My Revenue</h2><p class="muted">Your own fees for every event — past and upcoming.</p></div></div><p class="muted">Loading…</p>`;
+  const { items } = await api("/api/my/revenue");
+  const today = new Date().toISOString().slice(0, 10);
+  const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const withFee = items.filter((i) => i.amount != null);
+  const sum = (arr) => arr.reduce((t, i) => t + Number(i.amount || 0), 0);
+  const receivedItems = withFee.filter((i) => i.received);
+  const pastDue = withFee.filter((i) => !i.received && i.date < today);
+  const upcoming = withFee.filter((i) => !i.received && i.date >= today);
+  const monthKey = (i) => (i.payment_date || (i.member_received_at || "").slice(0, 10) || i.date).slice(0, 7);
+  const thisMonth = today.slice(0, 7);
+  const months = [];
+  for (let k = 5; k >= 0; k--) { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - k); months.push(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0")); }
+  const byMonth = months.map((m) => ({ m, v: sum(receivedItems.filter((i) => monthKey(i) === m)) }));
+  const maxV = Math.max(1, ...byMonth.map((x) => x.v));
+  const mLabel = (m) => new Date(m + "-01T00:00:00").toLocaleDateString("en-GB", { month: "short" });
+  const row = (i) => {
+    const noFee = i.amount == null;
+    const tag = i.received
+      ? `<span class="tag" style="color:#1C7A80;">✓ Received${i.paid ? "" : " (by you)"}</span>`
+      : noFee ? `<span class="tag muted">Fee not set yet</span>`
+      : i.date < today ? `<span class="tag" style="color:#A6432B;">Awaiting payment</span>` : `<span class="tag" style="color:#B6752C;">Upcoming</span>`;
+    const btn = noFee || i.paid ? "" : `<button class="btn-ghost rev-toggle" data-id="${i.expense_id}" data-on="${i.member_received ? 0 : 1}" style="font-size:12.5px; padding:4px 10px;">${i.member_received ? "Undo received" : "Mark received"}</button>`;
+    return `<div class="list-row" style="grid-template-columns:100px 1fr 100px 150px 130px; row-gap:2px;">
+      <span class="mono">${fmtDate(i.date)}</span>
+      <span>${esc(i.lead_name)}${i.occasion ? ` <span class="muted small">— ${esc(i.occasion)}</span>` : ""}<div class="muted small">${esc(i.city || "")}${i.status === "pending" ? " · not yet accepted" : ""}</div></span>
+      <span class="mono"><b>${noFee ? "—" : inr(i.amount)}</b></span>${tag}<span>${btn}</span></div>`;
+  };
+  const section = (title, arr, empty) => `<div class="section-label" style="margin-top:18px;">${title}</div><div class="list">${arr.length ? arr.map(row).join("") : `<div class="board-empty">${empty}</div>`}</div>`;
+  main.innerHTML = `
+    <div class="view-head"><div><h2>My Revenue</h2><p class="muted">Your own fees for every event — past and upcoming. If you've been paid and it isn't ticked, mark it received.</p></div></div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px;">
+      <div class="card"><div class="muted small">Received (all time)</div><div style="font-size:22px; font-weight:700; color:#1C7A80;">${inr(sum(receivedItems))}</div></div>
+      <div class="card"><div class="muted small">Received this month</div><div style="font-size:22px; font-weight:700;">${inr(sum(receivedItems.filter((i) => monthKey(i) === thisMonth)))}</div></div>
+      <div class="card"><div class="muted small">Past events, not received</div><div style="font-size:22px; font-weight:700; color:#A6432B;">${inr(sum(pastDue))}</div></div>
+      <div class="card"><div class="muted small">Coming up</div><div style="font-size:22px; font-weight:700; color:#B6752C;">${inr(sum(upcoming))}</div></div>
+    </div>
+    <div class="card" style="margin-top:14px;">
+      <div class="section-label">Received — last 6 months</div>
+      <div style="display:flex; gap:10px; align-items:flex-end; height:120px;">
+        ${byMonth.map((x) => `<div style="flex:1; text-align:center;"><div class="small mono">${x.v ? inr(x.v) : ""}</div><div style="height:${Math.max(3, Math.round((x.v / maxV) * 80))}px; background:${x.v ? "#1C7A80" : "#E6DFD0"}; border-radius:4px 4px 0 0;"></div><div class="muted small">${mLabel(x.m)}</div></div>`).join("")}
+      </div>
+    </div>
+    ${section("⚠ Past events — not received yet", pastDue, "Nothing pending — you're all caught up")}
+    ${section("Upcoming", upcoming.concat(items.filter((i) => i.amount == null && i.date >= today)), "No upcoming fees")}
+    ${section("✓ Received", receivedItems.slice().reverse(), "Nothing received yet")}`;
+  main.querySelectorAll(".rev-toggle").forEach((b) => b.addEventListener("click", async () => {
+    b.disabled = true;
+    try { await api(`/api/my/revenue/${b.dataset.id}/received`, { method: "POST", body: JSON.stringify({ received: b.dataset.on === "1" }) }); } catch (e) { alert(e.message || "Couldn't save"); }
+    renderMyRevenue(main);
+  }));
+}
+
+// ---------- My Cash — private income / expense / investment / savings tracker ----------
+async function renderMyCash(main) {
+  const rows = await api("/api/my/cash");
+  const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  const KINDS = { income: ["Income", "#1C7A80"], expense: ["Expense", "#A6432B"], investment: ["Investment", "#6B4FA0"], savings: ["Savings", "#B6752C"] };
+  const tot = (k) => rows.filter((r) => r.kind === k).reduce((t, r) => t + r.amount, 0);
+  const inflow = tot("income"), out = tot("expense") + tot("investment") + tot("savings");
+  const today = new Date().toISOString().slice(0, 10);
+  main.innerHTML = `
+    <div class="view-head"><div><h2>My Cash</h2><p class="muted">🔒 Private to you — nobody else, including admin, can see this. Track what comes in and where it goes.</p></div></div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px;">
+      <div class="card"><div class="muted small">Cash in hand</div><div style="font-size:22px; font-weight:700; color:${inflow - out >= 0 ? "#1C7A80" : "#A6432B"};">${inr(inflow - out)}</div></div>
+      ${Object.keys(KINDS).map((k) => `<div class="card"><div class="muted small">${KINDS[k][0]}</div><div style="font-size:20px; font-weight:700; color:${KINDS[k][1]};">${inr(tot(k))}</div></div>`).join("")}
+    </div>
+    <div class="card" style="margin-top:14px;">
+      <div class="section-label">Add an entry</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <select id="cashKind" style="padding:8px;">${Object.keys(KINDS).map((k) => `<option value="${k}">${KINDS[k][0]}</option>`).join("")}</select>
+        <input id="cashTitle" placeholder="What for? e.g. Fuel, SIP, Gig fee" style="flex:1; min-width:160px; padding:8px;" />
+        <input id="cashAmt" type="number" inputmode="numeric" placeholder="Amount ₹" style="width:120px; padding:8px;" />
+        <input id="cashDate" type="date" value="${today}" style="padding:8px;" />
+        <button class="btn-primary" id="cashAdd">Add</button>
+      </div>
+      <div id="cashErr" class="small" style="color:#A6432B; margin-top:6px;"></div>
+    </div>
+    <div class="section-label" style="margin-top:18px;">Entries</div>
+    <div class="list">${rows.length ? rows.map((r) => `<div class="list-row" style="grid-template-columns:100px 110px 1fr 120px 40px;">
+      <span class="mono">${fmtDate(r.entry_date)}</span><span class="tag" style="color:${KINDS[r.kind][1]};">${KINDS[r.kind][0]}</span><span>${esc(r.title)}</span>
+      <span class="mono"><b>${r.kind === "income" ? "+" : "−"}${inr(r.amount)}</b></span><button class="btn-ghost cash-del" data-id="${r.id}" title="Delete" style="padding:2px 8px;">✕</button></div>`).join("") : `<div class="board-empty">No entries yet</div>`}</div>`;
+  main.querySelector("#cashAdd").addEventListener("click", async () => {
+    const err = main.querySelector("#cashErr");
+    try {
+      await api("/api/my/cash", { method: "POST", body: JSON.stringify({ kind: main.querySelector("#cashKind").value, title: main.querySelector("#cashTitle").value, amount: main.querySelector("#cashAmt").value, date: main.querySelector("#cashDate").value }) });
+      renderMyCash(main);
+    } catch (e) { err.textContent = e.message || "Couldn't save"; }
+  });
+  main.querySelectorAll(".cash-del").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm("Delete this entry?")) return;
+    await api(`/api/my/cash/${b.dataset.id}`, { method: "DELETE" });
+    renderMyCash(main);
+  }));
+}
+
 async function renderMyEvents(main) {
   main.innerHTML = `<div class="view-head"><div><h2>My Events</h2><p class="muted">Your own assigned events — accept/decline, artist fee, and pay status.</p></div></div><p class="muted">Loading your events…</p>`;
   const allEvents = await api("/api/my/events");
