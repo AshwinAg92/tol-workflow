@@ -16,6 +16,43 @@ let leadsDateFilter = "";
 let leadsQuoteDateFilter = "";
 let leadsSortBy = "date";
 let leadsB2bOnly = false;
+let leadsClashOnly = false;
+
+// Other leads that fall on the same event date as this one — Confirmed, Tentative,
+// Interested, Follow-up and New all count (not Not Interested / Completed). The
+// other legs of the same combo booking share a date on purpose, so they're skipped.
+const CLASH_STAGES = ["New", "Follow-up", "Interested", "Tentative", "Confirmed"];
+function dateClashes(lead) {
+  if (!lead || !lead.date) return [];
+  return LEADS.filter((o) => o.id !== lead.id && o.date === lead.date && CLASH_STAGES.includes(o.stage)
+    && !(lead.combo_group_id && o.combo_group_id === lead.combo_group_id));
+}
+function clashSummary(lead) {
+  return dateClashes(lead).map((o) => `${o.name} (${o.stage}${o.city ? ", " + o.city : ""})`).join(", ");
+}
+// Modal shown before following up a lead whose date is already spoken for elsewhere.
+function confirmDateClash(lead, onProceed) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card" style="max-width:420px;">
+        <div class="modal-head"><h3>Heads up — same date</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div style="background:#FFF4E5; color:#8A5A1F; padding:10px 12px; border-radius:6px; font-size:13.5px; margin-bottom:14px;">
+          ⚠️ ${lead.name}'s date (${fmtDate(lead.date)}) is also taken by:
+          <ul style="margin:6px 0 0 18px; padding:0;">${dateClashes(lead).map((o) => `<li><b>${o.name}</b> — ${o.stage}${o.city ? ", " + o.city : ""}</li>`).join("")}</ul>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-primary" id="clashGoBtn" style="flex:1;">Follow up anyway</button>
+          <button class="btn-ghost" id="clashCancelBtn">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  const close = () => { root.innerHTML = ""; };
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#clashCancelBtn").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#clashGoBtn").addEventListener("click", () => { close(); onProceed(); });
+}
 let leadsSelected = new Set();
 let dashActivityPage = 1;
 let dashActivityActorFilter = "all";
@@ -1610,9 +1647,8 @@ function openBulkWhatsappFollowupModal(leadIds, main) {
           <p class="muted small" style="margin-bottom:14px;">${packageName(lead.event_type)} · ${lead.city || "—"} · ${fmtDate(lead.date)}</p>
           ${(() => {
             if (!lead.date) return "";
-            const conflictLead = LEADS.find((o) => o.id !== lead.id && o.date === lead.date && ["Interested", "Tentative", "Confirmed"].includes(o.stage));
-            if (!conflictLead) return "";
-            return `<div style="background:#FFF4E5; color:#8A5A1F; padding:8px 10px; border-radius:6px; font-size:12.5px; margin-bottom:12px;">⚠️ ${conflictLead.name} is already ${conflictLead.stage} for this date — you may be chasing a date that's already spoken for.</div>`;
+            if (!dateClashes(lead).length) return "";
+            return `<div style="background:#FFF4E5; color:#8A5A1F; padding:8px 10px; border-radius:6px; font-size:12.5px; margin-bottom:12px;">⚠️ Same date as ${clashSummary(lead)} — you may be chasing a date that's already spoken for.</div>`;
           })()}
           <div class="card" style="background:#FBEFD9; white-space:pre-wrap; font-size:13.5px; margin-bottom:14px;">${msg}</div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
@@ -1834,7 +1870,8 @@ async function renderLeadsLog(main, skipRefresh) {
     .filter((l) => !leadsCityFilter || (l.city || "").toLowerCase().includes(leadsCityFilter.toLowerCase()))
     .filter((l) => !leadsDateFilter || l.date === leadsDateFilter)
     .filter((l) => !leadsQuoteDateFilter || (l.last_quoted_at || "").slice(0, 10) === leadsQuoteDateFilter)
-    .filter((l) => !leadsB2bOnly || l.is_b2b);
+    .filter((l) => !leadsB2bOnly || l.is_b2b)
+    .filter((l) => !leadsClashOnly || (l.date && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) && dateClashes(l).length > 0));
   const filtered = leadsFilter === "all" ? baseFiltered : baseFiltered.filter((l) => l.event_type === leadsFilter);
   const countFor = (id) => baseFiltered.filter((l) => l.event_type === id).length;
   const shareLink = `${window.location.origin}/lead-form.html`;
@@ -1885,7 +1922,8 @@ async function renderLeadsLog(main, skipRefresh) {
           <option value="newest" ${leadsSortBy === "newest" ? "selected" : ""}>Sort: Newest submitted</option>
         </select>
         <button class="btn-ghost${leadsB2bOnly ? " filter-chip-active" : ""}" id="leadsB2bToggle" style="${leadsB2bOnly ? "background:#8A5FA8; color:#fff; border-color:#8A5FA8;" : ""}">🏢 B2B only</button>
-        ${(leadsSearch || leadsOnlyId || leadsCityFilter || leadsDateFilter || leadsQuoteDateFilter || leadsStageFilter !== "all" || leadsB2bOnly) ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
+        ${(() => { const n = LEADS.filter((l) => l.date && l.date >= todayStr && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) && dateClashes(l).length > 0).length; return `<button class="btn-ghost${leadsClashOnly ? " filter-chip-active" : ""}" id="leadsClashToggle" style="${leadsClashOnly ? "background:#C1602B; color:#fff; border-color:#C1602B;" : n ? "color:#8A5A1F; border-color:#E8C48A;" : ""}">⚠️ Same-date clashes${n ? ` (${n})` : ""}</button>`; })()}
+        ${(leadsSearch || leadsOnlyId || leadsCityFilter || leadsDateFilter || leadsQuoteDateFilter || leadsStageFilter !== "all" || leadsB2bOnly || leadsClashOnly) ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
       </div>
     </div>
 
@@ -1929,8 +1967,9 @@ async function renderLeadsLog(main, skipRefresh) {
   main.querySelector("#leadsStageSelect").addEventListener("change", (e) => { leadsStageFilter = e.target.value; renderLeadsLog(main, true); });
   main.querySelector("#leadsSortSelect").addEventListener("change", (e) => { leadsSortBy = e.target.value; renderLeadsLog(main, true); });
   main.querySelector("#leadsB2bToggle").addEventListener("click", () => { leadsB2bOnly = !leadsB2bOnly; renderLeadsLog(main, true); });
+  main.querySelector("#leadsClashToggle").addEventListener("click", () => { leadsClashOnly = !leadsClashOnly; renderLeadsLog(main, true); });
   const clearAllBtn = main.querySelector("#clearAllFilters");
-  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsOnlyId = ""; leadsCityFilter = ""; leadsDateFilter = ""; leadsQuoteDateFilter = ""; leadsStageFilter = "all"; leadsB2bOnly = false; renderLeadsLog(main, true); });
+  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsOnlyId = ""; leadsCityFilter = ""; leadsDateFilter = ""; leadsQuoteDateFilter = ""; leadsStageFilter = "all"; leadsB2bOnly = false; leadsClashOnly = false; renderLeadsLog(main, true); });
 
   const filterRow = main.querySelector("#filterRow");
   const allChip = el(`<button class="filter-chip${leadsFilter === "all" ? " filter-chip-active" : ""}">All <span class="mono">${baseFiltered.length}</span></button>`);
@@ -2050,15 +2089,14 @@ async function renderLeadsLog(main, skipRefresh) {
           })() : ""}
           ${l.stage === "Confirmed" && canAssignTeam() ? `</div>` : ""}
           ${(() => {
-            // If this lead is still just New/Follow-up, warn when someone else
-            // has already advanced past that stage for the same date — helps
-            // avoid chasing a date that's effectively already spoken for.
-            if (!["New", "Follow-up"].includes(l.stage) || !l.date) return "";
-            const conflictLead = LEADS.find((o) => o.id !== l.id && o.date === l.date && ["Interested", "Tentative", "Confirmed"].includes(o.stage));
-            if (!conflictLead) return "";
-            const canAsk = ["Interested", "Tentative"].includes(conflictLead.stage) && (conflictLead.whatsapp_number || conflictLead.phone);
-            return `<div style="background:#FFF4E5; color:#8A5A1F; padding:6px 10px; border-radius:6px; font-size:12.5px; margin-top:6px;">⚠️ ${conflictLead.name} is already ${conflictLead.stage} for this date
-              ${canAsk ? `<div style="margin-top:6px;"><button class="btn-ghost ask-date-confirm-btn" data-conflict-id="${conflictLead.id}" style="font-size:12px; padding:4px 10px;">💬 Ask ${(conflictLead.name || "").split(" ")[0]} to confirm</button></div>` : ""}
+            // Warn on any open lead (New, Follow-up, Interested, Tentative) when
+            // another lead already sits on the same date.
+            if (!["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) || !l.date) return "";
+            const clashes = dateClashes(l);
+            if (!clashes.length) return "";
+            const askable = clashes.filter((o) => ["Interested", "Tentative"].includes(o.stage) && (o.whatsapp_number || o.phone)).slice(0, 3);
+            return `<div class="date-clash-warning" style="background:#FFF4E5; color:#8A5A1F; padding:6px 10px; border-radius:6px; font-size:12.5px; margin-top:6px;">⚠️ Same date as ${clashSummary(l)}
+              ${askable.length && ["New", "Follow-up"].includes(l.stage) ? `<div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">${askable.map((o) => `<button class="btn-ghost ask-date-confirm-btn" data-conflict-id="${o.id}" style="font-size:12px; padding:4px 10px;">💬 Ask ${(o.name || "").split(" ")[0]} to confirm</button>`).join("")}</div>` : ""}
             </div>`;
           })()}
           <div class="muted small">Submitted ${fmtDateTime(l.created_at)}</div>
@@ -2207,6 +2245,10 @@ async function renderLeadsLog(main, skipRefresh) {
   main.querySelectorAll(".followup-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
+      if (dateClashes(lead).length && lead.stage !== "Not Interested") { confirmDateClash(lead, () => doFollowup(lead)); return; }
+      doFollowup(lead);
+    });
+    async function doFollowup(lead) {
       const firstName = (lead.name || "").split(" ")[0] || "there";
       const key = lead.stage === "Tentative" ? "tentative_followup" : "followup";
       const tpl = MESSAGE_TEMPLATES[key] || TEMPLATE_META[key].default;
@@ -2225,9 +2267,9 @@ async function renderLeadsLog(main, skipRefresh) {
         lead.stage = updated.stage;
         lead.notes = updated.notes;
         renderLeadsLog(main, true);
-        if (wasNotInterested) alert(`${lead.name} has been moved to Not Interested — that was the 3rd follow-up with no response.`);
+        if (wasNotInterested) alert(`${lead.name} has been moved to Not Interested — it reached the follow-up limit with no response.`);
       } catch (err) { /* WhatsApp already opened; tracker just won't update this once */ }
-    });
+    }
   });
 
   main.querySelectorAll(".mark-followup-link").forEach((link) => {
@@ -2243,7 +2285,7 @@ async function renderLeadsLog(main, skipRefresh) {
         lead.stage = updated.stage;
         lead.notes = updated.notes;
         renderLeadsLog(main, true);
-        if (wasNotInterested) alert(`${lead.name} has been moved to Not Interested — that was the 3rd follow-up with no response.`);
+        if (wasNotInterested) alert(`${lead.name} has been moved to Not Interested — it reached the follow-up limit with no response.`);
       } catch (err) {
         alert("Couldn't save — check your connection and try again.");
       }
