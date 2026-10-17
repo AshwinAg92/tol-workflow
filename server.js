@@ -2828,6 +2828,36 @@ app.get("/api/leads/:id/travel-legs", requireAuth, async (req, res) => {
 // Every travel leg across every event, plus any standalone (no lead) entries
 // logged directly — this is what the standalone Travel Calendar reads from,
 // so a client-linked trip and a manually-logged one show up side by side.
+// One call for the Crew & Travel board: who is allotted to which event, plus every date each
+// artist is already committed (events and travel) so clashes show while planning. Scoped managers
+// only get names for their own events — other events appear as just "another event".
+app.get("/api/crew-board", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const scope = isScopedManager(req.user) ? await assignedLeadIdSet(req.user) : null;
+  const inScope = (leadId) => !scope || scope.has(leadId);
+  const asg = (await pool.query(`
+    SELECT ea.id, ea.lead_id, ea.team_id, ea.status, l.name AS lead_name, l.date, l.stage
+    FROM event_assignments ea JOIN leads l ON l.id = ea.lead_id
+    WHERE l.stage IN ('Confirmed', 'Completed')
+  `)).rows;
+  const assignments = asg.filter((a) => inScope(a.lead_id)).map((a) => ({ id: a.id, lead_id: a.lead_id, team_id: a.team_id, status: a.status }));
+  const busy = [];
+  asg.filter((a) => a.status !== "declined" && a.date).forEach((a) => busy.push({
+    teamId: a.team_id, from: a.date, to: a.date, kind: "event", leadId: a.lead_id,
+    label: inScope(a.lead_id) ? a.lead_name : "another event",
+  }));
+  const legs = (await pool.query(`
+    SELECT tl.id, tl.lead_id, tl.departure_at, tl.arrival_at, tl.from_city, tl.to_city, l.name AS lead_name
+    FROM travel_legs tl LEFT JOIN leads l ON l.id = tl.lead_id WHERE tl.departure_at IS NOT NULL AND tl.departure_at <> ''
+  `)).rows;
+  const mem = legs.length ? (await pool.query("SELECT leg_id, team_id FROM travel_leg_members WHERE leg_id = ANY($1)", [legs.map((l) => l.id)])).rows : [];
+  const shaped = await hideAdminTravel(req.user, legs.map((l) => ({ ...l, members: mem.filter((m) => m.leg_id === l.id).map((m) => ({ teamId: m.team_id })) })));
+  shaped.forEach((l) => l.members.forEach((m) => busy.push({
+    teamId: m.teamId, from: l.departure_at.slice(0, 10), to: (l.arrival_at || l.departure_at).slice(0, 10), kind: "travel", leadId: l.lead_id,
+    label: l.lead_id && inScope(l.lead_id) ? `${l.from_city || "?"} → ${l.to_city || "?"} (${l.lead_name || "travel"})` : "travelling",
+  })));
+  res.json({ assignments, busy });
+});
+
 app.get("/api/travel-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
   let { rows: legs } = await pool.query(`
     SELECT travel_legs.*, leads.name AS lead_name, leads.city AS lead_city
