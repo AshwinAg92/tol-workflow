@@ -4148,6 +4148,7 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
     tempArtists: temps.rows.filter((t) => !t.musician_id).map((t) => t.name),
     legs: legs.rows.map((l) => ({ ...l, memberIds: members.rows.filter((m) => m.leg_id === l.id).map((m) => m.team_id), tickets: ticketRows.filter((t) => t.travel_leg_id === l.id).map((t) => ({ id: t.id, name: t.original_name })) })),
     shares: shares.rows.map((s) => ({ token: s.token, teamIds: JSON.parse(s.team_ids || "[]"), createdAt: s.created_at, expiresAt: s.expires_at, revoked: !!s.revoked })),
+    clientUnread: Number((await pool.query("SELECT (SELECT COUNT(*) FROM travel_share_messages WHERE lead_id = $1 AND sender = 'client' AND read_by_team = 0) + (SELECT COUNT(*) FROM travel_share_files WHERE lead_id = $1 AND read_by_team = 0) AS n", [leadId])).rows[0].n),
   });
 });
 app.post("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, res) => {
@@ -4156,15 +4157,16 @@ app.post("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, r
   const teamIds = allIds.filter((x) => !x.startsWith("g:"));
   const guestIds = allIds.filter((x) => x.startsWith("g:")).map((x) => x.slice(2));
   if (allIds.length === 0) return res.status(400).json({ error: "Select at least one person." });
-  const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [leadId])).rows[0];
-  if (!lead) return res.status(404).json({ error: "Event not found" });
+  const leadRow = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [leadId])).rows[0];
+  if (!leadRow) return res.status(404).json({ error: "Event not found" });
+  const lead = leadRow;
   // Only people actually assigned to THIS event can ever be included.
   const ok = (teamIds.length ? await pool.query("SELECT team_id FROM event_assignments WHERE lead_id = $1 AND team_id = ANY($2)", [leadId, teamIds]) : { rows: [] }).rows.map((r) => r.team_id);
   const okGuests = guestIds.length ? (await pool.query("SELECT id FROM temp_artists WHERE lead_id = $1 AND musician_id IS NOT NULL AND id = ANY($2)", [leadId, guestIds])).rows : [];
   if (ok.length !== teamIds.length || okGuests.length !== guestIds.length) return res.status(400).json({ error: "Someone selected isn't assigned to this event." });
   const token = crypto.randomBytes(24).toString("base64url");
   const now = new Date();
-  const expires = new Date(now.getTime() + 15 * 86400000);
+  const expires = shareExpiryFor(leadRow.date, now);
   await pool.query("INSERT INTO travel_shares (token, lead_id, team_ids, created_at, expires_at, created_by, include_tickets, note) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
     [token, leadId, JSON.stringify(allIds), now.toISOString(), expires.toISOString(), req.user.username || null, req.body.includeTickets ? 1 : 0, String(req.body.note || "").trim().slice(0, 1000) || null]);
   logActivity(req, `Travel IDs & details link created for ${lead.name} (${allIds.length} traveller${allIds.length > 1 ? "s" : ""})`, leadId);
@@ -4173,6 +4175,126 @@ app.post("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, r
 app.post("/api/travel-share/:token/revoke", requireAuth, requireAdmin, async (req, res) => {
   await pool.query("UPDATE travel_shares SET revoked = 1 WHERE token = $1", [req.params.token]);
   res.json({ ok: true });
+});
+
+// A client link now stays open until the end of the event day (IST), so it can be used for
+// follow-up messages and uploads. At least 3 days from now, so a link made close to the event still works.
+function shareExpiryFor(eventDate, now = new Date()) {
+  const min = new Date(now.getTime() + 3 * 86400000);
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(eventDate || ""));
+  if (!m) return new Date(now.getTime() + 15 * 86400000);
+  const endOfEventDay = new Date(`${m[1]}T23:59:59+05:30`);
+  return endOfEventDay > min ? endOfEventDay : min;
+}
+app.post("/api/travel-share/:token/extend", requireAuth, requireAdmin, async (req, res) => {
+  const s = (await pool.query("SELECT travel_shares.token, leads.date FROM travel_shares JOIN leads ON leads.id = travel_shares.lead_id WHERE token = $1", [req.params.token])).rows[0];
+  if (!s) return res.status(404).json({ error: "Link not found" });
+  const exp = shareExpiryFor(s.date);
+  await pool.query("UPDATE travel_shares SET expires_at = $1 WHERE token = $2", [exp.toISOString(), req.params.token]);
+  res.json({ expiresAt: exp.toISOString() });
+});
+
+// ---- Client conversation + uploads on the link (public side needs only the live token) ----
+const SHARE_FILE_MIMES = /^(image\/(jpeg|png|webp|heic|heif)|application\/pdf|application\/(msword|vnd\.openxmlformats-officedocument\.wordprocessingml\.document)|text\/plain)$/i;
+const shareAttempts = new Map(); // ip+token -> timestamps
+const shareRateOk = (key, max = 30) => {
+  const now = Date.now();
+  const list = (shareAttempts.get(key) || []).filter((t) => now - t < 3600000);
+  if (list.length >= max) { shareAttempts.set(key, list); return false; }
+  list.push(now); shareAttempts.set(key, list); return true;
+};
+const clientIp = (req) => String(req.headers["x-forwarded-for"] || req.ip).split(",")[0].trim();
+async function threadFor(leadId) {
+  const [messages, files] = await Promise.all([
+    pool.query("SELECT id, sender, sender_name, body, created_at, read_by_team FROM travel_share_messages WHERE lead_id = $1 ORDER BY created_at ASC", [leadId]),
+    pool.query("SELECT id, label, original_name, mime_type, uploader_name, uploaded_at, read_by_team FROM travel_share_files WHERE lead_id = $1 ORDER BY uploaded_at ASC", [leadId]),
+  ]);
+  return { messages: messages.rows, files: files.rows };
+}
+app.get("/trip/:token/thread", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const s = await loadTravelShare(req.params.token);
+  if (!s) return res.status(404).json({ error: "This link is no longer available." });
+  const t = await threadFor(s.lead_id);
+  res.json({
+    messages: t.messages.map((m) => ({ id: m.id, from: m.sender, name: m.sender_name, body: m.body, at: m.created_at })),
+    files: t.files.map((f) => ({ id: f.id, label: f.label, name: f.original_name, by: f.uploader_name, at: f.uploaded_at, url: `/trip/${encodeURIComponent(req.params.token)}/file/${f.id}` })),
+  });
+});
+app.post("/trip/:token/message", async (req, res) => {
+  const s = await loadTravelShare(req.params.token);
+  if (!s) return res.status(404).json({ error: "This link is no longer available." });
+  if (!shareRateOk("m:" + clientIp(req) + ":" + req.params.token)) return res.status(429).json({ error: "Too many messages — please try again later." });
+  const body = String(req.body.body || "").trim().slice(0, 2000);
+  const name = String(req.body.name || "").trim().slice(0, 80) || null;
+  if (!body) return res.status(400).json({ error: "Write a message first." });
+  await pool.query("INSERT INTO travel_share_messages (id, lead_id, share_token, sender, sender_name, body, created_at, read_by_team) VALUES ($1,$2,$3,'client',$4,$5,$6,0)",
+    [uuid(), s.lead_id, req.params.token, name, body, new Date().toISOString()]);
+  const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [s.lead_id])).rows[0];
+  sendPushToAll("\ud83d\udcac Client message", `${lead ? lead.name : "Event"}${name ? " \u2014 " + name : ""}: ${body.slice(0, 90)}`, "/login", { adminOnly: true }).catch(() => {});
+  res.status(201).json({ ok: true });
+});
+app.post("/trip/:token/upload", (req, res, next) => {
+  upload.single("file")(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.code === "LIMIT_FILE_SIZE" ? "That file is over 15 MB — please send a smaller one." : "Upload failed." });
+    next();
+  });
+}, async (req, res) => {
+  const s = await loadTravelShare(req.params.token);
+  if (!s) return res.status(404).json({ error: "This link is no longer available." });
+  if (!shareRateOk("u:" + clientIp(req) + ":" + req.params.token, 20)) return res.status(429).json({ error: "Too many uploads — please try again later." });
+  if (!req.file) return res.status(400).json({ error: "Choose a file first." });
+  if (!SHARE_FILE_MIMES.test(req.file.mimetype || "")) return res.status(400).json({ error: "Please upload a PDF, a photo (JPG/PNG) or a Word/text file." });
+  const name = String(req.body.name || "").trim().slice(0, 80) || null;
+  const label = String(req.body.label || "").trim().slice(0, 120) || null;
+  await pool.query("INSERT INTO travel_share_files (id, lead_id, share_token, label, original_name, mime_type, file_data, uploader_name, uploaded_at, read_by_team) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0)",
+    [uuid(), s.lead_id, req.params.token, label, req.file.originalname, req.file.mimetype, req.file.buffer, name, new Date().toISOString()]);
+  const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [s.lead_id])).rows[0];
+  sendPushToAll("\ud83d\udcce Client uploaded a file", `${lead ? lead.name : "Event"}: ${req.file.originalname}`, "/login", { adminOnly: true }).catch(() => {});
+  res.status(201).json({ ok: true });
+});
+app.get("/trip/:token/file/:fileId", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  const s = await loadTravelShare(req.params.token);
+  if (!s) return res.status(404).send("Link no longer available");
+  const d = (await pool.query("SELECT original_name, mime_type, file_data FROM travel_share_files WHERE id = $1 AND lead_id = $2", [req.params.fileId, s.lead_id])).rows[0];
+  if (!d || !d.file_data) return res.status(404).send("File not found");
+  res.setHeader("Content-Type", d.mime_type || "application/octet-stream");
+  res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(d.original_name)}"`);
+  res.send(d.file_data);
+});
+// Admin side of the same conversation
+app.get("/api/leads/:id/client-thread", requireAuth, requireAdmin, async (req, res) => {
+  const t = await threadFor(req.params.id);
+  res.json({
+    messages: t.messages.map((m) => ({ id: m.id, from: m.sender, name: m.sender_name, body: m.body, at: m.created_at, unread: m.sender === "client" && !m.read_by_team })),
+    files: t.files.map((f) => ({ id: f.id, label: f.label, name: f.original_name, by: f.uploader_name, at: f.uploaded_at, unread: !f.read_by_team, url: `/api/client-files/${f.id}/file` })),
+  });
+});
+app.post("/api/leads/:id/client-thread/reply", requireAuth, requireAdmin, async (req, res) => {
+  const body = String(req.body.body || "").trim().slice(0, 2000);
+  if (!body) return res.status(400).json({ error: "Write a reply first." });
+  await pool.query("INSERT INTO travel_share_messages (id, lead_id, share_token, sender, sender_name, body, created_at, read_by_team) VALUES ($1,$2,NULL,'team',$3,$4,$5,1)",
+    [uuid(), req.params.id, "Together, Out Loud", body, new Date().toISOString()]);
+  res.status(201).json({ ok: true });
+});
+app.post("/api/leads/:id/client-thread/read", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("UPDATE travel_share_messages SET read_by_team = 1 WHERE lead_id = $1", [req.params.id]);
+  await pool.query("UPDATE travel_share_files SET read_by_team = 1 WHERE lead_id = $1", [req.params.id]);
+  res.json({ ok: true });
+});
+app.get("/api/client-files/:fileId/file", requireAuth, requireAdmin, async (req, res) => {
+  const d = (await pool.query("SELECT original_name, mime_type, file_data FROM travel_share_files WHERE id = $1", [req.params.fileId])).rows[0];
+  if (!d || !d.file_data) return res.status(404).send("File not found");
+  res.setHeader("Content-Type", d.mime_type || "application/octet-stream");
+  res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(d.original_name)}"`);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.send(d.file_data);
+});
+app.delete("/api/client-files/:fileId", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM travel_share_files WHERE id = $1", [req.params.fileId]);
+  res.status(204).end();
 });
 
 async function loadTravelShare(token) {
@@ -4189,6 +4311,79 @@ const fmtWall = (v) => {
   if (m[4]) { const h = Number(m[4]); out += `, ${((h + 11) % 12) + 1}:${m[5]} ${h >= 12 ? "PM" : "AM"}`; }
   return out;
 };
+function clientHubHtml(token) {
+  const T = JSON.stringify(token);
+  return `<h2>Send us your itinerary, tickets or a message</h2>
+<div class="c">
+  <div class="m" style="margin-bottom:8px">Booked the tickets? Upload them here (PDF or photo). You can also leave a message — we'll reply and it stays on this page.</div>
+  <input id="hubName" placeholder="Your name (optional)" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;margin-bottom:8px">
+  <input id="hubLabel" placeholder="What is this? e.g. Train tickets Delhi → Pune" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;margin-bottom:8px">
+  <input id="hubFile" type="file" accept="image/*,application/pdf,.doc,.docx,.txt" style="width:100%;margin-bottom:8px">
+  <button id="hubUp" style="padding:11px 16px;border:0;border-radius:10px;background:#B5541C;color:#fff;font:inherit;font-size:15px;cursor:pointer">⬆ Upload</button>
+  <div id="hubUpMsg" class="m" style="margin-top:6px"></div>
+</div>
+<div class="c">
+  <b>Messages</b>
+  <div id="hubThread" style="margin-top:8px"></div>
+  <textarea id="hubMsg" rows="3" placeholder="Write a message…" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;margin-top:8px"></textarea>
+  <button id="hubSend" style="margin-top:8px;padding:11px 16px;border:0;border-radius:10px;background:#B5541C;color:#fff;font:inherit;font-size:15px;cursor:pointer">Send message</button>
+  <div id="hubMsgErr" class="m" style="margin-top:6px"></div>
+</div>
+<script>
+(function(){
+  var TOKEN=${T}, base="/trip/"+encodeURIComponent(TOKEN);
+  var $=function(id){return document.getElementById(id)};
+  try{var saved=localStorage.getItem("tolHubName"); if(saved) $("hubName").value=saved;}catch(e){}
+  function fmt(iso){try{return new Date(iso).toLocaleString("en-IN",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit"})}catch(e){return ""}}
+  function el(tag,css,text){var e=document.createElement(tag); if(css) e.style.cssText=css; if(text!=null) e.textContent=text; return e;}
+  function render(d){
+    var box=$("hubThread"); box.textContent="";
+    var items=[];
+    d.messages.forEach(function(m){items.push({at:m.at,m:m})});
+    d.files.forEach(function(f){items.push({at:f.at,f:f})});
+    items.sort(function(a,b){return a.at<b.at?-1:1});
+    if(!items.length){box.appendChild(el("div","color:#7A6A58;font-size:13px","Nothing yet."));return;}
+    items.forEach(function(it){
+      if(it.m){
+        var mine=it.m.from==="client";
+        var w=el("div","margin:6px 0;padding:8px 10px;border-radius:10px;font-size:15px;white-space:pre-wrap;"+(mine?"background:#FFF3DC;margin-left:24px":"background:#EEF4F1;margin-right:24px"));
+        w.appendChild(el("div","font-size:12px;color:#7A6A58;margin-bottom:2px",(mine?(it.m.name||"You"):"Together, Out Loud")+" · "+fmt(it.m.at)));
+        w.appendChild(document.createTextNode(it.m.body)); box.appendChild(w);
+      } else {
+        var f=it.f, w2=el("div","margin:6px 0;padding:8px 10px;border-radius:10px;font-size:14px;background:#FFF3DC;margin-left:24px");
+        w2.appendChild(el("div","font-size:12px;color:#7A6A58;margin-bottom:2px",(f.by||"You")+" · "+fmt(f.at)));
+        var a=el("a",null,"📎 "+(f.label||f.name)); a.href=f.url; a.target="_blank"; a.rel="noopener"; w2.appendChild(a);
+        if(f.label) w2.appendChild(el("div","font-size:12px;color:#7A6A58",f.name));
+        box.appendChild(w2);
+      }
+    });
+  }
+  function load(){fetch(base+"/thread").then(function(r){return r.json()}).then(render).catch(function(){});}
+  load();
+  $("hubSend").onclick=function(){
+    var body=$("hubMsg").value.trim(); if(!body) return;
+    var name=$("hubName").value.trim(); try{localStorage.setItem("tolHubName",name)}catch(e){}
+    $("hubSend").disabled=true; $("hubMsgErr").textContent="";
+    fetch(base+"/message",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({body:body,name:name})})
+      .then(function(r){return r.json().then(function(j){if(!r.ok) throw new Error(j.error||"Could not send");})})
+      .then(function(){$("hubMsg").value=""; load();})
+      .catch(function(e){$("hubMsgErr").textContent=e.message;})
+      .then(function(){$("hubSend").disabled=false;});
+  };
+  $("hubUp").onclick=function(){
+    var f=$("hubFile").files[0]; if(!f){$("hubUpMsg").textContent="Choose a file first.";return;}
+    var fd=new FormData(); fd.append("file",f); fd.append("label",$("hubLabel").value); fd.append("name",$("hubName").value);
+    try{localStorage.setItem("tolHubName",$("hubName").value)}catch(e){}
+    $("hubUp").disabled=true; $("hubUpMsg").textContent="Uploading…";
+    fetch(base+"/upload",{method:"POST",body:fd})
+      .then(function(r){return r.json().then(function(j){if(!r.ok) throw new Error(j.error||"Upload failed");})})
+      .then(function(){$("hubUpMsg").textContent="✓ Uploaded — thank you."; $("hubFile").value=""; $("hubLabel").value=""; load();})
+      .catch(function(e){$("hubUpMsg").textContent=e.message;})
+      .then(function(){$("hubUp").disabled=false;});
+  };
+})();
+</script>`;
+}
 app.get("/trip/:token", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
@@ -4227,10 +4422,11 @@ app.get("/trip/:token", async (req, res) => {
   const ogDesc = "Team IDs and travel plan, shared by Together, Out Loud for booking tickets.";
   const ogHead = `<meta property="og:type" content="website"><meta property="og:site_name" content="Together, Out Loud"><meta property="og:title" content="${escHtml(ogTitle)}"><meta property="og:description" content="${escHtml(ogDesc)}"><meta property="og:image" content="${ogImg}"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="${ogImg}">`;
   res.send(shell(`<h1>Travel details & IDs</h1><div class="m">${escHtml(lead ? `${lead.name}${lead.city ? " · " + lead.city : ""}${lead.date ? " · " + fmtWall(lead.date) : ""}` : "")}</div>
-    <div class="m" style="margin-top:6px">Shared by Together, Out Loud for booking tickets. Link valid until ${escHtml(fmtWall(s.expires_at))}.</div>
+    <div class="m" style="margin-top:6px">Shared by Together, Out Loud for booking tickets. This link stays open until the event date (${escHtml(new Date(s.expires_at).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Kolkata" }))}) — use it any time to send us your itinerary, tickets or questions.</div>
     ${s.note ? `<div class="c" style="margin-top:12px;border-left:4px solid #C1602B"><b>Note from Together, Out Loud</b><div style="margin-top:4px;white-space:pre-wrap">${escHtml(s.note)}</div></div>` : ""}
     <h2>Team travelling (${trav.team.length + trav.guests.length})</h2>${idCards}
-    <h2>Travel plan</h2>${legCards || `<div class="c m">Travel plan will be shared shortly.</div>`}`, ogHead));
+    <h2>Travel plan</h2>${legCards || `<div class="c m">Travel plan will be shared shortly.</div>`}
+    ${clientHubHtml(req.params.token)}`, ogHead));
 });
 app.get("/trip/:token/ticket/:docId", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");

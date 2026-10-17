@@ -6327,6 +6327,10 @@ async function openTravelShareModal(leadId) {
   let busy = false;
   let includeTickets = true;
   let clientNote = "";
+  let thread = { messages: [], files: [] };
+  let replyDraft = "";
+  const loadThread = async () => { try { thread = await api(`/api/leads/${leadId}/client-thread`); } catch { thread = { messages: [], files: [] }; } };
+  await loadThread();
   const LINK = "{link}";
 
   const legsFor = () => data.legs.map((l) => ({ ...l, who: data.team.filter((t) => selected.has(t.teamId) && l.memberIds.includes(t.teamId)).map((t) => t.name) }));
@@ -6352,7 +6356,7 @@ async function openTravelShareModal(leadId) {
       "",
       ...(clientNote.trim() ? ["\ud83d\udcdd *Note:* " + clientNote.trim(), ""] : []),
       ...(includeTickets && legs.some((l) => (l.tickets || []).length) ? ["\ud83c\udfab Tickets already booked are attached in the link below.", ""] : []),
-      `🪪 *ID cards + full details (secure link, valid 15 days):*`,
+      `🪪 *ID cards + full details (secure link — stays open till the event, so you can also upload tickets / itineraries or message us there):*`,
       LINK,
       "",
       "Please confirm once the tickets are booked. Thank you!",
@@ -6374,8 +6378,29 @@ async function openTravelShareModal(leadId) {
         <div class="modal-card" style="width:680px; max-width:96vw;">
           <div class="modal-head"><h3>🪪 Send IDs & travel details — ${esc(lead.name)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
           <div class="modal-body">
-            <p class="muted small" style="margin:0 0 10px;">Only the team members you tick below are included — nobody else's ID can be reached through the link. The client gets one secure link (valid 15 days, you can revoke it) showing the IDs and the travel plan, plus the same details in the WhatsApp message.</p>
+            <p class="muted small" style="margin:0 0 10px;">Only the team members you tick below are included — nobody else's ID can be reached through the link. The client gets one secure link showing the IDs and the travel plan, plus the same details in the WhatsApp message. The link stays open until the event date, so the client can use it to upload tickets or itineraries and message you; you can revoke it any time.</p>
 
+            ${(() => {
+              const items = [...thread.messages.map((m) => ({ at: m.at, m })), ...thread.files.map((f) => ({ at: f.at, f }))].sort((a, b) => (a.at < b.at ? -1 : 1));
+              const unreadN = thread.messages.filter((m) => m.unread).length + thread.files.filter((f) => f.unread).length;
+              const when = (iso) => { try { return new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
+              return `
+              <div class="section-label">💬 Conversation &amp; uploads from the client${unreadN ? ` <span class="tag" style="background:#C1602B;color:#fff;">${unreadN} new</span>` : ""}</div>
+              <div class="card" style="padding:10px 12px; margin-bottom:12px;">
+                ${items.length === 0 ? `<p class="muted small" style="margin:0 0 8px;">Nothing yet. Once the client opens their link they can message you and upload tickets or itineraries here.</p>` : `<div style="max-height:260px; overflow:auto; margin-bottom:8px;">${items.map((it) => it.m ? `
+                  <div style="margin:5px 0; padding:7px 10px; border-radius:10px; font-size:13px; white-space:pre-wrap; ${it.m.from === "client" ? "background:#FFF3DC;" : "background:#EEF4F1; margin-left:24px;"}">
+                    <div class="muted small">${it.m.from === "client" ? esc(it.m.name || "Client") : "You (Team TOL)"} · ${esc(when(it.m.at))}${it.m.unread ? " · <b style='color:#C1602B;'>new</b>" : ""}</div>${esc(it.m.body)}</div>` : `
+                  <div style="margin:5px 0; padding:7px 10px; border-radius:10px; font-size:13px; background:#FFF3DC;">
+                    <div class="muted small">${esc(it.f.by || "Client")} uploaded · ${esc(when(it.f.at))}${it.f.unread ? " · <b style='color:#C1602B;'>new</b>" : ""}</div>
+                    📎 <a href="${it.f.url}" target="_blank" rel="noopener">${esc(it.f.label || it.f.name)}</a>${it.f.label ? ` <span class="muted small">${esc(it.f.name)}</span>` : ""}
+                    <button class="btn-ghost ts-del-cfile" data-file-id="${it.f.id}" style="font-size:11px; padding:1px 7px; margin-left:6px;">remove</button></div>`).join("")}</div>`}
+                <textarea id="tsReply" rows="2" placeholder="Reply to the client (they see it on their link)…" style="font-size:13px;">${esc(replyDraft)}</textarea>
+                <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
+                  <button class="btn-primary" id="tsReplyBtn" style="font-size:12.5px; padding:5px 12px;">Send reply</button>
+                  ${activeShares.length ? `<button class="btn-ghost" id="tsNudgeBtn" style="font-size:12.5px; padding:5px 12px;">💬 Tell client on WhatsApp</button>` : ""}
+                </div>
+              </div>`;
+            })()}
             <div class="section-label">1. Who is travelling</div>
             ${people.length === 0 ? `<p class="muted small">No team members are assigned to this event yet.</p>` : people.map((t) => `
               <div class="card" style="padding:10px 12px; margin-bottom:8px;" data-team-id="${t.teamId}">
@@ -6430,7 +6455,8 @@ async function openTravelShareModal(leadId) {
                 const names = data.team.filter((t) => x.teamIds.includes(t.teamId)).map((t) => t.name).join(", ");
                 return `<div class="card" style="padding:8px 12px; margin-bottom:6px; font-size:12.5px;">
                   <div>${live ? "🟢 Active" : x.revoked ? "⛔ Revoked" : "⌛ Expired"} · created ${esc(wall(x.createdAt))} · for ${esc(names || "—")}</div>
-                  ${live ? `<div style="margin-top:6px; display:flex; gap:6px;"><button class="btn-ghost ts-copy" data-token="${x.token}" style="font-size:12px; padding:3px 9px;">🔗 Copy link</button><button class="btn-ghost ts-revoke" data-token="${x.token}" style="font-size:12px; padding:3px 9px;">Revoke</button></div>` : ""}
+                  <div style="margin-top:4px;" class="muted small">${live ? "Open until" : x.revoked ? "" : "Expired"} ${x.revoked ? "" : esc(wall(x.expiresAt))}</div>
+                  ${live ? `<div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;"><button class="btn-ghost ts-copy" data-token="${x.token}" style="font-size:12px; padding:3px 9px;">🔗 Copy link</button><button class="btn-ghost ts-extend" data-token="${x.token}" style="font-size:12px; padding:3px 9px;">Keep open till event date</button><button class="btn-ghost ts-revoke" data-token="${x.token}" style="font-size:12px; padding:3px 9px;">Revoke</button></div>` : x.revoked ? "" : `<div style="margin-top:6px;"><button class="btn-ghost ts-extend" data-token="${x.token}" style="font-size:12px; padding:3px 9px;">Re-open till event date</button></div>`}
                 </div>`;
               }).join("")}` : ""}
           </div>
@@ -6444,7 +6470,7 @@ async function openTravelShareModal(leadId) {
     wire();
   }
 
-  async function reload() { data = await api(`/api/leads/${leadId}/travel-share`); render(); }
+  async function reload() { data = await api(`/api/leads/${leadId}/travel-share`); await loadThread(); render(); }
 
   async function createLinkedMessage() {
     const phoneEl = root.querySelector("#tsPhone");
@@ -6509,6 +6535,31 @@ async function openTravelShareModal(leadId) {
       await api(`/api/team-id-docs/${b.dataset.docId}`, { method: "DELETE" });
       await reload();
     }));
+    root.querySelector("#tsReply").addEventListener("input", (e) => { replyDraft = e.target.value; });
+    root.querySelector("#tsReplyBtn").addEventListener("click", async () => {
+      const body = root.querySelector("#tsReply").value.trim();
+      if (!body) return;
+      keepInputs();
+      try { await api(`/api/leads/${leadId}/client-thread/reply`, { method: "POST", body: JSON.stringify({ body }) }); replyDraft = ""; await reload(); } catch (err) { alert(err.message); }
+    });
+    const nudge = root.querySelector("#tsNudgeBtn");
+    if (nudge) nudge.addEventListener("click", () => {
+      const live = data.shares.find((x) => !x.revoked && new Date(x.expiresAt) > new Date());
+      const phone = normPhone(root.querySelector("#tsPhone").value);
+      if (!live || !phone) return alert("Add the client's WhatsApp number first.");
+      const text = `Hi, we've replied to you on your travel details link:\n${window.location.origin}/trip/${live.token}`;
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`, "_blank");
+    });
+    root.querySelectorAll(".ts-del-cfile").forEach((b) => b.addEventListener("click", async () => {
+      if (!confirm("Remove this file the client uploaded?")) return;
+      keepInputs();
+      await api(`/api/client-files/${b.dataset.fileId}`, { method: "DELETE" });
+      await reload();
+    }));
+    root.querySelectorAll(".ts-extend").forEach((b) => b.addEventListener("click", async () => {
+      keepInputs();
+      try { await api(`/api/travel-share/${b.dataset.token}/extend`, { method: "POST" }); await reload(); } catch (err) { alert(err.message); }
+    }));
     root.querySelectorAll(".ts-copy").forEach((b) => b.addEventListener("click", async () => {
       const link = `${window.location.origin}/trip/${b.dataset.token}`;
       try { await navigator.clipboard.writeText(link); b.textContent = "✓ Copied"; } catch { prompt("Copy this link:", link); }
@@ -6546,6 +6597,8 @@ async function openTravelShareModal(leadId) {
   }
 
   render();
+  // Opening the conversation counts as reading it.
+  if (thread.messages.some((m) => m.unread) || thread.files.some((f) => f.unread)) api(`/api/leads/${leadId}/client-thread/read`, { method: "POST" }).catch(() => {});
 }
 
 // ---------- Travel plan (per-artist, per-event) ----------

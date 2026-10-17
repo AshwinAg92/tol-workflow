@@ -806,6 +806,29 @@ async function setup() {
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS legacy_musician_id TEXT`);
   await pool.query(`ALTER TABLE travel_shares ADD COLUMN IF NOT EXISTS include_tickets INTEGER NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE travel_shares ADD COLUMN IF NOT EXISTS note TEXT`);
+  // Client conversation + uploads on a travel-share link (additive; nothing existing is touched).
+  await pool.query(`CREATE TABLE IF NOT EXISTS travel_share_messages (
+    id TEXT PRIMARY KEY,
+    lead_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    share_token TEXT,
+    sender TEXT NOT NULL,
+    sender_name TEXT,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    read_by_team INTEGER NOT NULL DEFAULT 0
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS travel_share_files (
+    id TEXT PRIMARY KEY,
+    lead_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    share_token TEXT,
+    label TEXT,
+    original_name TEXT NOT NULL,
+    mime_type TEXT,
+    file_data BYTEA,
+    uploader_name TEXT,
+    uploaded_at TEXT NOT NULL,
+    read_by_team INTEGER NOT NULL DEFAULT 0
+  )`);
   await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS migrated_assignment_id TEXT`);
   {
     const ins = (await pool.query("SELECT musician_id, instrument FROM musician_instruments ORDER BY instrument ASC")).rows;
