@@ -3444,11 +3444,85 @@ async function renderCalendar(main) {
 }
 
 // ---------- Travel Calendar ----------
+// ---- Travel Calendar helpers: events alongside journeys, previous-event note, gaps and clashes ----
+function eventPrevOf(lead) {
+  let p = null;
+  LEADS.forEach((e) => {
+    if (["Confirmed", "Completed"].includes(e.stage) && e.date && lead.date && e.date < lead.date && (!p || e.date >= p.date)) p = e;
+  });
+  return p;
+}
+// Who was with us on the immediately previous event: travellers if travel was logged, else its crew.
+function lastTimeCrew(prev, legsAll, assignments) {
+  if (!prev) return { names: [], kind: "" };
+  const trav = new Set();
+  legsAll.filter((l) => l.lead_id === prev.id).forEach((l) => (l.members || []).forEach((m) => trav.add(m.teamId)));
+  if (trav.size) return { ids: [...trav], kind: "Travelled" };
+  const crew = assignments.filter((a) => a.lead_id === prev.id && a.status !== "declined").map((a) => a.team_id);
+  return { ids: crew, kind: "Crew" };
+}
+function prevEventNoteHtml(lead, legsAll, assignments) {
+  const prev = eventPrevOf(lead);
+  if (!prev) return `<div class="muted small tc-prev">No earlier event on record.</div>`;
+  const last = lastTimeCrew(prev, legsAll, assignments);
+  const days = Math.round((new Date(lead.date + "T00:00:00") - new Date(prev.date + "T00:00:00")) / 86400000);
+  const names = (last.ids || []).map((id) => TEAM.find((m) => m.id === id)?.name).filter(Boolean);
+  const esc = (v) => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  return `<div class="muted small tc-prev" style="padding:8px 10px; background:#F7F3EA; border-radius:8px;"><b>Previous event:</b> ${esc(prev.name)} · ${fmtDate(prev.date)}${prev.city ? " · " + esc(prev.city) : ""} (${days} day${days === 1 ? "" : "s"} before)<br>${names.length ? `${last.kind === "Travelled" ? "✈ Travelled" : "↺ Crew (no travel logged)"}: <b>${esc(names.join(", "))}</b>` : "No crew or travel recorded for it."}</div>`;
+}
+// Allotted artists whose home city differs from the event city and who have no journey for it.
+function eventTravelGaps(lead, legsAll, assignments) {
+  const norm = (v) => String(v || "").trim().toLowerCase();
+  const travelling = new Set();
+  legsAll.filter((l) => l.lead_id === lead.id).forEach((l) => (l.members || []).forEach((m) => travelling.add(m.teamId)));
+  return assignments.filter((a) => a.lead_id === lead.id && a.status !== "declined").filter((a) => {
+    const m = TEAM.find((x) => x.id === a.team_id);
+    const bc = norm(m?.base_city), ec = norm(lead.city);
+    return bc && ec && bc !== ec && !travelling.has(a.team_id);
+  }).map((a) => TEAM.find((x) => x.id === a.team_id)?.name).filter(Boolean);
+}
+function busyClash(busy, teamId, lead) {
+  const sameCombo = (otherId) => { const o = LEADS.find((x) => x.id === otherId); return !!(lead.combo_group_id && o && o.combo_group_id === lead.combo_group_id); };
+  return (busy || []).find((b) => b.teamId === teamId && b.leadId !== lead.id && b.from <= lead.date && lead.date <= b.to && !sameCombo(b.leadId));
+}
+
+function openTravelEventModal(lead, legsAll, ctx, onClose) {
+  const root = document.getElementById("modalRoot");
+  const esc = (v) => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const crew = ctx.assignments.filter((a) => a.lead_id === lead.id);
+  const gaps = eventTravelGaps(lead, legsAll, ctx.assignments);
+  const evLegs = legsAll.filter((l) => l.lead_id === lead.id);
+  const stColor = { accepted: "#1C7A80", pending: "#B6752C", declined: "#A6432B", cancel_requested: "#A6432B" };
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay"><div class="modal-card" style="max-width:520px;">
+      <div class="modal-head"><h3>${esc(lead.name)} <span class="muted" style="font-weight:400; font-size:14px;">${lead.city ? "(" + esc(lead.city) + ", " : "("}${fmtDate(lead.date)})</span></h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+      <div class="modal-body">
+        ${prevEventNoteHtml(lead, legsAll, ctx.assignments)}
+        <div class="muted small" style="margin:12px 0 4px; font-weight:600; text-transform:uppercase;">Crew for this event</div>
+        ${crew.length ? crew.map((a) => {
+          const m = TEAM.find((x) => x.id === a.team_id);
+          const mine = evLegs.filter((l) => (l.members || []).some((x) => x.teamId === a.team_id));
+          const gap = gaps.includes(m?.name);
+          return `<div class="dash-list-item" style="display:flex; justify-content:space-between; gap:8px;"><span><b>${esc(m?.name || "Unknown")}</b> <span class="muted small">${m?.base_city ? "📍 " + esc(m.base_city) : ""}</span></span><span class="small"><span style="color:${stColor[a.status] || "#666"};">${a.status === "cancel_requested" ? "cancel requested" : a.status}</span> · ${mine.length ? `✈ ${mine.map((l) => (l.status === "not_booked" ? "not booked" : "booked")).join(", ")}` : gap ? `<span style="color:#A6432B; font-weight:600;">⚠ no travel planned</span>` : `<span class="muted">local</span>`}</span></div>`;
+        }).join("") : `<p class="muted small">No one allotted yet.</p>`}
+      </div>
+      <div class="modal-foot"><button class="btn-ghost" id="evAllot">Allot crew</button><button class="btn-primary" id="evTravel">Plan travel</button></div>
+    </div></div>`;
+  const close = () => { root.innerHTML = ""; if (onClose) onClose(); };
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#evAllot").addEventListener("click", () => { openAssignTeamModal(lead.id); });
+  root.querySelector("#evTravel").addEventListener("click", () => { openTravelPlanModal(lead.id); });
+}
+
 async function renderTravelCalendar(main) {
   main.innerHTML = `<div class="view-head"><div><h2>Travel Calendar</h2></div></div><p class="muted">Loading…</p>`;
   let legs;
+  let tcCtx = { assignments: [], busy: [] };
   try {
     legs = await api("/api/travel-legs");
+    tcCtx = await api("/api/travel-context").catch(() => tcCtx);
+    await refreshLeads().catch(() => {});
   } catch (err) {
     main.innerHTML = `<div class="view-head"><div><h2>Travel Calendar</h2></div></div><p class="muted small">Couldn't load travel data.</p>`;
     return;
@@ -3495,6 +3569,8 @@ async function renderTravelCalendar(main) {
       </div>
     </div>
     <div class="card">${calendarGridMarkup()}</div>
+    <div class="section-label" style="margin-top:20px;">Upcoming events</div>
+    <div id="travelCalEvents"></div>
     <div class="section-label" style="margin-top:20px;">Upcoming travel</div>
     <div id="travelCalList"></div>
   `;
@@ -3511,6 +3587,13 @@ async function renderTravelCalendar(main) {
   function visibleLegs() {
     if (travelCalSelectedIds === null) return legs; // no filter — show everyone
     return legs.filter((leg) => leg.members.some((m) => travelCalSelectedIds.has(m.teamId)));
+  }
+
+  // Confirmed events on the calendar too. With a person filter on, only events that person is allotted to.
+  function visibleEvents() {
+    const evs = LEADS.filter((l) => ["Confirmed", "Completed"].includes(l.stage) && l.date);
+    if (travelCalSelectedIds === null) return evs;
+    return evs.filter((l) => tcCtx.assignments.some((a) => a.lead_id === l.id && a.status !== "declined" && travelCalSelectedIds.has(a.team_id)));
   }
 
   function legLabel(leg) { return leg.lead_id ? `${leg.lead_name}${leg.lead_city ? ` (${leg.lead_city})` : ""}` : (leg.label || "Travel"); }
@@ -3533,21 +3616,35 @@ async function renderTravelCalendar(main) {
       addOn(leg.departure_at, "depart");
       if (leg.arrival_at && leg.arrival_at.slice(0, 10) !== (leg.departure_at || "").slice(0, 10)) addOn(leg.arrival_at, "return");
     });
+    const showEvents = {};
+    visibleEvents().forEach((l) => {
+      const d = new Date(l.date + "T00:00:00");
+      if (d.getFullYear() === travelCalYear && d.getMonth() === travelCalMonth - 1) (showEvents[d.getDate()] = showEvents[d.getDate()] || []).push(l);
+    });
     main.querySelector("#calMonthLabel").textContent = first.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
     const calCells = main.querySelector("#calCells");
     calCells.innerHTML = "";
     cells.forEach((d) => {
       const evs = d ? (eventsByDay[d] || []) : [];
+      const dayEvents = d ? (showEvents[d] || []) : [];
       calCells.appendChild(el(`
         <div class="cal-cell${d ? "" : " cal-cell-empty"}">
           ${d ? `<div class="cal-day">${d}</div>` : ""}
+          ${dayEvents.map((l) => { const gap = eventTravelGaps(l, legs, tcCtx.assignments).length > 0; return `
+            <div class="cal-event tc-event" data-event-id="${l.id}" style="cursor:pointer; background:#1F6F43;" title="Event: ${String(l.name).replace(/"/g, "")}${gap ? " — travel not planned for someone" : ""}">🎤 ${l.name}${gap ? " ⚠" : ""}</div>`; }).join("")}
           ${evs.map(({ leg, kind }) => `
             <div class="cal-event" data-leg-id="${leg.id}" style="cursor:pointer; ${kind === "return" ? "background:#8A5FA8;" : ""}" title="${legLabel(leg)}${kind === "return" ? " — Return" : ""}">${kind === "return" ? "↩ " : ""}${legLabel(leg)}</div>
           `).join("")}
         </div>
       `));
     });
-    calCells.querySelectorAll(".cal-event").forEach((pill) => {
+    calCells.querySelectorAll(".tc-event").forEach((pill) => {
+      pill.addEventListener("click", () => {
+        const lead = LEADS.find((l) => l.id === pill.dataset.eventId);
+        if (lead) openTravelEventModal(lead, legs, tcCtx, () => renderTravelCalendar(main));
+      });
+    });
+    calCells.querySelectorAll(".cal-event[data-leg-id]").forEach((pill) => {
       pill.addEventListener("click", () => {
         const leg = legs.find((l) => l.id === pill.dataset.legId);
         if (!leg) return;
@@ -3561,7 +3658,36 @@ async function renderTravelCalendar(main) {
   main.querySelector("#nextMonth").addEventListener("click", () => { travelCalMonth++; if (travelCalMonth > 12) { travelCalMonth = 1; travelCalYear++; } redraw(); });
 
   const listEl = main.querySelector("#travelCalList");
+  const eventsListEl = main.querySelector("#travelCalEvents");
+  function redrawEvents() {
+    const today = new Date().toISOString().slice(0, 10);
+    const stColor = { accepted: "#1C7A80", pending: "#B6752C", declined: "#A6432B", cancel_requested: "#A6432B" };
+    const upEvents = visibleEvents().filter((l) => l.date >= today).sort((a, b) => a.date.localeCompare(b.date));
+    eventsListEl.innerHTML = upEvents.length === 0 ? `<p class="muted small">No upcoming events${travelCalSelectedIds === null ? "" : " for the selected people"}.</p>` : "";
+    upEvents.forEach((l) => {
+      const crew = tcCtx.assignments.filter((a) => a.lead_id === l.id);
+      const gaps = eventTravelGaps(l, legs, tcCtx.assignments);
+      const d = new Date(l.date + "T00:00:00");
+      const card = el(`
+        <div class="card" style="margin-bottom:8px; cursor:pointer; display:flex; gap:12px; align-items:flex-start; border-left:4px solid #1F6F43;">
+          <div style="flex-shrink:0; text-align:center; min-width:42px;">
+            <div style="font-size:21px; font-weight:700; line-height:1.1;">${d.getDate()}</div>
+            <div class="muted small" style="text-transform:uppercase;">${d.toLocaleDateString("en-IN", { month: "short" })}</div>
+          </div>
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:600;">🎤 ${l.name}${l.city ? ` <span class="muted small" style="font-weight:400;">· ${l.city}</span>` : ""}</div>
+            <div class="small" style="margin-top:2px;">${crew.length ? crew.map((a) => `<span style="color:${stColor[a.status] || "#666"}; margin-right:8px;">${TEAM.find((m) => m.id === a.team_id)?.name || "?"}${a.status === "pending" ? " ⏳" : a.status === "declined" ? " ✕" : a.status === "accepted" ? " ✓" : ""}</span>`).join("") : `<span style="color:#A6432B;">No crew allotted yet</span>`}</div>
+            ${gaps.length ? `<div class="small" style="color:#A6432B; font-weight:600; margin-top:2px;">⚠ No travel planned: ${gaps.join(", ")}</div>` : ""}
+            <div style="margin-top:6px;">${prevEventNoteHtml(l, legs, tcCtx.assignments)}</div>
+          </div>
+        </div>`);
+      card.addEventListener("click", () => openTravelEventModal(l, legs, tcCtx, () => renderTravelCalendar(main)));
+      eventsListEl.appendChild(card);
+    });
+  }
+
   function redrawList() {
+    redrawEvents();
     const today = new Date().toISOString().slice(0, 10);
     // Sort/filter by whichever date is actually set — a leg logged with only
     // a return date (no departure known yet) should still show up here.
@@ -3588,6 +3714,7 @@ async function renderTravelCalendar(main) {
             </div>
             <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${leg.arrival_at && leg.departure_at ? ` · returns ${new Date(leg.arrival_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : ""}</div>
             <div class="muted small">${legLabel(leg)} · ${names}</div>
+            ${leg.lead_id && LEADS.find((x) => x.id === leg.lead_id) ? `<div style="margin-top:6px;">${prevEventNoteHtml(LEADS.find((x) => x.id === leg.lead_id), legs, tcCtx.assignments)}</div>` : ""}
             ${leg.notes ? `<div style="font-weight:700; margin-top:4px;">📝 ${leg.notes}</div>` : ""}
             ${leg.manager_notes ? `<div style="font-weight:700; margin-top:4px;">🗒 Manager: ${leg.manager_notes}</div>` : ""}
           </div>
@@ -5167,7 +5294,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   const _prevScroll = _prevCard ? _prevCard.scrollTop : 0;
   const lead = LEADS.find((l) => l.id === leadId);
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
-  const [assignments, tempArtists, leadExpenses, myReimbursements, myOwnFee, tempArtistDirectory, allMusicians, allDocs] = await Promise.all([
+  const [assignments, tempArtists, leadExpenses, myReimbursements, myOwnFee, tempArtistDirectory, allMusicians, allDocs, travelCtx] = await Promise.all([
     api(`/api/leads/${leadId}/assignments`),
     Promise.resolve([]),
     isAdmin ? api(`/api/expenses?leadId=${leadId}`) : Promise.resolve([]),
@@ -5176,6 +5303,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     Promise.resolve([]),
     Promise.resolve([]),
     api(`/api/documents`).catch(() => []),
+    api(`/api/travel-context`).catch(() => ({ busy: [] })),
   ]);
   // Riders (Tech / Hospitality) — this event's own copy first, else the general library one.
   const riderDocs = [];
@@ -5366,6 +5494,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                   soundcheckClause: isManager && lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : "",
                   pcsClause: isManager && lead.pcs ? ` Band size for this event: ${lead.pcs} pcs.` : "",
                 }) + (confirmLink ? `\n\nAccept or decline here: ${confirmLink}` : "");
+                const clash = !a ? busyClash(travelCtx.busy, m.id, lead) : null;
                 const isLocalEvent = m.base_city && lead.city && m.base_city.trim().toLowerCase() === lead.city.trim().toLowerCase();
                 const suggestedFee = isLocalEvent ? m.local_fee : m.outstation_fee;
                 return `
@@ -5376,6 +5505,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                         <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13.5px;">
                           <span style="font-weight:600;">${m.name}</span>${m.kind === "freelance" ? ` <span class="mono small" style="background:#EDE7F6; color:#5E4B8B; border-radius:4px; padding:0 6px;">Freelance</span>` : ""}
                           <span class="muted">${m.instruments || m.role ? ` · ${m.instruments || m.role}` : ""}${m.base_city ? ` · 📍 ${m.base_city}` : ""}</span>
+                          ${clash ? `<br><span class="clash-note" style="color:#A6432B; font-size:12px; font-weight:600; white-space:normal;">⛔ Already committed that day: ${String(clash.label).replace(/</g, "&lt;")} (${clash.kind})</span>` : ""}
                         </span>
                       </label>
                       ${isAdmin
@@ -5738,6 +5868,8 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     cb.addEventListener("change", async () => {
       const teamId = cb.dataset.teamId;
       if (!cb.checked || byTeamId[teamId]) return;
+      const clashHere = busyClash(travelCtx.busy, teamId, lead);
+      if (clashHere && !confirm(`${TEAM.find((m) => m.id === teamId)?.name || "This person"} is already committed on ${fmtDate(lead.date)} (${clashHere.label}). Allot anyway?`)) { cb.checked = false; return; }
       cb.disabled = true;
       try {
         await api(`/api/leads/${leadId}/assignments`, { method: "POST", body: JSON.stringify({ teamIds: [teamId] }) });
@@ -6268,6 +6400,11 @@ async function openTravelPlanModal(leadId) {
     api(`/api/leads/${leadId}/travel-legs`),
     api(`/api/leads/${leadId}/assignments`),
   ]);
+  let prevNoteHtml = "";
+  try {
+    const [allLegs, ctx] = await Promise.all([api("/api/travel-legs"), api("/api/travel-context")]);
+    prevNoteHtml = `<div style="margin-bottom:10px;">${prevEventNoteHtml(lead, allLegs, ctx.assignments)}</div>`;
+  } catch { /* the note is a nice-to-have */ }
   let addingNew = false;
   let editingLegId = null;
   let linkingExisting = false;
@@ -6404,6 +6541,7 @@ async function openTravelPlanModal(leadId) {
             <button class="icon-btn" id="closeModal">${ICON_X}</button>
           </div>
           <div class="modal-body">
+            ${prevNoteHtml}
             ${legs.length === 0 && !addingNew && !linkingExisting ? `<p class="muted small">No travel added yet.</p>` : ""}
             ${legs.map(legCard).join("")}
             ${addingNew ? legForm({}) : ""}
