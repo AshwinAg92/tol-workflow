@@ -2855,6 +2855,22 @@ app.get("/api/leads/:id/travel-legs", requireAuth, async (req, res) => {
 // One call for the Travel Calendar: who is allotted to which event, plus every date each
 // artist is already committed (events and travel) so clashes show while planning. Scoped managers
 // only get names for their own events — other events appear as just "another event".
+// Who is on each upcoming event and whether they have accepted — for the Calendar's "Upcoming events" list.
+// A scoped manager only gets the events allotted to them. No money anywhere in this payload.
+app.get("/api/crew-status", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const scope = isScopedManager(req.user) ? await assignedLeadIdSet(req.user) : null;
+  const today = new Date().toISOString().slice(0, 10);
+  const crew = (await pool.query(`
+    SELECT ea.lead_id, ea.team_id, ea.status, t.name, t.role
+    FROM event_assignments ea JOIN team t ON t.id = ea.team_id JOIN leads l ON l.id = ea.lead_id
+    WHERE l.date >= $1 ORDER BY t.name ASC`, [today])).rows;
+  const guests = (await pool.query(`
+    SELECT ta.lead_id, ta.id, ta.name FROM temp_artists ta JOIN leads l ON l.id = ta.lead_id
+    WHERE l.date >= $1 AND ta.migrated_assignment_id IS NULL ORDER BY ta.name ASC`, [today])).rows;
+  const ok = (r) => !scope || scope.has(r.lead_id);
+  res.json({ crew: crew.filter(ok), guests: guests.filter(ok) });
+});
+
 app.get("/api/travel-context", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const scope = isScopedManager(req.user) ? await assignedLeadIdSet(req.user) : null;
   const inScope = (leadId) => !scope || scope.has(leadId);

@@ -3389,7 +3389,7 @@ async function renderCalendar(main) {
       ${CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost" id="manageBlockedDatesBtn">🚫 Block dates</button>` : ""}
     </div>
     <div class="card">${calendarGridMarkup()}</div>
-    <div class="section-label" style="margin-top:20px;">Upcoming confirmed events</div>
+    <div class="section-label" style="margin-top:20px;">Upcoming events — who has accepted</div>
     <div class="list" id="calList"></div>
   `;
   wireCalendarGrid(main);
@@ -3397,35 +3397,83 @@ async function renderCalendar(main) {
   if (blockBtn) blockBtn.addEventListener("click", () => openBlockedDatesModal(() => renderCalendar(main)));
 
   const calList = main.querySelector("#calList");
-  if (upcoming.length === 0) calList.innerHTML = `<div class="board-empty">Nothing upcoming right now</div>`;
-  upcoming.forEach((l) => {
-    const row = el(`
-      <div class="list-row" style="grid-template-columns:110px 1fr 100px 90px 70px; cursor:pointer;">
-        <span class="mono">${fmtDate(l.date)}</span><span>${l.name}${l.occasion ? ` <span class="muted small">— ${l.occasion}</span>` : ""}</span><span class="muted">${l.city || ""}</span>
-        <span class="tag" style="color:${STAGE_COLOR[l.stage]}">${l.stage}</span>
-        <button class="btn-ghost open-event-chat-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="font-size:12px; padding:3px 8px;">💬 Chat</button>
-      </div>
-    `);
-    row.querySelector(".open-event-chat-btn").addEventListener("click", (e) => {
-      e.stopPropagation();
-      openEventChat(l.id, l.name);
+  const canPlan = canAssignTeam();
+  let crewStatus = { crew: [], guests: [] };
+  if (canPlan) crewStatus = await api("/api/crew-status").catch(() => crewStatus);
+  const ST = {
+    accepted: { icon: "✓", color: "#1C7A80", label: "accepted" },
+    pending: { icon: "⏳", color: "#B6752C", label: "not responded yet" },
+    declined: { icon: "✕", color: "#A6432B", label: "declined" },
+    cancel_requested: { icon: "↩", color: "#A6432B", label: "asked to cancel" },
+  };
+  const crewOf = (leadId) => crewStatus.crew.filter((c) => c.lead_id === leadId);
+  const guestsOf = (leadId) => crewStatus.guests.filter((g) => g.lead_id === leadId);
+  // "Needs attention" = nobody allotted, or anyone not yet accepted.
+  const needsAttention = (l) => { const c = crewOf(l.id); return c.length === 0 || c.some((x) => x.status !== "accepted"); };
+  let calFilter = "all";
+  const eventNameEsc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+  function drawUpcoming() {
+    calList.innerHTML = "";
+    const shown = upcoming.filter((l) => calFilter === "all" || (calFilter === "attention" ? needsAttention(l) : !needsAttention(l)));
+    if (shown.length === 0) calList.innerHTML = `<div class="board-empty">${upcoming.length === 0 ? "Nothing upcoming right now" : "Nothing in this view"}</div>`;
+    shown.forEach((l) => {
+      const crew = crewOf(l.id), guests = guestsOf(l.id);
+      const acc = crew.filter((c) => c.status === "accepted").length;
+      const declined = crew.filter((c) => c.status === "declined" || c.status === "cancel_requested").length;
+      const summaryColor = crew.length === 0 || declined ? "#A6432B" : acc === crew.length ? "#1C7A80" : "#B6752C";
+      const summary = crew.length === 0 ? "No crew allotted" : `${acc} of ${crew.length} accepted`;
+      const crewLine = !canPlan ? "" : `
+        <div style="grid-column:1 / -1; padding:6px 0 2px 0; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+          <span class="tag" style="color:${summaryColor}; font-weight:700;">${summary}</span>
+          ${crew.map((c) => { const st = ST[c.status] || ST.pending; return `<span class="small" style="border:1px solid ${st.color}55; color:${st.color}; border-radius:999px; padding:2px 9px;" title="${eventNameEsc(c.name)} — ${st.label}">${st.icon} ${eventNameEsc(c.name)}${c.role ? ` <span class="muted">· ${eventNameEsc(c.role)}</span>` : ""}</span>`; }).join("")}
+          ${guests.map((g) => `<span class="small muted" style="border:1px dashed #BBB; border-radius:999px; padding:2px 9px;" title="Guest musician">🎸 ${eventNameEsc(g.name)} (guest)</span>`).join("")}
+          <button class="btn-ghost allot-btn" data-lead-id="${l.id}" style="font-size:12px; padding:2px 9px; margin-left:auto;">👥 ${crew.length ? "Manage crew" : "Allot crew"}</button>
+        </div>`;
+      const row = el(`
+        <div class="list-row" style="grid-template-columns:110px 1fr 100px 90px 70px; cursor:pointer; row-gap:2px;">
+          <span class="mono">${fmtDate(l.date)}</span><span>${l.name}${l.occasion ? ` <span class="muted small">— ${l.occasion}</span>` : ""}</span><span class="muted">${l.city || ""}</span>
+          <span class="tag" style="color:${STAGE_COLOR[l.stage]}">${l.stage}</span>
+          <button class="btn-ghost open-event-chat-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="font-size:12px; padding:3px 8px;">💬 Chat</button>
+          ${crewLine}
+        </div>
+      `);
+      row.querySelector(".open-event-chat-btn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        openEventChat(l.id, l.name);
+      });
+      const allot = row.querySelector(".allot-btn");
+      if (allot) allot.addEventListener("click", (e) => { e.stopPropagation(); openAssignTeamModal(l.id); });
+      row.addEventListener("click", () => {
+        if (hasLeadsAccess()) {
+          leadsSearch = l.name; leadsOnlyId = l.id;
+          leadsStageFilter = "all";
+          leadsCityFilter = "";
+          leadsDateFilter = "";
+          leadsQuoteDateFilter = "";
+          currentTab = "leads";
+          renderNav();
+          renderMain();
+        } else if (canAssignTeam()) {
+          openAssignTeamModal(l.id);
+        }
+      });
+      calList.appendChild(row);
     });
-    row.addEventListener("click", () => {
-      if (hasLeadsAccess()) {
-        leadsSearch = l.name; leadsOnlyId = l.id;
-        leadsStageFilter = "all";
-        leadsCityFilter = "";
-        leadsDateFilter = "";
-        leadsQuoteDateFilter = "";
-        currentTab = "leads";
-        renderNav();
-        renderMain();
-      } else if (canAssignTeam()) {
-        openAssignTeamModal(l.id);
-      }
-    });
-    calList.appendChild(row);
-  });
+  }
+  if (canPlan) {
+    const attn = upcoming.filter(needsAttention).length;
+    const bar = el(`<div style="display:flex; gap:8px; flex-wrap:wrap; margin:0 0 10px;">
+      <button class="btn-ghost cal-filter" data-f="all" style="font-size:12.5px; padding:4px 11px;">All (${upcoming.length})</button>
+      <button class="btn-ghost cal-filter" data-f="attention" style="font-size:12.5px; padding:4px 11px;">⚠ Needs attention (${attn})</button>
+      <button class="btn-ghost cal-filter" data-f="ready" style="font-size:12.5px; padding:4px 11px;">✓ Crew all accepted (${upcoming.length - attn})</button>
+    </div>`);
+    const mark = () => bar.querySelectorAll(".cal-filter").forEach((b) => { b.style.background = b.dataset.f === calFilter ? "#F3E3C6" : ""; b.style.fontWeight = b.dataset.f === calFilter ? "700" : "400"; });
+    bar.querySelectorAll(".cal-filter").forEach((b) => b.addEventListener("click", () => { calFilter = b.dataset.f; mark(); drawUpcoming(); }));
+    calList.parentNode.insertBefore(bar, calList);
+    mark();
+  }
+  drawUpcoming();
 }
 
 // ---------- Travel Calendar ----------
