@@ -188,6 +188,20 @@ async function assignedLeadIdSet(user) {
   const rows = (await pool.query("SELECT lead_id FROM event_assignments WHERE team_id = $1 AND status <> 'declined'", [user.team_id])).rows;
   return new Set(rows.map((r) => r.lead_id));
 }
+// A manager who is also on the team roster only manages events allotted to them (not declined)
+// — no pipeline, no other events. Managers not on the roster keep the company-wide ops view.
+const isScopedManager = (user) => user.access_level === "staff" && userHasSection(user, "assign_team") && !!user.team_id;
+async function leadInManagerScope(user, leadId) {
+  if (!isScopedManager(user)) return true;
+  const ids = await assignedLeadIdSet(user);
+  return !!ids && ids.has(leadId);
+}
+async function assignmentInManagerScope(user, assignmentId) {
+  if (!isScopedManager(user)) return true;
+  const a = (await pool.query("SELECT lead_id FROM event_assignments WHERE id = $1", [assignmentId])).rows[0];
+  return !a || (await leadInManagerScope(user, a.lead_id));
+}
+const scopeDeny = (res) => res.status(403).json({ error: "You can only manage events allotted to you" });
 // Travel notes are the admin's private remarks — nobody else gets them.
 // Managers (assign_team) additionally see the manager_notes they and other managers write.
 function legForUser(leg, user) {
@@ -878,18 +892,20 @@ app.get("/api/leads", requireAuth, async (req, res) => {
     try { perms = req.user.permissions ? JSON.parse(req.user.permissions) : null; } catch { perms = null; }
     if (perms && !perms.includes("leads")) hasLeadsAccess = false;
   }
+  if (isScopedManager(req.user)) hasLeadsAccess = false;
   if (hasLeadsAccess) return res.json(withReceived.map((l) => stripLeadMoney(l, req.user)));
   // Restricted staff (e.g. a manager who can assign team but not view the pipeline)
   // still need basic event info for the calendar and team assignment — nothing sensitive.
   // And if they're on the team roster themselves, only the events they've been
   // allotted (and haven't declined) — not the whole company calendar.
   let visible = withReceived;
-  if (userHasSection(req.user, "assign_team")) {
+  if (userHasSection(req.user, "assign_team") && !isScopedManager(req.user)) {
     // Someone who plans the team needs every confirmed event to plan it for — operations details only.
     visible = withReceived.filter((l) => ["Confirmed", "Completed"].includes(l.stage));
   } else {
     const mineIds = await assignedLeadIdSet(req.user);
     if (mineIds) visible = withReceived.filter((l) => mineIds.has(l.id));
+    if (isScopedManager(req.user)) visible = visible.filter((l) => ["Confirmed", "Completed"].includes(l.stage));
   }
   const withCounts = userHasSection(req.user, "assign_team")
     ? (l) => ({ ...restrictedLeadView(l), team_total: l.team_total, team_accepted: l.team_accepted, team_declined: l.team_declined, travel_total: l.travel_total, travel_booked: l.travel_booked, travel_done: l.travel_done })
@@ -2436,6 +2452,7 @@ app.delete("/api/quotes/:id", requireAuth, requireAnySection(["leads", "quotatio
 // Admin picks which team members are performing; each gets a pending
 // invitation they accept/decline from their own simplified view.
 app.get("/api/leads/:id/assignments", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (!(await leadInManagerScope(req.user, req.params.id))) return scopeDeny(res);
   const { rows } = await pool.query(`
     SELECT event_assignments.*, team.name AS team_name, team.base_city AS team_base_city
     FROM event_assignments JOIN team ON team.id = event_assignments.team_id
@@ -2447,6 +2464,7 @@ app.get("/api/leads/:id/assignments", requireAuth, requireCapability("assign_tea
 });
 
 app.post("/api/leads/:id/assignments", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (!(await leadInManagerScope(req.user, req.params.id))) return scopeDeny(res);
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
   const { teamIds = [] } = req.body;
@@ -2502,6 +2520,7 @@ async function checkTeamComplete(leadId) {
 }
 
 app.delete("/api/assignments/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (!(await assignmentInManagerScope(req.user, req.params.id))) return scopeDeny(res);
   const gone = (await pool.query("DELETE FROM event_assignments WHERE id = $1 RETURNING lead_id", [req.params.id])).rows[0];
   res.status(204).end();
   if (gone) await checkTeamComplete(gone.lead_id);
@@ -2524,6 +2543,7 @@ app.patch("/api/assignments/:id", requireAuth, requireAdmin, async (req, res) =>
 // artists don't use their own login, so this is how their accept/decline gets
 // captured instead of waiting on /api/my/assignments/:id/respond.
 app.patch("/api/assignments/:id/mark-response", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (!(await assignmentInManagerScope(req.user, req.params.id))) return scopeDeny(res);
   const a = (await pool.query("SELECT * FROM event_assignments WHERE id = $1", [req.params.id])).rows[0];
   if (!a) return res.status(404).json({ error: "Assignment not found" });
   const { status } = req.body;
@@ -2809,12 +2829,13 @@ app.get("/api/leads/:id/travel-legs", requireAuth, async (req, res) => {
 // logged directly — this is what the standalone Travel Calendar reads from,
 // so a client-linked trip and a manually-logged one show up side by side.
 app.get("/api/travel-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
-  const { rows: legs } = await pool.query(`
+  let { rows: legs } = await pool.query(`
     SELECT travel_legs.*, leads.name AS lead_name, leads.city AS lead_city
     FROM travel_legs
     LEFT JOIN leads ON leads.id = travel_legs.lead_id
     ORDER BY travel_legs.departure_at ASC NULLS LAST, travel_legs.created_at ASC
   `);
+  if (isScopedManager(req.user)) { const ids = await assignedLeadIdSet(req.user); legs = legs.filter((l) => l.lead_id && ids && ids.has(l.lead_id)); }
   const legIds = legs.map((l) => l.id);
   const [members, tickets] = legIds.length > 0 ? await Promise.all([
     pool.query(`SELECT travel_leg_members.leg_id, team.id AS team_id, team.name AS team_name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id = ANY($1)`, [legIds]),
@@ -2871,6 +2892,7 @@ app.post("/api/travel-legs", requireAuth, requireCapability("assign_team"), asyn
 });
 
 app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (!(await leadInManagerScope(req.user, req.params.id))) return scopeDeny(res);
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Event not found" });
   const { teamIds, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status } = req.body;
@@ -2901,6 +2923,7 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
 });
 
 app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (isScopedManager(req.user)) { const lg = (await pool.query("SELECT lead_id FROM travel_legs WHERE id = $1", [req.params.id])).rows[0]; if (lg && !(await leadInManagerScope(req.user, lg.lead_id))) return scopeDeny(res); }
   const leg = (await pool.query("SELECT * FROM travel_legs WHERE id = $1", [req.params.id])).rows[0];
   if (!leg) return res.status(404).json({ error: "Travel leg not found" });
   if (await legIsAdminOnly(req.user, req.params.id)) return res.status(403).json({ error: "Not available" });
@@ -2967,11 +2990,13 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
 });
 
 app.delete("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (isScopedManager(req.user)) { const lg = (await pool.query("SELECT lead_id FROM travel_legs WHERE id = $1", [req.params.id])).rows[0]; if (lg && !(await leadInManagerScope(req.user, lg.lead_id))) return scopeDeny(res); }
   await pool.query("DELETE FROM travel_legs WHERE id = $1", [req.params.id]);
   res.status(204).end();
 });
 
 app.post("/api/travel-legs/:id/tickets", requireAuth, requireCapability("assign_team"), upload.single("file"), async (req, res) => {
+  if (isScopedManager(req.user)) { const lg = (await pool.query("SELECT lead_id FROM travel_legs WHERE id = $1", [req.params.id])).rows[0]; if (lg && !(await leadInManagerScope(req.user, lg.lead_id))) return scopeDeny(res); }
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
   const leg = (await pool.query("SELECT * FROM travel_legs WHERE id = $1", [req.params.id])).rows[0];
   if (!leg) return res.status(404).json({ error: "Travel leg not found" });
@@ -2990,6 +3015,7 @@ app.post("/api/travel-legs/:id/tickets", requireAuth, requireCapability("assign_
 // toward that event's expenses/profit and shows up in Pending expenses / Recent
 // transactions, without a second, separate accounting path to keep in sync.
 app.get("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (!(await leadInManagerScope(req.user, req.params.id))) return scopeDeny(res);
   const { rows } = await pool.query(`
     SELECT temp_artists.*, expenses.amount AS fee_amount, expenses.paid AS fee_paid,
       expenses.payment_date AS fee_payment_date, expenses.payment_mode AS fee_payment_mode
@@ -3002,6 +3028,7 @@ app.get("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_te
 });
 
 app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (!(await leadInManagerScope(req.user, req.params.id))) return scopeDeny(res);
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
   const { name, description, phone, baseCity, feeAmount } = req.body;
@@ -3060,6 +3087,7 @@ app.post("/api/leads/:id/temp-artists", requireAuth, requireCapability("assign_t
 // fixed by any manager with assign_team, since that's just correcting who
 // they wrote down, not touching money.
 app.patch("/api/temp-artists/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (isScopedManager(req.user)) { const ta = (await pool.query("SELECT lead_id FROM temp_artists WHERE id = $1", [req.params.id])).rows[0]; if (ta && !(await leadInManagerScope(req.user, ta.lead_id))) return scopeDeny(res); }
   const artist = (await pool.query("SELECT * FROM temp_artists WHERE id = $1", [req.params.id])).rows[0];
   if (!artist) return res.status(404).json({ error: "Not found" });
   const { feeAmount, name, phone, description, baseCity } = req.body;
@@ -3107,6 +3135,7 @@ app.patch("/api/temp-artists/:id", requireAuth, requireCapability("assign_team")
 });
 
 app.delete("/api/temp-artists/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (isScopedManager(req.user)) { const ta = (await pool.query("SELECT lead_id FROM temp_artists WHERE id = $1", [req.params.id])).rows[0]; if (ta && !(await leadInManagerScope(req.user, ta.lead_id))) return scopeDeny(res); }
   const artist = (await pool.query("SELECT * FROM temp_artists WHERE id = $1", [req.params.id])).rows[0];
   if (artist?.expense_id) await pool.query("DELETE FROM expenses WHERE id = $1", [artist.expense_id]);
   await pool.query("DELETE FROM temp_artists WHERE id = $1", [req.params.id]);
@@ -3119,12 +3148,13 @@ app.delete("/api/temp-artists/:id", requireAuth, requireCapability("assign_team"
 // Grouped by phone (or name, if no phone) so the same person hired for
 // several events shows up once with their most recent details and full history.
 app.get("/api/temp-artists", requireAuth, requireCapability("assign_team"), async (req, res) => {
-  const { rows } = await pool.query(`
+  let { rows } = await pool.query(`
     SELECT temp_artists.*, leads.name AS lead_name, leads.date AS lead_date, leads.city AS lead_city
     FROM temp_artists
     JOIN leads ON leads.id = temp_artists.lead_id
     ORDER BY temp_artists.created_at DESC
   `);
+  if (isScopedManager(req.user)) { const ids = await assignedLeadIdSet(req.user); rows = rows.filter((r) => ids && ids.has(r.lead_id)); }
   const groups = new Map();
   for (const row of rows) {
     const key = (row.phone && row.phone.trim()) ? `phone:${row.phone.trim()}` : `name:${row.name.trim().toLowerCase()}`;
@@ -3205,6 +3235,7 @@ app.post("/api/my/assignments/:id/request-cancel", requireAuth, async (req, res)
 // Admin approves or rejects a performer's cancellation request.
 // A manager coordinating events can resolve these too, not just admin.
 app.post("/api/assignments/:id/resolve-cancel", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (!(await assignmentInManagerScope(req.user, req.params.id))) return scopeDeny(res);
   const a = (await pool.query("SELECT * FROM event_assignments WHERE id = $1", [req.params.id])).rows[0];
   if (!a) return res.status(404).json({ error: "Assignment not found" });
   if (a.status !== "cancel_requested") return res.status(400).json({ error: "No pending cancellation request on this assignment" });
@@ -3260,7 +3291,8 @@ async function canAccessEventChat(req, leadId) {
   // A manager coordinating an event should be able to jump into its chat even
   // if they aren't personally performing at it — not just admins and performers
   // who happen to be assigned.
-  if (userHasSection(req.user, "leads") || userHasSection(req.user, "assign_team")) return true;
+  if (isScopedManager(req.user)) { /* only events allotted to them — falls through to the roster check below */ }
+  else if (userHasSection(req.user, "leads") || userHasSection(req.user, "assign_team")) return true;
   if (!req.user.team_id) return false;
   const row = (await pool.query("SELECT id FROM event_assignments WHERE lead_id = $1 AND team_id = $2", [leadId, req.user.team_id])).rows[0];
   return !!row;
@@ -3418,7 +3450,7 @@ app.get("/api/team/:id/assignments", requireAuth, async (req, res) => {
     return res.status(403).json({ error: "You don't have permission to view this" });
   }
   const today = new Date().toISOString().slice(0, 10);
-  const { rows } = await pool.query(`
+  let { rows } = await pool.query(`
     SELECT event_assignments.id, event_assignments.status,
       leads.id AS lead_id, leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage,
       leads.event_time, leads.soundcheck_time, leads.occasion, leads.venue,
@@ -3429,6 +3461,7 @@ app.get("/api/team/:id/assignments", requireAuth, async (req, res) => {
     WHERE event_assignments.team_id = $1 AND leads.date >= $2
     ORDER BY leads.date ASC
   `, [req.params.id, today]);
+  if (isScopedManager(req.user)) { const ids = await assignedLeadIdSet(req.user); rows = rows.filter((r) => ids && ids.has(r.lead_id)); }
   const canSeeMoney = userHasSection(req.user, "accounts");
   res.json(canSeeMoney ? rows : rows.map(({ fee_amount, paid, ...rest }) => rest));
 });
@@ -3442,8 +3475,8 @@ app.get("/api/calendar", requireAuth, async (req, res) => {
     const d = new Date(l.date + "T00:00:00");
     return (!year || d.getFullYear() === Number(year)) && (!month || d.getMonth() + 1 === Number(month));
   });
-  if (userHasSection(req.user, "leads")) return res.json(filtered.map((l) => stripLeadMoney(l, req.user)));
-  if (userHasSection(req.user, "assign_team")) return res.json(filtered.map(restrictedLeadView));
+  if (userHasSection(req.user, "leads") && !isScopedManager(req.user)) return res.json(filtered.map((l) => stripLeadMoney(l, req.user)));
+  if (userHasSection(req.user, "assign_team") && !isScopedManager(req.user)) return res.json(filtered.map(restrictedLeadView));
   const mineIds = await assignedLeadIdSet(req.user);
   res.json((mineIds ? filtered.filter((l) => mineIds.has(l.id)) : filtered).map(restrictedLeadView));
 });
@@ -4475,8 +4508,8 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
 
   // No Leads access (e.g. a manager): no pipeline, no totals, no outstanding —
   // just their own upcoming events and tasks.
-  if (!userHasSection(req.user, "leads")) {
-    const mineIds = userHasSection(req.user, "assign_team") ? null : await assignedLeadIdSet(req.user);
+  if (!userHasSection(req.user, "leads") || isScopedManager(req.user)) {
+    const mineIds = (userHasSection(req.user, "assign_team") && !isScopedManager(req.user)) ? null : await assignedLeadIdSet(req.user);
     const upcomingAll = (await pool.query(`SELECT * FROM leads WHERE stage IN ('Confirmed', 'Completed') AND date >= $1 ORDER BY date ASC`, [today])).rows
       .filter((l) => !mineIds || mineIds.has(l.id));
     const allTasks = (await pool.query(`SELECT * FROM tasks WHERE done = 0 AND (due_date <= $1 OR due_date IS NULL) ORDER BY due_date ASC LIMIT 8`, [weekAhead])).rows;
