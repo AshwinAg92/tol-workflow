@@ -6331,6 +6331,25 @@ async function openTravelShareModal(leadId) {
   let replyDraft = "";
   const loadThread = async () => { try { thread = await api(`/api/leads/${leadId}/client-thread`); } catch { thread = { messages: [], files: [] }; } };
   await loadThread();
+  const when = (iso) => { try { return new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
+  const threadBadgeHtml = () => { const n = thread.messages.filter((m) => m.unread).length + thread.files.filter((f) => f.unread).length; return n ? `<span class="tag" style="background:#C1602B;color:#fff;">${n} new</span>` : ""; };
+  const threadListHtml = () => {
+    const items = [...thread.messages.map((m) => ({ at: m.at, m })), ...thread.files.map((f) => ({ at: f.at, f }))].sort((a, b) => (a.at < b.at ? -1 : 1));
+    if (items.length === 0) return `<p class="muted small" style="margin:0 0 8px;">Nothing yet. Once the client opens their link they can message you and upload tickets or itineraries here.</p>`;
+    const legOpts = (data.legs || []).map((l) => `<option value="${l.id}">${esc(cap(l.mode))} · ${esc(l.from_city || "?")} → ${esc(l.to_city || "?")}${l.departure_at ? " · " + esc(wall(l.departure_at)) : ""}</option>`).join("");
+    return `<div id="tsThreadScroll" style="max-height:300px; overflow:auto; margin-bottom:8px;">${items.map((it) => it.m ? `
+      <div style="margin:5px 0; padding:7px 10px; border-radius:10px; font-size:13px; white-space:pre-wrap; ${it.m.from === "client" ? "background:#FFF3DC;" : "background:#EEF4F1; margin-left:24px;"}">
+        <div class="muted small">${it.m.from === "client" ? esc(it.m.name || "Client") : "You (Team TOL)"} · ${esc(when(it.m.at))}${it.m.unread ? " · <b style='color:#C1602B;'>new</b>" : ""}</div>${esc(it.m.body)}</div>` : `
+      <div style="margin:5px 0; padding:7px 10px; border-radius:10px; font-size:13px; background:#FFF3DC;">
+        <div class="muted small">${esc(it.f.by || "Client")} uploaded · ${esc(when(it.f.at))}${it.f.unread ? " · <b style='color:#C1602B;'>new</b>" : ""}</div>
+        📎 <a href="${it.f.url}" target="_blank" rel="noopener">${esc(it.f.label || it.f.name)}</a>${it.f.label ? ` <span class="muted small">${esc(it.f.name)}</span>` : ""}
+        <button class="btn-ghost ts-del-cfile" data-file-id="${it.f.id}" style="font-size:11px; padding:1px 7px; margin-left:6px;">remove</button>
+        ${it.f.inPlan ? `<div class="small" style="color:#2F6B3A; margin-top:3px;">✓ In the Travel plan as a ticket — ${esc(it.f.journey || "")}</div>`
+          : `<div class="small" style="margin-top:5px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;"><span style="color:#8A5A1F;">Not in the Travel plan yet</span>
+              ${legOpts ? `<select class="ts-attach-leg" data-file-id="${it.f.id}" style="width:auto; font-size:12px;">${legOpts}</select><button class="btn-ghost ts-attach" data-file-id="${it.f.id}" style="font-size:12px; padding:2px 9px;">Add to this journey</button>` : `<span class="muted">add a journey in 🧳 Travel plan first</span>`}</div>`}
+      </div>`).join("")}</div>`;
+  };
+  const threadSig = (t) => JSON.stringify([t.messages.map((m) => [m.id, m.unread]), t.files.map((f) => [f.id, f.unread, f.inPlan, f.legId])]);
   const LINK = "{link}";
 
   const legsFor = () => data.legs.map((l) => ({ ...l, who: data.team.filter((t) => selected.has(t.teamId) && l.memberIds.includes(t.teamId)).map((t) => t.name) }));
@@ -6380,27 +6399,15 @@ async function openTravelShareModal(leadId) {
           <div class="modal-body">
             <p class="muted small" style="margin:0 0 10px;">Only the team members you tick below are included — nobody else's ID can be reached through the link. The client gets one secure link showing the IDs and the travel plan, plus the same details in the WhatsApp message. The link stays open until the event date, so the client can use it to upload tickets or itineraries and message you; you can revoke it any time.</p>
 
-            ${(() => {
-              const items = [...thread.messages.map((m) => ({ at: m.at, m })), ...thread.files.map((f) => ({ at: f.at, f }))].sort((a, b) => (a.at < b.at ? -1 : 1));
-              const unreadN = thread.messages.filter((m) => m.unread).length + thread.files.filter((f) => f.unread).length;
-              const when = (iso) => { try { return new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
-              return `
-              <div class="section-label">💬 Conversation &amp; uploads from the client${unreadN ? ` <span class="tag" style="background:#C1602B;color:#fff;">${unreadN} new</span>` : ""}</div>
-              <div class="card" style="padding:10px 12px; margin-bottom:12px;">
-                ${items.length === 0 ? `<p class="muted small" style="margin:0 0 8px;">Nothing yet. Once the client opens their link they can message you and upload tickets or itineraries here.</p>` : `<div style="max-height:260px; overflow:auto; margin-bottom:8px;">${items.map((it) => it.m ? `
-                  <div style="margin:5px 0; padding:7px 10px; border-radius:10px; font-size:13px; white-space:pre-wrap; ${it.m.from === "client" ? "background:#FFF3DC;" : "background:#EEF4F1; margin-left:24px;"}">
-                    <div class="muted small">${it.m.from === "client" ? esc(it.m.name || "Client") : "You (Team TOL)"} · ${esc(when(it.m.at))}${it.m.unread ? " · <b style='color:#C1602B;'>new</b>" : ""}</div>${esc(it.m.body)}</div>` : `
-                  <div style="margin:5px 0; padding:7px 10px; border-radius:10px; font-size:13px; background:#FFF3DC;">
-                    <div class="muted small">${esc(it.f.by || "Client")} uploaded · ${esc(when(it.f.at))}${it.f.unread ? " · <b style='color:#C1602B;'>new</b>" : ""}</div>
-                    📎 <a href="${it.f.url}" target="_blank" rel="noopener">${esc(it.f.label || it.f.name)}</a>${it.f.label ? ` <span class="muted small">${esc(it.f.name)}</span>` : ""}
-                    <button class="btn-ghost ts-del-cfile" data-file-id="${it.f.id}" style="font-size:11px; padding:1px 7px; margin-left:6px;">remove</button></div>`).join("")}</div>`}
-                <textarea id="tsReply" rows="2" placeholder="Reply to the client (they see it on their link)…" style="font-size:13px;">${esc(replyDraft)}</textarea>
-                <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
-                  <button class="btn-primary" id="tsReplyBtn" style="font-size:12.5px; padding:5px 12px;">Send reply</button>
-                  ${activeShares.length ? `<button class="btn-ghost" id="tsNudgeBtn" style="font-size:12.5px; padding:5px 12px;">💬 Tell client on WhatsApp</button>` : ""}
-                </div>
-              </div>`;
-            })()}
+            <div class="section-label">💬 Conversation &amp; uploads from the client <span id="tsThreadBadge">${threadBadgeHtml()}</span> <span class="muted small" style="text-transform:none; letter-spacing:0; font-weight:400;">· updates live</span></div>
+            <div class="card" style="padding:10px 12px; margin-bottom:12px;">
+              <div id="tsThreadList">${threadListHtml()}</div>
+              <textarea id="tsReply" rows="2" placeholder="Reply to the client (they see it on their link)…" style="font-size:13px;">${esc(replyDraft)}</textarea>
+              <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
+                <button class="btn-primary" id="tsReplyBtn" style="font-size:12.5px; padding:5px 12px;">Send reply</button>
+                ${activeShares.length ? `<button class="btn-ghost" id="tsNudgeBtn" style="font-size:12.5px; padding:5px 12px;">💬 Tell client on WhatsApp</button>` : ""}
+              </div>
+            </div>
             <div class="section-label">1. Who is travelling</div>
             ${people.length === 0 ? `<p class="muted small">No team members are assigned to this event yet.</p>` : people.map((t) => `
               <div class="card" style="padding:10px 12px; margin-bottom:8px;" data-team-id="${t.teamId}">
@@ -6488,8 +6495,46 @@ async function openTravelShareModal(leadId) {
     return { text, link };
   }
 
+  function wireThreadList() {
+    root.querySelectorAll(".ts-del-cfile").forEach((b) => b.addEventListener("click", async () => {
+      if (!confirm("Remove this file from the conversation? (If it was added to the Travel plan, the ticket there stays.)")) return;
+      await api(`/api/client-files/${b.dataset.fileId}`, { method: "DELETE" });
+      await reload();
+    }));
+    root.querySelectorAll(".ts-attach").forEach((b) => b.addEventListener("click", async () => {
+      const legId = root.querySelector(`.ts-attach-leg[data-file-id="${b.dataset.fileId}"]`).value;
+      b.disabled = true;
+      try { await api(`/api/client-files/${b.dataset.fileId}/attach`, { method: "POST", body: JSON.stringify({ legId }) }); await reload(); } catch (err) { alert(err.message); b.disabled = false; }
+    }));
+  }
+  // Live updates: while this window is open, check for new client messages / uploads every few seconds.
+  let pollTimer = null;
+  function startThreadPolling() {
+    if (pollTimer) return;
+    pollTimer = setInterval(async () => {
+      const list = root.querySelector("#tsThreadList");
+      if (!list) { clearInterval(pollTimer); pollTimer = null; return; }
+      if (document.hidden) return;
+      const before = threadSig(thread);
+      const keepSel = [...root.querySelectorAll(".ts-attach-leg")].map((x) => [x.dataset.fileId, x.value]);
+      let fresh;
+      try { fresh = await api(`/api/leads/${leadId}/client-thread`); } catch { return; }
+      if (threadSig(fresh) === before) return;
+      const scroll = list.querySelector("#tsThreadScroll");
+      const atEnd = !scroll || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 40;
+      thread = fresh;
+      list.innerHTML = threadListHtml();
+      keepSel.forEach(([id, v]) => { const sel = root.querySelector(`.ts-attach-leg[data-file-id="${id}"]`); if (sel) sel.value = v; });
+      const badge = root.querySelector("#tsThreadBadge"); if (badge) badge.innerHTML = threadBadgeHtml();
+      const sc2 = list.querySelector("#tsThreadScroll"); if (sc2 && atEnd) sc2.scrollTop = sc2.scrollHeight;
+      wireThreadList();
+      // It is on screen, so it counts as read.
+      if (thread.messages.some((m) => m.unread) || thread.files.some((f) => f.unread)) api(`/api/leads/${leadId}/client-thread/read`, { method: "POST" }).catch(() => {});
+    }, 4000);
+  }
+
   function wire() {
-    const close = () => openAssignTeamModal(leadId);
+    const close = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } openAssignTeamModal(leadId); };
     root.querySelector("#closeModal").addEventListener("click", close);
     root.querySelector("#cancelModal").addEventListener("click", close);
     root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
@@ -6550,12 +6595,8 @@ async function openTravelShareModal(leadId) {
       const text = `Hi, we've replied to you on your travel details link:\n${window.location.origin}/trip/${live.token}`;
       window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`, "_blank");
     });
-    root.querySelectorAll(".ts-del-cfile").forEach((b) => b.addEventListener("click", async () => {
-      if (!confirm("Remove this file the client uploaded?")) return;
-      keepInputs();
-      await api(`/api/client-files/${b.dataset.fileId}`, { method: "DELETE" });
-      await reload();
-    }));
+    wireThreadList();
+    startThreadPolling();
     root.querySelectorAll(".ts-extend").forEach((b) => b.addEventListener("click", async () => {
       keepInputs();
       try { await api(`/api/travel-share/${b.dataset.token}/extend`, { method: "POST" }); await reload(); } catch (err) { alert(err.message); }

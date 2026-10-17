@@ -4204,12 +4204,26 @@ const shareRateOk = (key, max = 30) => {
   list.push(now); shareAttempts.set(key, list); return true;
 };
 const clientIp = (req) => String(req.headers["x-forwarded-for"] || req.ip).split(",")[0].trim();
+// Put a client-uploaded file into the Travel plan: a copy becomes a ticket on that journey.
+async function attachClientFileToLeg(fileId, legId) {
+  const f = (await pool.query("SELECT * FROM travel_share_files WHERE id = $1", [fileId])).rows[0];
+  if (!f) return { error: "File not found", status: 404 };
+  const leg = (await pool.query("SELECT id, lead_id FROM travel_legs WHERE id = $1", [legId])).rows[0];
+  if (!leg || leg.lead_id !== f.lead_id) return { error: "That journey isn't part of this event.", status: 400 };
+  if (f.document_id) await pool.query("DELETE FROM documents WHERE id = $1", [f.document_id]).catch(() => {});
+  const docId = uuid();
+  await pool.query("INSERT INTO documents (id, lead_id, travel_leg_id, original_name, notes, uploaded_at, mime_type, file_data) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+    [docId, f.lead_id, leg.id, f.original_name, `Uploaded by ${f.uploader_name || "client"} via travel link${f.label ? " \u2014 " + f.label : ""}`, new Date().toISOString(), f.mime_type, f.file_data]);
+  await pool.query("UPDATE travel_share_files SET leg_id = $1, document_id = $2 WHERE id = $3", [leg.id, docId, fileId]);
+  return { ok: true };
+}
+const legTitle = (l) => `${l.mode ? l.mode[0].toUpperCase() + l.mode.slice(1) : "Travel"} \u00b7 ${l.from_city || "?"} \u2192 ${l.to_city || "?"}${l.departure_at ? " \u00b7 " + fmtWall(String(l.departure_at).slice(0, 10)) : ""}`;
 async function threadFor(leadId) {
   const [messages, files] = await Promise.all([
     pool.query("SELECT id, sender, sender_name, body, created_at, read_by_team FROM travel_share_messages WHERE lead_id = $1 ORDER BY created_at ASC", [leadId]),
-    pool.query("SELECT id, label, original_name, mime_type, uploader_name, uploaded_at, read_by_team FROM travel_share_files WHERE lead_id = $1 ORDER BY uploaded_at ASC", [leadId]),
+    pool.query("SELECT f.id, f.label, f.original_name, f.mime_type, f.uploader_name, f.uploaded_at, f.read_by_team, f.leg_id, f.document_id, l.mode AS leg_mode, l.from_city AS leg_from, l.to_city AS leg_to, l.departure_at AS leg_dep FROM travel_share_files f LEFT JOIN travel_legs l ON l.id = f.leg_id WHERE f.lead_id = $1 ORDER BY f.uploaded_at ASC", [leadId]),
   ]);
-  return { messages: messages.rows, files: files.rows };
+  return { messages: messages.rows, files: files.rows.map((f) => ({ ...f, leg_title: f.leg_id ? legTitle({ mode: f.leg_mode, from_city: f.leg_from, to_city: f.leg_to, departure_at: f.leg_dep }) : null })) };
 }
 app.get("/trip/:token/thread", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -4218,7 +4232,7 @@ app.get("/trip/:token/thread", async (req, res) => {
   const t = await threadFor(s.lead_id);
   res.json({
     messages: t.messages.map((m) => ({ id: m.id, from: m.sender, name: m.sender_name, body: m.body, at: m.created_at })),
-    files: t.files.map((f) => ({ id: f.id, label: f.label, name: f.original_name, by: f.uploader_name, at: f.uploaded_at, url: `/trip/${encodeURIComponent(req.params.token)}/file/${f.id}` })),
+    files: t.files.map((f) => ({ id: f.id, label: f.label, name: f.original_name, by: f.uploader_name, at: f.uploaded_at, journey: f.leg_title, url: `/trip/${encodeURIComponent(req.params.token)}/file/${f.id}` })),
   });
 });
 app.post("/trip/:token/message", async (req, res) => {
@@ -4247,8 +4261,12 @@ app.post("/trip/:token/upload", (req, res, next) => {
   if (!SHARE_FILE_MIMES.test(req.file.mimetype || "")) return res.status(400).json({ error: "Please upload a PDF, a photo (JPG/PNG) or a Word/text file." });
   const name = String(req.body.name || "").trim().slice(0, 80) || null;
   const label = String(req.body.label || "").trim().slice(0, 120) || null;
+  const fileId = uuid();
   await pool.query("INSERT INTO travel_share_files (id, lead_id, share_token, label, original_name, mime_type, file_data, uploader_name, uploaded_at, read_by_team) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0)",
-    [uuid(), s.lead_id, req.params.token, label, req.file.originalname, req.file.mimetype, req.file.buffer, name, new Date().toISOString()]);
+    [fileId, s.lead_id, req.params.token, label, req.file.originalname, req.file.mimetype, req.file.buffer, name, new Date().toISOString()]);
+  // If the client said which journey it is for (and it is one of this event's), it goes straight into the Travel plan as a ticket.
+  const wantLeg = String(req.body.legId || "");
+  if (wantLeg) { try { await attachClientFileToLeg(fileId, wantLeg); } catch (e) { console.error("attach client file:", e.message); } }
   const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [s.lead_id])).rows[0];
   sendPushToAll("\ud83d\udcce Client uploaded a file", `${lead ? lead.name : "Event"}: ${req.file.originalname}`, "/login", { adminOnly: true }).catch(() => {});
   res.status(201).json({ ok: true });
@@ -4269,7 +4287,7 @@ app.get("/api/leads/:id/client-thread", requireAuth, requireAdmin, async (req, r
   const t = await threadFor(req.params.id);
   res.json({
     messages: t.messages.map((m) => ({ id: m.id, from: m.sender, name: m.sender_name, body: m.body, at: m.created_at, unread: m.sender === "client" && !m.read_by_team })),
-    files: t.files.map((f) => ({ id: f.id, label: f.label, name: f.original_name, by: f.uploader_name, at: f.uploaded_at, unread: !f.read_by_team, url: `/api/client-files/${f.id}/file` })),
+    files: t.files.map((f) => ({ id: f.id, label: f.label, name: f.original_name, by: f.uploader_name, at: f.uploaded_at, unread: !f.read_by_team, legId: f.leg_id, journey: f.leg_title, inPlan: !!f.document_id, url: `/api/client-files/${f.id}/file` })),
   });
 });
 app.post("/api/leads/:id/client-thread/reply", requireAuth, requireAdmin, async (req, res) => {
@@ -4292,6 +4310,11 @@ app.get("/api/client-files/:fileId/file", requireAuth, requireAdmin, async (req,
   res.setHeader("Cache-Control", "private, no-store");
   res.send(d.file_data);
 });
+app.post("/api/client-files/:fileId/attach", requireAuth, requireAdmin, async (req, res) => {
+  const r = await attachClientFileToLeg(req.params.fileId, String(req.body.legId || ""));
+  if (r.error) return res.status(r.status || 400).json({ error: r.error });
+  res.json({ ok: true });
+});
 app.delete("/api/client-files/:fileId", requireAuth, requireAdmin, async (req, res) => {
   await pool.query("DELETE FROM travel_share_files WHERE id = $1", [req.params.fileId]);
   res.status(204).end();
@@ -4311,13 +4334,15 @@ const fmtWall = (v) => {
   if (m[4]) { const h = Number(m[4]); out += `, ${((h + 11) % 12) + 1}:${m[5]} ${h >= 12 ? "PM" : "AM"}`; }
   return out;
 };
-function clientHubHtml(token) {
+function clientHubHtml(token, legs = []) {
   const T = JSON.stringify(token);
+  const legOpts = legs.map((l) => `<option value="${escHtml(l.id)}">${escHtml(legTitle(l))}</option>`).join("");
   return `<h2>Send us your itinerary, tickets or a message</h2>
 <div class="c">
   <div class="m" style="margin-bottom:8px">Booked the tickets? Upload them here (PDF or photo). You can also leave a message — we'll reply and it stays on this page.</div>
   <input id="hubName" placeholder="Your name (optional)" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;margin-bottom:8px">
   <input id="hubLabel" placeholder="What is this? e.g. Train tickets Delhi → Pune" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;margin-bottom:8px">
+  <select id="hubLeg" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;margin-bottom:8px;background:#fff"><option value="">Which journey is this for? (optional)</option>${legOpts}</select>
   <input id="hubFile" type="file" accept="image/*,application/pdf,.doc,.docx,.txt" style="width:100%;margin-bottom:8px">
   <button id="hubUp" style="padding:11px 16px;border:0;border-radius:10px;background:#B5541C;color:#fff;font:inherit;font-size:15px;cursor:pointer">⬆ Upload</button>
   <div id="hubUpMsg" class="m" style="margin-top:6px"></div>
@@ -4354,12 +4379,14 @@ function clientHubHtml(token) {
         w2.appendChild(el("div","font-size:12px;color:#7A6A58;margin-bottom:2px",(f.by||"You")+" · "+fmt(f.at)));
         var a=el("a",null,"📎 "+(f.label||f.name)); a.href=f.url; a.target="_blank"; a.rel="noopener"; w2.appendChild(a);
         if(f.label) w2.appendChild(el("div","font-size:12px;color:#7A6A58",f.name));
+        if(f.journey) w2.appendChild(el("div","font-size:12px;color:#2F6B3A","✓ Added to: "+f.journey));
         box.appendChild(w2);
       }
     });
   }
   function load(){fetch(base+"/thread").then(function(r){return r.json()}).then(render).catch(function(){});}
   load();
+  setInterval(function(){ if(!document.hidden) load(); }, 8000);
   $("hubSend").onclick=function(){
     var body=$("hubMsg").value.trim(); if(!body) return;
     var name=$("hubName").value.trim(); try{localStorage.setItem("tolHubName",name)}catch(e){}
@@ -4372,12 +4399,12 @@ function clientHubHtml(token) {
   };
   $("hubUp").onclick=function(){
     var f=$("hubFile").files[0]; if(!f){$("hubUpMsg").textContent="Choose a file first.";return;}
-    var fd=new FormData(); fd.append("file",f); fd.append("label",$("hubLabel").value); fd.append("name",$("hubName").value);
+    var fd=new FormData(); fd.append("file",f); fd.append("label",$("hubLabel").value); fd.append("name",$("hubName").value); fd.append("legId",$("hubLeg").value);
     try{localStorage.setItem("tolHubName",$("hubName").value)}catch(e){}
     $("hubUp").disabled=true; $("hubUpMsg").textContent="Uploading…";
     fetch(base+"/upload",{method:"POST",body:fd})
       .then(function(r){return r.json().then(function(j){if(!r.ok) throw new Error(j.error||"Upload failed");})})
-      .then(function(){$("hubUpMsg").textContent="✓ Uploaded — thank you."; $("hubFile").value=""; $("hubLabel").value=""; load();})
+      .then(function(){$("hubUpMsg").textContent="✓ Uploaded — thank you."; $("hubFile").value=""; $("hubLabel").value=""; $("hubLeg").value=""; load();})
       .catch(function(e){$("hubUpMsg").textContent=e.message;})
       .then(function(){$("hubUp").disabled=false;});
   };
@@ -4426,7 +4453,7 @@ app.get("/trip/:token", async (req, res) => {
     ${s.note ? `<div class="c" style="margin-top:12px;border-left:4px solid #C1602B"><b>Note from Together, Out Loud</b><div style="margin-top:4px;white-space:pre-wrap">${escHtml(s.note)}</div></div>` : ""}
     <h2>Team travelling (${trav.team.length + trav.guests.length})</h2>${idCards}
     <h2>Travel plan</h2>${legCards || `<div class="c m">Travel plan will be shared shortly.</div>`}
-    ${clientHubHtml(req.params.token)}`, ogHead));
+    ${clientHubHtml(req.params.token, legs.rows.filter((l) => members.rows.some((m) => m.leg_id === l.id && teamIds.includes(m.team_id))))}`, ogHead));
 });
 app.get("/trip/:token/ticket/:docId", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");

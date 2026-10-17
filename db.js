@@ -829,6 +829,8 @@ async function setup() {
     uploaded_at TEXT NOT NULL,
     read_by_team INTEGER NOT NULL DEFAULT 0
   )`);
+  await pool.query(`ALTER TABLE travel_share_files ADD COLUMN IF NOT EXISTS leg_id TEXT`);
+  await pool.query(`ALTER TABLE travel_share_files ADD COLUMN IF NOT EXISTS document_id TEXT`);
   await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS migrated_assignment_id TEXT`);
   {
     const ins = (await pool.query("SELECT musician_id, instrument FROM musician_instruments ORDER BY instrument ASC")).rows;
