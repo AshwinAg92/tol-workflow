@@ -3766,7 +3766,7 @@ async function renderTravelCalendar(main) {
       const evs = d ? (eventsByDay[d] || []) : [];
       const dayEvents = d ? (showEvents[d] || []) : [];
       calCells.appendChild(el(`
-        <div class="cal-cell${d ? "" : " cal-cell-empty"}">
+        <div class="cal-cell${d ? "" : " cal-cell-empty"}"${d ? ` data-day="${d}" style="cursor:pointer;" title="Click an empty spot to add travel on this date"` : ""}>
           ${d ? `<div class="cal-day">${d}</div>` : ""}
           ${dayEvents.map((l) => { const gap = eventTravelGaps(l, legs, tcCtx.assignments).length > 0; return `
             <div class="cal-event tc-event" data-event-id="${l.id}" style="cursor:pointer; background:#1F6F43;" title="Event: ${String(l.name).replace(/"/g, "")}${gap ? " — travel not planned for someone" : ""}">🎤 ${l.name}${gap ? " ⚠" : ""}</div>`; }).join("")}
@@ -3775,6 +3775,14 @@ async function renderTravelCalendar(main) {
           `).join("")}
         </div>
       `));
+    });
+    // Click the day box itself (not a pill) to log travel on that date.
+    calCells.querySelectorAll(".cal-cell[data-day]").forEach((cell) => {
+      cell.addEventListener("click", (e) => {
+        if (e.target.closest(".cal-event")) return;
+        const iso = `${travelCalYear}-${String(travelCalMonth).padStart(2, "0")}-${String(cell.dataset.day).padStart(2, "0")}`;
+        openStandaloneTravelLegModal(null, () => renderTravelCalendar(main), iso);
+      });
     });
     calCells.querySelectorAll(".tc-event").forEach((pill) => {
       pill.addEventListener("click", () => {
@@ -3907,7 +3915,7 @@ async function renderTravelCalendar(main) {
 // A travel entry not tied to any event — scouting a venue, a personal trip,
 // anything worth keeping on the shared travel calendar without a booking
 // behind it. Shares the same fields as an event's travel plan, minus the lead.
-function openStandaloneTravelLegModal(legId, onDone) {
+function openStandaloneTravelLegModal(legId, onDone, presetDate) {
   const root = document.getElementById("modalRoot");
   root.innerHTML = `<div class="modal-overlay" id="overlay"><div class="modal-card"><p class="muted small" style="padding:20px;">Loading…</p></div></div>`;
 
@@ -3959,7 +3967,7 @@ function openStandaloneTravelLegModal(legId, onDone) {
               <div><label>To city</label><input id="stlToCity" value="${leg?.to_city || ""}" /></div>
             </div>
             <div class="row-2">
-              <div><label>Departure (optional)</label><input id="stlDeparture" type="date" value="${leg?.departure_at ? leg.departure_at.slice(0, 10) : ""}" /></div>
+              <div><label>Departure (optional)</label><input id="stlDeparture" type="date" value="${leg?.departure_at ? leg.departure_at.slice(0, 10) : (leg ? "" : (presetDate || ""))}" /></div>
               <div><label>Return (optional)</label><input id="stlArrival" type="date" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 10) : ""}" /></div>
             </div>
             <label>Booking ref / PNR (optional)</label>

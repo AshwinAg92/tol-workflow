@@ -171,6 +171,7 @@ nav { display:flex; flex-direction:column; gap:2px; }
 .cal-head { font-family:'JetBrains Mono',monospace; font-size:10.5px; letter-spacing:0.04em; color:var(--muted); text-align:center; margin-bottom:6px; }
 .cal-cell { min-height:56px; min-width:0; overflow:hidden; border-radius:8px; background:var(--cream); padding:5px; font-size:11px; }
 .cal-cell-empty { background:transparent; }
+.cal-cell[data-day]:hover { background:#FBE9D2; }
 .cal-day { font-family:'JetBrains Mono',monospace; color:var(--muted); margin-bottom:3px; }
 .cal-event { background:var(--terracotta); color:#FFFFFF; border-radius:5px; padding:1px 4px; margin-top:2px; font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cal-nav { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
