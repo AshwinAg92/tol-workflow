@@ -2011,6 +2011,7 @@ async function openLeadDetailModal(lead) {
               <div id="leadDetailTravel"><p class="muted small">Loading…</p></div>
             </div>
           ` : ""}
+          ${hasLeadsAccess() ? `<div class="lead-detail-section"><div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">🕘 History</div><div id="leadDetailHistory"><p class="muted small">Loading…</p></div></div>` : ""}
         </div>
         <div class="modal-foot">
           <button class="btn-ghost" id="cancelModal">Close</button>
@@ -2035,11 +2036,16 @@ async function openLeadDetailModal(lead) {
     renderMain();
   });
 
+  if (hasLeadsAccess()) api(`/api/leads/${lead.id}/history`).then((hist) => {
+    const box = root.querySelector("#leadDetailHistory");
+    if (!box) return;
+    box.innerHTML = hist.length ? hist.map((h) => `<div class="small" style="padding:4px 0; border-top:1px solid #EFE6D2;"><span class="muted">${fmtDateTime(h.created_at)}${h.actor ? " · " + escH(h.actor) : ""}</span><div>${escH(h.message)}</div></div>`).join("") : `<p class="muted small">No history yet.</p>`;
+  }).catch(() => { const box = root.querySelector("#leadDetailHistory"); if (box) box.innerHTML = `<p class="muted small">Couldn't load history.</p>`; });
   if (lead.stage === "Cancelled" && hasAccountsAccess()) {
     const block = root.querySelector("#cxMoneyBlock");
     const reopen = async () => { await refreshLeads(); const fresh = LEADS.find((x) => x.id === lead.id) || lead; openLeadDetailModal(fresh); };
     try {
-      const [pays, hist] = await Promise.all([api(`/api/leads/${lead.id}/payments`), api(`/api/leads/${lead.id}/history`).catch(() => [])]);
+      const pays = await api(`/api/leads/${lead.id}/payments`);
       if (block) {
         const got = pays.filter((x) => x.type === "payment" && x.status === "received");
         const refunds = pays.filter((x) => x.type === "refund");
@@ -2066,8 +2072,7 @@ async function openLeadDetailModal(lead) {
             ${CURRENT_USER.accessLevel === "admin" && gotT - paidT > 0 && !dueT ? `<button class="btn-primary" id="cxSettleBtn">${settled ? "Revisit settlement" : "Settle refund"}</button>` : ""}
             ${CURRENT_USER.accessLevel === "admin" && dueRef.map((r) => `<button class="btn-primary cx-paid" data-id="${r.id}">✓ Mark refund of ${inr(r.amount)} paid</button>`).join("")}
             ${CURRENT_USER.accessLevel === "admin" && dueT ? `<button class="btn-ghost" id="cxResettleBtn">Change decision</button>` : ""}
-          </div>
-          ${hist.length ? `<details style="margin-top:10px;"><summary class="small" style="cursor:pointer;"><b>History (${hist.length})</b></summary>${hist.map((h) => `<div class="small" style="padding:3px 0; border-top:1px solid #EBD3CA;"><span class="muted">${fmtDateTime(h.created_at)}${h.actor ? " · " + escH(h.actor) : ""}</span><div>${escH(h.message)}</div></div>`).join("")}</details>` : ""}`;
+          </div>`;
         const settle = async () => {
           const { held } = await moneyHeldFor(lead.id);
           const r = await openCancelEventModal(lead, held, true);

@@ -3763,9 +3763,11 @@ app.post("/api/leads/:id/cancel-settlement", requireAuth, requireSection("accoun
 });
 
 // One lead's change history (stage moves, payments, refunds, settlement) — the audit trail behind a cancellation.
-app.get("/api/leads/:id/history", requireAuth, requireSection("accounts"), async (req, res) => {
+app.get("/api/leads/:id/history", requireAuth, async (req, res) => {
+  if (!userHasSection(req.user, "leads") || isScopedManager(req.user)) return res.status(403).json({ error: "You don't have access to leads" });
   const { rows } = await pool.query("SELECT message, actor, created_at FROM activity_log WHERE lead_id = $1 ORDER BY created_at ASC", [req.params.id]);
-  res.json(rows);
+  // No money lines for logins without Accounts access.
+  res.json(canSeeMoney(req.user) ? rows : rows.filter((r) => !/₹|refund|payment/i.test(r.message)));
 });
 
 // Marks a due reimbursement as actually received from the client (or
