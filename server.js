@@ -4890,20 +4890,28 @@ const riderLib = require("./rider");
 const canBuildRider = (user) => userHasSection(user, "leads") && !isScopedManager(user);
 app.get("/api/rider-catalog", requireAuth, async (req, res) => {
   if (!canBuildRider(req.user)) return res.status(403).json({ error: "You don't have access to leads" });
-  res.json({ catalog: riderLib.CATALOG.map((c) => ({ id: c.id, label: c.label, row: c.row, ch: c.ch, mic: c.mic })), presets: riderLib.PRESETS });
+  res.json({
+    catalog: riderLib.CATALOG.map((c) => ({ id: c.id, label: c.label, row: c.row, lines: c.lines })), presets: riderLib.PRESETS,
+    lighting: riderLib.DEFAULT_LIGHTING, stageNotes: riderLib.DEFAULT_STAGE_NOTES, contacts: riderLib.DEFAULT_CONTACTS,
+  });
 });
+// Live recompute for the builder: the auto-written requirements table, summary, and a full page preview.
 app.post("/api/tech-rider/auto", requireAuth, async (req, res) => {
   if (!canBuildRider(req.user)) return res.status(403).json({ error: "You don't have access to leads" });
-  const data = riderLib.sanitize(req.body);
-  res.json({ requirements: riderLib.autoRequirements(data), summary: riderLib.summarize(data), svg: data.instruments.length ? riderLib.stageSvg(data) : "" });
+  const data = riderLib.sanitize(req.body && req.body.data);
+  const lead = req.body && req.body.leadId ? (await pool.query("SELECT name, date, city, venue, event_type, occasion FROM leads WHERE id = $1", [req.body.leadId])).rows[0] : null;
+  res.json({
+    general: riderLib.autoGeneral(data), summary: riderLib.summarize(data),
+    html: data.instruments.length ? riderLib.renderRiderPage({ lead: lead || {}, data }) : "",
+  });
 });
 app.get("/api/leads/:id/tech-rider", requireAuth, async (req, res) => {
   if (!canBuildRider(req.user)) return res.status(403).json({ error: "You don't have access to leads" });
   const lead = (await pool.query("SELECT pcs, soundcheck_time, event_time, sound_manager_name, sound_manager_phone FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
   const row = (await pool.query("SELECT token, data, updated_at FROM tech_riders WHERE lead_id = $1", [req.params.id])).rows[0];
-  res.json({ token: row?.token || null, data: row ? JSON.parse(row.data) : null, updatedAt: row?.updated_at || null,
-    defaults: { pcs: lead.pcs || null, soundcheck: lead.soundcheck_time || "", showTime: lead.event_time || "", contactName: lead.sound_manager_name || "", contactPhone: lead.sound_manager_phone || "" } });
+  res.json({ token: row?.token || null, data: row ? riderLib.sanitize(JSON.parse(row.data)) : null, updatedAt: row?.updated_at || null,
+    defaults: { pcs: lead.pcs || null, soundcheck: lead.soundcheck_time || "", showTime: lead.event_time || "" } });
 });
 app.put("/api/leads/:id/tech-rider", requireAuth, async (req, res) => {
   if (!canBuildRider(req.user)) return res.status(403).json({ error: "You don't have access to leads" });

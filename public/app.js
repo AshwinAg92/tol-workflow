@@ -9353,7 +9353,7 @@ async function buildThankYouMessage(lead) {
   }), hasReviewLink: !!reviewLink };
 }
 
-// ---------- Tech rider builder: pick the instruments, layout + requirements follow ----------
+// ---------- Tech rider builder: pick the instruments, the whole rider follows ----------
 async function openTechRiderModal(lead) {
   const root = document.getElementById("modalRoot");
   root.innerHTML = `<div class="modal-overlay"><div class="modal-card"><div class="modal-body"><p class="muted">Loading…</p></div></div></div>`;
@@ -9361,49 +9361,62 @@ async function openTechRiderModal(lead) {
   try { [cat, cur] = await Promise.all([api("/api/rider-catalog"), api(`/api/leads/${lead.id}/tech-rider`)]); }
   catch (e) { root.innerHTML = ""; alert(e.message || "Couldn't open the rider"); return; }
   const byId = Object.fromEntries(cat.catalog.map((c) => [c.id, c]));
-  const fromCat = (id) => { const c = byId[id]; return { id, label: c.label, mic: c.mic, ch: c.ch, note: "" }; };
+  const fromCat = (id) => ({ id, label: byId[id].label, player: "", lines: byId[id].lines.map((l) => ({ ...l })) });
   const d0 = cur.data;
   const startPcs = Math.min(8, Math.max(2, Number(lead.pcs || cur.defaults.pcs) || 5));
-  const S = d0 ? { ...d0 } : {
-    instruments: (cat.presets[startPcs] || cat.presets[5]).map(fromCat), soundBy: "venue", stageW: "", stageD: "",
+  const S = d0 ? JSON.parse(JSON.stringify(d0)) : {
+    instruments: (cat.presets[startPcs] || cat.presets[5]).map(fromCat), soundBy: "venue", monitoring: "iem", spare: true, stageW: "", stageD: "",
     arrival: "", soundcheck: cur.defaults.soundcheck ? fmtTimeHM(cur.defaults.soundcheck) : "", showTime: cur.defaults.showTime ? fmtTimeHM(cur.defaults.showTime) : "",
-    contactName: cur.defaults.contactName, contactPhone: cur.defaults.contactPhone, requirements: "", notes: "",
+    contacts: cat.contacts.map((x) => ({ ...x })), general: null, lighting: null, stageNotes: null, notes: "",
   };
-  let token = cur.token, autoReqs = [], customReqs = !!(d0 && d0.requirements);
+  let token = cur.token, autoGeneral = [];
   const a = (v) => escH(v);
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
-      <div class="modal-card" style="width:680px; max-width:98vw;">
+      <div class="modal-card" style="width:700px; max-width:98vw;">
         <div class="modal-head"><h3>🎛 Tech rider — ${escH(lead.name)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
-        <div class="modal-body" style="max-height:72vh; overflow:auto;">
+        <div class="modal-body" style="max-height:74vh; overflow:auto;">
           <div class="section-label">1 · The band <span id="trCount" class="muted small" style="font-weight:400;"></span></div>
           <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
             <span class="muted small">Start from a standard</span>
             ${[2, 3, 4, 5, 6, 7, 8].map((n) => `<button class="btn-ghost tr-preset" data-n="${n}" style="font-size:12.5px; padding:4px 10px;">${n} pcs</button>`).join("")}
           </div>
-          <p class="muted small" style="margin:6px 0 0;">One person playing two instruments (e.g. lead singer on guitar)? Type the <b>same name</b> in "Played by" on both rows — they count as <b>one</b> pc and share one spot on the stage plan.</p>
+          <p class="muted small" style="margin:6px 0 0;">One person playing two instruments (e.g. lead singer on guitar)? Type the <b>same name</b> in "Played by" on both — they count as <b>one</b> pc and share one spot on the stage plot. Tap an instrument to edit its channels.</p>
           <datalist id="trPlayers"></datalist>
           <div id="trRows" style="margin-top:8px;"></div>
-          <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
-            <select id="trAdd" style="padding:8px;"><option value="">+ Add an instrument…</option>${cat.catalog.map((c) => `<option value="${c.id}">${escH(c.label)}</option>`).join("")}<option value="custom">Other (type your own)…</option></select>
-          </div>
+          <select id="trAdd" style="padding:8px; margin-top:8px;"><option value="">+ Add an instrument…</option>${cat.catalog.map((c) => `<option value="${c.id}">${escH(c.label)}</option>`).join("")}<option value="custom">Other (type your own)…</option></select>
+
           <div class="section-label" style="margin-top:16px;">2 · Event details</div>
           <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px;">
             <div><label>Sound system</label><select id="trSoundBy"><option value="venue">Venue / client provides</option><option value="tol">We bring our own</option></select></div>
+            <div><label>Monitoring</label><select id="trMon"><option value="iem">In-ear (IEM) per performer</option><option value="wedge">Stage wedges</option></select></div>
             <div><label>Arrival / load-in</label><input id="trArrival" value="${a(S.arrival)}" placeholder="e.g. 3:00 PM" /></div>
             <div><label>Soundcheck</label><input id="trCheck" value="${a(S.soundcheck)}" placeholder="e.g. 5:00 PM" /></div>
             <div><label>Show time</label><input id="trShow" value="${a(S.showTime)}" placeholder="e.g. 8:00 PM" /></div>
             <div><label>Stage width (ft)</label><input id="trSW" value="${a(S.stageW)}" placeholder="auto" /></div>
             <div><label>Stage depth (ft)</label><input id="trSD" value="${a(S.stageD)}" placeholder="auto" /></div>
-            <div><label>Our sound contact</label><input id="trCName" value="${a(S.contactName)}" placeholder="Name" /></div>
-            <div><label>Contact phone</label><input id="trCPhone" value="${a(S.contactPhone)}" placeholder="Phone" /></div>
+            <div style="display:flex; align-items:flex-end;"><label style="font-weight:400;"><input id="trSpare" type="checkbox" ${S.spare !== false ? "checked" : ""}/> Include a spare channel</label></div>
           </div>
-          <div class="section-label" style="margin-top:16px;">3 · What we need from the venue <button class="btn-ghost" id="trReset" type="button" style="font-size:12px; padding:2px 8px; margin-left:8px; display:none;">Reset to auto</button></div>
-          <textarea id="trReqs" rows="8" style="width:100%; font-size:15px;"></textarea>
-          <p class="muted small" style="margin:4px 0 0;">Filled in automatically from the band above — edit any line, one per line.</p>
-          <div class="section-label" style="margin-top:16px;">4 · Extra notes <span class="muted small" style="font-weight:400;">(optional)</span></div>
-          <textarea id="trNotes" rows="3" style="width:100%; font-size:15px;" placeholder="Anything else the client's team should know">${a(S.notes)}</textarea>
-          <details id="trPrev" open style="margin-top:16px;"><summary class="section-label" style="cursor:pointer;">Stage plan preview</summary><div id="trSvg" style="margin-top:8px;"></div></details>
+
+          <div class="section-label" style="margin-top:16px;">3 · Contacts</div>
+          <div id="trContacts"></div>
+          <button class="btn-ghost" id="trAddContact" type="button" style="font-size:12.5px; padding:3px 10px;">+ Add contact</button>
+
+          <div class="section-label" style="margin-top:16px;">4 · General technical requirements <button class="btn-ghost tr-reset" data-k="general" type="button" style="font-size:12px; padding:2px 8px; margin-left:8px; display:none;">Reset to auto</button></div>
+          <p class="muted small" style="margin:0 0 6px;">Written automatically from the band above — edit any row.</p>
+          <div id="trGeneral"></div>
+
+          <div class="section-label" style="margin-top:16px;">5 · Lighting, LED &amp; SFX <button class="btn-ghost tr-reset" data-k="lighting" type="button" style="font-size:12px; padding:2px 8px; margin-left:8px; display:none;">Reset</button></div>
+          <div id="trLighting"></div>
+
+          <div class="section-label" style="margin-top:16px;">6 · Stage notes <button class="btn-ghost tr-reset" data-k="stageNotes" type="button" style="font-size:12px; padding:2px 8px; margin-left:8px; display:none;">Reset</button></div>
+          <textarea id="trStageNotes" rows="6" style="width:100%; font-size:15px;"></textarea>
+          <p class="muted small" style="margin:2px 0 0;">One per line.</p>
+
+          <div class="section-label" style="margin-top:16px;">7 · Extra note <span class="muted small" style="font-weight:400;">(optional — shown under Monitor Mixes)</span></div>
+          <textarea id="trNotes" rows="2" style="width:100%; font-size:15px;" placeholder="e.g. Channel 12 varies by show — confirm before the advance">${a(S.notes)}</textarea>
+
+          <details id="trPrev" style="margin-top:16px;"><summary class="section-label" style="cursor:pointer;">Preview the rider</summary><iframe id="trFrame" sandbox style="width:100%; height:460px; border:1px solid #E6DFD0; border-radius:8px; margin-top:8px; background:#fff;"></iframe></details>
           <div id="trErr" class="small" style="color:#A6432B; margin-top:8px;"></div>
           <div style="position:sticky; bottom:-1px; background:#fff; padding:10px 0 2px; margin-top:12px; border-top:1px solid #E6DFD0; display:flex; gap:6px; flex-wrap:wrap;">
             <button class="btn-primary" id="trSend" style="flex:1 1 100%;">💬 Save & send on WhatsApp</button>
@@ -9416,52 +9429,74 @@ async function openTechRiderModal(lead) {
       </div>
     </div>`;
   const q = (sel) => root.querySelector(sel);
-  q("#trSoundBy").value = S.soundBy || "venue";
+  q("#trSoundBy").value = S.soundBy || "venue"; q("#trMon").value = S.monitoring || "iem";
   const close = () => { root.innerHTML = ""; renderMain(); };
   q("#closeModal").addEventListener("click", close);
   q("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
 
   const collect = () => ({
-    instruments: S.instruments, soundBy: q("#trSoundBy").value, stageW: q("#trSW").value.trim(), stageD: q("#trSD").value.trim(),
+    instruments: S.instruments, soundBy: q("#trSoundBy").value, monitoring: q("#trMon").value, spare: q("#trSpare").checked,
+    stageW: q("#trSW").value.trim(), stageD: q("#trSD").value.trim(),
     arrival: q("#trArrival").value.trim(), soundcheck: q("#trCheck").value.trim(), showTime: q("#trShow").value.trim(),
-    contactName: q("#trCName").value.trim(), contactPhone: q("#trCPhone").value.trim(),
-    requirements: customReqs ? q("#trReqs").value : "", notes: q("#trNotes").value,
+    contacts: S.contacts, general: S.general, lighting: S.lighting, stageNotes: S.stageNotes, notes: q("#trNotes").value,
   });
   let timer = null;
   const refresh = () => {
     clearTimeout(timer);
     timer = setTimeout(async () => {
       try {
-        const r = await api("/api/tech-rider/auto", { method: "POST", body: JSON.stringify(collect()) });
-        autoReqs = r.requirements;
-        if (!customReqs) q("#trReqs").value = autoReqs.join("\n");
-        q("#trReset").style.display = customReqs ? "inline-block" : "none";
-        q("#trSvg").innerHTML = r.svg || `<p class="muted small">Add an instrument to see the stage plan.</p>`;
+        const r = await api("/api/tech-rider/auto", { method: "POST", body: JSON.stringify({ data: collect(), leadId: lead.id }) });
+        autoGeneral = r.general;
+        drawGeneral();
         const n = r.summary.pcs, mism = lead.pcs && Number(lead.pcs) !== n;
         q("#trCount").innerHTML = `— ${n} pcs${r.summary.instruments !== n ? ` (${r.summary.instruments} instruments)` : ""} · ${r.summary.channels} channels · stage ${escH(r.summary.stage)}${mism ? ` <span style="color:#B6752C;">(this event is booked as ${lead.pcs} pcs)</span>` : ""}`;
+        if (q("#trPrev").open) q("#trFrame").srcdoc = r.html || "<p style='font-family:sans-serif;padding:12px'>Add an instrument to see the rider.</p>";
       } catch (e) { /* preview is best-effort */ }
-    }, 250);
+    }, 300);
   };
+  q("#trPrev").addEventListener("toggle", refresh);
+
+  const showResets = () => root.querySelectorAll(".tr-reset").forEach((b) => { b.style.display = S[b.dataset.k] ? "inline-block" : "none"; });
+  const tinyInput = (cls, attrs, val, ph, style) => `<input class="${cls}" ${attrs} value="${a(val)}" placeholder="${ph}" style="${style || ""}" />`;
+
+  // --- instruments, each with editable channel lines ---
   const drawRows = () => {
     q("#trRows").innerHTML = S.instruments.map((e, i) => `
-      <div style="border:1px solid #E6DFD0; border-radius:8px; padding:8px; margin-bottom:6px; display:grid; grid-template-columns:1fr 70px 32px; gap:6px;">
-        <input class="tr-f" data-i="${i}" data-k="label" value="${a(e.label)}" placeholder="Instrument" style="font-weight:700;" />
-        <input class="tr-f" data-i="${i}" data-k="ch" type="number" min="0" max="12" value="${e.ch}" title="Channels" />
-        <button class="btn-ghost tr-del" data-i="${i}" title="Remove" style="padding:2px;">✕</button>
-        <input class="tr-f" data-i="${i}" data-k="mic" value="${a(e.mic)}" placeholder="Mic / DI needed" style="grid-column:1 / 3;" />
-        <span></span>
-        <input class="tr-f" data-i="${i}" data-k="player" list="trPlayers" value="${a(e.player || "")}" placeholder="Played by (optional) — e.g. Lead singer" style="grid-column:1 / 4;" />
-        <input class="tr-f" data-i="${i}" data-k="note" value="${a(e.note || "")}" placeholder="Note (optional) — e.g. needs a mat" style="grid-column:1 / 4;" />
-      </div>`).join("") || `<p class="muted small">No instruments yet — pick a standard band above or add one.</p>`;
-    q("#trRows").querySelectorAll(".tr-f").forEach((inp) => inp.addEventListener("input", () => {
-      const e = S.instruments[Number(inp.dataset.i)], k = inp.dataset.k;
-      e[k] = k === "ch" ? Math.max(0, Math.min(12, Number(inp.value) || 0)) : inp.value;
-      if (k === "player") q("#trPlayers").innerHTML = [...new Set(S.instruments.map((x) => (x.player || "").trim()).filter(Boolean))].map((n) => `<option value="${a(n)}">`).join("");
+      <details class="tr-inst" ${e.id === "custom" && !e.label ? "open" : ""} style="border:1px solid #E6DFD0; border-radius:8px; padding:6px 8px; margin-bottom:6px;">
+        <summary style="cursor:pointer; display:flex; gap:6px; align-items:center;"><b style="flex:1;">${a(e.label || "New instrument")}</b><span class="muted small">${e.lines.reduce((t, l) => t + (Number(l.ch) || 0), 0)} ch${e.player ? " · " + a(e.player) : ""}</span></summary>
+        <div style="display:grid; grid-template-columns:1fr 1fr 32px; gap:6px; margin-top:8px;">
+          ${tinyInput("tr-e", `data-i="${i}" data-k="label"`, e.label, "Instrument", "font-weight:700;")}
+          ${tinyInput("tr-e", `data-i="${i}" data-k="player" list="trPlayers"`, e.player || "", "Played by (optional)")}
+          <button class="btn-ghost tr-del" data-i="${i}" title="Remove instrument" style="padding:2px;">✕</button>
+        </div>
+        ${e.lines.map((l, k) => `
+          <div style="border-top:1px dashed #E6DFD0; margin-top:8px; padding-top:8px; display:grid; grid-template-columns:1fr 64px 32px; gap:6px;">
+            ${tinyInput("tr-l", `data-i="${i}" data-k="${k}" data-f="source"`, l.source, "Source — e.g. Lead Vocal")}
+            ${tinyInput("tr-l", `data-i="${i}" data-k="${k}" data-f="ch" type="number" min="0" max="12"`, l.ch, "Ch", "")}
+            <button class="btn-ghost tr-ldel" data-i="${i}" data-k="${k}" title="Remove channel" style="padding:2px;">✕</button>
+            ${tinyInput("tr-l", `data-i="${i}" data-k="${k}" data-f="mic"`, l.mic, "Mic / DI", "grid-column:1 / 4;")}
+            ${tinyInput("tr-l", `data-i="${i}" data-k="${k}" data-f="mount"`, l.mount, "Mount / stand", "grid-column:1 / 3;")}
+            <span></span>
+            ${tinyInput("tr-l", `data-i="${i}" data-k="${k}" data-f="notes"`, l.notes, "Notes", "grid-column:1 / 4;")}
+          </div>`).join("")}
+        <button class="btn-ghost tr-ladd" data-i="${i}" type="button" style="font-size:12px; padding:3px 9px; margin-top:8px;">+ Add a channel</button>
+      </details>`).join("") || `<p class="muted small">No instruments yet — pick a standard band above or add one.</p>`;
+    q("#trRows").querySelectorAll(".tr-e").forEach((inp) => inp.addEventListener("input", () => {
+      const e = S.instruments[Number(inp.dataset.i)]; e[inp.dataset.k] = inp.value;
+      if (inp.dataset.k === "player") q("#trPlayers").innerHTML = [...new Set(S.instruments.map((x) => (x.player || "").trim()).filter(Boolean))].map((n) => `<option value="${a(n)}">`).join("");
       refresh();
     }));
-    q("#trRows").querySelectorAll(".tr-del").forEach((b) => b.addEventListener("click", () => { S.instruments.splice(Number(b.dataset.i), 1); drawRows(); refresh(); }));
+    q("#trRows").querySelectorAll(".tr-l").forEach((inp) => inp.addEventListener("input", () => {
+      const l = S.instruments[Number(inp.dataset.i)].lines[Number(inp.dataset.k)];
+      l[inp.dataset.f] = inp.dataset.f === "ch" ? Math.max(0, Math.min(12, Number(inp.value) || 0)) : inp.value;
+      refresh();
+    }));
+    q("#trRows").querySelectorAll(".tr-del").forEach((b) => b.addEventListener("click", (ev) => { ev.preventDefault(); S.instruments.splice(Number(b.dataset.i), 1); drawRows(); refresh(); }));
+    q("#trRows").querySelectorAll(".tr-ldel").forEach((b) => b.addEventListener("click", (ev) => { ev.preventDefault(); S.instruments[Number(b.dataset.i)].lines.splice(Number(b.dataset.k), 1); keepOpen(b.dataset.i); refresh(); }));
+    q("#trRows").querySelectorAll(".tr-ladd").forEach((b) => b.addEventListener("click", (ev) => { ev.preventDefault(); S.instruments[Number(b.dataset.i)].lines.push({ source: "", mic: "", mount: "—", notes: "", ch: 1 }); keepOpen(b.dataset.i); refresh(); }));
     refresh();
   };
+  const keepOpen = (i) => { drawRows(); const d = q("#trRows").querySelectorAll(".tr-inst")[Number(i)]; if (d) d.open = true; };
   root.querySelectorAll(".tr-preset").forEach((b) => b.addEventListener("click", () => {
     if (S.instruments.length && !confirm(`Replace the current band with the standard ${b.dataset.n}-piece set-up?`)) return;
     S.instruments = (cat.presets[b.dataset.n] || []).map(fromCat); drawRows();
@@ -9469,15 +9504,52 @@ async function openTechRiderModal(lead) {
   q("#trAdd").addEventListener("change", (e) => {
     const v = e.target.value; e.target.value = "";
     if (!v) return;
-    S.instruments.push(v === "custom" ? { id: "custom", label: "", mic: "Mic or DI — please confirm with us", ch: 1, note: "", row: "front" } : fromCat(v));
-    drawRows();
+    S.instruments.push(v === "custom" ? { id: "custom", label: "", player: "", row: "front", lines: [{ source: "", mic: "Mic or DI — please confirm with us", mount: "—", notes: "", ch: 1 }] } : fromCat(v));
+    drawRows(); const ds = q("#trRows").querySelectorAll(".tr-inst"); if (ds.length) ds[ds.length - 1].open = true;
   });
-  ["#trSoundBy", "#trSW", "#trSD", "#trNotes", "#trArrival", "#trCheck", "#trShow", "#trCName", "#trCPhone"].forEach((s2) => q(s2).addEventListener("input", refresh));
-  q("#trSoundBy").addEventListener("change", refresh);
-  q("#trReqs").addEventListener("input", () => { customReqs = true; q("#trReset").style.display = "inline-block"; });
-  q("#trReset").addEventListener("click", () => { customReqs = false; q("#trReqs").value = autoReqs.join("\n"); q("#trReset").style.display = "none"; });
-  if (d0 && d0.requirements) q("#trReqs").value = d0.requirements;
-  drawRows();
+
+  // --- contacts ---
+  const drawContacts = () => {
+    q("#trContacts").innerHTML = S.contacts.map((c, i) => `<div style="display:grid; grid-template-columns:1fr 1fr 32px; gap:6px; margin-bottom:6px;">
+      ${tinyInput("tr-c", `data-i="${i}" data-k="role"`, c.role, "Role")}${tinyInput("tr-c", `data-i="${i}" data-k="contact"`, c.contact, "Phone / contact")}<button class="btn-ghost tr-cdel" data-i="${i}" style="padding:2px;">✕</button></div>`).join("");
+    q("#trContacts").querySelectorAll(".tr-c").forEach((inp) => inp.addEventListener("input", () => { S.contacts[Number(inp.dataset.i)][inp.dataset.k] = inp.value; refresh(); }));
+    q("#trContacts").querySelectorAll(".tr-cdel").forEach((b) => b.addEventListener("click", () => { S.contacts.splice(Number(b.dataset.i), 1); drawContacts(); refresh(); }));
+  };
+  q("#trAddContact").addEventListener("click", () => { S.contacts.push({ role: "", contact: "" }); drawContacts(); });
+
+  // --- general requirements (auto until edited) ---
+  const drawGeneral = () => {
+    const rows = S.general || autoGeneral;
+    const active = document.activeElement;
+    if (active && q("#trGeneral").contains(active)) return; // never redraw under the cursor
+    q("#trGeneral").innerHTML = rows.map((r, i) => `<div style="border:1px solid #EFE6D2; border-radius:6px; padding:6px; margin-bottom:6px;">
+      ${tinyInput("tr-g", `data-i="${i}" data-k="cat"`, r.cat, "Category", "font-weight:700; margin-bottom:4px;")}
+      <textarea class="tr-g" data-i="${i}" data-k="req" rows="2" style="width:100%; font-size:14px;">${a(r.req)}</textarea></div>`).join("");
+    q("#trGeneral").querySelectorAll(".tr-g").forEach((inp) => inp.addEventListener("input", () => {
+      if (!S.general) S.general = autoGeneral.map((x) => ({ ...x }));
+      S.general[Number(inp.dataset.i)][inp.dataset.k] = inp.value; showResets(); refresh();
+    }));
+    showResets();
+  };
+  const drawLighting = () => {
+    const rows = S.lighting || cat.lighting;
+    q("#trLighting").innerHTML = rows.map((r, i) => `<div style="border:1px solid #EFE6D2; border-radius:6px; padding:6px; margin-bottom:6px;">
+      ${tinyInput("tr-lt", `data-i="${i}" data-k="item"`, r.item, "Item", "font-weight:700; margin-bottom:4px;")}
+      <textarea class="tr-lt" data-i="${i}" data-k="spec" rows="2" style="width:100%; font-size:14px;">${a(r.spec)}</textarea></div>`).join("");
+    q("#trLighting").querySelectorAll(".tr-lt").forEach((inp) => inp.addEventListener("input", () => {
+      if (!S.lighting) S.lighting = cat.lighting.map((x) => ({ ...x }));
+      S.lighting[Number(inp.dataset.i)][inp.dataset.k] = inp.value; showResets(); refresh();
+    }));
+  };
+  const drawNotes = () => { q("#trStageNotes").value = (S.stageNotes || cat.stageNotes).join("\n"); };
+  q("#trStageNotes").addEventListener("input", () => { S.stageNotes = q("#trStageNotes").value.split("\n").map((x) => x.trim()).filter(Boolean); showResets(); refresh(); });
+  root.querySelectorAll(".tr-reset").forEach((b) => b.addEventListener("click", () => {
+    S[b.dataset.k] = null;
+    if (b.dataset.k === "general") drawGeneral(); else if (b.dataset.k === "lighting") drawLighting(); else drawNotes();
+    showResets(); refresh();
+  }));
+  ["#trSoundBy", "#trMon", "#trSW", "#trSD", "#trNotes", "#trArrival", "#trCheck", "#trShow", "#trSpare"].forEach((s2) => { q(s2).addEventListener("input", refresh); q(s2).addEventListener("change", refresh); });
+  drawContacts(); drawLighting(); drawNotes(); drawRows();
 
   const save = async () => {
     q("#trErr").textContent = "";
