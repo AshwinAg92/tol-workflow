@@ -50,7 +50,7 @@ const DEFAULT_STAGE_NOTES = [
   "No alcohol, no smoking, no hookah", "Hot & cold water on stage", "Pure vegetarian meals", "Please provide safe power connections", "Keep audience quiet during performance",
   "Sound check: min. 60 minutes (uninterrupted)", "All artists to have 1 IEM + 1 stage monitor", "Stage to be clean, carpeted & free from obstructions",
 ];
-const DEFAULT_CONTACTS = [{ role: "TOL Sound Coordinator", contact: "+91 82502 00518" }];
+const DEFAULT_CONTACTS = [{ role: "TOL Sound Coordinator", contact: "+91 98323 02004" }];
 
 const num = (v, d, lo, hi) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
 const str = (v, n) => String(v == null ? "" : v).slice(0, n);

@@ -615,6 +615,7 @@ async function setup() {
       updated_at TEXT NOT NULL
     );
   `);
+  await pool.query(`UPDATE tech_riders SET data = REPLACE(data, '+91 82502 00518', '+91 98323 02004') WHERE data LIKE '%82502 00518%'`);
   // Private per-login money tracker (income / expense / investment / savings).
   // Only ever read through /api/my/cash filtered by the logged-in user — admin has no view of it.
   await pool.query(`
