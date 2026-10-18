@@ -41,8 +41,8 @@ function sanitize(input) {
   const d = input || {};
   const entries = (Array.isArray(d.instruments) ? d.instruments : []).slice(0, 16).map((e) => {
     const c = BY_ID[e && e.id];
-    if (c) return { id: c.id, label: str(e.label || c.label, 40), mic: str(e.mic || c.mic, 120), ch: num(e.ch, c.ch, 0, 12), note: str(e.note, 120) };
-    return { id: "custom", label: str((e && e.label) || "Other instrument", 40), mic: str((e && e.mic) || "Mic or DI — please confirm with us", 120), ch: num(e && e.ch, 1, 0, 12), note: str(e && e.note, 120), row: e && e.row === "back" ? "back" : "front" };
+    if (c) return { id: c.id, label: str(e.label || c.label, 40), mic: str(e.mic || c.mic, 120), ch: num(e.ch, c.ch, 0, 12), note: str(e.note, 120), player: str(e.player, 30).trim() };
+    return { id: "custom", label: str((e && e.label) || "Other instrument", 40), mic: str((e && e.mic) || "Mic or DI — please confirm with us", 120), ch: num(e && e.ch, 1, 0, 12), note: str(e && e.note, 120), player: str(e && e.player, 30).trim(), row: e && e.row === "back" ? "back" : "front" };
   });
   return {
     instruments: entries,
@@ -55,17 +55,40 @@ function sanitize(input) {
 }
 const spec = (e) => { const c = BY_ID[e.id]; return c ? { row: c.row, stands: c.stands, di: c.di, power: c.power, monitor: c.monitor, seated: c.seated, code: c.code, color: c.color, prio: c.prio } : { row: e.row || "front", stands: e.ch || 1, di: 0, power: 0, monitor: 1, seated: 0, code: "OTH", color: "#7A6A58", prio: 20 }; };
 
+// One musician can play several instruments: rows with the same "played by" name are one person (one "pc").
+function musicians(data) {
+  const groups = [], byName = new Map();
+  data.instruments.forEach((e) => {
+    const key = (e.player || "").toLowerCase();
+    if (key && byName.has(key)) { byName.get(key).push(e); return; }
+    const g = [e]; groups.push(g); if (key) byName.set(key, g);
+  });
+  return groups.map((entries) => {
+    const specs = entries.map(spec);
+    const front = specs.some((x) => x.row === "front");
+    return {
+      entries, player: entries.find((e) => e.player)?.player || "",
+      row: front ? "front" : "back", prio: Math.min(...specs.map((x) => x.prio)),
+      color: specs[0].color, code: [...new Set(specs.map((x) => x.code))].join("+"),
+      stands: specs.reduce((t, x, i) => t + (x.stands && entries[i].ch ? x.stands : 0), 0),
+      power: specs.reduce((t, x) => t + x.power, 0), monitor: specs.some((x) => x.monitor), seated: specs.some((x) => x.seated),
+      label: entries.map((e) => e.label).join(" + "),
+    };
+  });
+}
+
 function summarize(data) {
   const es = data.instruments.map((e) => ({ e, s: spec(e) }));
-  const front = es.filter((x) => x.s.row === "front"), back = es.filter((x) => x.s.row === "back");
+  const ms = musicians(data);
+  const front = ms.filter((x) => x.row === "front"), back = ms.filter((x) => x.row === "back");
   const rows = Math.ceil(front.length / 5) + Math.ceil(back.length / 5);
   const widest = Math.max(1, Math.min(5, front.length || 0), Math.min(5, back.length || 0));
   const w = Math.max(16, widest * 6 + 4), dep = Math.max(12, Math.max(1, rows) * 6 + 4);
   return {
-    pcs: es.length, channels: es.reduce((t, x) => t + x.e.ch, 0),
+    pcs: ms.length, instruments: es.length, channels: es.reduce((t, x) => t + x.e.ch, 0),
     stands: es.reduce((t, x) => t + (x.s.stands && x.e.ch ? x.s.stands : 0), 0), di: es.reduce((t, x) => t + x.s.di, 0),
     powerPts: es.reduce((t, x) => t + x.s.power, 0), seated: es.reduce((t, x) => t + x.s.seated, 0),
-    monitors: Math.max(2, Math.min(6, es.filter((x) => x.s.monitor).length)), front: front.length, back: back.length,
+    monitors: Math.max(2, Math.min(6, ms.filter((x) => x.monitor).length)), front: front.length, back: back.length,
     stage: `${data.stageW || w} ft × ${data.stageD || dep} ft`,
   };
 }
@@ -73,6 +96,7 @@ function summarize(data) {
 // The text bullets under "What we need from the venue". Plain strings; the builder can edit any of them.
 function autoRequirements(data) {
   const m = summarize(data), L = [];
+  const recording = data.soundBy === "tol";
   L.push(`Stage: minimum ${m.stage}, level, clean and covered (if outdoors), with a backdrop or banner space behind the band.`);
   if (data.soundBy === "tol") {
     L.push("Together, Out Loud brings its own sound system and engineer. Please provide clear access for load-in and a power supply as listed below.");
@@ -85,43 +109,51 @@ function autoRequirements(data) {
   L.push(`Power: ${m.powerPts + 2} × 230 V power points on stage (surge-protected extension boards)${m.powerPts ? ` (${m.powerPts} for instruments)` : ""}, plus 2 spare.`);
   if (m.seated) L.push(`Seating: ${m.seated} low ${m.seated === 1 ? "stool / floor mat" : "stools / floor mats"} (rugs) for seated players, placed as shown on the plan.`);
   L.push("Stage lighting: warm front wash. Please avoid strobes or harsh flashing lights aimed at the performers.");
+  L.push(recording
+    ? "Recording: we record the show from our own console and sound card — please keep a clear table with 2 power points near front of house."
+    : `Recording: mixing console with a built-in or external USB sound card (multitrack out) so every channel (${m.channels}) can be recorded to our laptop.`);
+  L.push("Talkback: a talkback system so front of house, monitors and every member of the band can speak to each other during soundcheck and the show (talkback mic from the console routed to all stage monitors, or intercom / headsets).");
   L.push("Soundcheck: stage, sound and power ready and the venue quiet before our soundcheck slot.");
   L.push("Drinking water (room temperature) for the band on stage.");
   return L;
 }
 
 function stageSvg(data) {
-  const es = data.instruments.map((e) => ({ e, s: spec(e) }));
+  const ms = musicians(data);
   const place = (arr) => { // centre-out ordering by priority
-    const sorted = arr.slice().sort((a, b) => a.s.prio - b.s.prio);
+    const sorted = arr.slice().sort((a, b) => a.prio - b.prio);
     const out = [];
     sorted.forEach((x, i) => { out[i % 2 === 0 ? "push" : "unshift"](x); });
     return out;
   };
   const chunk = (arr) => { const c = []; for (let i = 0; i < arr.length; i += 5) c.push(arr.slice(i, i + 5)); return c; };
-  const frontRows = chunk(es.filter((x) => x.s.row === "front").sort((a, b) => a.s.prio - b.s.prio)).map(place);
-  const backRows = chunk(es.filter((x) => x.s.row === "back").sort((a, b) => a.s.prio - b.s.prio)).map(place);
-  // Audience is at the bottom: back rows first (top of the picture), front rows last.
-  const ordered = [...backRows, ...frontRows]; // top → bottom
+  const frontRows = chunk(ms.filter((x) => x.row === "front").sort((a, b) => a.prio - b.prio)).map(place);
+  const backRows = chunk(ms.filter((x) => x.row === "back").sort((a, b) => a.prio - b.prio)).map(place);
+  const ordered = [...backRows, ...frontRows]; // top → bottom, audience at the bottom
   const W = 680, rowH = 120, top = 70, H = top + Math.max(1, ordered.length) * rowH + 90;
   const stageX = 30, stageW = W - 60;
   let nodes = "";
   // channel numbers follow the order of the channel list (the order the entries were added)
-  const chStart = new Map(); let c = 1; es.forEach((x) => { chStart.set(x.e, c); c += x.e.ch; });
+  const chStart = new Map(); let c = 1; data.instruments.forEach((e) => { chStart.set(e, c); c += e.ch; });
+  const chText = (entries) => {
+    const parts = entries.filter((e) => e.ch > 0).map((e) => { const a = chStart.get(e); return e.ch === 1 ? `${a}` : `${a}–${a + e.ch - 1}`; });
+    return parts.length ? `CH ${parts.join(", ")}` : "no channel";
+  };
+  const clip = (t, n) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
   ordered.forEach((r, ri) => {
     const y = top + ri * rowH + 50;
     r.forEach((x, i) => {
       const cx = stageX + (stageW * (i + 1)) / (r.length + 1);
-      const col = x.s.color, a = chStart.get(x.e), b = a + x.e.ch - 1;
-      const chTxt = x.e.ch === 0 ? "no channel" : x.e.ch === 1 ? `CH ${a}` : `CH ${a}–${b}`;
+      const long = x.code.length > 4, multi = x.entries.length > 1;
       nodes += `<g>
-        ${x.s.row === "front" && x.s.monitor ? `<polygon points="${cx - 16},${y + 38} ${cx + 16},${y + 38} ${cx + 10},${y + 50} ${cx - 10},${y + 50}" fill="#E9DFCF" stroke="#8A7A66" stroke-width="1"/>` : ""}
-        ${x.s.stands && x.e.ch ? `<circle cx="${cx}" cy="${y + 30}" r="4" fill="none" stroke="#3A2A1A" stroke-width="1.5"/><line x1="${cx}" y1="${y + 34}" x2="${cx}" y2="${y + 38}" stroke="#3A2A1A" stroke-width="1.5"/>` : ""}
-        <circle cx="${cx}" cy="${y}" r="26" fill="${col}" fill-opacity="0.92" stroke="#3A2A1A" stroke-width="1.5"/>
-        <text x="${cx}" y="${y + 4}" text-anchor="middle" font-size="12" font-weight="700" fill="#fff" font-family="Arial,Helvetica,sans-serif">${esc(x.s.code)}</text>
-        ${x.s.power ? `<rect x="${cx + 20}" y="${y - 32}" width="16" height="16" rx="3" fill="#FFF3C4" stroke="#8A5A1F"/><text x="${cx + 28}" y="${y - 20}" text-anchor="middle" font-size="10" font-weight="700" fill="#8A5A1F" font-family="Arial">P</text>` : ""}
-        <text x="${cx}" y="${y + 62}" text-anchor="middle" font-size="12" font-weight="700" fill="#3A2A1A" font-family="Arial,Helvetica,sans-serif">${esc(x.e.label.length > 22 ? x.e.label.slice(0, 21) + "…" : x.e.label)}</text>
-        <text x="${cx}" y="${y + 76}" text-anchor="middle" font-size="10.5" fill="#7A6A58" font-family="Arial,Helvetica,sans-serif">${esc(chTxt)}</text>
+        ${x.row === "front" && x.monitor ? `<polygon points="${cx - 16},${y + 38} ${cx + 16},${y + 38} ${cx + 10},${y + 50} ${cx - 10},${y + 50}" fill="#E9DFCF" stroke="#8A7A66" stroke-width="1"/>` : ""}
+        ${x.stands ? `<circle cx="${cx}" cy="${y + 30}" r="4" fill="none" stroke="#3A2A1A" stroke-width="1.5"/><line x1="${cx}" y1="${y + 34}" x2="${cx}" y2="${y + 38}" stroke="#3A2A1A" stroke-width="1.5"/>` : ""}
+        <circle cx="${cx}" cy="${y}" r="26" fill="${x.color}" fill-opacity="0.92" stroke="#3A2A1A" stroke-width="1.5"/>
+        ${multi ? `<circle cx="${cx}" cy="${y}" r="30" fill="none" stroke="${x.color}" stroke-width="1.5" stroke-dasharray="3 3"/>` : ""}
+        <text x="${cx}" y="${y + 4}" text-anchor="middle" font-size="${long ? 9.5 : 12}" font-weight="700" fill="#fff" font-family="Arial,Helvetica,sans-serif">${esc(x.code)}</text>
+        ${x.power ? `<rect x="${cx + 22}" y="${y - 36}" width="16" height="16" rx="3" fill="#FFF3C4" stroke="#8A5A1F"/><text x="${cx + 30}" y="${y - 24}" text-anchor="middle" font-size="10" font-weight="700" fill="#8A5A1F" font-family="Arial">P</text>` : ""}
+        <text x="${cx}" y="${y + 62}" text-anchor="middle" font-size="${multi ? 11 : 12}" font-weight="700" fill="#3A2A1A" font-family="Arial,Helvetica,sans-serif">${esc(clip(x.label, multi ? 30 : 22))}</text>
+        <text x="${cx}" y="${y + 76}" text-anchor="middle" font-size="10.5" fill="#7A6A58" font-family="Arial,Helvetica,sans-serif">${esc(x.player && multi ? x.player + " · " : "")}${esc(chText(x.entries))}</text>
       </g>`;
     });
   });
@@ -135,6 +167,7 @@ function stageSvg(data) {
       <circle cx="${stageX + 8}" cy="${H - 16}" r="4" fill="none" stroke="#3A2A1A" stroke-width="1.5"/><text x="${stageX + 18}" y="${H - 12}">mic stand</text>
       <polygon points="${stageX + 90},${H - 20} ${stageX + 106},${H - 20} ${stageX + 102},${H - 10} ${stageX + 94},${H - 10}" fill="#E9DFCF" stroke="#8A7A66"/><text x="${stageX + 112}" y="${H - 12}">monitor wedge</text>
       <rect x="${stageX + 210}" y="${H - 22}" width="14" height="14" rx="3" fill="#FFF3C4" stroke="#8A5A1F"/><text x="${stageX + 217}" y="${H - 11}" text-anchor="middle" font-size="9" font-weight="700" fill="#8A5A1F">P</text><text x="${stageX + 230}" y="${H - 12}">power point</text>
+      <circle cx="${stageX + 320}" cy="${H - 15}" r="6" fill="none" stroke="#7A6A58" stroke-dasharray="3 2"/><text x="${stageX + 332}" y="${H - 12}">one musician, more than one instrument</text>
     </g>
   </svg>`;
 }
@@ -145,7 +178,7 @@ function renderRiderPage({ lead, data, token }) {
   let chn = 1;
   const rows = data.instruments.map((e) => {
     const a = chn; chn += e.ch;
-    return `<tr><td>${e.ch === 0 ? "—" : e.ch === 1 ? a : `${a}–${a + e.ch - 1}`}</td><td><b>${esc(e.label)}</b></td><td>${esc(e.mic)}</td><td>${esc(e.note)}</td></tr>`;
+    return `<tr><td>${e.ch === 0 ? "—" : e.ch === 1 ? a : `${a}–${a + e.ch - 1}`}</td><td><b>${esc(e.label)}</b></td><td>${esc(e.mic)}</td><td>${esc([e.player ? `Played by ${e.player}` : "", e.note].filter(Boolean).join(" · "))}</td></tr>`;
   }).join("");
   const when = (label, v) => (v ? `<div><span class="m">${label}</span><br><b>${esc(v)}</b></div>` : "");
   const venue = [lead.venue, lead.city].filter(Boolean).join(", ");
@@ -164,7 +197,7 @@ li{margin:6px 0;line-height:1.45}.btn{display:inline-block;padding:9px 16px;bord
 <div class="m">${esc(lead.occasion || lead.event_type || "")}${lead.date ? " · " + esc(lead.date) : ""}${venue ? " · " + esc(venue) : ""}</div></div>
 <button class="btn noprint" onclick="window.print()">Print / Save as PDF</button></div>
 <div class="c" style="margin-top:14px"><div class="g">
-<div><span class="m">Band size</span><br><b>${m.pcs} pcs</b></div><div><span class="m">Channels</span><br><b>${m.channels}</b></div><div><span class="m">Stage needed</span><br><b>${esc(m.stage)}</b></div>
+<div><span class="m">Band size</span><br><b>${m.pcs} pcs</b>${m.instruments !== m.pcs ? `<span class="m"> · ${m.instruments} instruments</span>` : ""}</div><div><span class="m">Channels</span><br><b>${m.channels}</b></div><div><span class="m">Stage needed</span><br><b>${esc(m.stage)}</b></div>
 ${when("Arrival / load-in", data.arrival)}${when("Soundcheck", data.soundcheck)}${when("Show time", data.showTime)}
 ${data.contactName || data.contactPhone ? `<div><span class="m">Our sound contact</span><br><b>${esc(data.contactName)}${data.contactPhone ? ` · <a href="tel:${esc(String(data.contactPhone).replace(/\s+/g, ""))}" style="color:inherit">${esc(data.contactPhone)}</a>` : ""}</b></div>` : ""}
 </div></div>

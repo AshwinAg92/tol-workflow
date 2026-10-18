@@ -9381,6 +9381,8 @@ async function openTechRiderModal(lead) {
             <span class="muted small">Start from a standard</span>
             ${[2, 3, 4, 5, 6, 7, 8].map((n) => `<button class="btn-ghost tr-preset" data-n="${n}" style="font-size:12.5px; padding:4px 10px;">${n} pcs</button>`).join("")}
           </div>
+          <p class="muted small" style="margin:6px 0 0;">One person playing two instruments (e.g. lead singer on guitar)? Type the <b>same name</b> in "Played by" on both rows — they count as <b>one</b> pc and share one spot on the stage plan.</p>
+          <datalist id="trPlayers"></datalist>
           <div id="trRows" style="margin-top:8px;"></div>
           <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
             <select id="trAdd" style="padding:8px;"><option value="">+ Add an instrument…</option>${cat.catalog.map((c) => `<option value="${c.id}">${escH(c.label)}</option>`).join("")}<option value="custom">Other (type your own)…</option></select>
@@ -9435,8 +9437,8 @@ async function openTechRiderModal(lead) {
         if (!customReqs) q("#trReqs").value = autoReqs.join("\n");
         q("#trReset").style.display = customReqs ? "inline-block" : "none";
         q("#trSvg").innerHTML = r.svg || `<p class="muted small">Add an instrument to see the stage plan.</p>`;
-        const n = S.instruments.length, mism = lead.pcs && Number(lead.pcs) !== n;
-        q("#trCount").innerHTML = `— ${n} pcs · ${r.summary.channels} channels · stage ${escH(r.summary.stage)}${mism ? ` <span style="color:#B6752C;">(this event is booked as ${lead.pcs} pcs)</span>` : ""}`;
+        const n = r.summary.pcs, mism = lead.pcs && Number(lead.pcs) !== n;
+        q("#trCount").innerHTML = `— ${n} pcs${r.summary.instruments !== n ? ` (${r.summary.instruments} instruments)` : ""} · ${r.summary.channels} channels · stage ${escH(r.summary.stage)}${mism ? ` <span style="color:#B6752C;">(this event is booked as ${lead.pcs} pcs)</span>` : ""}`;
       } catch (e) { /* preview is best-effort */ }
     }, 250);
   };
@@ -9448,11 +9450,13 @@ async function openTechRiderModal(lead) {
         <button class="btn-ghost tr-del" data-i="${i}" title="Remove" style="padding:2px;">✕</button>
         <input class="tr-f" data-i="${i}" data-k="mic" value="${a(e.mic)}" placeholder="Mic / DI needed" style="grid-column:1 / 3;" />
         <span></span>
+        <input class="tr-f" data-i="${i}" data-k="player" list="trPlayers" value="${a(e.player || "")}" placeholder="Played by (optional) — e.g. Lead singer" style="grid-column:1 / 4;" />
         <input class="tr-f" data-i="${i}" data-k="note" value="${a(e.note || "")}" placeholder="Note (optional) — e.g. needs a mat" style="grid-column:1 / 4;" />
       </div>`).join("") || `<p class="muted small">No instruments yet — pick a standard band above or add one.</p>`;
     q("#trRows").querySelectorAll(".tr-f").forEach((inp) => inp.addEventListener("input", () => {
       const e = S.instruments[Number(inp.dataset.i)], k = inp.dataset.k;
       e[k] = k === "ch" ? Math.max(0, Math.min(12, Number(inp.value) || 0)) : inp.value;
+      if (k === "player") q("#trPlayers").innerHTML = [...new Set(S.instruments.map((x) => (x.player || "").trim()).filter(Boolean))].map((n) => `<option value="${a(n)}">`).join("");
       refresh();
     }));
     q("#trRows").querySelectorAll(".tr-del").forEach((b) => b.addEventListener("click", () => { S.instruments.splice(Number(b.dataset.i), 1); drawRows(); refresh(); }));
