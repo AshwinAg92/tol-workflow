@@ -2003,6 +2003,7 @@ async function openLeadDetailModal(lead) {
               <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin-bottom:6px; color:#A6432B;">❌ Cancellation</div>
               <div>${lead.cancelled_at ? `Cancelled on <b>${fmtDate(lead.cancelled_at.slice(0, 10))}</b>` : "Cancelled"}${lead.cancelled_by ? ` by <b>${lead.cancelled_by === "client" ? "the client" : lead.cancelled_by === "us" ? "us" : "mutual / other"}</b>` : ""}</div>
               ${lead.cancellation_reason ? `<div class="small" style="margin-top:2px;">Reason: ${escH(lead.cancellation_reason)}</div>` : ""}
+              ${hasLeadsAccess() && (lead.phone || lead.email) ? `<div style="margin-top:8px;"><button class="btn-ghost" id="cxMsgBtn">${lead.cancel_msg_sent_at ? "📩 Cancellation sent ✓ — send again" : "📩 Send cancellation confirmation"}</button></div>` : ""}
               ${hasAccountsAccess() ? `<div id="cxMoneyBlock" style="margin-top:10px;"><p class="muted small">Loading money trail…</p></div>` : ""}
             </div>` : ""}
           ${isConfirmedOrDone ? `
@@ -2036,6 +2037,7 @@ async function openLeadDetailModal(lead) {
     renderMain();
   });
 
+  root.querySelector("#cxMsgBtn")?.addEventListener("click", () => openCancellationMessageModal(lead, async () => { await refreshLeads(); openLeadDetailModal(LEADS.find((x) => x.id === lead.id) || lead); }));
   if (hasLeadsAccess()) api(`/api/leads/${lead.id}/history`).then((hist) => {
     const box = root.querySelector("#leadDetailHistory");
     if (!box) return;
@@ -2503,6 +2505,7 @@ async function renderLeadsLog(main, skipRefresh) {
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team & Expenses</button>` : ""}
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost travel-plan-btn" data-lead-id="${l.id}">🧳 Travel</button>` : ""}
             ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost lead-documents-btn" data-lead-id="${l.id}">📄 Documents</button>` : ""}
+            ${l.stage === "Cancelled" && hasLeadsAccess() && (l.phone || l.email) ? `<button class="btn-ghost cancel-msg-btn" data-lead-id="${l.id}">${l.cancel_msg_sent_at ? "📩 Cancellation sent ✓" : "📩 Cancellation msg"}</button>` : ""}
             ${l.stage === "Completed" && hasLeadsAccess() && l.phone ? `<button class="btn-ghost thank-you-btn" data-lead-id="${l.id}">${l.thanked_at ? "🙏 Thanked ✓" : "🙏 Thank client"}</button>` : ""}
             ${hasLeadsAccess() && l.stage !== "Completed" ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}">✎ Edit</button>` : ""}
             ${CURRENT_USER?.accessLevel === "admin" && l.stage !== "Completed" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="color:#A6432B;">🗑 Delete</button>` : ""}
@@ -2722,6 +2725,13 @@ async function renderLeadsLog(main, skipRefresh) {
     btn.addEventListener("click", () => {
       const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
       if (lead) openConfirmationMessageModal(lead);
+    });
+  });
+
+  main.querySelectorAll(".cancel-msg-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
+      if (lead) openCancellationMessageModal(lead);
     });
   });
 
@@ -9335,6 +9345,59 @@ async function buildThankYouMessage(lead) {
   }), hasReviewLink: !!reviewLink };
 }
 
+function buildCancellationMessage(lead) {
+  const inrC = (n) => "₹" + Number(n).toLocaleString("en-IN");
+  const refundPaid = lead.refund_paid || 0, refundDue = lead.refund_due || 0, kept = lead.cancel_retained || 0;
+  let moneyClause = "";
+  if (lead.received && (lead.cancel_settled_at || refundPaid || refundDue)) {
+    const parts = [`We have received ${inrC(lead.received)} from you so far.`];
+    if (refundPaid) parts.push(`A refund of ${inrC(refundPaid)} has been sent to you.`);
+    if (refundDue) parts.push(`A refund of ${inrC(refundDue)} will be processed to you shortly.`);
+    if (kept) parts.push(`${inrC(kept)} has been retained as a cancellation fee.`);
+    if (!refundPaid && !refundDue && !kept) parts.push("Nothing further is due from either side.");
+    moneyClause = " " + parts.join(" ");
+  }
+  const tpl = MESSAGE_TEMPLATES.cancellation_confirmation || TEMPLATE_META.cancellation_confirmation.default;
+  return fillTemplate(tpl, {
+    firstName: (lead.name || "").split(" ")[0] || "there",
+    experience: packageName(lead.event_type),
+    date: fmtDate(lead.date),
+    moneyClause,
+  });
+}
+
+async function openCancellationMessageModal(lead, onDone) {
+  const root = document.getElementById("modalRoot");
+  const message = buildCancellationMessage(lead);
+  const digits = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
+  const unsettled = hasAccountsAccess() && (lead.received || 0) - (lead.refund_paid || 0) > 0 && !lead.cancel_settled_at;
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card">
+        <div class="modal-head"><h3>Cancellation message — ${escH(lead.name)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body">
+          ${unsettled ? `<p class="small" style="margin-top:0; color:#B6752C;">⚠ You haven't decided the refund yet, so the message has no refund details. Settle first (Details → Settle refund) if you want them included.</p>` : ""}
+          <textarea id="cxMsg" rows="9" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${escH(message)}</textarea>
+          <p class="muted small" style="margin-top:6px; margin-bottom:0;">Edit freely before sending. The wording itself can be changed permanently in Settings → Message templates.</p>
+        </div>
+        <div class="modal-foot">
+          ${digits ? `<button class="btn-ghost" id="cxWa">💬 WhatsApp</button>` : `<span class="muted small">No phone on file</span>`}
+          ${lead.email ? `<button class="btn-ghost" id="cxMail">✉️ Email</button>` : ""}
+          <button class="btn-primary" id="cxDone">Done</button>
+        </div>
+      </div>
+    </div>`;
+  const close = () => { root.innerHTML = ""; if (onDone) onDone(); else renderMain(); };
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#cxDone").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  const stamp = async () => {
+    try { const r = await api(`/api/leads/${lead.id}/cancellation-message-sent`, { method: "POST" }); lead.cancel_msg_sent_at = r.at; const l2 = LEADS.find((x) => x.id === lead.id); if (l2) l2.cancel_msg_sent_at = r.at; } catch {}
+  };
+  root.querySelector("#cxWa")?.addEventListener("click", async () => { const t = root.querySelector("#cxMsg").value; await stamp(); window.location.href = `https://wa.me/${digits}?text=${encodeURIComponent(t)}`; });
+  root.querySelector("#cxMail")?.addEventListener("click", async () => { const t = root.querySelector("#cxMsg").value; await stamp(); window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Your booking with Together, Out Loud — cancellation confirmation")}&body=${encodeURIComponent(t)}`; });
+}
+
 async function openThankYouMessageModal(lead) {
   const root = document.getElementById("modalRoot");
   const { message, hasReviewLink: reviewLink } = await buildThankYouMessage(lead);
@@ -9953,6 +10016,12 @@ const TEMPLATE_META = {
     description: "Sent from the \"Release this date\" popup to leads whose date has just been taken by another confirmed/tentative booking.",
     placeholders: ["firstName", "experience", "date"],
     default: "Hi {firstName}, thank you for your interest in {experience} on {date} with Together, Out Loud. Unfortunately that date has now been booked for another event, so we won't be able to hold it. If you have a flexible or alternate date, we'd love to make it work \u2014 just let us know!\n\n\uD83D\uDCF7 instagram.com/togetheroutloudclub | \uD83C\uDF10 togetheroutloud.in",
+  },
+  cancellation_confirmation: {
+    label: "Cancellation confirmation",
+    description: "Sent from the \"📩 Cancellation msg\" button on a cancelled lead. {moneyClause} is filled in automatically from the refund / cancellation-fee settlement (empty until it's settled).",
+    placeholders: ["firstName", "experience", "date", "moneyClause"],
+    default: "Hi {firstName}, this is to confirm that your {experience} on {date} with Together, Out Loud has been cancelled as discussed.{moneyClause}\n\nWe're sorry we won't be performing for you this time — if your plans change, we'd love to be part of your celebration in future. Please reach out any time.\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
   date_hold_check: {
     label: "Date confirmation request",

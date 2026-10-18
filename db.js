@@ -364,6 +364,7 @@ async function setup() {
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS cancel_retained INTEGER`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS cancel_settled_at TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS cancel_notes TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS cancel_msg_sent_at TEXT`);
   // Lets the Leads tab show "last followed up X ago" on each card so
   // Ashwin/Prakriti can tell at a glance who still needs a nudge, instead of
   // having to remember or reopen WhatsApp to check.

@@ -3762,6 +3762,17 @@ app.post("/api/leads/:id/cancel-settlement", requireAuth, requireSection("accoun
   res.json({ held, retained, refund });
 });
 
+// Stamp that the cancellation confirmation went to the client (and put it in the lead's history).
+app.post("/api/leads/:id/cancellation-message-sent", requireAuth, async (req, res) => {
+  if (!userHasSection(req.user, "leads") || isScopedManager(req.user)) return res.status(403).json({ error: "You don't have access to leads" });
+  const lead = (await pool.query("SELECT id, name, stage FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  if (!lead || lead.stage !== "Cancelled") return res.status(400).json({ error: "Only for a cancelled event" });
+  const at = new Date().toISOString();
+  await pool.query("UPDATE leads SET cancel_msg_sent_at = $1 WHERE id = $2", [at, lead.id]);
+  logActivity(req, `Cancellation confirmation sent to ${lead.name}`, lead.id);
+  res.json({ at });
+});
+
 // One lead's change history (stage moves, payments, refunds, settlement) — the audit trail behind a cancellation.
 app.get("/api/leads/:id/history", requireAuth, async (req, res) => {
   if (!userHasSection(req.user, "leads") || isScopedManager(req.user)) return res.status(403).json({ error: "You don't have access to leads" });
