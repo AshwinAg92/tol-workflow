@@ -357,6 +357,13 @@ async function setup() {
   // bytes directly in Postgres instead, which is what the app already relies on
   // for everything else surviving redeploys. stored_name is no longer written to.
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS cancellation_reason TEXT`);
+  // Cancellation settlement: who cancelled, when, how much of the advance TOL keeps as a cancellation
+  // fee, and when the refund decision was recorded. The refund itself lives in `payments` (type 'refund').
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS cancelled_at TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS cancelled_by TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS cancel_retained INTEGER`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS cancel_settled_at TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS cancel_notes TEXT`);
   // Lets the Leads tab show "last followed up X ago" on each card so
   // Ashwin/Prakriti can tell at a glance who still needs a nudge, instead of
   // having to remember or reopen WhatsApp to check.

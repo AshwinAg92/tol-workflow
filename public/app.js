@@ -462,6 +462,124 @@ const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "numer
 // month-end "why are we losing leads" report has clean, groupable data
 // instead of free text. Returns a Promise resolving to the chosen reason
 // string, or null if the person backs out (stage change is then aborted).
+
+// ---------- Cancelling an event: reason, who cancelled, and what happens to money already received ----------
+const CANCEL_REASONS = ["Client changed plans", "Date or venue changed", "Family / personal reason", "Budget issue", "Weather / force majeure", "We couldn't do it", "Other"];
+const escH = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// How much cash we're still holding for an event: fee payments received minus refunds already paid out.
+async function moneyHeldFor(leadId) {
+  try {
+    const pays = await api(`/api/leads/${leadId}/payments`);
+    const got = pays.filter((x) => x.type === "payment" && x.status === "received").reduce((t, x) => t + x.amount, 0);
+    const back = pays.filter((x) => x.type === "refund" && x.status === "paid").reduce((t, x) => t + x.amount, 0);
+    return { held: got - back, pays };
+  } catch { return { held: 0, pays: [] }; }
+}
+
+// Resolves null if backed out, else { reason, cancelledBy, retained (null when no money held), notes }.
+// settleOnly = the event is already cancelled; we only record the money decision.
+function openCancelEventModal(lead, held, settleOnly) {
+  return new Promise((resolve) => {
+    const root = document.getElementById("modalRoot");
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay">
+        <div class="modal-card" style="width:460px; max-width:96vw;">
+          <div class="modal-head"><h3>${settleOnly ? "Settle cancellation" : "Cancel"} — ${escH(lead.name)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+          <div class="modal-body">
+            ${settleOnly ? "" : `
+            <label>Why is it cancelled?</label>
+            <select id="cxReason">${CANCEL_REASONS.map((r) => `<option>${r}</option>`).join("")}</select>
+            <label style="margin-top:8px;">Details <span class="muted small">(what the client said — kept on record, shared with assigned artists)</span></label>
+            <textarea id="cxDetails" rows="2" placeholder="e.g. Family emergency, wants to postpone to next year"></textarea>`}
+            <label style="margin-top:8px;">Who cancelled?</label>
+            <div style="display:flex; gap:14px; flex-wrap:wrap;">
+              ${[["client", "Client"], ["us", "Us (TOL)"], ["other", "Other / mutual"]].map(([v, l], i) => `<label style="font-weight:400;"><input type="radio" name="cxBy" value="${v}"${(settleOnly ? (lead.cancelled_by || "client") : "client") === v ? " checked" : ""}/> ${l}</label>`).join("")}
+            </div>
+            ${held > 0 ? `
+            <div style="margin-top:12px; padding:10px 12px; background:#FBF3D9; border:1px solid #E8D488; border-radius:8px;">
+              <div><b>💰 You are holding ${inr(held)}</b> from this client. What happens to it?</div>
+              <label style="font-weight:400; display:block; margin-top:6px;"><input type="radio" name="cxMoney" value="full" checked/> Refund all — ${inr(held)} back to client</label>
+              <label style="font-weight:400; display:block; margin-top:4px;"><input type="radio" name="cxMoney" value="part"/> Keep part as cancellation fee, refund the rest</label>
+              <div id="cxPartWrap" style="display:none; margin:6px 0 0 22px;"><input id="cxKeep" type="number" inputmode="numeric" min="0" max="${held}" placeholder="Amount we keep ₹" style="width:170px;"/></div>
+              <label style="font-weight:400; display:block; margin-top:4px;"><input type="radio" name="cxMoney" value="all"/> Keep all — no refund</label>
+              <div id="cxSummary" class="small" style="margin-top:8px; font-weight:600;"></div>
+            </div>
+            <label style="margin-top:8px;">Note on the money <span class="muted small">(optional — e.g. "client agreed to 20% fee")</span></label>
+            <input id="cxNotes" placeholder="Anything to remember about this settlement" />` : `<p class="muted small" style="margin-top:10px;">No payment has been received for this event, so there's nothing to refund.</p>`}
+            <div id="cxErr" class="small" style="color:#A6432B; margin-top:6px;"></div>
+          </div>
+          <div class="modal-foot">
+            <button class="btn-ghost" id="cancelModal">${settleOnly ? "Close" : "Keep event"}</button>
+            <button class="btn-primary" id="cxGo" style="${settleOnly ? "" : "background:#A6432B;"}">${settleOnly ? "Save settlement" : "Cancel event"}</button>
+          </div>
+        </div>
+      </div>`;
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; root.innerHTML = ""; resolve(v); } };
+    const q = (sel) => root.querySelector(sel);
+    q("#closeModal").addEventListener("click", () => finish(null));
+    q("#cancelModal").addEventListener("click", () => finish(null));
+    q("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") finish(null); });
+    const mode = () => (root.querySelector('input[name="cxMoney"]:checked') || {}).value;
+    const keepAmt = () => (mode() === "all" ? held : mode() === "part" ? Math.round(Number(q("#cxKeep").value || 0)) : 0);
+    const sum = () => {
+      if (!held) return;
+      q("#cxPartWrap").style.display = mode() === "part" ? "block" : "none";
+      const k = keepAmt();
+      q("#cxSummary").innerHTML = k > held || k < 0 ? `<span style="color:#A6432B;">Can't keep more than ${inr(held)}</span>` : `Keep ${inr(k)} · Refund to client <span style="color:${held - k > 0 ? "#A6432B" : "#1C7A80"};">${inr(held - k)}</span>`;
+    };
+    root.querySelectorAll('input[name="cxMoney"]').forEach((r) => r.addEventListener("change", sum));
+    if (held) { q("#cxKeep").addEventListener("input", sum); sum(); }
+    q("#cxGo").addEventListener("click", () => {
+      const k = held ? keepAmt() : null;
+      if (held && (k > held || k < 0 || !Number.isFinite(k))) { q("#cxErr").textContent = `Enter an amount between 0 and ${inr(held)}`; return; }
+      const reason = settleOnly ? null : q("#cxReason").value;
+      const details = settleOnly ? "" : q("#cxDetails").value.trim();
+      if (!settleOnly && reason === "Other" && !details) { q("#cxErr").textContent = "Please add the details — you picked Other."; return; }
+      finish({
+        reason: settleOnly ? null : (details ? `${reason}: ${details}` : reason),
+        cancelledBy: (root.querySelector('input[name="cxBy"]:checked') || {}).value || "client",
+        retained: k, notes: held ? q("#cxNotes").value.trim() : "",
+      });
+    });
+  });
+}
+
+// Mark a refund as paid out to the client — date, mode and a reference for the record.
+function openRefundPaidModal(payment, leadName) {
+  return new Promise((resolve) => {
+    const root = document.getElementById("modalRoot");
+    const today = new Date().toISOString().slice(0, 10);
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay">
+        <div class="modal-card" style="width:420px; max-width:96vw;">
+          <div class="modal-head"><h3>Refund paid — ${escH(leadName)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+          <div class="modal-body">
+            <p>Refund of <b>${inr(payment.amount)}</b> sent to the client.</p>
+            <label>Date paid</label><input id="rfDate" type="date" max="${today}" value="${today}" />
+            <label style="margin-top:8px;">How</label>
+            <select id="rfMode"><option>UPI</option><option>Bank transfer</option><option>Cash</option><option>Cheque</option><option>Other</option></select>
+            <label style="margin-top:8px;">Reference <span class="muted small">(UTR / txn id, optional)</span></label><input id="rfRef" placeholder="e.g. UTR 4081…" />
+            <div id="rfErr" class="small" style="color:#A6432B; margin-top:6px;"></div>
+          </div>
+          <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="rfGo">Mark refund paid</button></div>
+        </div>
+      </div>`;
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; root.innerHTML = ""; resolve(v); } };
+    root.querySelector("#closeModal").addEventListener("click", () => finish(null));
+    root.querySelector("#cancelModal").addEventListener("click", () => finish(null));
+    root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") finish(null); });
+    root.querySelector("#rfGo").addEventListener("click", async () => {
+      try {
+        await api(`/api/payments/${payment.id}`, { method: "PATCH", body: JSON.stringify({ status: "paid", date: root.querySelector("#rfDate").value, mode: root.querySelector("#rfMode").value, notes: root.querySelector("#rfRef").value.trim() || undefined }) });
+        finish(true);
+      } catch (e) { root.querySelector("#rfErr").textContent = e.message || "Couldn't save"; }
+    });
+  });
+}
+
 function openNotInterestedReasonModal(leadName) {
   return new Promise((resolve) => {
     const root = document.getElementById("modalRoot");
@@ -1880,6 +1998,13 @@ async function openLeadDetailModal(lead) {
               ${lead.stage === "Tentative" ? `<p class="muted small" style="margin-top:6px;">This is a tentative hold, not a locked-in rate yet.</p>` : ""}
             </div>
           ` : ""}
+          ${lead.stage === "Cancelled" ? `
+            <div class="lead-detail-section" style="background:#FBF0EC; border:1px solid #E8C3B8; border-radius:8px; padding:10px 12px; margin-top:12px;">
+              <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin-bottom:6px; color:#A6432B;">❌ Cancellation</div>
+              <div>${lead.cancelled_at ? `Cancelled on <b>${fmtDate(lead.cancelled_at.slice(0, 10))}</b>` : "Cancelled"}${lead.cancelled_by ? ` by <b>${lead.cancelled_by === "client" ? "the client" : lead.cancelled_by === "us" ? "us" : "mutual / other"}</b>` : ""}</div>
+              ${lead.cancellation_reason ? `<div class="small" style="margin-top:2px;">Reason: ${escH(lead.cancellation_reason)}</div>` : ""}
+              ${hasAccountsAccess() ? `<div id="cxMoneyBlock" style="margin-top:10px;"><p class="muted small">Loading money trail…</p></div>` : ""}
+            </div>` : ""}
           ${isConfirmedOrDone ? `
             <div class="lead-detail-section">
               <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">🧳 Who's travelling</div>
@@ -1910,6 +2035,56 @@ async function openLeadDetailModal(lead) {
     renderMain();
   });
 
+  if (lead.stage === "Cancelled" && hasAccountsAccess()) {
+    const block = root.querySelector("#cxMoneyBlock");
+    const reopen = async () => { await refreshLeads(); const fresh = LEADS.find((x) => x.id === lead.id) || lead; openLeadDetailModal(fresh); };
+    try {
+      const [pays, hist] = await Promise.all([api(`/api/leads/${lead.id}/payments`), api(`/api/leads/${lead.id}/history`).catch(() => [])]);
+      if (block) {
+        const got = pays.filter((x) => x.type === "payment" && x.status === "received");
+        const refunds = pays.filter((x) => x.type === "refund");
+        const gotT = got.reduce((t, x) => t + x.amount, 0);
+        const paidT = refunds.filter((x) => x.status === "paid").reduce((t, x) => t + x.amount, 0);
+        const dueRef = refunds.filter((x) => x.status === "due");
+        const dueT = dueRef.reduce((t, x) => t + x.amount, 0);
+        const kept = gotT - paidT - dueT;
+        const settled = !!lead.cancel_settled_at;
+        const line = (d, t, amt, col) => `<div style="display:flex; justify-content:space-between; gap:8px; padding:3px 0; border-top:1px solid #EBD3CA;"><span class="small">${d ? fmtDate(String(d).slice(0, 10)) + " · " : ""}${t}</span><span class="mono small" style="color:${col};">${amt}</span></div>`;
+        block.innerHTML = `
+          <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; text-align:center;">
+            <div><div class="muted small">Received</div><div class="mono"><b>${inr(gotT)}</b></div></div>
+            <div><div class="muted small">Refund ${dueT ? "due" : "paid"}</div><div class="mono" style="color:#A6432B;"><b>${inr(dueT || paidT)}</b></div></div>
+            <div><div class="muted small">We keep</div><div class="mono" style="color:#1C7A80;"><b>${settled ? inr(Math.max(0, kept)) : "—"}</b></div></div>
+          </div>
+          <div style="margin-top:8px;">
+            ${got.map((x) => line(x.payment_date, `Payment received${x.payment_mode ? " via " + escH(x.payment_mode) : ""}`, "+" + inr(x.amount), "#1C7A80")).join("")}
+            ${refunds.map((x) => line(x.status === "paid" ? x.payment_date : "", x.status === "paid" ? `Refund paid${x.payment_mode ? " via " + escH(x.payment_mode) : ""}${x.notes ? " · " + escH(x.notes) : ""}` : "Refund due to client", "−" + inr(x.amount), "#A6432B")).join("")}
+          </div>
+          ${gotT === 0 ? `<p class="muted small" style="margin-top:6px;">No payment was received — nothing to settle.</p>` : ""}
+          ${lead.cancel_notes ? `<div class="small" style="margin-top:6px;">📝 ${escH(lead.cancel_notes)}</div>` : ""}
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+            ${CURRENT_USER.accessLevel === "admin" && gotT - paidT > 0 && !dueT ? `<button class="btn-primary" id="cxSettleBtn">${settled ? "Revisit settlement" : "Settle refund"}</button>` : ""}
+            ${CURRENT_USER.accessLevel === "admin" && dueRef.map((r) => `<button class="btn-primary cx-paid" data-id="${r.id}">✓ Mark refund of ${inr(r.amount)} paid</button>`).join("")}
+            ${CURRENT_USER.accessLevel === "admin" && dueT ? `<button class="btn-ghost" id="cxResettleBtn">Change decision</button>` : ""}
+          </div>
+          ${hist.length ? `<details style="margin-top:10px;"><summary class="small" style="cursor:pointer;"><b>History (${hist.length})</b></summary>${hist.map((h) => `<div class="small" style="padding:3px 0; border-top:1px solid #EBD3CA;"><span class="muted">${fmtDateTime(h.created_at)}${h.actor ? " · " + escH(h.actor) : ""}</span><div>${escH(h.message)}</div></div>`).join("")}</details>` : ""}`;
+        const settle = async () => {
+          const { held } = await moneyHeldFor(lead.id);
+          const r = await openCancelEventModal(lead, held, true);
+          if (r === null) return reopen();
+          try { await api(`/api/leads/${lead.id}/cancel-settlement`, { method: "POST", body: JSON.stringify({ retainedAmount: r.retained, cancelledBy: r.cancelledBy, notes: r.notes }) }); } catch (e) { alert(e.message); }
+          reopen();
+        };
+        block.querySelector("#cxSettleBtn")?.addEventListener("click", settle);
+        block.querySelector("#cxResettleBtn")?.addEventListener("click", settle);
+        block.querySelectorAll(".cx-paid").forEach((b) => b.addEventListener("click", async () => {
+          const pay = pays.find((x) => x.id === b.dataset.id);
+          await openRefundPaidModal(pay, lead.name);
+          reopen();
+        }));
+      }
+    } catch (e) { if (block) block.innerHTML = `<p class="muted small">Couldn't load the money trail.</p>`; }
+  }
   if (hasAccountsAccess()) try {
     const allQuotes = await api("/api/quotes");
     const quotesForLead = allQuotes.filter((q) => q.lead_id === lead.id);
@@ -2293,7 +2468,13 @@ async function renderLeadsLog(main, skipRefresh) {
               <textarea class="lead-note-input" data-lead-id="${l.id}" rows="2" placeholder="Quick note for this lead…" style="width:100%; padding:6px 8px; border:1px solid #E0CE8A; border-radius:5px; font-family:inherit; font-size:16px; background:#FFFDF6; resize:vertical;">${l.notes || ""}</textarea>
             </div>
           ` : (l.notes ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#FBEFD9; border-radius:4px;">📝 ${l.notes}</div>` : "")}
-          ${l.stage === "Cancelled" && l.cancellation_reason ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#F7E4DF; border-radius:4px; color:#A6432B;">❌ Cancelled: ${l.cancellation_reason}</div>` : ""}
+          ${l.stage === "Cancelled" && l.cancellation_reason ? `<div class="muted small" style="margin-top:4px; padding:6px 8px; background:#F7E4DF; border-radius:4px; color:#A6432B;">❌ Cancelled${l.cancelled_by === "client" ? " by client" : l.cancelled_by === "us" ? " by us" : ""}: ${escH(l.cancellation_reason)}</div>` : ""}
+          ${l.stage === "Cancelled" && hasAccountsAccess() && (l.received || l.refund_due || l.refund_paid) ? (() => {
+            const heldC = (l.received || 0) - (l.refund_paid || 0);
+            if (l.refund_due) return `<div class="small" style="margin-top:4px; padding:6px 8px; background:#F7E4DF; border-radius:4px; color:#A6432B; font-weight:700;">↩ Refund due to client: ${inr(l.refund_due)} — open Details to mark paid</div>`;
+            if (heldC > 0 && !l.cancel_settled_at) return `<div class="small" style="margin-top:4px; padding:6px 8px; background:#FBF3D9; border-radius:4px; color:#B6752C; font-weight:700;">⚠ ${inr(heldC)} received — decide refund (open Details)</div>`;
+            return `<div class="small" style="margin-top:4px; padding:6px 8px; background:#E4F1F1; border-radius:4px; color:#1C7A80;">✓ Cancellation settled${l.refund_paid ? ` — ${inr(l.refund_paid)} refunded` : ""}${l.cancel_retained ? ` · ${inr(l.cancel_retained)} kept` : ""}</div>`;
+          })() : ""}
           ${hasRateInfo && hasAccountsAccess() ? `
             <div class="lead-card-financials" style="${displayReimbursementDue ? "grid-template-columns:repeat(2,1fr);" : ""}">
               <div><span class="muted small">${l.stage === "Tentative" ? "Rate held" : "Final"}</span><div class="mono">${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
@@ -2608,14 +2789,16 @@ async function renderLeadsLog(main, skipRefresh) {
         openTentativeRateModal(lead);
         return;
       }
-      let cancellationReason;
+      let cancellationReason, cancelDecision = null;
       if (newStage === "Cancelled" && lead.stage !== "Cancelled") {
-        cancellationReason = prompt(`Why is "${lead.name}" being cancelled? (This is shared with any artists already assigned, and kept on record.)`);
-        if (cancellationReason === null) {
-          // They backed out of the prompt — don't change the stage at all.
+        const heldNow = hasAccountsAccess() && CURRENT_USER.accessLevel === "admin" ? (await moneyHeldFor(lead.id)).held : 0;
+        cancelDecision = await openCancelEventModal(lead, heldNow, false);
+        if (cancelDecision === null) {
+          // They backed out — don't change the stage at all.
           renderMain();
           return;
         }
+        cancellationReason = cancelDecision.reason;
       }
       let notInterestedReason;
       if (newStage === "Not Interested" && lead.stage !== "Not Interested") {
@@ -2632,9 +2815,13 @@ async function renderLeadsLog(main, skipRefresh) {
           body: JSON.stringify({
             stage: newStage,
             ...(cancellationReason !== undefined ? { cancellation_reason: cancellationReason || null } : {}),
+            ...(cancelDecision ? { cancelled_by: cancelDecision.cancelledBy } : {}),
             ...(notInterestedReason !== undefined ? { notInterestedReason: notInterestedReason || null } : {}),
           }),
         });
+        if (cancelDecision && cancelDecision.retained !== null) {
+          await api(`/api/leads/${leadId}/cancel-settlement`, { method: "POST", body: JSON.stringify({ retainedAmount: cancelDecision.retained, cancelledBy: cancelDecision.cancelledBy, notes: cancelDecision.notes }) });
+        }
         await refreshLeads();
         renderMain();
       } catch (err) {
@@ -5221,7 +5408,7 @@ async function openLeadPaymentsModal(leadId) {
     const body = root.querySelector(".modal-body");
     if (!body) return; // modal was closed while loading — nothing to update
     const total = lead.final_amount || lead.quote_amount || 0;
-    const feePayments = payments.filter((p) => p.type !== "client_reimbursement");
+    const feePayments = payments.filter((p) => p.type !== "client_reimbursement" && p.type !== "refund");
     const reimbursements = payments.filter((p) => p.type === "client_reimbursement");
     const reimbursementsDue = reimbursements.filter((p) => p.status === "due");
     const reimbursementsReceived = reimbursements.filter((p) => p.status === "received");

@@ -163,7 +163,7 @@ function requireCapability(capability) {
 const canSeeMoney = (user) => userHasSection(user, "accounts");
 // Money on a lead row (what the client budgeted / was quoted / pays). Anyone without
 // Accounts access (a manager, say) never receives these, whichever endpoint asks.
-const LEAD_MONEY_FIELDS = ["quote_amount", "final_amount", "budget", "advance", "advance_date", "received", "reimbursement_due"];
+const LEAD_MONEY_FIELDS = ["quote_amount", "final_amount", "budget", "advance", "advance_date", "received", "reimbursement_due", "refund_due", "refund_paid", "cancel_retained"];
 function stripLeadMoney(l, user) {
   if (!l || canSeeMoney(user)) return l;
   const o = { ...l };
@@ -852,6 +852,9 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   const receivedByLead = {};
   paymentSums.forEach((p) => (receivedByLead[p.lead_id] = Number(p.total)));
   const dueReimbursementSums = (await pool.query("SELECT lead_id, COALESCE(SUM(amount), 0) AS total FROM payments WHERE type = 'client_reimbursement' AND status = 'due' GROUP BY lead_id")).rows;
+  const refundSums = (await pool.query("SELECT lead_id, status, COALESCE(SUM(amount), 0) AS total FROM payments WHERE type = 'refund' GROUP BY lead_id, status")).rows;
+  const refundDueByLead = {}, refundPaidByLead = {};
+  refundSums.forEach((r) => { (r.status === "paid" ? refundPaidByLead : refundDueByLead)[r.lead_id] = Number(r.total); });
   const dueReimbursementByLead = {};
   dueReimbursementSums.forEach((p) => (dueReimbursementByLead[p.lead_id] = Number(p.total)));
   // So the Leads tab can show "when did I last quote this person" -- helps
@@ -902,6 +905,8 @@ app.get("/api/leads", requireAuth, async (req, res) => {
     team_declined: teamByLead[l.id]?.declined || 0,
     received: receivedByLead[l.id] || 0,
     reimbursement_due: dueReimbursementByLead[l.id] || 0,
+    refund_due: refundDueByLead[l.id] || 0,
+    refund_paid: refundPaidByLead[l.id] || 0,
     last_quoted_at: lastQuotedByLead[l.id]?.last_quoted_at || null,
     quote_count: lastQuotedByLead[l.id]?.quote_count || 0,
   }));
@@ -2198,11 +2203,11 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const leadsOnlyFields = [
     "stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "date",
     "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration", "whatsapp_number",
-    "cancellation_reason", "snooze_until", "state", "rate_type", "rate_note", "rate_inclusions", "occasion_other", "not_interested_reason", "is_b2b", "thanked_at",
+    "cancellation_reason", "cancelled_by", "snooze_until", "state", "rate_type", "rate_note", "rate_inclusions", "occasion_other", "not_interested_reason", "is_b2b", "thanked_at",
   ];
   const sharedFields = ["event_time", "soundcheck_time", "venue", "sound_manager_name", "sound_manager_phone", "coordinator_name", "coordinator_phone", "contacts"];
   if (!hasLeads) {
-    const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f === "not_interested_reason" ? "notInterestedReason" : f === "is_b2b" ? "isB2b" : f === "thanked_at" ? "thankedAt" : f);
+    const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f === "not_interested_reason" ? "notInterestedReason" : f === "is_b2b" ? "isB2b" : f === "thanked_at" ? "thankedAt" : f === "cancelled_by" ? "cancelledBy" : f);
     const attemptedRestricted = leadsOnlyFields.some((f) => req.body[keyFor(f)] !== undefined);
     if (attemptedRestricted) return res.status(403).json({ error: "You don't have permission to update those fields" });
   }
@@ -2305,6 +2310,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   if (req.body.stage === "Cancelled" && lead.stage !== "Cancelled") {
     const assigned = (await pool.query("SELECT team_id FROM event_assignments WHERE lead_id = $1", [req.params.id])).rows;
     const now = new Date().toISOString();
+    await pool.query("UPDATE leads SET cancelled_at = COALESCE(cancelled_at, $1) WHERE id = $2", [now, req.params.id]);
     const reasonSuffix = req.body.cancellation_reason ? ` Reason: ${req.body.cancellation_reason}` : "";
     for (const a of assigned) {
       await pool.query(`
@@ -3723,13 +3729,66 @@ app.post("/api/leads/:id/payments", requireAuth, requireSection("accounts"), req
   logActivity(req, `${finalType === "client_reimbursement" ? `Reimbursement ${finalStatus === "due" ? "logged as due" : "recorded"}` : "Payment recorded"} for ${lead.name}: ₹${Number(amount).toLocaleString("en-IN")}${finalStatus === "received" && mode ? ` via ${mode}` : ""}`, lead.id);
 });
 
+// ---------- Cancellation settlement ----------
+// A cancelled event that already took money needs a decision: refund all, keep part as a cancellation
+// fee, or keep it all. Re-running it replaces an unpaid refund; a refund already paid out is never touched.
+app.post("/api/leads/:id/cancel-settlement", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  if (lead.stage !== "Cancelled") return res.status(400).json({ error: "Only a cancelled event can be settled" });
+  const received = Number((await pool.query("SELECT COALESCE(SUM(amount),0) AS t FROM payments WHERE lead_id = $1 AND type = 'payment' AND status = 'received'", [lead.id])).rows[0].t);
+  const alreadyRefunded = Number((await pool.query("SELECT COALESCE(SUM(amount),0) AS t FROM payments WHERE lead_id = $1 AND type = 'refund' AND status = 'paid'", [lead.id])).rows[0].t);
+  const held = received - alreadyRefunded;
+  const retained = Math.round(Number(req.body.retainedAmount || 0));
+  if (!Number.isFinite(retained) || retained < 0) return res.status(400).json({ error: "Enter the amount you're keeping (0 for a full refund)" });
+  if (retained > held) return res.status(400).json({ error: `You only hold ₹${held.toLocaleString("en-IN")}` });
+  const cancelledBy = ["client", "us", "other"].includes(req.body.cancelledBy) ? req.body.cancelledBy : null;
+  const notes = String(req.body.notes || "").slice(0, 500) || null;
+  const refund = held - retained;
+  await pool.query("DELETE FROM payments WHERE lead_id = $1 AND type = 'refund' AND status = 'due'", [lead.id]);
+  const today = new Date().toISOString().slice(0, 10);
+  if (refund > 0) {
+    await pool.query("INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, type, status, created_at) VALUES ($1,$2,$3,$4,NULL,$5,'refund','due',$6)",
+      [uuid(), lead.id, refund, today, notes, new Date().toISOString()]);
+  }
+  await pool.query("UPDATE leads SET cancel_retained = $1, cancel_settled_at = $2, cancelled_by = COALESCE($3, cancelled_by), cancel_notes = $4 WHERE id = $5",
+    [retained, new Date().toISOString(), cancelledBy, notes, lead.id]);
+  const inr = (n) => "₹" + Number(n).toLocaleString("en-IN");
+  logActivity(req, `Cancellation settled for ${lead.name}: held ${inr(held)}, keeping ${inr(retained)}${refund > 0 ? `, refund of ${inr(refund)} due to client` : ", no refund due"}`, lead.id);
+  if (refund > 0) {
+    await pool.query("INSERT INTO admin_notifications (id, message, assignment_id, audience, created_at) VALUES ($1,$2,NULL,'admin',$3)",
+      [uuid(), `↩ Refund due: ${escHtml(inr(refund))} to ${escHtml(lead.name)} (cancelled event, ${escHtml(lead.date)}).`, new Date().toISOString()]);
+  }
+  res.json({ held, retained, refund });
+});
+
+// One lead's change history (stage moves, payments, refunds, settlement) — the audit trail behind a cancellation.
+app.get("/api/leads/:id/history", requireAuth, requireSection("accounts"), async (req, res) => {
+  const { rows } = await pool.query("SELECT message, actor, created_at FROM activity_log WHERE lead_id = $1 ORDER BY created_at ASC", [req.params.id]);
+  res.json(rows);
+});
+
 // Marks a due reimbursement as actually received from the client (or
 // reverts a received one back to due, if it was marked by mistake) — the
 // same "due → paid" transition the expenses table already has for artist fees.
 app.patch("/api/payments/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   const payment = (await pool.query("SELECT * FROM payments WHERE id = $1", [req.params.id])).rows[0];
   if (!payment) return res.status(404).json({ error: "Payment not found" });
-  if (payment.type !== "client_reimbursement") return res.status(400).json({ error: "Only reimbursements can change status" });
+  if (payment.type === "refund") {
+    const { status, date, mode, notes } = req.body;
+    if (status !== "paid" && status !== "due") return res.status(400).json({ error: "status must be 'paid' or 'due'" });
+    const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [payment.lead_id])).rows[0];
+    if (status === "paid") {
+      const d = date || new Date().toISOString().slice(0, 10);
+      if (d > new Date().toISOString().slice(0, 10)) return res.status(400).json({ error: "Date can't be in the future" });
+      await pool.query("UPDATE payments SET status = 'paid', payment_date = $1, payment_mode = $2, notes = COALESCE($3, notes) WHERE id = $4", [d, mode || null, notes ? String(notes).slice(0, 300) : null, payment.id]);
+    } else {
+      await pool.query("UPDATE payments SET status = 'due', payment_mode = NULL WHERE id = $1", [payment.id]);
+    }
+    logActivity(req, `Refund ${status === "paid" ? "paid to client" : "marked due again"} for ${lead?.name || "a lead"}: ₹${Number(payment.amount).toLocaleString("en-IN")}${status === "paid" && mode ? ` via ${mode}` : ""}`, payment.lead_id);
+    return res.json((await pool.query("SELECT * FROM payments WHERE id = $1", [payment.id])).rows[0]);
+  }
+  if (payment.type !== "client_reimbursement") return res.status(400).json({ error: "Only reimbursements and refunds can change status" });
   const { status, date, mode } = req.body;
   if (status !== "received" && status !== "due") return res.status(400).json({ error: "status must be 'received' or 'due'" });
   if (status === "received") {
@@ -3791,6 +3850,13 @@ app.get("/api/transactions", requireAuth, requireSection("accounts"), async (req
       (CASE WHEN p.type = 'client_reimbursement' THEN 'Reimbursement received' ELSE 'Payment received' END) AS description
     FROM payments p
     JOIN leads l ON l.id = p.lead_id
+    WHERE p.type <> 'refund'
+
+    UNION ALL
+
+    SELECT 'out' AS direction, p.id, p.amount, p.payment_date AS date, p.payment_mode AS mode, l.name AS party_name, 'Refund to client' AS description
+    FROM payments p JOIN leads l ON l.id = p.lead_id
+    WHERE p.type = 'refund' AND p.status = 'paid'
 
     ORDER BY date DESC
     LIMIT 30
@@ -4920,7 +4986,7 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
     // Fee payments only — see the matching comment in /api/leads. Reimbursement
     // money, once received, must stay out of this or Outstanding goes
     // negative by the reimbursed amount even though nothing is actually owed.
-    pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'received' AND type = 'payment'`),
+    pool.query(`SELECT COALESCE(SUM(p.amount), 0) AS total FROM payments p JOIN leads l ON l.id = p.lead_id WHERE p.status = 'received' AND p.type = 'payment' AND l.stage IN ('Confirmed', 'Completed')`),
     pool.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE type = 'client_reimbursement' AND status = 'due'`),
     pool.query(`SELECT * FROM tasks WHERE done = 0 AND (due_date <= $1 OR due_date IS NULL) ORDER BY due_date ASC LIMIT 8`, [weekAhead]),
     pool.query(`SELECT COUNT(*) AS c FROM leads WHERE stage = 'New'`),
