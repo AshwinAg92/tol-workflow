@@ -604,6 +604,17 @@ async function setup() {
     await pool.query("UPDATE leads SET is_seed = 1 WHERE name = ANY($1::text[])", [demoLeadNames]);
   }
 
+  // Customisable tech rider per event (instruments chosen, requirements, notes) — shared via /rider/:token.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tech_riders (
+      id TEXT PRIMARY KEY,
+      lead_id TEXT NOT NULL UNIQUE REFERENCES leads(id) ON DELETE CASCADE,
+      token TEXT NOT NULL UNIQUE,
+      data TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
   // Private per-login money tracker (income / expense / investment / savings).
   // Only ever read through /api/my/cash filtered by the logged-in user — admin has no view of it.
   await pool.query(`

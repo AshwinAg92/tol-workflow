@@ -2504,6 +2504,7 @@ async function renderLeadsLog(main, skipRefresh) {
             ${isConfirmedOrDone && hasLeadsAccess() && hasAccountsAccess() ? `<button class="btn-ghost confirmation-msg-btn" data-lead-id="${l.id}">✅ Confirmation msg</button>` : ""}
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team & Expenses</button>` : ""}
             ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost travel-plan-btn" data-lead-id="${l.id}">🧳 Travel</button>` : ""}
+            ${(isConfirmedOrDone || l.stage === "Tentative") && hasLeadsAccess() ? `<button class="btn-ghost tech-rider-btn" data-lead-id="${l.id}">🎛 Tech rider</button>` : ""}
             ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost lead-documents-btn" data-lead-id="${l.id}">📄 Documents</button>` : ""}
             ${l.stage === "Cancelled" && hasLeadsAccess() && (l.phone || l.email) ? `<button class="btn-ghost cancel-msg-btn" data-lead-id="${l.id}">${l.cancel_msg_sent_at ? "📩 Cancellation sent ✓" : "📩 Cancellation msg"}</button>` : ""}
             ${l.stage === "Completed" && hasLeadsAccess() && l.phone ? `<button class="btn-ghost thank-you-btn" data-lead-id="${l.id}">${l.thanked_at ? "🙏 Thanked ✓" : "🙏 Thank client"}</button>` : ""}
@@ -2725,6 +2726,13 @@ async function renderLeadsLog(main, skipRefresh) {
     btn.addEventListener("click", () => {
       const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
       if (lead) openConfirmationMessageModal(lead);
+    });
+  });
+
+  main.querySelectorAll(".tech-rider-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
+      if (lead) openTechRiderModal(lead);
     });
   });
 
@@ -9345,6 +9353,151 @@ async function buildThankYouMessage(lead) {
   }), hasReviewLink: !!reviewLink };
 }
 
+// ---------- Tech rider builder: pick the instruments, layout + requirements follow ----------
+async function openTechRiderModal(lead) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `<div class="modal-overlay"><div class="modal-card"><div class="modal-body"><p class="muted">Loading…</p></div></div></div>`;
+  let cat, cur;
+  try { [cat, cur] = await Promise.all([api("/api/rider-catalog"), api(`/api/leads/${lead.id}/tech-rider`)]); }
+  catch (e) { root.innerHTML = ""; alert(e.message || "Couldn't open the rider"); return; }
+  const byId = Object.fromEntries(cat.catalog.map((c) => [c.id, c]));
+  const fromCat = (id) => { const c = byId[id]; return { id, label: c.label, mic: c.mic, ch: c.ch, note: "" }; };
+  const d0 = cur.data;
+  const startPcs = Math.min(8, Math.max(2, Number(lead.pcs || cur.defaults.pcs) || 5));
+  const S = d0 ? { ...d0 } : {
+    instruments: (cat.presets[startPcs] || cat.presets[5]).map(fromCat), soundBy: "venue", stageW: "", stageD: "",
+    arrival: "", soundcheck: cur.defaults.soundcheck ? fmtTimeHM(cur.defaults.soundcheck) : "", showTime: cur.defaults.showTime ? fmtTimeHM(cur.defaults.showTime) : "",
+    contactName: cur.defaults.contactName, contactPhone: cur.defaults.contactPhone, requirements: "", notes: "",
+  };
+  let token = cur.token, autoReqs = [], customReqs = !!(d0 && d0.requirements);
+  const a = (v) => escH(v);
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card" style="width:680px; max-width:98vw;">
+        <div class="modal-head"><h3>🎛 Tech rider — ${escH(lead.name)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body" style="max-height:72vh; overflow:auto;">
+          <div class="section-label">1 · The band <span id="trCount" class="muted small" style="font-weight:400;"></span></div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+            <span class="muted small">Start from a standard</span>
+            ${[2, 3, 4, 5, 6, 7, 8].map((n) => `<button class="btn-ghost tr-preset" data-n="${n}" style="font-size:12.5px; padding:4px 10px;">${n} pcs</button>`).join("")}
+          </div>
+          <div id="trRows" style="margin-top:8px;"></div>
+          <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+            <select id="trAdd" style="padding:8px;"><option value="">+ Add an instrument…</option>${cat.catalog.map((c) => `<option value="${c.id}">${escH(c.label)}</option>`).join("")}<option value="custom">Other (type your own)…</option></select>
+          </div>
+          <div class="section-label" style="margin-top:16px;">2 · Event details</div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px;">
+            <div><label>Sound system</label><select id="trSoundBy"><option value="venue">Venue / client provides</option><option value="tol">We bring our own</option></select></div>
+            <div><label>Arrival / load-in</label><input id="trArrival" value="${a(S.arrival)}" placeholder="e.g. 3:00 PM" /></div>
+            <div><label>Soundcheck</label><input id="trCheck" value="${a(S.soundcheck)}" placeholder="e.g. 5:00 PM" /></div>
+            <div><label>Show time</label><input id="trShow" value="${a(S.showTime)}" placeholder="e.g. 8:00 PM" /></div>
+            <div><label>Stage width (ft)</label><input id="trSW" value="${a(S.stageW)}" placeholder="auto" /></div>
+            <div><label>Stage depth (ft)</label><input id="trSD" value="${a(S.stageD)}" placeholder="auto" /></div>
+            <div><label>Our sound contact</label><input id="trCName" value="${a(S.contactName)}" placeholder="Name" /></div>
+            <div><label>Contact phone</label><input id="trCPhone" value="${a(S.contactPhone)}" placeholder="Phone" /></div>
+          </div>
+          <div class="section-label" style="margin-top:16px;">3 · What we need from the venue <button class="btn-ghost" id="trReset" type="button" style="font-size:12px; padding:2px 8px; margin-left:8px; display:none;">Reset to auto</button></div>
+          <textarea id="trReqs" rows="8" style="width:100%; font-size:15px;"></textarea>
+          <p class="muted small" style="margin:4px 0 0;">Filled in automatically from the band above — edit any line, one per line.</p>
+          <div class="section-label" style="margin-top:16px;">4 · Extra notes <span class="muted small" style="font-weight:400;">(optional)</span></div>
+          <textarea id="trNotes" rows="3" style="width:100%; font-size:15px;" placeholder="Anything else the client's team should know">${a(S.notes)}</textarea>
+          <details id="trPrev" open style="margin-top:16px;"><summary class="section-label" style="cursor:pointer;">Stage plan preview</summary><div id="trSvg" style="margin-top:8px;"></div></details>
+          <div id="trErr" class="small" style="color:#A6432B; margin-top:8px;"></div>
+          <div style="position:sticky; bottom:-1px; background:#fff; padding:10px 0 2px; margin-top:12px; border-top:1px solid #E6DFD0; display:flex; gap:6px; flex-wrap:wrap;">
+            <button class="btn-primary" id="trSend" style="flex:1 1 100%;">💬 Save & send on WhatsApp</button>
+            <button class="btn-ghost" id="trSave">Save</button>
+            <button class="btn-ghost" id="trOpen">👁 Open page</button>
+            <button class="btn-ghost" id="trCopy">🔗 Copy link</button>
+            ${cur.token ? `<button class="btn-ghost" id="trRemove" style="color:#A6432B;">Remove</button>` : ""}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  const q = (sel) => root.querySelector(sel);
+  q("#trSoundBy").value = S.soundBy || "venue";
+  const close = () => { root.innerHTML = ""; renderMain(); };
+  q("#closeModal").addEventListener("click", close);
+  q("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+
+  const collect = () => ({
+    instruments: S.instruments, soundBy: q("#trSoundBy").value, stageW: q("#trSW").value.trim(), stageD: q("#trSD").value.trim(),
+    arrival: q("#trArrival").value.trim(), soundcheck: q("#trCheck").value.trim(), showTime: q("#trShow").value.trim(),
+    contactName: q("#trCName").value.trim(), contactPhone: q("#trCPhone").value.trim(),
+    requirements: customReqs ? q("#trReqs").value : "", notes: q("#trNotes").value,
+  });
+  let timer = null;
+  const refresh = () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      try {
+        const r = await api("/api/tech-rider/auto", { method: "POST", body: JSON.stringify(collect()) });
+        autoReqs = r.requirements;
+        if (!customReqs) q("#trReqs").value = autoReqs.join("\n");
+        q("#trReset").style.display = customReqs ? "inline-block" : "none";
+        q("#trSvg").innerHTML = r.svg || `<p class="muted small">Add an instrument to see the stage plan.</p>`;
+        const n = S.instruments.length, mism = lead.pcs && Number(lead.pcs) !== n;
+        q("#trCount").innerHTML = `— ${n} pcs · ${r.summary.channels} channels · stage ${escH(r.summary.stage)}${mism ? ` <span style="color:#B6752C;">(this event is booked as ${lead.pcs} pcs)</span>` : ""}`;
+      } catch (e) { /* preview is best-effort */ }
+    }, 250);
+  };
+  const drawRows = () => {
+    q("#trRows").innerHTML = S.instruments.map((e, i) => `
+      <div style="border:1px solid #E6DFD0; border-radius:8px; padding:8px; margin-bottom:6px; display:grid; grid-template-columns:1fr 70px 32px; gap:6px;">
+        <input class="tr-f" data-i="${i}" data-k="label" value="${a(e.label)}" placeholder="Instrument" style="font-weight:700;" />
+        <input class="tr-f" data-i="${i}" data-k="ch" type="number" min="0" max="12" value="${e.ch}" title="Channels" />
+        <button class="btn-ghost tr-del" data-i="${i}" title="Remove" style="padding:2px;">✕</button>
+        <input class="tr-f" data-i="${i}" data-k="mic" value="${a(e.mic)}" placeholder="Mic / DI needed" style="grid-column:1 / 3;" />
+        <span></span>
+        <input class="tr-f" data-i="${i}" data-k="note" value="${a(e.note || "")}" placeholder="Note (optional) — e.g. needs a mat" style="grid-column:1 / 4;" />
+      </div>`).join("") || `<p class="muted small">No instruments yet — pick a standard band above or add one.</p>`;
+    q("#trRows").querySelectorAll(".tr-f").forEach((inp) => inp.addEventListener("input", () => {
+      const e = S.instruments[Number(inp.dataset.i)], k = inp.dataset.k;
+      e[k] = k === "ch" ? Math.max(0, Math.min(12, Number(inp.value) || 0)) : inp.value;
+      refresh();
+    }));
+    q("#trRows").querySelectorAll(".tr-del").forEach((b) => b.addEventListener("click", () => { S.instruments.splice(Number(b.dataset.i), 1); drawRows(); refresh(); }));
+    refresh();
+  };
+  root.querySelectorAll(".tr-preset").forEach((b) => b.addEventListener("click", () => {
+    if (S.instruments.length && !confirm(`Replace the current band with the standard ${b.dataset.n}-piece set-up?`)) return;
+    S.instruments = (cat.presets[b.dataset.n] || []).map(fromCat); drawRows();
+  }));
+  q("#trAdd").addEventListener("change", (e) => {
+    const v = e.target.value; e.target.value = "";
+    if (!v) return;
+    S.instruments.push(v === "custom" ? { id: "custom", label: "", mic: "Mic or DI — please confirm with us", ch: 1, note: "", row: "front" } : fromCat(v));
+    drawRows();
+  });
+  ["#trSoundBy", "#trSW", "#trSD", "#trNotes", "#trArrival", "#trCheck", "#trShow", "#trCName", "#trCPhone"].forEach((s2) => q(s2).addEventListener("input", refresh));
+  q("#trSoundBy").addEventListener("change", refresh);
+  q("#trReqs").addEventListener("input", () => { customReqs = true; q("#trReset").style.display = "inline-block"; });
+  q("#trReset").addEventListener("click", () => { customReqs = false; q("#trReqs").value = autoReqs.join("\n"); q("#trReset").style.display = "none"; });
+  if (d0 && d0.requirements) q("#trReqs").value = d0.requirements;
+  drawRows();
+
+  const save = async () => {
+    q("#trErr").textContent = "";
+    try { const r = await api(`/api/leads/${lead.id}/tech-rider`, { method: "PUT", body: JSON.stringify({ data: collect() }) }); token = r.token; return true; }
+    catch (e) { q("#trErr").textContent = e.message || "Couldn't save"; return false; }
+  };
+  const link = () => `${window.location.origin}/rider/${token}`;
+  q("#trSave").addEventListener("click", async () => { if (await save()) { q("#trSave").textContent = "Saved ✓"; setTimeout(() => (q("#trSave").textContent = "Save"), 1500); } });
+  q("#trOpen").addEventListener("click", async () => { if (await save()) window.open(link(), "_blank"); });
+  q("#trCopy").addEventListener("click", async () => { if (await save()) { try { await navigator.clipboard.writeText(link()); } catch {} q("#trCopy").textContent = "Copied ✓"; setTimeout(() => (q("#trCopy").textContent = "🔗 Copy link"), 1500); } });
+  q("#trSend").addEventListener("click", async () => {
+    if (!(await save())) return;
+    const digits = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
+    const tpl = MESSAGE_TEMPLATES.tech_rider_message || TEMPLATE_META.tech_rider_message.default;
+    const msg = fillTemplate(tpl, { firstName: (lead.name || "").split(" ")[0] || "there", experience: packageName(lead.event_type), date: fmtDate(lead.date), link: link() });
+    window.location.href = digits ? `https://wa.me/${digits}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  });
+  q("#trRemove")?.addEventListener("click", async () => {
+    if (!confirm("Remove this rider? The link you sent will stop working.")) return;
+    await api(`/api/leads/${lead.id}/tech-rider`, { method: "DELETE" });
+    close();
+  });
+}
+
 function buildCancellationMessage(lead) {
   const inrC = (n) => "₹" + Number(n).toLocaleString("en-IN");
   const refundPaid = lead.refund_paid || 0, refundDue = lead.refund_due || 0, kept = lead.cancel_retained || 0;
@@ -10016,6 +10169,12 @@ const TEMPLATE_META = {
     description: "Sent from the \"Release this date\" popup to leads whose date has just been taken by another confirmed/tentative booking.",
     placeholders: ["firstName", "experience", "date"],
     default: "Hi {firstName}, thank you for your interest in {experience} on {date} with Together, Out Loud. Unfortunately that date has now been booked for another event, so we won't be able to hold it. If you have a flexible or alternate date, we'd love to make it work \u2014 just let us know!\n\n\uD83D\uDCF7 instagram.com/togetheroutloudclub | \uD83C\uDF10 togetheroutloud.in",
+  },
+  tech_rider_message: {
+    label: "Tech rider message",
+    description: "Sent from the \"🎛 Tech rider\" button — the link opens the stage plan, channel list and venue requirements for this event.",
+    placeholders: ["firstName", "experience", "date", "link"],
+    default: "Hi {firstName}, here is the technical rider for your {experience} on {date}:\n{link}\n\nIt has the stage plan, channel list and what we need from the venue. Please share it with your sound and stage team — if anything can't be arranged, let us know early and we'll adapt.\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
   cancellation_confirmation: {
     label: "Cancellation confirmation",

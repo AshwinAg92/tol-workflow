@@ -4885,6 +4885,54 @@ app.put("/api/my/sticky-note", requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Tech rider builder ----------
+const riderLib = require("./rider");
+const canBuildRider = (user) => userHasSection(user, "leads") && !isScopedManager(user);
+app.get("/api/rider-catalog", requireAuth, async (req, res) => {
+  if (!canBuildRider(req.user)) return res.status(403).json({ error: "You don't have access to leads" });
+  res.json({ catalog: riderLib.CATALOG.map((c) => ({ id: c.id, label: c.label, row: c.row, ch: c.ch, mic: c.mic })), presets: riderLib.PRESETS });
+});
+app.post("/api/tech-rider/auto", requireAuth, async (req, res) => {
+  if (!canBuildRider(req.user)) return res.status(403).json({ error: "You don't have access to leads" });
+  const data = riderLib.sanitize(req.body);
+  res.json({ requirements: riderLib.autoRequirements(data), summary: riderLib.summarize(data), svg: data.instruments.length ? riderLib.stageSvg(data) : "" });
+});
+app.get("/api/leads/:id/tech-rider", requireAuth, async (req, res) => {
+  if (!canBuildRider(req.user)) return res.status(403).json({ error: "You don't have access to leads" });
+  const lead = (await pool.query("SELECT pcs, soundcheck_time, event_time, sound_manager_name, sound_manager_phone FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const row = (await pool.query("SELECT token, data, updated_at FROM tech_riders WHERE lead_id = $1", [req.params.id])).rows[0];
+  res.json({ token: row?.token || null, data: row ? JSON.parse(row.data) : null, updatedAt: row?.updated_at || null,
+    defaults: { pcs: lead.pcs || null, soundcheck: lead.soundcheck_time || "", showTime: lead.event_time || "", contactName: lead.sound_manager_name || "", contactPhone: lead.sound_manager_phone || "" } });
+});
+app.put("/api/leads/:id/tech-rider", requireAuth, async (req, res) => {
+  if (!canBuildRider(req.user)) return res.status(403).json({ error: "You don't have access to leads" });
+  const lead = (await pool.query("SELECT id, name FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const data = riderLib.sanitize(req.body && req.body.data);
+  if (data.instruments.length === 0) return res.status(400).json({ error: "Pick at least one instrument" });
+  const now = new Date().toISOString();
+  const existing = (await pool.query("SELECT token FROM tech_riders WHERE lead_id = $1", [lead.id])).rows[0];
+  const token = existing?.token || crypto.randomBytes(18).toString("base64url");
+  await pool.query(`INSERT INTO tech_riders (id, lead_id, token, data, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$5)
+    ON CONFLICT (lead_id) DO UPDATE SET data = $4, updated_at = $5`, [uuid(), lead.id, token, JSON.stringify(data), now]);
+  logActivity(req, `Tech rider ${existing ? "updated" : "created"} for ${lead.name} (${data.instruments.length} pcs)`, lead.id);
+  res.json({ token });
+});
+app.delete("/api/leads/:id/tech-rider", requireAuth, async (req, res) => {
+  if (!canBuildRider(req.user)) return res.status(403).json({ error: "You don't have access to leads" });
+  await pool.query("DELETE FROM tech_riders WHERE lead_id = $1", [req.params.id]);
+  res.status(204).end();
+});
+app.get("/rider/:token", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  const row = (await pool.query("SELECT lead_id, data FROM tech_riders WHERE token = $1", [req.params.token])).rows[0];
+  if (!row) return res.status(404).send(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:Georgia,serif;padding:24px;background:#FBF6EC;color:#3A2A1A"><h2>This rider link is no longer available</h2><p>Please ask Together, Out Loud for a fresh link.</p></body>`);
+  const lead = (await pool.query("SELECT name, date, city, venue, event_type, occasion FROM leads WHERE id = $1", [row.lead_id])).rows[0];
+  res.send(riderLib.renderRiderPage({ lead: lead || {}, data: riderLib.sanitize(JSON.parse(row.data)) }));
+});
+
 // ---------- Note for Admin — a living note on a team member's dashboard, readable by admin ----------
 app.get("/api/my/admin-note", requireAuth, async (req, res) => {
   const row = (await pool.query("SELECT content, updated_at FROM admin_notes WHERE user_id = $1", [req.user.id])).rows[0];
