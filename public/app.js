@@ -6004,7 +6004,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                 <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
                   <div>
                     <div>${r.head.replace(/^Reimbursement — /, "")} <span class="muted small">— ${inr(r.amount)}</span></div>
-                    <div class="muted small" style="color:${r.approved ? "#1C7A80" : "#B6752C"};">${reimbStatusLabel[r.approved]}${r.notes ? ` · ${r.notes}` : ""}</div>
+                    <div class="muted small" style="color:${r.approved ? "#1C7A80" : "#B6752C"};">${reimbStatusLabel[r.approved]}${r.notes ? ` · ${r.notes}` : ""}${(r.receipts || []).length ? ` · 📎 ${r.receipts.length} receipt${r.receipts.length > 1 ? "s" : ""}` : ` · no receipt`}</div>
                   </div>
                 </div>
               `).join("")}
@@ -6020,6 +6020,8 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
           </div>
           <input id="reimbArtistName" placeholder="Artist name" style="margin-top:8px; display:none;" />
           <input id="reimbNotes" placeholder="What was this for? (e.g. cab fare, travel)" style="margin-top:8px;" />
+          <label class="muted small" style="display:block; margin-top:8px;">📎 Receipt (photo or PDF) — so admin can verify</label>
+          <input id="reimbReceipt" type="file" accept="image/*,application/pdf" multiple style="margin-top:2px;" />
           <button class="btn-ghost full" id="addReimbursementBtn" style="margin-top:8px;">+ Submit reimbursement</button>
           <p class="muted small" style="margin-top:4px;">Sent to admin for approval and payment — this is separate from the artist's performance fee.</p>
         </div>
@@ -6203,7 +6205,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     if (!amount) return alert("Enter an amount.");
     btn.disabled = true;
     try {
-      await api("/api/reimbursements", {
+      const created = await api("/api/reimbursements", {
         method: "POST",
         body: JSON.stringify({
           leadId,
@@ -6213,6 +6215,14 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
           notes: root.querySelector("#reimbNotes").value.trim(),
         }),
       });
+      const files = [...(root.querySelector("#reimbReceipt").files || [])].slice(0, 5);
+      const failed = [];
+      for (const f of files) {
+        const fd = new FormData(); fd.append("file", f);
+        const r = await fetch(`/api/reimbursements/${created.id}/receipt`, { method: "POST", body: fd, credentials: "same-origin" });
+        if (!r.ok) failed.push(`${f.name}: ${(await r.json().catch(() => ({}))).error || "upload failed"}`);
+      }
+      if (failed.length) alert("Request submitted, but some receipts didn't upload:\n" + failed.join("\n"));
       openAssignTeamModal(leadId);
     } catch (err) {
       alert(err.message);
@@ -7542,6 +7552,7 @@ async function renderAccounts(main) {
             <div>
               <div>${r.head}${r.notes ? ` <span class="muted small">— ${r.notes}</span>` : ""}</div>
               <div class="muted small">${lead ? lead.name : "General"} · requested by ${r.requested_by || "—"}</div>
+              <div class="small" style="margin-top:4px;">${(r.receipts || []).length ? r.receipts.map((x, i) => `<a href="/api/reimbursement-receipts/${x.id}/file" target="_blank" rel="noopener">📎 Receipt ${i + 1}</a>`).join(" · ") : `<span style="color:#B6752C;">⚠ No receipt attached</span>`}</div>
             </div>
           </div>
           <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px;">

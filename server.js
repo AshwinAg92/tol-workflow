@@ -3971,6 +3971,44 @@ app.post("/api/reimbursements", requireAuth, requireCapability("assign_team"), a
   logActivity(req, `Reimbursement requested for ${resolvedName}${lead ? ` (${lead.name})` : ""} — ₹${Number(amount).toLocaleString("en-IN")}, pending admin approval`, leadId || null);
 });
 
+// Receipts: the requester (or admin) attaches photos/PDFs; only admin or the requester can open them.
+const RECEIPT_MIMES = /^(image\/(jpeg|png|webp|heic|heif)|application\/pdf)$/i;
+async function reimbOwnedBy(req, expId) {
+  const exp = (await pool.query("SELECT id, requested_by FROM expenses WHERE id = $1 AND category = 'reimbursement'", [expId])).rows[0];
+  if (!exp) return null;
+  if (req.user.access_level === "admin" || req.user.accessLevel === "admin") return exp;
+  return exp.requested_by === (await actorName(req.user)) ? exp : false;
+}
+async function attachReceiptInfo(rows) {
+  if (!rows.length) return rows;
+  const r = (await pool.query("SELECT id, expense_id, original_name FROM reimbursement_receipts WHERE expense_id = ANY($1::text[]) ORDER BY uploaded_at ASC", [rows.map((x) => x.id)])).rows;
+  const by = {};
+  r.forEach((x) => (by[x.expense_id] = by[x.expense_id] || []).push({ id: x.id, name: x.original_name }));
+  return rows.map((x) => ({ ...x, receipts: by[x.id] || [] }));
+}
+app.post("/api/reimbursements/:id/receipt", requireAuth, upload.single("file"), async (req, res) => {
+  const exp = await reimbOwnedBy(req, req.params.id);
+  if (exp === null) return res.status(404).json({ error: "Reimbursement not found" });
+  if (exp === false) return res.status(403).json({ error: "Not your request" });
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+  if (!RECEIPT_MIMES.test(req.file.mimetype || "")) return res.status(400).json({ error: "Please upload a photo (JPG/PNG) or a PDF." });
+  const n = (await pool.query("SELECT COUNT(*)::int AS c FROM reimbursement_receipts WHERE expense_id = $1", [req.params.id])).rows[0].c;
+  if (n >= 5) return res.status(400).json({ error: "Up to 5 receipts per request" });
+  const id = uuid();
+  await pool.query("INSERT INTO reimbursement_receipts (id, expense_id, original_name, mime_type, file_data, uploaded_at) VALUES ($1,$2,$3,$4,$5,$6)",
+    [id, req.params.id, (req.file.originalname || "receipt").slice(0, 200), req.file.mimetype, req.file.buffer, new Date().toISOString()]);
+  res.status(201).json({ id, name: req.file.originalname });
+});
+app.get("/api/reimbursement-receipts/:rid/file", requireAuth, async (req, res) => {
+  const d = (await pool.query("SELECT expense_id, original_name, mime_type, file_data FROM reimbursement_receipts WHERE id = $1", [req.params.rid])).rows[0];
+  if (!d) return res.status(404).send("File not found");
+  if (!(await reimbOwnedBy(req, d.expense_id))) return res.status(403).send("Not allowed");
+  res.setHeader("Content-Type", d.mime_type || "application/octet-stream");
+  res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(d.original_name)}"`);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.send(d.file_data);
+});
+
 // A manager can see the status of reimbursements they personally submitted,
 // without needing the "accounts" section that would expose everyone else's numbers.
 app.get("/api/my/reimbursements", requireAuth, async (req, res) => {
@@ -3979,7 +4017,7 @@ app.get("/api/my/reimbursements", requireAuth, async (req, res) => {
     "SELECT * FROM expenses WHERE category = 'reimbursement' AND requested_by = $1 ORDER BY created_at DESC",
     [requestedBy]
   );
-  res.json(rows);
+  res.json(await attachReceiptInfo(rows));
 });
 
 // Admin-only: all reimbursements awaiting approval, across every artist/event.
@@ -3987,7 +4025,7 @@ app.get("/api/reimbursements/pending", requireAuth, requireSection("accounts"), 
   const { rows } = await pool.query(
     "SELECT * FROM expenses WHERE category = 'reimbursement' AND approved = 0 ORDER BY created_at ASC"
   );
-  res.json(rows);
+  res.json(await attachReceiptInfo(rows));
 });
 
 // Admin approves a reimbursement, setting payment details in the same step (or

@@ -616,6 +616,18 @@ async function setup() {
     );
   `);
   await pool.query(`UPDATE tech_riders SET data = REPLACE(data, '+91 82502 00518', '+91 98323 02004') WHERE data LIKE '%82502 00518%'`);
+  // Receipt (photo/PDF) attached to an artist reimbursement so admin can verify it before approving.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS reimbursement_receipts (
+      id TEXT PRIMARY KEY,
+      expense_id TEXT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+      original_name TEXT NOT NULL,
+      mime_type TEXT,
+      file_data BYTEA NOT NULL,
+      uploaded_at TEXT NOT NULL
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_reimb_receipts_exp ON reimbursement_receipts(expense_id)`);
   // Private per-login money tracker (income / expense / investment / savings).
   // Only ever read through /api/my/cash filtered by the logged-in user — admin has no view of it.
   await pool.query(`
