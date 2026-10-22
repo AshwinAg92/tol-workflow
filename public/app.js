@@ -9203,6 +9203,9 @@ async function openConfirmationMessageModal(lead) {
   const docs = await api("/api/documents");
   const leadDocs = docs.filter((d) => d.lead_id === lead.id);
   const generalDocs = docs.filter((d) => !d.lead_id);
+  // The customised rider built for this event (Tech rider button), if one has been saved.
+  let riderToken = null;
+  try { riderToken = (await api(`/api/leads/${lead.id}/tech-rider`)).token || null; } catch (e) { riderToken = null; }
   const firstName = (lead.name || "").split(" ")[0] || "there";
   const finalAmount = lead.final_amount || lead.quote_amount || 0;
   const received = lead.received || 0;
@@ -9270,6 +9273,14 @@ async function openConfirmationMessageModal(lead) {
             </label>
             ${!(MESSAGE_TEMPLATES.bank_details || "").trim() ? `<p class="muted small" style="margin-top:4px; color:#B6752C;">No bank/UPI details on file — add them in Settings to enable this.</p>` : ""}
           </div>
+          ${riderToken ? `
+            <div style="margin-top:14px;">
+              <label class="check-row" style="font-size:13.5px;">
+                <input type="checkbox" id="confirmRiderCheckbox" />
+                <span>🎛 Include the customised tech rider link <span class="muted small">(built for this event)</span></span>
+              </label>
+            </div>
+          ` : ""}
           ${(leadDocs.length > 0 || generalDocs.length > 0) ? `
             <div style="margin-top:14px;">
               <div class="section-label" style="margin-bottom:6px;">📎 Attach document links (optional)</div>
@@ -9324,6 +9335,7 @@ async function openConfirmationMessageModal(lead) {
       const doc = docs.find((d) => d.id === cb.dataset.docId);
       return doc ? `📎 ${doc.notes || doc.original_name}: ${window.location.origin + doc.url}` : "";
     }).filter(Boolean);
+    if (riderToken && root.querySelector("#confirmRiderCheckbox")?.checked) links.unshift(`🎛 Tech rider: ${window.location.origin}/rider/${riderToken}`);
     return links.length > 0 ? `${base}\n\n${links.join("\n")}` : base;
   }
   // When the bank-details checkbox is on and a QR code is on file, WhatsApp
