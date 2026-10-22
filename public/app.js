@@ -1265,7 +1265,14 @@ async function downloadLedgerPDF(booking, payments, reimbursements = [], shareOp
   ].sort((p, q) => String(p.payment_date || "").localeCompare(String(q.payment_date || "")));
   // To the client every receipt is simply money paid: the first is the advance, the rest are payments.
   // Whether it was set against the fee or a reimbursement is our bookkeeping, not theirs.
-  receipts.forEach((p, i) => {
+  // Receipts from the same day and mode are one payment to the client, however they were booked.
+  const merged = [];
+  receipts.forEach((p) => {
+    const last = merged[merged.length - 1];
+    if (last && last.payment_date === p.payment_date && (last.payment_mode || "") === (p.payment_mode || "")) last.amount += p.amount;
+    else merged.push({ payment_date: p.payment_date, payment_mode: p.payment_mode, amount: p.amount });
+  });
+  merged.forEach((p, i) => {
     const mode = p.payment_mode ? ` (${p.payment_mode})` : "";
     addRow(fmtDate(p.payment_date), (i === 0 ? "Advance received" : "Payment received") + mode, p.amount, -1);
   });
@@ -1962,7 +1969,7 @@ async function openLeadDetailModal(lead) {
               <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Financials</div>
               <div class="lead-card-financials" style="margin-top:0; ${lead.reimbursement_due ? "grid-template-columns:repeat(2,1fr);" : ""}">
                 <div><span class="muted small">${lead.stage === "Tentative" ? "Rate held" : "Final"}</span><div class="mono">${lead.final_amount || lead.quote_amount ? inr(lead.final_amount || lead.quote_amount) : "—"}</div></div>
-                ${lead.reimbursement_due ? `<div><span class="muted small">Reimbursement due</span><div class="mono" style="color:#B6752C;">+ ${inr(lead.reimbursement_due)}</div></div>` : ""}
+                ${lead.reimbursement_due ? `<div><span class="muted small">Reimbursements</span><div class="mono" style="color:#B6752C;">+ ${inr(lead.reimbursement_due)}</div></div>` : ""}
                 <div><span class="muted small">Received</span><div class="mono">${inr(lead.received || 0)}</div></div>
                 <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A6432B" : "#1C7A80"};">${inr(balance)}</div></div>
               </div>
@@ -2458,7 +2465,7 @@ async function renderLeadsLog(main, skipRefresh) {
           ${hasRateInfo && hasAccountsAccess() ? `
             <div class="lead-card-financials" style="${displayReimbursementDue ? "grid-template-columns:repeat(2,1fr);" : ""}">
               <div><span class="muted small">${l.stage === "Tentative" ? "Rate held" : "Final"}</span><div class="mono">${displayFinal ? inr(displayFinal) : "—"}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
-              ${displayReimbursementDue ? `<div><span class="muted small">Reimbursement due</span><div class="mono" style="color:#B6752C;">+ ${inr(displayReimbursementDue)}</div></div>` : ""}
+              ${displayReimbursementDue ? `<div><span class="muted small">Reimbursements</span><div class="mono" style="color:#B6752C;">+ ${inr(displayReimbursementDue)}</div></div>` : ""}
               <div><span class="muted small">Received</span><div class="mono">${inr(displayReceived || 0)}${comboPrimary && !l.is_combo_primary ? " (combo)" : ""}</div></div>
               <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A6432B" : "#1C7A80"};">${inr(balance)}</div></div>
             </div>
@@ -5416,21 +5423,25 @@ async function openLeadPaymentsModal(leadId) {
     // permanently negative by that amount the moment it's settled, even
     // though nothing is actually owed either way. Reimbursement money in
     // hand is shown separately, just below, instead.
-    const received = feePayments.reduce((s, p) => s + p.amount, 0);
-    const balance = (total - received) + totalReimbursementDue;
+    // One pool: the client owes the fee plus any reimbursements, and everything they pay (whatever it
+    // was "for") reduces that one total. Reimbursements settled the old way count as payments received.
+    const totalReimbursements = reimbursements.reduce((s, p) => s + p.amount, 0);
+    const received = feePayments.reduce((s, p) => s + p.amount, 0) + totalReimbursementReceived;
+    const grandTotal = total + totalReimbursements;
+    const balance = grandTotal - received;
+    const allReceipts = [...feePayments, ...reimbursementsReceived].sort((p, q) => String(p.payment_date || "").localeCompare(String(q.payment_date || "")));
     body.innerHTML = `
-      <div class="dash-stats" style="grid-template-columns:repeat(2,1fr); margin-bottom:16px; gap:8px;">
-        <div class="card summary-card summary-card-compact"><div class="muted">Final rate</div><div class="mono big">${inr(total)}</div></div>
-        ${totalReimbursementDue > 0 ? `<div class="card summary-card summary-card-compact"><div class="muted">Reimbursement due</div><div class="mono big" style="color:#B6752C;">+ ${inr(totalReimbursementDue)}</div></div>` : ""}
+      <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:8px; gap:8px;">
+        <div class="card summary-card summary-card-compact"><div class="muted">Total</div><div class="mono big">${inr(grandTotal)}</div></div>
         <div class="card summary-card summary-card-compact"><div class="muted">Received</div><div class="mono big" style="color:${STAGE_COLOR.Confirmed}">${inr(received)}</div></div>
-        <div class="card summary-card summary-card-compact"><div class="muted">Balance</div><div class="mono big" style="color:${balance > 0 ? "#A6432B" : "#1C7A80"};">${inr(balance)}</div></div>
+        <div class="card summary-card summary-card-compact"><div class="muted">Balance due</div><div class="mono big" style="color:${balance > 0 ? "#A6432B" : "#1C7A80"};">${inr(balance)}</div></div>
       </div>
-      ${totalReimbursementDue > 0 ? `<p class="muted small" style="margin-top:-8px; margin-bottom:14px;">Balance = Final − Received + Reimbursement due (${inr(total)} − ${inr(received)} + ${inr(totalReimbursementDue)}).</p>` : ""}
+      <p class="muted small" style="margin:0 0 14px;">Professional fee ${inr(total)}${totalReimbursements > 0 ? ` + Reimbursements ${inr(totalReimbursements)}` : ""}</p>
       ${hasAccountsAccess() ? `<button class="btn-ghost full" id="lpShareLedgerBtn" style="margin-bottom:14px;">📄 Share ledger PDF on WhatsApp</button>` : ""}
 
-      <div class="section-label">Client payments (toward fee)</div>
+      <div class="section-label">Payments received</div>
       <div style="margin-bottom:10px;">
-        ${feePayments.length === 0 ? `<p class="muted small">No payments recorded yet.</p>` : feePayments.map((p) => `
+        ${allReceipts.length === 0 ? `<p class="muted small">No payments recorded yet.</p>` : allReceipts.map((p) => `
           <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
             <div>
               <div class="mono">${inr(p.amount)}</div>
@@ -5441,21 +5452,16 @@ async function openLeadPaymentsModal(leadId) {
         `).join("")}
       </div>
 
-      <div class="section-label">Reimbursements from client${reimbursements.length ? ` — ${inr(totalReimbursementReceived)} received${totalReimbursementDue ? `, ${inr(totalReimbursementDue)} due` : ""}` : ""}</div>
-      <p class="muted small" style="margin-top:-6px;">For travel or other costs paid upfront and billed back to the client, on top of the performance fee. Logged as due until the client actually pays it back.</p>
+      <div class="section-label">Reimbursements${reimbursements.length ? ` — ${inr(totalReimbursements)}` : ""}</div>
+      <p class="muted small" style="margin-top:-6px;">Travel or other costs billed to the client. They are added to the total above — just record whatever the client pays under "Payments received".</p>
       <div style="margin-bottom:10px;">
         ${reimbursements.length === 0 ? `<p class="muted small">None recorded yet.</p>` : reimbursements.map((p) => `
           <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
             <div>
               <div class="mono">${inr(p.amount)}</div>
-              <div class="muted small">${p.status === "due" ? "Due" : `${fmtDate(p.payment_date)}${p.payment_mode ? ` · ${p.payment_mode}` : ""}`}${p.notes ? ` · ${p.notes}` : ""}</div>
+              <div class="muted small">${p.notes || "Reimbursement"}</div>
             </div>
-            <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
-              ${p.status === "due"
-                ? `<button class="btn-ghost mark-reimbursement-btn" data-payment-id="${p.id}" data-mark-status="received" style="font-size:12px; padding:4px 8px;">Mark received</button>`
-                : `<span class="tag" style="color:#1C7A80;">Received</span><button class="btn-ghost mark-reimbursement-btn" data-payment-id="${p.id}" data-mark-status="due" style="font-size:11px; padding:3px 6px;">Undo</button>`}
-              <button class="icon-btn" data-delete-payment="${p.id}">${ICON_X}</button>
-            </div>
+            <button class="icon-btn" data-delete-payment="${p.id}">${ICON_X}</button>
           </div>
         `).join("")}
       </div>
@@ -5466,67 +5472,29 @@ async function openLeadPaymentsModal(leadId) {
       </div>
       <div class="row-2" style="margin-top:8px;">
         <select id="lpType">
-          <option value="payment">Payment (toward fee)</option>
-          <option value="client_reimbursement">Reimbursement (travel/other costs)</option>
+          <option value="payment">Payment received</option>
+          <option value="client_reimbursement">Add a reimbursement (to the client's total)</option>
         </select>
-        <select id="lpMode" style="display:none;">
+        <select id="lpMode">
           <option value="">Mode —</option>
           <option value="Cash">Cash</option>
           <option value="UPI">UPI</option>
         </select>
       </div>
-      <input id="lpNotes" placeholder="What's this reimbursement for? (optional)" style="margin-top:8px; display:none;" />
-      <label id="lpReceivedWrap" style="display:none; align-items:center; gap:6px; margin-top:8px; font-size:13px; cursor:pointer;">
-        <input type="checkbox" id="lpAlreadyReceived" /> Client already paid this back
-      </label>
-      ${totalReimbursementDue > 0 ? `
-        <label id="lpSettleWrap" style="display:none; align-items:center; gap:6px; margin-top:8px; font-size:13px; cursor:pointer;">
-          <input type="checkbox" id="lpSettleReimbursement" />
-          This amount also settles the ${inr(totalReimbursementDue)} reimbursement due — split it automatically
-        </label>
-      ` : ""}
-      <button class="btn-primary full" id="lpAddBtn" style="margin-top:10px;">Add payment</button>
+      <input id="lpNotes" placeholder="What's this reimbursement for? (e.g. Train and Cab)" style="margin-top:8px; display:none;" />
+      <button class="btn-primary full" id="lpAddBtn" style="margin-top:10px;">Add</button>
     `;
 
     const typeSelect = body.querySelector("#lpType");
     const notesInput = body.querySelector("#lpNotes");
-    const receivedWrap = body.querySelector("#lpReceivedWrap");
-    const receivedCheckbox = body.querySelector("#lpAlreadyReceived");
     const modeSelect = body.querySelector("#lpMode");
-    const settleWrap = body.querySelector("#lpSettleWrap");
-    const settleCheckbox = body.querySelector("#lpSettleReimbursement");
     function refreshPaymentFormFields() {
       const isReimbursement = typeSelect.value === "client_reimbursement";
       notesInput.style.display = isReimbursement ? "block" : "none";
-      receivedWrap.style.display = isReimbursement ? "flex" : "none";
-      // A fee payment is always already-received by definition, so its mode
-      // is always relevant. A reimbursement's mode only matters once it's
-      // actually been collected, matching the checkbox above.
-      modeSelect.style.display = (!isReimbursement || receivedCheckbox.checked) ? "" : "none";
-      // The "settle both at once" option only makes sense while logging a fee
-      // payment — a reimbursement entry is already its own thing.
-      if (settleWrap) settleWrap.style.display = isReimbursement ? "none" : "flex";
+      modeSelect.style.display = isReimbursement ? "none" : "";
     }
     typeSelect.addEventListener("change", refreshPaymentFormFields);
-    receivedCheckbox.addEventListener("change", refreshPaymentFormFields);
     refreshPaymentFormFields();
-
-    body.querySelectorAll(".mark-reimbursement-btn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        btn.disabled = true;
-        try {
-          await api(`/api/payments/${btn.dataset.paymentId}`, { method: "PATCH", body: JSON.stringify({ status: btn.dataset.markStatus }) });
-          await refreshLeads();
-          const [freshPayments, freshExpenses] = await Promise.all([
-            api(`/api/leads/${leadId}/payments`), api(`/api/expenses?leadId=${leadId}`),
-          ]);
-          draw(freshPayments, freshExpenses);
-        } catch (err) {
-          alert(err.message);
-          btn.disabled = false;
-        }
-      });
-    });
 
     const shareLedgerBtn = body.querySelector("#lpShareLedgerBtn");
     if (shareLedgerBtn) {
@@ -5576,45 +5544,21 @@ async function openLeadPaymentsModal(leadId) {
       if (!amount || Number(amount) <= 0) return alert("Enter a valid amount.");
       if (!date) return alert("Pick a date.");
       const type = body.querySelector("#lpType").value;
-      const status = type === "client_reimbursement" ? (receivedCheckbox.checked ? "received" : "due") : "received";
-      const mode = body.querySelector("#lpMode").value || null;
-      // One combined amount covering both the fee and an already-logged due
-      // reimbursement (e.g. "received ₹1,20,000 total, ₹10,000 of which is
-      // the taxi reimbursement") — split it into the right two ledger
-      // entries instead of making the person do this as two separate visits
-      // to the form. Only offered while logging a fee payment, and only when
-      // there's something due to settle.
-      const settling = type === "payment" && settleCheckbox && settleCheckbox.checked && totalReimbursementDue > 0;
-      if (settling && Number(amount) < totalReimbursementDue) {
-        return alert(`This amount is less than the ${inr(totalReimbursementDue)} reimbursement due — either enter the full combined total, or uncheck the settle option and log this as a partial payment instead.`);
-      }
+      // A reimbursement is simply a charge added to the client's total (kept as "due" internally);
+      // a payment is money received. No splitting between the two — the balance is one number.
+      const status = type === "client_reimbursement" ? "due" : "received";
+      const mode = type === "client_reimbursement" ? null : (body.querySelector("#lpMode").value || null);
       const btn = body.querySelector("#lpAddBtn");
       btn.disabled = true;
       try {
-        if (settling) {
-          // Mark every currently-due reimbursement as received first (same
-          // date/mode as this payment — it's all part of the one amount the
-          // client actually handed over).
-          for (const r of reimbursementsDue) {
-            await api(`/api/payments/${r.id}`, { method: "PATCH", body: JSON.stringify({ status: "received", date, mode }) });
-          }
-          const feePortion = Number(amount) - totalReimbursementDue;
-          if (feePortion > 0) {
-            await api(`/api/leads/${leadId}/payments`, {
-              method: "POST",
-              body: JSON.stringify({ amount: feePortion, date, mode, type: "payment", status: "received" }),
-            });
-          }
-        } else {
-          await api(`/api/leads/${leadId}/payments`, {
-            method: "POST",
-            body: JSON.stringify({
-              amount: Number(amount), date, mode,
-              type, status,
-              notes: body.querySelector("#lpNotes").value.trim() || null,
-            }),
-          });
-        }
+        await api(`/api/leads/${leadId}/payments`, {
+          method: "POST",
+          body: JSON.stringify({
+            amount: Number(amount), date, mode,
+            type, status,
+            notes: body.querySelector("#lpNotes").value.trim() || null,
+          }),
+        });
         await refreshLeads();
         const [freshPayments, freshExpenses] = await Promise.all([
           api(`/api/leads/${leadId}/payments`), api(`/api/expenses?leadId=${leadId}`),
@@ -7460,7 +7404,7 @@ async function renderAccounts(main) {
           </div>
           <div class="lead-card-financials acct-financials" style="${l.reimbursement_due ? "grid-template-columns:repeat(3,1fr);" : ""}">
             <div><span class="muted small">Final</span><div class="mono">${total ? inr(total) : "—"}</div></div>
-            ${l.reimbursement_due ? `<div><span class="muted small">Reimb. due</span><div class="mono" style="color:#B6752C;">+ ${inr(l.reimbursement_due)}</div></div>` : ""}
+            ${l.reimbursement_due ? `<div><span class="muted small">Reimbursements</span><div class="mono" style="color:#B6752C;">+ ${inr(l.reimbursement_due)}</div></div>` : ""}
             <div><span class="muted small">Received</span><div class="mono">${inr(l.received)}</div></div>
             <div><span class="muted small">Balance</span><div class="mono" style="color:${balance > 0 ? "#A6432B" : "#1C7A80"};">${inr(balance)}</div></div>
             <div><span class="muted small">Expenses</span><div class="mono">${l.expenses ? inr(l.expenses) : "—"}</div></div>
