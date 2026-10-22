@@ -1269,12 +1269,15 @@ async function downloadLedgerPDF(booking, payments, reimbursements = [], shareOp
   const merged = [];
   receipts.forEach((p) => {
     const last = merged[merged.length - 1];
-    if (last && last.payment_date === p.payment_date && (last.payment_mode || "") === (p.payment_mode || "")) last.amount += p.amount;
-    else merged.push({ payment_date: p.payment_date, payment_mode: p.payment_mode, amount: p.amount });
+    const note = p._kind === "fee" && p.notes ? p.notes : "";
+    if (last && last.payment_date === p.payment_date && (last.payment_mode || "") === (p.payment_mode || "")) {
+      last.amount += p.amount;
+      if (note && !last.note.includes(note)) last.note = last.note ? `${last.note}, ${note}` : note;
+    } else merged.push({ payment_date: p.payment_date, payment_mode: p.payment_mode, amount: p.amount, note });
   });
   merged.forEach((p, i) => {
     const mode = p.payment_mode ? ` (${p.payment_mode})` : "";
-    addRow(fmtDate(p.payment_date), (i === 0 ? "Advance received" : "Payment received") + mode, p.amount, -1);
+    addRow(fmtDate(p.payment_date), (i === 0 ? "Advance received" : "Payment received") + mode + (p.note ? ` - from ${p.note}` : ""), p.amount, -1);
   });
   // Closing line: what is still to be paid.
   ensureRoom(16);
@@ -5445,7 +5448,7 @@ async function openLeadPaymentsModal(leadId) {
           <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
             <div>
               <div class="mono">${inr(p.amount)}</div>
-              <div class="muted small">${fmtDate(p.payment_date)}${p.payment_mode ? ` · ${p.payment_mode}` : ""}${p.type === "client_reimbursement" ? " · settled earlier against a reimbursement — remove it under Reimbursements below" : ""}</div>
+              <div class="muted small">${fmtDate(p.payment_date)}${p.payment_mode ? ` · ${p.payment_mode}` : ""}${p.type !== "client_reimbursement" && p.notes ? ` · ${escH(p.notes)}` : ""}${p.type === "client_reimbursement" ? " · settled earlier against a reimbursement — remove it under Reimbursements below" : ""}</div>
             </div>
             ${p.type === "client_reimbursement" ? "" : `<button class="icon-btn" data-delete-payment="${p.id}">${ICON_X}</button>`}
           </div>
@@ -5479,9 +5482,10 @@ async function openLeadPaymentsModal(leadId) {
           <option value="">Mode —</option>
           <option value="Cash">Cash</option>
           <option value="UPI">UPI</option>
+          <option value="NEFT">NEFT</option>
         </select>
       </div>
-      <input id="lpNotes" placeholder="What's this reimbursement for? (e.g. Train and Cab)" style="margin-top:8px; display:none;" />
+      <input id="lpNotes" placeholder="Bank account it was received from (e.g. HDFC - Gopi Gogoi)" style="margin-top:8px;" />
       <button class="btn-primary full" id="lpAddBtn" style="margin-top:10px;">Add</button>
     `;
 
@@ -5490,7 +5494,7 @@ async function openLeadPaymentsModal(leadId) {
     const modeSelect = body.querySelector("#lpMode");
     function refreshPaymentFormFields() {
       const isReimbursement = typeSelect.value === "client_reimbursement";
-      notesInput.style.display = isReimbursement ? "block" : "none";
+      notesInput.placeholder = isReimbursement ? "What's this reimbursement for? (e.g. Train and Cab)" : "Bank account it was received from (e.g. HDFC - Gopi Gogoi)";
       modeSelect.style.display = isReimbursement ? "none" : "";
     }
     typeSelect.addEventListener("change", refreshPaymentFormFields);
