@@ -1186,11 +1186,17 @@ async function downloadLedgerPDF(booking, payments, reimbursements = [], shareOp
   const contentW = pageWidth - marginX * 2;
   let y = 40;
 
+  // Fee and reimbursements are kept apart (a reimbursement is a pass-through cost, never part of the
+  // confirmed fee), then combined once into the single figure the client actually owes.
   const total = booking.final_amount || booking.quote_amount || 0;
   const reimbursementsReceived = reimbursements.filter((p) => p.status !== "due");
   const reimbursementsDue = reimbursements.filter((p) => p.status === "due");
-  const received = payments.reduce((s, p) => s + p.amount, 0) + reimbursementsReceived.reduce((s, p) => s + p.amount, 0);
-  const balance = (total - received) + reimbursementsDue.reduce((s, p) => s + p.amount, 0);
+  const received = payments.reduce((s, p) => s + p.amount, 0);
+  const feeBalance = total - received;
+  const reimbBilled = reimbursements.reduce((s, p) => s + p.amount, 0);
+  const reimbReceivedTotal = reimbursementsReceived.reduce((s, p) => s + p.amount, 0);
+  const reimbursementDueTotal = reimbursementsDue.reduce((s, p) => s + p.amount, 0);
+  const balance = feeBalance + reimbursementDueTotal; // total outstanding right now
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
@@ -1212,34 +1218,51 @@ async function downloadLedgerPDF(booking, payments, reimbursements = [], shareOp
   doc.line(marginX, y, pageWidth - marginX, y);
   y += 9;
 
-  // Reimbursement due sits right after "Amount confirmed" — not between
-  // Received and Balance — so it's clear *before* Balance Due why that
-  // number can be higher than the confirmed amount, instead of looking like
-  // a mistake.
-  const reimbursementDueTotal = reimbursementsDue.reduce((s, p) => s + p.amount, 0);
-  const boxes = [
-    ["AMOUNT CONFIRMED", inrPdf(total), PDF_COLORS.dark, PDF_COLORS.line],
-    ...(reimbursementDueTotal > 0 ? [["REIMBURSEMENT DUE", "+ " + inrPdf(reimbursementDueTotal), PDF_COLORS.rustDark, PDF_COLORS.line]] : []),
+  const drawBoxRow = (boxes) => {
+    const boxGap = 4;
+    const boxW = (contentW - boxGap * (boxes.length - 1)) / boxes.length;
+    boxes.forEach(([label, value, color, borderColor], k) => {
+      const bx = marginX + k * (boxW + boxGap);
+      doc.setFillColor(...PDF_COLORS.card);
+      doc.setDrawColor(...borderColor);
+      doc.setLineWidth(0.5);
+      doc.roundedRect(bx, y, boxW, 24, 2, 2, "FD");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.6);
+      doc.setTextColor(...PDF_COLORS.muted);
+      doc.text(label, bx + 5, y + 9);
+      doc.setFontSize(boxes.length > 3 ? 12 : 14);
+      doc.setTextColor(...color);
+      doc.text(value, bx + 5, y + 19);
+    });
+    y += 24 + 6;
+  };
+  // Row 1 — the performance fee. Row 2 — reimbursements (only when there are any) and the one total owed.
+  drawBoxRow([
+    ["PERFORMANCE FEE", inrPdf(total), PDF_COLORS.dark, PDF_COLORS.line],
     ["RECEIVED", inrPdf(received), PDF_COLORS.green, PDF_COLORS.line],
-    ["BALANCE DUE", inrPdf(balance), PDF_COLORS.rustDark, balance > 0 ? PDF_COLORS.rust : PDF_COLORS.line],
-  ];
-  const boxGap = 4;
-  const boxW = (contentW - boxGap * (boxes.length - 1)) / boxes.length;
-  boxes.forEach(([label, value, color, borderColor], i) => {
-    const bx = marginX + i * (boxW + boxGap);
-    doc.setFillColor(...PDF_COLORS.card);
-    doc.setDrawColor(...borderColor);
-    doc.setLineWidth(0.5);
-    doc.roundedRect(bx, y, boxW, 24, 2, 2, "FD");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.6);
-    doc.setTextColor(...PDF_COLORS.muted);
-    doc.text(label, bx + 5, y + 9);
-    doc.setFontSize(boxes.length > 3 ? 12 : 14);
-    doc.setTextColor(...color);
-    doc.text(value, bx + 5, y + 19);
-  });
-  y += 24 + 12;
+    ["FEE BALANCE", inrPdf(feeBalance), PDF_COLORS.rustDark, feeBalance > 0 ? PDF_COLORS.rust : PDF_COLORS.line],
+  ]);
+  if (reimbursements.length > 0) {
+    drawBoxRow([
+      ["REIMBURSEMENTS", inrPdf(reimbBilled), PDF_COLORS.dark, PDF_COLORS.line],
+      ["REIMB. RECEIVED", inrPdf(reimbReceivedTotal), PDF_COLORS.green, PDF_COLORS.line],
+      ["REIMB. DUE", inrPdf(reimbursementDueTotal), PDF_COLORS.rustDark, reimbursementDueTotal > 0 ? PDF_COLORS.rust : PDF_COLORS.line],
+    ]);
+  }
+  // The headline: everything still to be paid, fee balance plus reimbursements due.
+  doc.setFillColor(...PDF_COLORS.card);
+  doc.setDrawColor(...(balance > 0 ? PDF_COLORS.rust : PDF_COLORS.line));
+  doc.setLineWidth(0.8);
+  doc.roundedRect(marginX, y, contentW, 18, 2, 2, "FD");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(...PDF_COLORS.muted);
+  doc.text(reimbursements.length > 0 ? "TOTAL OUTSTANDING  (fee balance + reimbursements due)" : "TOTAL OUTSTANDING", marginX + 5, y + 7.5);
+  doc.setFontSize(14);
+  doc.setTextColor(...PDF_COLORS.rustDark);
+  doc.text(inrPdf(balance), pageWidth - marginX - 5, y + 12.5, { align: "right" });
+  y += 18 + 12;
 
   y = pdfHeaderBar(doc, "Payments Received", marginX, y, contentW, PDF_COLORS.rust);
   doc.setFillColor(...PDF_COLORS.card);
@@ -1304,7 +1327,7 @@ async function downloadLedgerPDF(booking, payments, reimbursements = [], shareOp
     doc.setFont("helvetica", "italic");
     doc.setFontSize(8);
     doc.setTextColor(...PDF_COLORS.muted);
-    const reimbNote = doc.splitTextToSize("These are travel or other costs paid upfront and billed back to you, on top of the performance fee. Received ones are already reflected in the Received/Balance above; due ones are counted as outstanding until paid.", contentW);
+    const reimbNote = doc.splitTextToSize("These are travel or other costs paid upfront and billed back to you, on top of the performance fee. Received ones are already settled and not part of the balance; due ones are counted as outstanding until paid.", contentW);
     doc.text(reimbNote, marginX, y);
     y += reimbNote.length * 5 + 6;
   }
