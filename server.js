@@ -2529,20 +2529,23 @@ app.post("/api/leads/:id/assignments", requireAuth, requireCapability("assign_te
 // complete (someone added/declines), the flag resets so the alert fires again when it is.
 async function checkTeamComplete(leadId) {
   try {
-    const lead = (await pool.query("SELECT id, name, date, city, stage, team_complete_notified FROM leads WHERE id = $1", [leadId])).rows[0];
+    const lead = (await pool.query("SELECT id, name, date, city, stage, pcs, team_complete_notified FROM leads WHERE id = $1", [leadId])).rows[0];
     if (!lead) return;
     const as = [
       ...(await pool.query("SELECT status FROM event_assignments WHERE lead_id = $1", [leadId])).rows,
       ...(await pool.query("SELECT status FROM temp_artists WHERE lead_id = $1 AND migrated_assignment_id IS NULL", [leadId])).rows,
     ];
-    const complete = lead.stage === "Confirmed" && as.length > 0 && as.every((a) => a.status === "accepted");
+    // Everyone assigned must have accepted AND the line-up must actually be full: a 4-piece booking
+    // with only 3 chosen is not "complete" yet, however many of those 3 have said yes.
+    const needed = Number(lead.pcs) || 0;
+    const complete = lead.stage === "Confirmed" && as.length > 0 && as.length >= needed && as.every((a) => a.status === "accepted");
     if (!complete) {
       if (lead.team_complete_notified) await pool.query("UPDATE leads SET team_complete_notified = 0 WHERE id = $1", [leadId]);
       return;
     }
     const won = await pool.query("UPDATE leads SET team_complete_notified = 1 WHERE id = $1 AND team_complete_notified = 0 RETURNING id", [leadId]);
     if (!won.rows.length) return;
-    const msg = `\ud83c\udf89 TEAM COMPLETE \u2014 all ${as.length} member${as.length > 1 ? "s have" : " has"} confirmed ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""}.`;
+    const msg = `\ud83c\udf89 TEAM COMPLETE \u2014 all ${as.length}${needed ? ` of ${needed}` : ""} member${as.length > 1 ? "s have" : " has"} confirmed ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""}.`;
     await pool.query("INSERT INTO admin_notifications (id, message, assignment_id, audience, created_at) VALUES ($1,$2,NULL,'coordination',$3)", [uuid(), msg, new Date().toISOString()]);
     logActivity({ user: null }, `Team complete: everyone confirmed ${lead.name} (${lead.date})`, leadId);
     await sendPushToAll("\ud83c\udf89 Team complete!", `${lead.name} (${lead.date}) \u2014 every member has confirmed.`, "/login", { adminOnly: true });
