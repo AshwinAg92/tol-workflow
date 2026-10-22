@@ -1263,13 +1263,11 @@ async function downloadLedgerPDF(booking, payments, reimbursements = [], shareOp
     ...payments.map((p) => ({ ...p, _kind: "fee" })),
     ...reimbursementsReceived.map((p) => ({ ...p, _kind: "reimb" })),
   ].sort((p, q) => String(p.payment_date || "").localeCompare(String(q.payment_date || "")));
-  let feeSeen = 0;
-  receipts.forEach((p) => {
+  // To the client every receipt is simply money paid: the first is the advance, the rest are payments.
+  // Whether it was set against the fee or a reimbursement is our bookkeeping, not theirs.
+  receipts.forEach((p, i) => {
     const mode = p.payment_mode ? ` (${p.payment_mode})` : "";
-    let label;
-    if (p._kind === "reimb") label = `Reimbursement received${p.notes ? " - " + p.notes : ""}${mode}`;
-    else label = (feeSeen++ === 0 ? "Advance received" : "Payment received") + mode;
-    addRow(fmtDate(p.payment_date), label, p.amount, -1);
+    addRow(fmtDate(p.payment_date), (i === 0 ? "Advance received" : "Payment received") + mode, p.amount, -1);
   });
   // Closing line: what is still to be paid.
   ensureRoom(16);
