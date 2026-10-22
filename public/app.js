@@ -5445,9 +5445,9 @@ async function openLeadPaymentsModal(leadId) {
           <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
             <div>
               <div class="mono">${inr(p.amount)}</div>
-              <div class="muted small">${fmtDate(p.payment_date)}${p.payment_mode ? ` · ${p.payment_mode}` : ""}</div>
+              <div class="muted small">${fmtDate(p.payment_date)}${p.payment_mode ? ` · ${p.payment_mode}` : ""}${p.type === "client_reimbursement" ? " · settled earlier against a reimbursement — remove it under Reimbursements below" : ""}</div>
             </div>
-            <button class="icon-btn" data-delete-payment="${p.id}">${ICON_X}</button>
+            ${p.type === "client_reimbursement" ? "" : `<button class="icon-btn" data-delete-payment="${p.id}">${ICON_X}</button>`}
           </div>
         `).join("")}
       </div>
