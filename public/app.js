@@ -5711,7 +5711,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   const _prevScroll = _prevCard ? _prevCard.scrollTop : 0;
   const lead = LEADS.find((l) => l.id === leadId);
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
-  const [assignments, tempArtists, leadExpenses, myReimbursements, myOwnFee, tempArtistDirectory, allMusicians, allDocs, travelCtx, travelLegsAll] = await Promise.all([
+  const [assignments, tempArtists, leadExpenses, myReimbursements, myOwnFee, tempArtistDirectory, allMusicians, allDocs, travelCtx, travelLegsAll, pendingAll] = await Promise.all([
     api(`/api/leads/${leadId}/assignments`),
     Promise.resolve([]),
     isAdmin ? api(`/api/expenses?leadId=${leadId}`) : Promise.resolve([]),
@@ -5722,7 +5722,9 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     api(`/api/documents`).catch(() => []),
     api(`/api/travel-context`).catch(() => ({ busy: [] })),
     api(`/api/travel-legs`).catch(() => []),
+    isAdmin ? api(`/api/reimbursements/pending`).catch(() => []) : Promise.resolve([]),
   ]);
+  const adminPending = pendingAll.filter((r) => r.lead_id === leadId);
   // Riders (Tech / Hospitality) — this event's own copy first, else the general library one.
   const riderDocs = [];
   allDocs.filter((d) => /rider/i.test(d.notes || "") && (!d.lead_id || d.lead_id === leadId))
@@ -5731,7 +5733,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   // Only musicians not already promoted into Team are offered here — once
   // promoted they show up in the regular Team checklist below like anyone else.
   const unpromotedMusicians = allMusicians.filter((m) => !m.team_id && !tempArtists.some((t) => t.musician_id === m.id));
-  const leadReimbursements = myReimbursements.filter((r) => r.lead_id === leadId);
+  const leadReimbursements = myReimbursements.filter((r) => r.lead_id === leadId && !(isAdmin && !r.approved));
   const reimbStatusLabel = { 0: "Pending approval", 1: "Approved" };
   const byTeamId = {};
   assignments.forEach((a) => (byTeamId[a.team_id] = a));
@@ -5998,6 +6000,23 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
           ` : ""}
 
           <div class="section-label" style="margin-top:16px;">Artist reimbursements</div>
+          ${isAdmin && adminPending.length ? `
+            <div id="reimbApprovals" style="margin-bottom:8px;">
+              ${adminPending.map((r) => `
+                <div class="dash-list-item">
+                  <div>${r.head.replace(/^Reimbursement — /, "")}${r.notes ? ` <span class="muted small">— ${r.notes}</span>` : ""}</div>
+                  <div class="muted small">requested by ${r.requested_by || "—"} · <span style="color:#B6752C;">Pending approval</span></div>
+                  <div class="small" style="margin-top:4px;">${(r.receipts || []).length ? r.receipts.map((x, i) => `<a href="/api/reimbursement-receipts/${x.id}/file" target="_blank" rel="noopener">📎 Receipt ${i + 1}</a>`).join(" · ") : `<span style="color:#B6752C;">⚠ No receipt attached</span>`}</div>
+                  <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px;">
+                    <input type="number" class="ra-amount" data-id="${r.id}" value="${r.amount}" style="width:90px;" />
+                    <input type="date" class="ra-date" data-id="${r.id}" max="${new Date().toISOString().slice(0, 10)}" style="flex:1; min-width:130px;" />
+                    <select class="ra-mode" data-id="${r.id}" style="width:100px;"><option value="">Mode —</option><option value="Cash">Cash</option><option value="UPI">UPI</option></select>
+                    <button class="btn-ghost ra-approve" data-id="${r.id}" style="padding:5px 10px; font-size:12.5px;">Approve</button>
+                    <button class="icon-btn ra-reject" data-id="${r.id}">${ICON_X}</button>
+                  </div>
+                </div>`).join("")}
+            </div>
+          ` : ""}
           ${leadReimbursements.length > 0 ? `
             <div id="reimbList" style="margin-bottom:8px;">
               ${leadReimbursements.map((r) => `
@@ -6191,6 +6210,22 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       }
     });
   });
+  root.querySelectorAll(".ra-approve").forEach((btn) => btn.addEventListener("click", async () => {
+    if (btn.disabled) return;
+    const id = btn.dataset.id, q = (c) => root.querySelector(`.${c}[data-id="${id}"]`);
+    const date = q("ra-date").value;
+    const markPaid = confirm("Mark this reimbursement as paid now? Cancel to approve it as unpaid (settle later).");
+    if (markPaid && !date) return alert("Enter the payment date before marking this paid.");
+    btn.disabled = true;
+    try {
+      await api(`/api/reimbursements/${id}/approve`, { method: "POST", body: JSON.stringify({ amount: q("ra-amount").value, paid: markPaid, paymentDate: date || null, paymentMode: q("ra-mode").value || null }) });
+      openAssignTeamModal(leadId);
+    } catch (err) { alert(err.message); btn.disabled = false; }
+  }));
+  root.querySelectorAll(".ra-reject").forEach((btn) => btn.addEventListener("click", async () => {
+    if (!confirm("Reject and delete this reimbursement request?")) return;
+    try { await api(`/api/reimbursements/${btn.dataset.id}`, { method: "DELETE" }); openAssignTeamModal(leadId); } catch (err) { alert(err.message); }
+  }));
   root.querySelector("#reimbTeamId").addEventListener("change", (e) => {
     root.querySelector("#reimbArtistName").style.display = e.target.value === "__other__" ? "block" : "none";
   });
