@@ -1218,53 +1218,11 @@ async function downloadLedgerPDF(booking, payments, reimbursements = [], shareOp
   doc.line(marginX, y, pageWidth - marginX, y);
   y += 9;
 
-  const drawBoxRow = (boxes) => {
-    const boxGap = 4;
-    const boxW = (contentW - boxGap * (boxes.length - 1)) / boxes.length;
-    boxes.forEach(([label, value, color, borderColor], k) => {
-      const bx = marginX + k * (boxW + boxGap);
-      doc.setFillColor(...PDF_COLORS.card);
-      doc.setDrawColor(...borderColor);
-      doc.setLineWidth(0.5);
-      doc.roundedRect(bx, y, boxW, 24, 2, 2, "FD");
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(7.6);
-      doc.setTextColor(...PDF_COLORS.muted);
-      doc.text(label, bx + 5, y + 9);
-      doc.setFontSize(boxes.length > 3 ? 12 : 14);
-      doc.setTextColor(...color);
-      doc.text(value, bx + 5, y + 19);
-    });
-    y += 24 + 6;
-  };
-  // Row 1 — the performance fee. Row 2 — reimbursements (only when there are any) and the one total owed.
-  drawBoxRow([
-    ["PERFORMANCE FEE", inrPdf(total), PDF_COLORS.dark, PDF_COLORS.line],
-    ["RECEIVED", inrPdf(received), PDF_COLORS.green, PDF_COLORS.line],
-    ["FEE BALANCE", inrPdf(feeBalance), PDF_COLORS.rustDark, feeBalance > 0 ? PDF_COLORS.rust : PDF_COLORS.line],
-  ]);
-  if (reimbursements.length > 0) {
-    drawBoxRow([
-      ["REIMBURSEMENTS", inrPdf(reimbBilled), PDF_COLORS.dark, PDF_COLORS.line],
-      ["REIMB. RECEIVED", inrPdf(reimbReceivedTotal), PDF_COLORS.green, PDF_COLORS.line],
-      ["REIMB. DUE", inrPdf(reimbursementDueTotal), PDF_COLORS.rustDark, reimbursementDueTotal > 0 ? PDF_COLORS.rust : PDF_COLORS.line],
-    ]);
-  }
-  // The headline: everything still to be paid, fee balance plus reimbursements due.
-  doc.setFillColor(...PDF_COLORS.card);
-  doc.setDrawColor(...(balance > 0 ? PDF_COLORS.rust : PDF_COLORS.line));
-  doc.setLineWidth(0.8);
-  doc.roundedRect(marginX, y, contentW, 18, 2, 2, "FD");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8.5);
-  doc.setTextColor(...PDF_COLORS.muted);
-  doc.text(reimbursements.length > 0 ? "TOTAL OUTSTANDING  (fee balance + reimbursements due)" : "TOTAL OUTSTANDING", marginX + 5, y + 7.5);
-  doc.setFontSize(14);
-  doc.setTextColor(...PDF_COLORS.rustDark);
-  doc.text(inrPdf(balance), pageWidth - marginX - 5, y + 12.5, { align: "right" });
-  y += 18 + 12;
-
-  y = pdfHeaderBar(doc, "Payments Received", marginX, y, contentW, PDF_COLORS.rust);
+  // One simple running statement: what the client owes (fee + reimbursements), then every amount
+  // received with its date, each one reducing the balance.
+  const colDate = marginX + 4, colDesc = marginX + 34, colAmt = marginX + contentW * 0.70, colBal = pageWidth - marginX - 4;
+  const ensureRoom = (need) => { if (y + need > 270) { doc.addPage(); y = 25; } };
+  y = pdfHeaderBar(doc, "Statement of Account", marginX, y, contentW, PDF_COLORS.rust);
   doc.setFillColor(...PDF_COLORS.card);
   doc.rect(marginX, y - 5, contentW, 7, "F");
   doc.setDrawColor(...PDF_COLORS.rust);
@@ -1273,64 +1231,58 @@ async function downloadLedgerPDF(booking, payments, reimbursements = [], shareOp
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8);
   doc.setTextColor(...PDF_COLORS.muted);
-  doc.text("DATE", marginX + 4, y);
-  doc.text("AMOUNT", marginX + contentW * 0.4, y);
-  doc.text("MODE", marginX + contentW * 0.7, y);
+  doc.text("DATE", colDate, y);
+  doc.text("DESCRIPTION", colDesc, y);
+  doc.text("AMOUNT", colAmt, y, { align: "right" });
+  doc.text("BALANCE", colBal, y, { align: "right" });
   y += 8;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9.3);
-  if (payments.length === 0) {
-    doc.setTextColor(...PDF_COLORS.muted);
-    doc.text("No payments recorded yet.", marginX + 4, y);
-    y += 7;
-  } else {
-    payments.forEach((p, i) => {
-      if (i % 2 === 1) { doc.setFillColor(248, 240, 230); doc.rect(marginX, y - 5, contentW, 7, "F"); }
-      doc.setTextColor(...PDF_COLORS.dark);
-      doc.text(fmtDate(p.payment_date), marginX + 4, y);
-      doc.text(inrPdf(p.amount), marginX + contentW * 0.4, y);
-      doc.text(p.payment_mode || "—", marginX + contentW * 0.7, y);
-      y += 7;
-    });
-  }
-  y += 6;
-
-  if (reimbursements.length > 0) {
-    const totalReimbReceived = reimbursementsReceived.reduce((s, p) => s + p.amount, 0);
-    const totalReimbDue = reimbursementsDue.reduce((s, p) => s + p.amount, 0);
-    y = pdfHeaderBar(doc, `Reimbursements — ${inrPdf(totalReimbReceived)} received${totalReimbDue ? `, ${inrPdf(totalReimbDue)} due` : ""}`, marginX, y, contentW, PDF_COLORS.rust);
-    doc.setFillColor(...PDF_COLORS.card);
-    doc.rect(marginX, y - 5, contentW, 7, "F");
-    doc.setDrawColor(...PDF_COLORS.rust);
-    doc.setLineWidth(0.4);
-    doc.line(marginX, y + 3, pageWidth - marginX, y + 3);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.setTextColor(...PDF_COLORS.muted);
-    doc.text("STATUS", marginX + 4, y);
-    doc.text("AMOUNT", marginX + contentW * 0.24, y);
-    doc.text("FOR", marginX + contentW * 0.46, y);
-    y += 8;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9.3);
-    reimbursements.forEach((p, i) => {
-      if (i % 2 === 1) { doc.setFillColor(248, 240, 230); doc.rect(marginX, y - 5, contentW, 7, "F"); }
-      doc.setTextColor(p.status === "due" ? PDF_COLORS.rustDark[0] : PDF_COLORS.dark[0], p.status === "due" ? PDF_COLORS.rustDark[1] : PDF_COLORS.dark[1], p.status === "due" ? PDF_COLORS.rustDark[2] : PDF_COLORS.dark[2]);
-      doc.text(p.status === "due" ? "Due" : `Received ${fmtDate(p.payment_date)}`, marginX + 4, y);
-      doc.setTextColor(...PDF_COLORS.dark);
-      doc.text(inrPdf(p.amount), marginX + contentW * 0.24, y);
-      const note = doc.splitTextToSize(p.notes || "—", contentW * 0.5);
-      doc.text(note, marginX + contentW * 0.46, y);
-      y += 7 * note.length;
-    });
-    y += 3;
-    doc.setFont("helvetica", "italic");
-    doc.setFontSize(8);
-    doc.setTextColor(...PDF_COLORS.muted);
-    const reimbNote = doc.splitTextToSize("These are travel or other costs paid upfront and billed back to you, on top of the performance fee. Received ones are already settled and not part of the balance; due ones are counted as outstanding until paid.", contentW);
-    doc.text(reimbNote, marginX, y);
-    y += reimbNote.length * 5 + 6;
-  }
+  let running = 0, rowNo = 0;
+  const addRow = (dateText, desc, amount, sign, opts = {}) => {
+    const lines = doc.splitTextToSize(desc, colAmt - colDesc - 24);
+    ensureRoom(7 * lines.length + 2);
+    if (rowNo++ % 2 === 1) { doc.setFillColor(248, 240, 230); doc.rect(marginX, y - 5, contentW, 7 * lines.length, "F"); }
+    running += sign * amount;
+    doc.setFont("helvetica", opts.bold ? "bold" : "normal");
+    doc.setTextColor(...PDF_COLORS.dark);
+    doc.text(dateText || "", colDate, y);
+    doc.text(lines, colDesc, y);
+    doc.setTextColor(...(sign < 0 ? PDF_COLORS.green : PDF_COLORS.dark));
+    doc.text((sign < 0 ? "- " : "") + inrPdf(amount), colAmt, y, { align: "right" });
+    doc.setTextColor(...PDF_COLORS.dark);
+    doc.text(inrPdf(running), colBal, y, { align: "right" });
+    y += 7 * lines.length;
+  };
+  addRow("", "Professional fee", total, 1, { bold: true });
+  [...reimbursements].sort((p, q) => String(p.payment_date || "").localeCompare(String(q.payment_date || ""))).forEach((p) => {
+    addRow("", `Reimbursement${p.notes ? " - " + p.notes : ""}`, p.amount, 1);
+  });
+  // Everything the client has paid, oldest first. The first fee payment is the advance.
+  const receipts = [
+    ...payments.map((p) => ({ ...p, _kind: "fee" })),
+    ...reimbursementsReceived.map((p) => ({ ...p, _kind: "reimb" })),
+  ].sort((p, q) => String(p.payment_date || "").localeCompare(String(q.payment_date || "")));
+  let feeSeen = 0;
+  receipts.forEach((p) => {
+    const mode = p.payment_mode ? ` (${p.payment_mode})` : "";
+    let label;
+    if (p._kind === "reimb") label = `Reimbursement received${p.notes ? " - " + p.notes : ""}${mode}`;
+    else label = (feeSeen++ === 0 ? "Advance received" : "Payment received") + mode;
+    addRow(fmtDate(p.payment_date), label, p.amount, -1);
+  });
+  // Closing line: what is still to be paid.
+  ensureRoom(16);
+  y += 1;
+  doc.setDrawColor(...(balance > 0 ? PDF_COLORS.rust : PDF_COLORS.line));
+  doc.setLineWidth(0.8);
+  doc.line(marginX, y - 4, pageWidth - marginX, y - 4);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.setTextColor(...PDF_COLORS.rustDark);
+  doc.text(balance > 0 ? "BALANCE DUE" : "BALANCE", colDesc, y + 3);
+  doc.text(inrPdf(balance), colBal, y + 3, { align: "right" });
+  y += 16;
 
   doc.setFont("helvetica", "italic");
   doc.setFontSize(8.3);
