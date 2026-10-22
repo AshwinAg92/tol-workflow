@@ -11523,7 +11523,9 @@ function recordTabHistory() {
 function withCardLinkAtEnd(text, link) {
   const cleaned = String(text)
     .split("\n")
-    .filter((l) => !/instagram\.com\/togetheroutloudclub|togetheroutloud\.in/i.test(l))
+    // Drop only the footer lines (Instagram / website). Lines carrying a real link — a checked
+    // document like the tech rider — also contain "togetheroutloud.in", so they must survive.
+    .filter((l) => /:\/\//.test(l) || !/instagram\.com\/togetheroutloudclub|togetheroutloud\.in/i.test(l))
     .join("\n")
     .replace(/\s+$/, "");
   return `${cleaned}\n\n${link}`;
