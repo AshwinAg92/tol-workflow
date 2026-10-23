@@ -18,6 +18,18 @@ let leadsSortBy = "date";
 let leadsB2bOnly = false;
 let leadsClashOnly = false;
 let leadsDueOnly = false;
+// The occasion as the client meant it ("Other" → the text they typed).
+function occasionLabel(l) { return !l || !l.occasion ? "" : (l.occasion === "Other" && l.occasion_other ? l.occasion_other : l.occasion); }
+// Highlighted "Occasion + client's notes" block — needed to plan the gig, so it is shown plainly, not buried.
+function planningBlockHtml(l) {
+  const occ = occasionLabel(l), notes = (l.details || "").trim();
+  if (!occ && !notes) return "";
+  const esc2 = (v) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return `<div style="margin:8px 0 2px; padding:8px 10px; background:#FFF3DC; border-left:4px solid #C1602B; border-radius:6px; font-size:13px; line-height:1.45;">
+    ${occ ? `<div><strong>🎉 Occasion:</strong> ${esc2(occ)}</div>` : ""}
+    ${notes ? `<div style="margin-top:${occ ? 4 : 0}px; white-space:pre-wrap;"><strong>📝 Client's notes:</strong> ${esc2(notes)}</div>` : ""}
+  </div>`;
+}
 
 // Other leads that fall on the same event date as this one — Confirmed, Tentative,
 // Interested, Follow-up and New all count (not Not Interested / Completed). The
@@ -2006,13 +2018,12 @@ async function openLeadDetailModal(lead) {
           ` : ""}
           <div class="lead-detail-section">
             <div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">From their enquiry</div>
+            ${planningBlockHtml(lead)}
             ${[
-              lead.occasion ? ["Occasion", lead.occasion === "Other" && lead.occasion_other ? `Other — ${lead.occasion_other}` : lead.occasion] : null,
               lead.guest_range ? ["Guests", lead.guest_range] : null,
               lead.budget ? ["Budget mentioned", inr(lead.budget)] : null,
               lead.alt_date ? ["Alternate date", fmtDate(lead.alt_date)] : null,
               lead.how_heard ? ["Heard about us via", lead.how_heard] : null,
-              lead.details ? ["Message", lead.details] : null,
             ].filter(Boolean).map(([label, value]) => `<div style="margin-bottom:3px;"><span class="muted small">${label}:</span> ${value}</div>`).join("") || `<p class="muted small">Nothing else submitted.</p>`}
           </div>
           ${lead.notes ? `<div class="lead-detail-section"><div class="muted small" style="font-weight:600; text-transform:uppercase; letter-spacing:0.03em; margin:12px 0 6px;">Sticky note</div><div style="padding:8px 10px; background:#FBF3D9; border-radius:6px;">📌 ${lead.notes}</div></div>` : ""}
@@ -2394,7 +2405,7 @@ async function renderLeadsLog(main, skipRefresh) {
                 <div class="lead-name">${l.name}${l.is_b2b ? ` <span class="mono small" style="background:#8A5FA8; color:#fff; border-radius:4px; padding:1px 6px; font-size:10.5px; font-weight:600; vertical-align:middle;">B2B</span>` : ""}</div>
                 <div class="muted small">${l.phone ? `<a href="tel:${l.phone.replace(/\s+/g, "")}" style="color:inherit; text-decoration:underline;">${l.phone}</a>` : ""}</div>
                 ${l.combo_group_id ? `<div class="muted small" style="color:#8A5FA8;" title="Linked bookings share one client — pricing and payments live on the primary event.">🔗 Combo with ${comboSiblings.map((s) => `${packageName(s.event_type)} (${fmtDate(s.date)})`).join(", ")}</div>` : ""}
-                ${l.occasion && isConfirmedOrDone ? `<div class="muted small">${l.occasion}</div>` : ""}
+                ${planningBlockHtml(l)}
                 ${l.alt_date ? `<div class="muted small" style="color:#B6752C;">Alt date: ${fmtDate(l.alt_date)}</div>` : ""}
               </div>
             </div>
@@ -5949,7 +5960,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card" style="width:680px; max-width:96vw;">
-        <div class="modal-head"><h3>Team & Expenses — ${lead.name}${lead.occasion ? ` <span class="muted" style="font-weight:400; font-size:14px;">— ${lead.occasion}</span>` : ""}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-head"><h3>Team & Expenses — ${lead.name}${lead.occasion ? ` <span class="muted" style="font-weight:400; font-size:14px;">— ${occasionLabel(lead)}</span>` : ""}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
           <div class="card" style="margin-bottom:12px; padding:10px 14px;">
             <div style="font-weight:700; margin-bottom:6px;">Event details</div>
@@ -5957,7 +5968,8 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
               ["Date", lead.date ? fmtDate(lead.date) : ""],
               ["City", lead.city || ""],
               ["Format", packageName(lead.event_type)],
-              ["Occasion", lead.occasion || ""],
+              ["🎉 Occasion", String(occasionLabel(lead)).replace(/&/g, "&amp;").replace(/</g, "&lt;")],
+              ["📝 Client's notes", String(lead.details || "").trim().replace(/&/g, "&amp;").replace(/</g, "&lt;")],
               ["Timing", [lead.soundcheck_time ? `Sound check ${fmtTimeHM(lead.soundcheck_time)}` : "", lead.event_time ? `Event ${fmtTimeHM(lead.event_time)}` : ""].filter(Boolean).join(" · ")],
               ["Set", lead.pcs && lead.event_type !== "pheras" ? `${lead.pcs} pieces` : ""],
               ["Duration", lead.duration || ""],
@@ -9481,7 +9493,8 @@ async function openConfirmationMessageModal(lead) {
     cityClause: lead.city ? ` in ${lead.city}` : "",
     amountLine,
     location: lead.venue || lead.city || "",
-    occasion: lead.occasion || "",
+    occasion: occasionLabel(lead),
+    notesLine: (lead.details || "").trim() ? `\nClient notes: ${String(lead.details).trim().replace(/\s*\n\s*/g, " ")}` : "",
     pieces: lead.pcs || "",
     duration: lead.duration || "75-90 Minutes",
     performanceFee: finalAmount ? Number(finalAmount).toLocaleString("en-IN") : "",
@@ -9490,6 +9503,11 @@ async function openConfirmationMessageModal(lead) {
     clientArrangements: clientArrangementsPhrase(lead),
     rateTermsBlock: confirmationTermsBlock(lead),
   });
+  // A custom-saved template won't have {notesLine} — slot the client's notes in right after the Occasion line.
+  if (!tpl.includes("{notesLine}") && (lead.details || "").trim()) {
+    const notesText = `Client notes: ${String(lead.details).trim().replace(/\s*\n\s*/g, " ")}`;
+    message = /^Occasion:.*$/m.test(message) ? message.replace(/^(Occasion:.*)$/m, `$1\n${notesText.replace(/\$/g, "$$$$")}`) : message;
+  }
   // A custom-saved template from before this block existed won't have the
   // placeholder — slot the terms in before the sign-off so they're never missing.
   if (!tpl.includes("{rateTermsBlock}")) {
@@ -10585,8 +10603,8 @@ const TEMPLATE_META = {
   confirmed: {
     label: "Confirmed client message",
     description: "Starting text shown when you confirm an event — you can still tweak it per-send before it goes out. Location, Set, Duration, Fee, Advance, Outstanding, and what the client needs to arrange are pulled automatically from the lead.",
-    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "amountLine", "location", "occasion", "pieces", "duration", "performanceFee", "advance", "outstanding", "clientArrangements", "rateTermsBlock"],
-    default: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe are pleased to confirm our booking for: {clientName}\nLocation: {location}\nDate: {date}\nOccasion: {occasion}\nSet: {pieces} Pieces\nDuration: {duration}\nPerformance Fee: ₹{performanceFee}/-\nAdvance: ₹{advance}/-\nOutstanding: ₹{outstanding}\n\n{rateTermsBlock}\n\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
+    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "amountLine", "location", "occasion", "notesLine", "pieces", "duration", "performanceFee", "advance", "outstanding", "clientArrangements", "rateTermsBlock"],
+    default: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe are pleased to confirm our booking for: {clientName}\nLocation: {location}\nDate: {date}\nOccasion: {occasion}{notesLine}\nSet: {pieces} Pieces\nDuration: {duration}\nPerformance Fee: ₹{performanceFee}/-\nAdvance: ₹{advance}/-\nOutstanding: ₹{outstanding}\n\n{rateTermsBlock}\n\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
   document_share: {
     label: "Document share message",

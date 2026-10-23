@@ -178,8 +178,8 @@
         </div>
 
         <div class="q">
-          <label class="qlabel">What is the occasion? <span class="opt">(optional)</span></label>
-          <select id="occasion"></select>
+          <label class="qlabel">What is the occasion? <span class="opt" id="occasionOpt">(required — it helps us plan your performance)</span></label>
+          <select id="occasion" required></select>
           <input id="occasionOther" type="text" maxlength="200" placeholder="Please tell us the occasion" style="display:none; margin-top:8px;" />
         </div>
 
@@ -206,7 +206,7 @@
 
         <div class="q">
           <label class="qlabel">Tell us about your event <span class="opt">(optional)</span></label>
-          <div class="qdesc">Anything you'd like us to know?</div>
+          <div class="qdesc">Anything you'd like us to know? Who's it for, the mood, songs or traditions that matter to you…</div>
           <textarea id="details" placeholder="Share any details that would help us plan..."></textarea>
         </div>
 
@@ -370,6 +370,9 @@
       radio.addEventListener("change", () => {
         const isManager = document.querySelector('input[name="bookingType"]:checked').value === "event_manager";
         managerFieldsWrap.style.display = isManager ? "" : "none";
+        // The occasion is needed to plan a private event; event/artist managers booking on someone's behalf can skip it.
+        occasionSelect.required = !isManager;
+        document.getElementById("occasionOpt").textContent = isManager ? "(optional)" : "(required — it helps us plan your performance)";
       });
     });
 
@@ -391,10 +394,11 @@
       if (sel.value === "Other") box.focus();
     });
     showOtherBox(occasionSelect, "occasionOther");
+    occasionSelect.addEventListener("change", () => { document.getElementById("occasionOther").required = occasionSelect.value === "Other"; });
     showOtherBox(howHeardSelect, "howHeardOther");
     fetch("/api/config").then(r => r.json()).then(cfg => {
       experienceSelect.innerHTML = cfg.experiences.map(e => `<option value="${e.id}">${e.name}</option>`).join("");
-      occasionSelect.innerHTML = cfg.occasions.map(o => `<option value="${o}">${o}</option>`).join("");
+      occasionSelect.innerHTML = `<option value="" disabled selected hidden>Choose the occasion…</option>` + cfg.occasions.map(o => `<option value="${o}">${o}</option>`).join("");
       guestRangeSelect.innerHTML = cfg.guestRanges.map(g => `<option value="${g}">${g}</option>`).join("");
       howHeardSelect.innerHTML = cfg.howHeard.map(h => `<option value="${h}">${h}</option>`).join("");
       // Lets the homepage's Format Finder link straight here with the
