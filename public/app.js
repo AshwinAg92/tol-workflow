@@ -6955,6 +6955,80 @@ async function openTravelShareModal(leadId) {
   if (thread.messages.some((m) => m.unread) || thread.files.some((f) => f.unread)) api(`/api/leads/${leadId}/client-thread/read`, { method: "POST" }).catch(() => {});
 }
 
+// ---------- Travel sanity checks: anything that makes a journey impossible or doubtful ----------
+// Returns plain-English warnings for one journey (dates against the events it serves, city mismatches,
+// travellers missing from the connected event's crew, a traveller already somewhere else that day).
+function legProblems(leg, assignmentsAll, allLegs) {
+  const out = [];
+  const t = leg.leg_type || "going";
+  const dep = ymd(leg.departure_at), arr = ymd(leg.arrival_at);
+  const own = LEADS.find((l) => l.id === leg.lead_id);
+  const prev = leg.from_lead_id ? LEADS.find((l) => l.id === leg.from_lead_id) : null;
+  const next = leg.to_lead_id ? LEADS.find((l) => l.id === leg.to_lead_id) : null;
+  const isCode = (c) => /^[A-Za-z]{2,4}$/.test(String(c || "").trim()); // airport / station codes can't be compared to a city name
+  const cityOk = (a, b) => { const x = normCity(a), y = normCity(b); return !x || !y || isCode(a) || isCode(b) || x.includes(y) || y.includes(x); };
+  const ev = (e) => `${e.name} (${fmtDate(e.date)})`;
+  const nameOf = (m) => m.name || (TEAM.find((x) => x.id === m.teamId) || {}).name || "";
+  if (dep && arr && arr < dep && baseLegType(t) === "going") out.push(`The return date (${fmtDate(arr)}) is before the departure date (${fmtDate(dep)}).`);
+  if (leg.status === "booked" && !dep) out.push("Marked booked, but there's no departure date.");
+  if (own && own.date) {
+    const going = baseLegType(t) === "going" && t !== "onward";
+    const returning = baseLegType(t) === "return";
+    if (going) {
+      if (dep && dep > own.date) out.push(`Departs ${fmtDate(dep)}, after ${ev(own)} — too late to reach it.`);
+      if (arr && arr < own.date) out.push(`The return date (${fmtDate(arr)}) is before ${ev(own)}.`);
+      if (!cityOk(leg.to_city, own.city)) out.push(`Goes to ${leg.to_city}, but ${own.name} is in ${own.city}.`);
+    }
+    if (returning) {
+      if (dep && dep < own.date) out.push(`Leaves ${fmtDate(dep)}, before ${ev(own)} has happened.`);
+      if (!cityOk(leg.from_city, own.city)) out.push(`Leaves from ${leg.from_city}, but ${own.name} is in ${own.city}.`);
+    }
+    if (t === "going_onward") {
+      if (prev) {
+        if (prev.date && prev.date > own.date) out.push(`The previous event (${ev(prev)}) is after ${own.name}.`);
+        if (dep && prev.date && dep < prev.date) out.push(`Departs ${fmtDate(dep)}, before ${ev(prev)} has happened.`);
+        if (!cityOk(leg.from_city, prev.city)) out.push(`Leaves from ${leg.from_city}, but ${prev.name} is in ${prev.city}.`);
+      } else out.push("Pick the previous event this journey continues from.");
+      if (dep && dep > own.date) out.push(`Departs ${fmtDate(dep)}, after ${ev(own)} — too late to reach it.`);
+      if (!cityOk(leg.to_city, own.city)) out.push(`Goes to ${leg.to_city}, but ${own.name} is in ${own.city}.`);
+    }
+    if (t === "return_onward") {
+      if (dep && dep < own.date) out.push(`Leaves ${fmtDate(dep)}, before ${ev(own)} has happened.`);
+      if (!cityOk(leg.from_city, own.city)) out.push(`Leaves from ${leg.from_city}, but ${own.name} is in ${own.city}.`);
+      if (next) {
+        if (next.date && next.date < own.date) out.push(`The next event (${ev(next)}) is before ${own.name}.`);
+        if (dep && next.date && dep > next.date) out.push(`Departs ${fmtDate(dep)}, after ${ev(next)} — too late to reach it.`);
+        if (!cityOk(leg.to_city, next.city)) out.push(`Goes to ${leg.to_city}, but ${next.name} is in ${next.city}.`);
+      } else out.push("Pick the next event this journey continues to.");
+    }
+  }
+  // Travellers who aren't on the crew of the event this journey connects to.
+  const other = t === "going_onward" ? prev : t === "return_onward" ? next : null;
+  if (other && assignmentsAll) {
+    const crew = new Set(assignmentsAll.filter((x) => x.lead_id === other.id && x.status !== "declined").map((x) => x.team_id));
+    const missing = (leg.members || []).filter((m) => !crew.has(m.teamId)).map(nameOf).filter(Boolean);
+    if (missing.length) out.push(`${missing.join(", ")} ${missing.length > 1 ? "aren't" : "isn't"} on the team for ${other.name}.`);
+  }
+  // A traveller who is on a different journey the same day that doesn't connect.
+  if (dep && allLegs) {
+    const seen = new Set();
+    (leg.members || []).forEach((m) => {
+      allLegs.filter((o) => o.id !== leg.id && ymd(o.departure_at) === dep && (o.members || []).some((x) => x.teamId === m.teamId)).forEach((o) => {
+        const connects = cityOk(o.to_city, leg.from_city) || cityOk(leg.to_city, o.from_city);
+        const sameRoute = normCity(o.from_city) === normCity(leg.from_city) && normCity(o.to_city) === normCity(leg.to_city);
+        if ((!connects || sameRoute) && !seen.has(m.teamId)) {
+          seen.add(m.teamId);
+          out.push(`${nameOf(m) || "Someone"} also has ${sameRoute ? "the same journey" : `another journey that day (${[o.from_city, o.to_city].filter(Boolean).join(" → ") || "route not set"})`}.`);
+        }
+      });
+    });
+  }
+  return out;
+}
+// Going first, then onward, then return — and by date within each.
+const legOrderRank = (l) => { const t = l.display_type || l.leg_type || "going"; return t === "going" ? 0 : t === "going_onward" || t === "onward" ? 1 : t === "return" ? 2 : 3; };
+const sortLegsForDisplay = (legs) => [...legs].sort((x, y) => legOrderRank(x) - legOrderRank(y) || String(x.departure_at || "9999").localeCompare(String(y.departure_at || "9999")));
+
 // ---------- Travel plan (per-artist, per-event) ----------
 async function openTravelPlanModal(leadId) {
   const lead = LEADS.find((l) => l.id === leadId);
@@ -6966,9 +7040,11 @@ async function openTravelPlanModal(leadId) {
     api(`/api/leads/${leadId}/assignments`),
   ]);
   let prevNoteHtml = "";
+  let tcAssign = null, tcAllLegs = null; // every event's crew and every journey, for the sanity checks
   let onwardHint = { type: "going", fromCity: "", text: "" };
   try {
     const [allLegs, ctx] = await Promise.all([api("/api/travel-legs"), api("/api/travel-context")]);
+    tcAssign = ctx.assignments; tcAllLegs = allLegs;
     prevNoteHtml = `<div style="margin-bottom:10px;">${prevEventNoteHtml(lead, allLegs, ctx.assignments)}</div>`;
     // If part of this crew was at an event just before this one, they're probably travelling on from it.
     const prev = eventPrevOf(lead);
@@ -7000,6 +7076,7 @@ async function openTravelPlanModal(leadId) {
           </div>
           <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
         </div>
+        ${(() => { const pr = legProblems(leg, tcAssign, tcAllLegs); return pr.length ? `<div class="small" style="margin-top:6px; padding:6px 10px; background:#FDECE6; border-radius:8px; color:#A6432B;">${pr.map((x) => `⚠ ${escH(x)}`).join("<br>")}</div>` : ""; })()}
         ${legWhenText(leg) ? `<div class="muted small" style="margin-top:6px;">${legWhenText(leg)}</div>` : ""}
         ${leg.booking_ref ? `<div class="muted small" style="margin-top:2px;">Ref: ${leg.booking_ref}</div>` : ""}
         ${leg.preferred_service || leg.travel_class || leg.food_included ? `<div class="small" style="margin-top:4px;">🎟 ${[leg.preferred_service ? escH(leg.preferred_service) : "", leg.travel_class ? "Class " + escH(leg.travel_class) : "", leg.food_included ? "Food " + FOOD_LABELS[leg.food_included].toLowerCase() : ""].filter(Boolean).join(" · ")}</div>` : ""}
@@ -7147,7 +7224,7 @@ async function openTravelPlanModal(leadId) {
           <div class="modal-body">
             ${prevNoteHtml}
             ${legs.length === 0 && !addingNew && !linkingExisting ? `<p class="muted small">No travel added yet.</p>` : ""}
-            ${legs.map(legCard).join("")}
+            ${sortLegsForDisplay(legs).map(legCard).join("")}
             ${addingNew ? legForm({}) : ""}
             ${linkingExisting ? linkForm() : ""}
             ${assignments.length === 0 ? `<p class="muted small" style="margin-top:10px;">No one's assigned to this event yet — add the team first.</p>` : (!addingNew && !linkingExisting ? `
@@ -7249,6 +7326,12 @@ async function openTravelPlanModal(leadId) {
           notes: root.querySelector(`#${prefix}Notes`)?.value.trim() || null,
           managerNotes: root.querySelector(`#${prefix}ManagerNotes`).value.trim() || null,
         };
+        {
+          // Warn before saving something that can't work — never blocks, the person may know better.
+          const draft = { id: isNew ? null : btn.dataset.saveLeg, lead_id: leadId, leg_type: payload.legType || "going", from_lead_id: payload.fromLeadId, to_lead_id: payload.toLeadId, from_city: payload.fromCity, to_city: payload.toCity || lead.city, departure_at: payload.departureAt, arrival_at: payload.arrivalAt, status: payload.status, members: teamIds.map((id) => ({ teamId: id })) };
+          const issues = legProblems(draft, tcAssign, tcAllLegs);
+          if (issues.length && !confirm(`Please check this journey:\n\n${issues.map((x) => "• " + x).join("\n")}\n\nSave anyway?`)) return;
+        }
         btn.disabled = true;
         try {
           if (isNew) {
@@ -7259,6 +7342,7 @@ async function openTravelPlanModal(leadId) {
             editingLegId = null;
           }
           const updated = await api(`/api/leads/${leadId}/travel-legs`);
+          tcAllLegs = await api("/api/travel-legs").catch(() => tcAllLegs);
           legs.length = 0;
           legs.push(...updated);
           renderModal();
