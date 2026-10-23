@@ -312,6 +312,7 @@ async function setup() {
     created_at TEXT NOT NULL
   )`);
   await pool.query(`CREATE INDEX IF NOT EXISTS team_fee_history_team_idx ON team_fee_history(team_id, effective_from)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS app_flags (key TEXT PRIMARY KEY, done_at TEXT)`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions TEXT`);
   await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS lead_id TEXT REFERENCES leads(id)`);
   await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS from_team_id TEXT REFERENCES team(id)`);

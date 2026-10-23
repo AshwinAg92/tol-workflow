@@ -5626,6 +5626,20 @@ ready.then(() => {
   setInterval(autoCompletePastEvents, 60 * 60 * 1000);
   autoCloseNearDateLeads();
   setInterval(autoCloseNearDateLeads, 60 * 60 * 1000);
+  // One-time catch-up: revisions saved before "apply to already-assigned events" existed only changed the suggested
+  // rate. Apply them once to unpaid fees of events on/after each artist's earliest revision date.
+  (async () => {
+    try {
+      const done = (await pool.query("SELECT 1 FROM app_flags WHERE key = 'fee_revisions_catchup'")).rows[0];
+      if (done) return;
+      const revs = (await pool.query("SELECT team_id, MIN(effective_from) AS d FROM team_fee_history WHERE COALESCE(note,'') <> 'Original rate' AND effective_from <> '1970-01-01' GROUP BY team_id")).rows;
+      for (const r of revs) {
+        const out = await applyRateToAssignedEvents(r.team_id, r.d);
+        if (out.updated.length) console.log(`Fee catch-up: ${r.team_id} → ${out.updated.length} event(s) updated`);
+      }
+      await pool.query("INSERT INTO app_flags (key, done_at) VALUES ('fee_revisions_catchup', $1) ON CONFLICT DO NOTHING", [new Date().toISOString()]);
+    } catch (err) { console.error("Fee catch-up failed (not fatal):", err.message); }
+  })();
   syncAllFees();
   setInterval(syncAllFees, 60 * 60 * 1000);
   runDailyBackupCheck();
