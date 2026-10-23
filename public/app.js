@@ -4520,11 +4520,13 @@ async function renderTeam(main, subTab = "team") {
           ${m.phone ? `<div><span class="muted">Phone:</span> ${escT(m.phone)}</div>` : ""}
           ${m.email ? `<div><span class="muted">Email:</span> ${escT(m.email)}</div>` : ""}
           ${m.base_city ? `<div><span class="muted">City:</span> \ud83d\udccd ${escT(m.base_city)}</div>` : ""}
+          ${(() => { const up = (m.fee_history || []).filter((f) => f.effective_from > new Date().toISOString().slice(0, 10)).sort((x, y) => x.effective_from.localeCompare(y.effective_from))[0]; return up ? `<div class="small" style="color:#B6752C;">Revised rate from ${fmtDate(up.effective_from)}: ${[up.local_fee ? "Local " + inr(up.local_fee) : "", up.outstation_fee ? "Outstation " + inr(up.outstation_fee) : ""].filter(Boolean).join(" · ")}</div>` : ""; })()}
           ${(m.local_fee || m.outstation_fee) ? `<div><span class="muted">Rates:</span> ${m.local_fee ? `Local ${inr(m.local_fee)}` : ""}${m.local_fee && m.outstation_fee ? " \u00b7 " : ""}${m.outstation_fee ? `Outstation ${inr(m.outstation_fee)}` : ""}</div>` : ""}
           ${m.notes ? `<div><span class="muted">Notes:</span> ${escT(m.notes)}</div>` : ""}
           <div style="margin-top:4px;"><span class="muted">Upcoming shows (${m.activeShows.length}):</span> ${m.activeShows.length ? m.activeShows.map((s2) => escT(s2.name)).join(", ") : "none"}</div>
           <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">
             <button class="btn-ghost" data-view-events="${m.id}" style="font-size:12px; padding:4px 9px;">\ud83d\udcc5 Events</button>
+            ${hasAccountsAccess() && m.fee_history ? `<button class="btn-ghost" data-fee-history="${m.id}" style="font-size:12px; padding:4px 9px;">\ud83d\udcb0 Fee history</button>` : ""}
             ${canAssignTeam() ? `<button class="btn-ghost" data-artist-link="${m.id}" style="font-size:12px; padding:4px 9px;">\ud83d\udd17 My-events link</button>` : ""}
             ${canManage ? `<button class="btn-ghost" data-edit-member="${m.id}" style="font-size:12px; padding:4px 9px;">Edit</button>` : ""}
             ${canManage && !teamIdsWithLogin.has(m.id) ? `<button class="btn-ghost" data-add-login="${m.id}" style="font-size:12px; padding:4px 9px;">${m.kind === "freelance" ? "Give a login anyway" : "+ Add login"}</button>` : ""}
@@ -4540,6 +4542,8 @@ async function renderTeam(main, subTab = "team") {
       card.querySelector(`[data-person-caret="${m.id}"]`).textContent = open ? "\u25b8" : "\u25be";
     });
     card.querySelector(`[data-view-events="${m.id}"]`).addEventListener("click", () => openTeamMemberEventsModal(m));
+    const feeBtn = card.querySelector(`[data-fee-history="${m.id}"]`);
+    if (feeBtn) feeBtn.addEventListener("click", () => openFeeHistoryModal(m, () => renderTeam(main)));
     const linkBtn = card.querySelector(`[data-artist-link="${m.id}"]`);
     if (linkBtn) linkBtn.addEventListener("click", () => openArtistLinkModal(m));
     card.dataset.search = [m.name, m.role, m.specialty, m.instruments, m.base_city, m.phone, m.email].filter(Boolean).join(" ").toLowerCase();
@@ -4659,6 +4663,74 @@ async function renderTeam(main, subTab = "team") {
 // accept/decline on their behalf here (many artists don't use their own
 // login) — changes are staged locally and only sent on "Save changes" so a
 // stray tap doesn't silently commit a status change.
+// The rate that applies on a given date: the latest revision whose "applicable from" date has arrived.
+function feeRateOn(m, date) {
+  const h = (m.fee_history || []).find((f) => f.effective_from <= (date || "9999-12-31"));
+  return h ? { local: h.local_fee, out: h.outstation_fee } : { local: m.local_fee, out: m.outstation_fee };
+}
+// Fee history for one artist, with a form to revise the rate from a chosen date.
+async function openFeeHistoryModal(member, onChange) {
+  const root = document.getElementById("modalRoot");
+  let data;
+  const load = async () => { data = await api(`/api/team/${member.id}/fee-history`); };
+  try { await load(); } catch (err) { return alert(err.message); }
+  const draw = () => {
+    const money = (v) => (v ? inr(v) : "—");
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay"><div class="modal-card" style="width:560px; max-width:96vw;">
+        <div class="modal-head"><h3>Fee history — ${escH(member.name)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body">
+          <div class="card" style="margin-bottom:12px;"><div class="muted small">Rate in force today</div>
+            <div style="font-weight:600;">Local ${money(data.current.local_fee)} · Outstation ${money(data.current.outstation_fee)}</div></div>
+          <div class="section-label">Revise the fee</div>
+          <div class="row-2">
+            <div><label>New local fee (₹)</label><input id="fhLocal" type="number" min="0" value="${data.current.local_fee || ""}" /></div>
+            <div><label>New outstation fee (₹)</label><input id="fhOut" type="number" min="0" value="${data.current.outstation_fee || ""}" /></div>
+          </div>
+          <label style="margin-top:8px;">Applicable from</label>
+          <input id="fhDate" type="date" value="${data.today}" />
+          <label style="margin-top:8px;">Note (optional)</label>
+          <input id="fhNote" placeholder="e.g. Yearly revision" />
+          <button class="btn-primary full" id="fhSave" style="margin-top:10px;">Save revision</button>
+          <p class="muted small" id="fhMsg" style="margin-top:6px;">Events on or after that date use the new rate when you pick this artist. Fees already agreed for events don't change.</p>
+          <div class="section-label" style="margin-top:16px;">History</div>
+          ${data.history.map((h) => `
+            <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+              <div>
+                <div><b>From ${h.effective_from === "1970-01-01" ? "the start" : fmtDate(h.effective_from)}</b>${h.effective_from > data.today ? ` <span class="tag" style="color:#B6752C;">upcoming</span>` : ""}</div>
+                <div class="small">Local ${money(h.local_fee)} · Outstation ${money(h.outstation_fee)}</div>
+                <div class="muted small">${[h.note, h.created_by ? "by " + h.created_by : "", h.created_at ? "recorded " + fmtDate(h.created_at.slice(0, 10)) : ""].filter(Boolean).map(escH).join(" · ")}</div>
+              </div>
+              ${data.history.length > 1 ? `<button class="btn-ghost" data-del-rev="${h.id}" style="font-size:12px; padding:4px 8px; color:#A6432B;">Remove</button>` : ""}
+            </div>`).join("") || `<p class="muted small">No rates recorded yet.</p>`}
+        </div>
+        <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
+      </div></div>`;
+    const close = () => { root.innerHTML = ""; if (onChange) onChange(); };
+    root.querySelector("#closeModal").addEventListener("click", close);
+    root.querySelector("#cancelModal").addEventListener("click", close);
+    root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+    root.querySelector("#fhSave").addEventListener("click", async () => {
+      const btn = root.querySelector("#fhSave");
+      const body = { localFee: root.querySelector("#fhLocal").value, outstationFee: root.querySelector("#fhOut").value, effectiveFrom: root.querySelector("#fhDate").value, note: root.querySelector("#fhNote").value };
+      if (!body.effectiveFrom) return alert("Pick the date this rate applies from.");
+      btn.disabled = true;
+      try { await api(`/api/team/${member.id}/fee-revisions`, { method: "POST", body: JSON.stringify(body) }); await load(); await refreshTeamFees(); draw(); root.querySelector("#fhMsg").textContent = "Saved."; }
+      catch (err) { alert(err.message); btn.disabled = false; }
+    });
+    root.querySelectorAll("[data-del-rev]").forEach((b) => b.addEventListener("click", async () => {
+      if (!confirm("Remove this revision? Rates go back to whatever applied before it.")) return;
+      try { await api(`/api/team/${member.id}/fee-revisions/${b.dataset.delRev}`, { method: "DELETE" }); await load(); await refreshTeamFees(); draw(); } catch (err) { alert(err.message); }
+    }));
+  };
+  // Keep the in-memory team list (used by the assign-team screen) in step with the change.
+  async function refreshTeamFees() {
+    const fresh = await api("/api/team").catch(() => null);
+    if (Array.isArray(fresh)) { fresh.forEach((f) => { const t = TEAM.find((x) => x.id === f.id); if (t) { t.local_fee = f.local_fee; t.outstation_fee = f.outstation_fee; t.fee_history = f.fee_history; } }); const mm = fresh.find((f) => f.id === member.id); if (mm) { member.local_fee = mm.local_fee; member.outstation_fee = mm.outstation_fee; member.fee_history = mm.fee_history; } }
+  }
+  draw();
+}
+
 // A personal, no-login page for an artist/freelancer: their upcoming + past events, travel, tickets and pay status.
 async function openArtistLinkModal(member) {
   const root = document.getElementById("modalRoot");
@@ -5963,7 +6035,8 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                 }) + (confirmLink ? `\n\nAccept or decline here: ${confirmLink}` : "");
                 const clash = !a ? busyClash(travelCtx.busy, m.id, lead) : null;
                 const isLocalEvent = m.base_city && lead.city && m.base_city.trim().toLowerCase() === lead.city.trim().toLowerCase();
-                const suggestedFee = isLocalEvent ? m.local_fee : m.outstation_fee;
+                const rateOnDate = feeRateOn(m, lead.date); // the rate that applies on the event's date (revisions respected)
+                const suggestedFee = isLocalEvent ? rateOnDate.local : rateOnDate.out;
                 return `
                   <div class="card team-pick-row" data-search="${String([m.name, m.role, m.instruments, m.base_city, m.phone].filter(Boolean).join(" ")).toLowerCase().replace(/"/g, "")}" style="margin-bottom:6px; padding:8px 12px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">

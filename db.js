@@ -299,6 +299,19 @@ async function setup() {
   // based on whether the event's city matches the artist's base city.
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS local_fee INTEGER`);
   await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS outstation_fee INTEGER`);
+  // Every revision of an artist's rates, with the date it applies from. team.local_fee / outstation_fee always hold the
+  // rate in force today (kept in sync by the server); the event-date-specific rate comes from this table.
+  await pool.query(`CREATE TABLE IF NOT EXISTS team_fee_history (
+    id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL REFERENCES team(id) ON DELETE CASCADE,
+    local_fee INTEGER,
+    outstation_fee INTEGER,
+    effective_from TEXT NOT NULL,
+    note TEXT,
+    created_by TEXT,
+    created_at TEXT NOT NULL
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS team_fee_history_team_idx ON team_fee_history(team_id, effective_from)`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions TEXT`);
   await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS lead_id TEXT REFERENCES leads(id)`);
   await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS from_team_id TEXT REFERENCES team(id)`);

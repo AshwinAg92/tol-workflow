@@ -658,6 +658,65 @@ app.post("/api/team", requireAuth, requireCapability("manage_team"), async (req,
   res.status(201).json({ id });
 });
 
+// ---------- Artist fee history: revisions with an "applicable from" date ----------
+const todayIST = () => new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+const cleanFee = (v) => { if (v === null || v === undefined || v === "") return null; const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 0 ? n : undefined; };
+// A member who has rates but no history yet gets their current rates recorded as the "original" rate.
+async function ensureFeeBaseline(teamId) {
+  const have = (await pool.query("SELECT 1 FROM team_fee_history WHERE team_id = $1 LIMIT 1", [teamId])).rows[0];
+  if (have) return;
+  const m = (await pool.query("SELECT local_fee, outstation_fee FROM team WHERE id = $1", [teamId])).rows[0];
+  if (!m || (m.local_fee == null && m.outstation_fee == null)) return;
+  await pool.query("INSERT INTO team_fee_history (id, team_id, local_fee, outstation_fee, effective_from, note, created_by, created_at) VALUES ($1,$2,$3,$4,'1970-01-01','Original rate',NULL,$5)",
+    [uuid(), teamId, m.local_fee, m.outstation_fee, new Date().toISOString()]);
+}
+// The rate in force today is what the Team tab and quick-picks show.
+async function syncCurrentFee(teamId) {
+  await ensureFeeBaseline(teamId);
+  const row = (await pool.query("SELECT local_fee, outstation_fee FROM team_fee_history WHERE team_id = $1 AND effective_from <= $2 ORDER BY effective_from DESC, created_at DESC LIMIT 1", [teamId, todayIST()])).rows[0];
+  if (row) await pool.query("UPDATE team SET local_fee = $1, outstation_fee = $2 WHERE id = $3", [row.local_fee, row.outstation_fee, teamId]);
+}
+async function syncAllFees() {
+  try {
+    const ids = (await pool.query("SELECT id FROM team")).rows;
+    for (const r of ids) await syncCurrentFee(r.id);
+  } catch (err) { console.error("Fee sync failed (not fatal):", err.message); }
+}
+app.get("/api/team/:id/fee-history", requireAuth, requireSection("accounts"), async (req, res) => {
+  const m = (await pool.query("SELECT id, name FROM team WHERE id = $1", [req.params.id])).rows[0];
+  if (!m) return res.status(404).json({ error: "Team member not found" });
+  await syncCurrentFee(m.id);
+  const rows = (await pool.query("SELECT id, local_fee, outstation_fee, effective_from, note, created_by, created_at FROM team_fee_history WHERE team_id = $1 ORDER BY effective_from DESC, created_at DESC", [m.id])).rows;
+  const t = (await pool.query("SELECT local_fee, outstation_fee FROM team WHERE id = $1", [m.id])).rows[0];
+  res.json({ name: m.name, today: todayIST(), current: { local_fee: t.local_fee, outstation_fee: t.outstation_fee }, history: rows });
+});
+app.post("/api/team/:id/fee-revisions", requireAuth, requireSection("accounts"), async (req, res) => {
+  const m = (await pool.query("SELECT id, name FROM team WHERE id = $1", [req.params.id])).rows[0];
+  if (!m) return res.status(404).json({ error: "Team member not found" });
+  const effectiveFrom = String(req.body.effectiveFrom || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom) || isNaN(new Date(effectiveFrom + "T00:00:00Z"))) return res.status(400).json({ error: "Pick the date this rate applies from." });
+  const localFee = cleanFee(req.body.localFee), outstationFee = cleanFee(req.body.outstationFee);
+  if (localFee === undefined || outstationFee === undefined) return res.status(400).json({ error: "Fees must be whole numbers (₹)." });
+  if (localFee === null && outstationFee === null) return res.status(400).json({ error: "Enter at least one fee." });
+  await ensureFeeBaseline(m.id);
+  const note = String(req.body.note || "").trim().slice(0, 300) || null;
+  const id = uuid();
+  await pool.query("INSERT INTO team_fee_history (id, team_id, local_fee, outstation_fee, effective_from, note, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+    [id, m.id, localFee, outstationFee, effectiveFrom, note, await actorName(req.user), new Date().toISOString()]);
+  await syncCurrentFee(m.id);
+  logActivity(req, `Revised ${m.name}'s fee from ${effectiveFrom}: local ${localFee ?? "—"}, outstation ${outstationFee ?? "—"}${note ? ` (${note})` : ""}`, null);
+  res.status(201).json({ id });
+});
+app.delete("/api/team/:id/fee-revisions/:revId", requireAuth, requireSection("accounts"), async (req, res) => {
+  const count = Number((await pool.query("SELECT COUNT(*) AS n FROM team_fee_history WHERE team_id = $1", [req.params.id])).rows[0].n);
+  if (count <= 1) return res.status(400).json({ error: "That's the only rate on record, so it can't be removed." });
+  const r = (await pool.query("DELETE FROM team_fee_history WHERE id = $1 AND team_id = $2 RETURNING effective_from", [req.params.revId, req.params.id])).rows[0];
+  if (!r) return res.status(404).json({ error: "Revision not found" });
+  await syncCurrentFee(req.params.id);
+  logActivity(req, `Removed a fee revision (from ${r.effective_from}) for a team member`, null);
+  res.status(204).end();
+});
+
 // Update a team member's own details (name, role/title, phone, email).
 app.patch("/api/team/:id", requireAuth, requireCapability("manage_team"), async (req, res) => {
   const member = (await pool.query("SELECT * FROM team WHERE id = $1", [req.params.id])).rows[0];
@@ -676,6 +735,7 @@ app.patch("/api/team/:id", requireAuth, requireCapability("manage_team"), async 
   const feeAllowed = canSeeMoney(req.user);
   const localFee = feeAllowed ? req.body.localFee : undefined;
   const outstationFee = feeAllowed ? req.body.outstationFee : undefined;
+  if (feeAllowed) await ensureFeeBaseline(member.id);
   await pool.query(`UPDATE team SET name = $1, role = $2, phone = $3, email = $4, specialty = $5, base_city = $6, local_fee = $7, outstation_fee = $8 WHERE id = $9`, [
     name || member.name,
     role !== undefined ? role : member.role,
@@ -687,6 +747,14 @@ app.patch("/api/team/:id", requireAuth, requireCapability("manage_team"), async 
     outstationFee !== undefined ? (outstationFee || null) : member.outstation_fee,
     member.id,
   ]);
+  if (feeAllowed) {
+    // A direct edit of the rate in the profile is recorded as a revision effective today.
+    const now = (await pool.query("SELECT local_fee, outstation_fee FROM team WHERE id = $1", [member.id])).rows[0];
+    if (now.local_fee !== member.local_fee || now.outstation_fee !== member.outstation_fee) {
+      await pool.query("INSERT INTO team_fee_history (id, team_id, local_fee, outstation_fee, effective_from, note, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        [uuid(), member.id, now.local_fee, now.outstation_fee, todayIST(), "Edited in profile", await actorName(req.user), new Date().toISOString()]);
+    }
+  }
   const { local_fee, outstation_fee, ...savedMember } = (await pool.query("SELECT * FROM team WHERE id = $1", [member.id])).rows[0];
   res.json(feeAllowed ? { ...savedMember, local_fee, outstation_fee } : savedMember);
 });
@@ -3559,10 +3627,12 @@ app.get("/api/team", requireAuth, async (req, res) => {
     ORDER BY leads.date ASC
   `, [today])).rows;
   const showMoney = canSeeMoney(req.user);
+  if (showMoney) await syncAllFees();
+  const feeRows = showMoney ? (await pool.query("SELECT team_id, local_fee, outstation_fee, effective_from, created_at FROM team_fee_history ORDER BY effective_from DESC, created_at DESC")).rows : [];
   const team = (await pool.query("SELECT * FROM team")).rows.map(({ local_fee, outstation_fee, reg_details, notes, legacy_musician_id, ...m }) => ({
     ...m,
     ...(req.user.access_level === "admin" ? { reg_details, notes } : {}),
-    ...(showMoney ? { local_fee, outstation_fee } : {}),
+    ...(showMoney ? { local_fee, outstation_fee, fee_history: feeRows.filter((f) => f.team_id === m.id).map(({ team_id, ...f }) => f) } : {}),
     activeShows: assignments.filter((a) => a.team_id === m.id),
   }));
   res.json(team);
@@ -5526,6 +5596,8 @@ ready.then(() => {
   setInterval(autoCompletePastEvents, 60 * 60 * 1000);
   autoCloseNearDateLeads();
   setInterval(autoCloseNearDateLeads, 60 * 60 * 1000);
+  syncAllFees();
+  setInterval(syncAllFees, 60 * 60 * 1000);
   runDailyBackupCheck();
   setInterval(runDailyBackupCheck, 60 * 60 * 1000);
   // Pre-warm the map's geocode cache in the background right after startup,
