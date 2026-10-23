@@ -12029,11 +12029,12 @@ async function renderMyEvents(main) {
         ` : `
           <div style="margin-top:10px;">
             <label class="muted small">Your response</label>
-            <select class="respond-select" data-respond-select="${e.id}">
-              <option value="pending" ${e.status === "pending" ? "selected" : ""}>Pending — not responded yet</option>
+            <select class="respond-select" data-respond-select="${e.id}" ${e.status === "accepted" ? "disabled" : ""}>
+              ${e.status === "accepted" ? `<option value="accepted" selected>Accepted</option>` : `<option value="pending" ${e.status === "pending" ? "selected" : ""}>Pending — not responded yet</option>
               <option value="accepted" ${e.status === "accepted" ? "selected" : ""}>Accept</option>
-              <option value="declined" ${e.status === "declined" ? "selected" : ""}>Decline</option>
+              <option value="declined" ${e.status === "declined" ? "selected" : ""}>Decline</option>`}
             </select>
+              ${e.status === "accepted" ? `<div class="muted small" style="margin-top:4px;">Already accepted — to back out, use “Request to cancel” below.</div>` : ""}
           </div>
         `}
         ${e.status === "accepted" ? `
@@ -12262,11 +12263,12 @@ function renderPerformerTabContent() {
       ` : `
         <div style="margin-top:10px;">
           <label class="muted small">Your response</label>
-          <select class="respond-select" data-respond-select="${e.id}">
-            <option value="pending" ${e.status === "pending" ? "selected" : ""}>Pending — not responded yet</option>
+          <select class="respond-select" data-respond-select="${e.id}" ${e.status === "accepted" ? "disabled" : ""}>
+            ${e.status === "accepted" ? `<option value="accepted" selected>Accepted</option>` : `<option value="pending" ${e.status === "pending" ? "selected" : ""}>Pending — not responded yet</option>
             <option value="accepted" ${e.status === "accepted" ? "selected" : ""}>Accept</option>
-            <option value="declined" ${e.status === "declined" ? "selected" : ""}>Decline</option>
+            <option value="declined" ${e.status === "declined" ? "selected" : ""}>Decline</option>`}
           </select>
+            ${e.status === "accepted" ? `<div class="muted small" style="margin-top:4px;">Already accepted — to back out, use “Request to cancel” below.</div>` : ""}
         </div>
       `}
       ${e.status === "accepted" ? `

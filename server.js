@@ -2647,6 +2647,8 @@ app.get("/api/public/assignment/:token", async (req, res) => {
   });
 });
 
+// Once a gig is accepted the artist can't decline it with the same link — backing out goes through Team TOL (or "Request to cancel" when logged in).
+const ALREADY_ACCEPTED_MSG = "You've already accepted this gig. To make a change, please contact Team Together, Out Loud directly.";
 app.post("/api/public/assignment/:token/respond", async (req, res) => {
   const { status, note } = req.body;
   if (!["accepted", "declined"].includes(status)) return res.status(400).json({ error: "status must be 'accepted' or 'declined'" });
@@ -2654,6 +2656,7 @@ app.post("/api/public/assignment/:token/respond", async (req, res) => {
   if (!a) {
     const g = (await pool.query("SELECT * FROM temp_artists WHERE confirm_token = $1", [req.params.token])).rows[0];
     if (!g) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
+    if (g.status === "accepted" && status === "declined") return res.status(409).json({ error: ALREADY_ACCEPTED_MSG });
     await pool.query("UPDATE temp_artists SET status = $1, responded_at = $2, note = $3 WHERE id = $4", [status, new Date().toISOString(), note !== undefined ? (note || null) : g.note, g.id]);
     const gl = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [g.lead_id])).rows[0];
     if (gl) {
@@ -2664,6 +2667,7 @@ app.post("/api/public/assignment/:token/respond", async (req, res) => {
     await checkTeamComplete(g.lead_id);
     return;
   }
+  if (a.status === "accepted" && status === "declined") return res.status(409).json({ error: ALREADY_ACCEPTED_MSG });
   await pool.query("UPDATE event_assignments SET status = $1, responded_at = $2, note = $3 WHERE id = $4", [
     status, new Date().toISOString(), note !== undefined ? (note || null) : a.note, a.id,
   ]);
@@ -3304,6 +3308,7 @@ app.post("/api/my/assignments/:id/respond", requireAuth, async (req, res) => {
   if (a.team_id !== req.user.team_id) return res.status(403).json({ error: "This invitation isn't yours" });
   const { status } = req.body;
   if (!["accepted", "declined"].includes(status)) return res.status(400).json({ error: "status must be 'accepted' or 'declined'" });
+  if (a.status === "accepted" && status === "declined") return res.status(409).json({ error: ALREADY_ACCEPTED_MSG + " You can use “Request to cancel”." });
   await pool.query("UPDATE event_assignments SET status = $1, responded_at = $2 WHERE id = $3", [status, new Date().toISOString(), a.id]);
 
   const lead = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [a.lead_id])).rows[0];

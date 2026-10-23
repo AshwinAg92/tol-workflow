@@ -130,8 +130,9 @@
         </div>
         <div class="btn-row">
           <button class="btn-accept" id="acceptBtn" ${data.status === "accepted" ? "disabled" : ""}>✓ Accept</button>
-          <button class="btn-decline" id="declineBtn" ${data.status === "declined" ? "disabled" : ""}>✕ Decline</button>
+          ${data.status === "accepted" ? "" : `<button class="btn-decline" id="declineBtn" ${data.status === "declined" ? "disabled" : ""}>✕ Decline</button>`}
         </div>
+        ${data.status === "accepted" ? `<div class="msg" style="margin-top:8px;">Need to make a change? Please contact Team Together, Out Loud directly.</div>` : ""}
         <label class="note-label" for="noteInput">Note for the organizer (optional)</label>
         <textarea id="noteInput" placeholder="e.g. running a bit late, can arrive by 6pm">${escapeHtml(data.note)}</textarea>
         <button class="btn-save-note" id="saveNoteBtn">Save note</button>
@@ -140,7 +141,7 @@
 
       async function respond(status) {
         document.getElementById("acceptBtn").disabled = true;
-        document.getElementById("declineBtn").disabled = true;
+        const dBtn = document.getElementById("declineBtn"); if (dBtn) dBtn.disabled = true;
         document.getElementById("msg").textContent = "Saving…";
         const note = document.getElementById("noteInput").value.trim();
         try {
@@ -157,7 +158,7 @@
         } catch (err) {
           document.getElementById("msg").textContent = err.message;
           document.getElementById("acceptBtn").disabled = data.status === "accepted";
-          document.getElementById("declineBtn").disabled = data.status === "declined";
+          const dBtn2 = document.getElementById("declineBtn"); if (dBtn2) dBtn2.disabled = data.status === "declined";
         }
       }
       async function saveNote() {
@@ -181,7 +182,7 @@
         }
       }
       document.getElementById("acceptBtn").addEventListener("click", () => respond("accepted"));
-      document.getElementById("declineBtn").addEventListener("click", () => respond("declined"));
+      const declineBtnEl = document.getElementById("declineBtn"); if (declineBtnEl) declineBtnEl.addEventListener("click", () => respond("declined"));
       document.getElementById("saveNoteBtn").addEventListener("click", saveNote);
     }
 
