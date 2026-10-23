@@ -6667,9 +6667,10 @@ async function openTravelShareModal(leadId) {
       legs.length ? "✈️ *Travel plan:*" : "✈️ Travel plan: we will share it shortly.",
       ...legs.flatMap((l) => [
         `• ${cap(l.mode)} — ${l.from_city || "?"} → ${l.to_city || "?"}`,
-        ...(l.preferred_service ? [`   Please book: ${l.preferred_service}`] : []),
-        ...(l.travel_class ? [`   Class: ${l.travel_class}`] : []),
-        ...(l.food_included ? [`   Food: ${l.food_included === "included" ? "included" : "not included"}`] : []),
+        ...(l.bookedElsewhere ? [`   ✅ No need to book this one — it is being booked separately, please skip it to avoid double booking.`] : []),
+        ...(!l.bookedElsewhere && l.preferred_service ? [`   Please book: ${l.preferred_service}`] : []),
+        ...(!l.bookedElsewhere && l.travel_class ? [`   Class: ${l.travel_class}`] : []),
+        ...(!l.bookedElsewhere && l.food_included ? [`   Food: ${l.food_included === "included" ? "included" : "not included"}`] : []),
         ...(l.departure_at || l.departure_time ? [`   Depart: ${[l.departure_at ? wall(l.departure_at) : "", l.departure_time ? fmtTimeHM(l.departure_time) : ""].filter(Boolean).join(", ")}`] : []),
         ...(l.arrival_at || l.arrival_time ? [`   Arrive: ${[l.arrival_at ? wall(l.arrival_at) : "", l.arrival_time ? fmtTimeHM(l.arrival_time) : ""].filter(Boolean).join(", ")}`] : []),
         `   Travelling: ${l.who.join(", ")}`,

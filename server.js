@@ -4287,7 +4287,7 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
                 FROM event_assignments JOIN team ON team.id = event_assignments.team_id
                 WHERE event_assignments.lead_id = $1 ORDER BY team.name ASC`, [leadId]),
     pool.query("SELECT id, name, description, phone, musician_id FROM temp_artists WHERE lead_id = $1 AND migrated_assignment_id IS NULL", [leadId]),
-    pool.query("SELECT id, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [leadId]),
+    pool.query("SELECT id, lead_id, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [leadId]),
     pool.query("SELECT token, team_ids, created_at, expires_at, revoked FROM travel_shares WHERE lead_id = $1 ORDER BY created_at DESC", [leadId]),
   ]);
   const teamIds = assigned.rows.map((r) => r.team_id);
@@ -4313,7 +4313,7 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
       })),
     ],
     tempArtists: temps.rows.filter((t) => !t.musician_id).map((t) => t.name),
-    legs: legs.rows.map((l) => ({ ...l, memberIds: members.rows.filter((m) => m.leg_id === l.id).map((m) => m.team_id), tickets: ticketRows.filter((t) => t.travel_leg_id === l.id).map((t) => ({ id: t.id, name: t.original_name })) })),
+    legs: legs.rows.map((l) => ({ ...l, bookedElsewhere: l.lead_id !== leadId, memberIds: members.rows.filter((m) => m.leg_id === l.id).map((m) => m.team_id), tickets: ticketRows.filter((t) => t.travel_leg_id === l.id).map((t) => ({ id: t.id, name: t.original_name })) })),
     shares: shares.rows.map((s) => ({ token: s.token, teamIds: JSON.parse(s.team_ids || "[]"), createdAt: s.created_at, expiresAt: s.expires_at, revoked: !!s.revoked })),
     clientUnread: Number((await pool.query("SELECT (SELECT COUNT(*) FROM travel_share_messages WHERE lead_id = $1 AND sender = 'client' AND read_by_team = 0) + (SELECT COUNT(*) FROM travel_share_files WHERE lead_id = $1 AND read_by_team = 0) AS n", [leadId])).rows[0].n),
   });
@@ -4600,14 +4600,15 @@ app.get("/trip/:token", async (req, res) => {
   const trav = await loadTravellers(s.lead_id, allIds);
   const ticketDocs = s.include_tickets ? (await pool.query("SELECT id, original_name, mime_type, travel_leg_id FROM documents WHERE travel_leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1) ORDER BY uploaded_at ASC", [s.lead_id])).rows : [];
   const [legs, members] = await Promise.all([
-    pool.query("SELECT id, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [s.lead_id]),
+    pool.query("SELECT id, lead_id, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [s.lead_id]),
     pool.query("SELECT travel_leg_members.leg_id, team.id AS team_id, team.name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1)", [s.lead_id]),
   ]);
   const legCards = legs.rows.map((l) => {
     const who = members.rows.filter((m) => m.leg_id === l.id && teamIds.includes(m.team_id)).map((m) => m.name);
     if (who.length === 0) return "";
     return `<div class="c"><b>${escHtml(l.mode ? l.mode[0].toUpperCase() + l.mode.slice(1) : "Travel")}</b> — ${escHtml(l.from_city || "?")} → ${escHtml(l.to_city || "?")}
-      ${l.preferred_service ? `<div class="m">Please book: <b>${escHtml(l.preferred_service)}</b></div>` : ""}${l.travel_class ? `<div class="m">Class: ${escHtml(l.travel_class)}</div>` : ""}${l.food_included === "included" ? `<div class="m">Food: included</div>` : l.food_included === "not_included" ? `<div class="m">Food: not included</div>` : ""}
+      ${l.lead_id !== s.lead_id ? `<div class="m" style="color:#1C7A80"><b>No need to book this one</b> — it is being booked separately, so please skip it to avoid double booking.</div>` : ""}
+      ${l.lead_id === s.lead_id && l.preferred_service ? `<div class="m">Please book: <b>${escHtml(l.preferred_service)}</b></div>` : ""}${l.lead_id === s.lead_id && l.travel_class ? `<div class="m">Class: ${escHtml(l.travel_class)}</div>` : ""}${l.lead_id !== s.lead_id ? "" : l.food_included === "included" ? `<div class="m">Food: included</div>` : l.food_included === "not_included" ? `<div class="m">Food: not included</div>` : ""}
       ${l.departure_at || l.departure_time ? `<div class="m">Depart: ${escHtml([l.departure_at ? fmtWall(String(l.departure_at).slice(0, 10)) : "", fmt12(l.departure_time)].filter(Boolean).join(", "))}</div>` : ""}${l.arrival_at || l.arrival_time ? `<div class="m">Arrive: ${escHtml([l.arrival_at ? fmtWall(String(l.arrival_at).slice(0, 10)) : "", fmt12(l.arrival_time)].filter(Boolean).join(", "))}</div>` : ""}
       <div style="margin-top:6px">Travelling: ${who.map(escHtml).join(", ")}</div>
       ${ticketDocs.filter((d) => d.travel_leg_id === l.id).map((d) => { const url = `/trip/${encodeURIComponent(req.params.token)}/ticket/${d.id}`; return `<div style="margin-top:8px"><span class="m">\ud83c\udfab ${escHtml(d.original_name)}</span>${/^image\//i.test(d.mime_type || "") && !/hei[cf]/i.test(d.mime_type) ? `<br><img src="${url}" alt="Ticket">` : ""}<br><a href="${url}" target="_blank" rel="noopener">Open ticket</a></div>`; }).join("")}</div>`;
