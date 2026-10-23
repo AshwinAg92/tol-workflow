@@ -23,6 +23,7 @@ process.on("uncaughtException", (err) => {
   console.error("Uncaught exception (server stays up):", err);
 });
 const express = require("express");
+const compression = require("compression");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
@@ -296,6 +297,7 @@ async function upsertB2bContact({ name, phone, company, city, instagram }) {
 }
 
 const app = express();
+app.use(compression()); // gzip: app.js 780KB -> ~170KB, API JSON ~5x smaller
 app.use(cors());
 app.use(express.json());
 // A dropped DB connection mid-query throws inside a route handler that has
@@ -322,7 +324,8 @@ app.use("/api", (req, res, next) => {
 // filename (no hash in the URL), so browsers were caching stale copies for
 // days — this forces a fresh fetch every time, ending that recurring issue.
 app.use(["/app.js", "/index.html", "/home.html", "/styles.css"], (req, res, next) => {
-  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  // "no-cache" = always ask the server, but reply 304 (no body) when unchanged — still never stale, far less to download.
+  res.setHeader("Cache-Control", "no-cache, must-revalidate");
   next();
 });
 // Served explicitly (ahead of express.static) with Range support turned off.
@@ -676,10 +679,18 @@ async function syncCurrentFee(teamId) {
   const row = (await pool.query("SELECT local_fee, outstation_fee FROM team_fee_history WHERE team_id = $1 AND effective_from <= $2 ORDER BY effective_from DESC, created_at DESC LIMIT 1", [teamId, todayIST()])).rows[0];
   if (row) await pool.query("UPDATE team SET local_fee = $1, outstation_fee = $2 WHERE id = $3", [row.local_fee, row.outstation_fee, teamId]);
 }
+// Two set-based statements for the whole team (was 3+ queries per person, run on every Team load).
 async function syncAllFees() {
   try {
-    const ids = (await pool.query("SELECT id FROM team")).rows;
-    for (const r of ids) await syncCurrentFee(r.id);
+    await pool.query(`INSERT INTO team_fee_history (id, team_id, local_fee, outstation_fee, effective_from, note, created_by, created_at)
+      SELECT 'base_' || t.id, t.id, t.local_fee, t.outstation_fee, '1970-01-01', 'Original rate', NULL, $1
+      FROM team t WHERE (t.local_fee IS NOT NULL OR t.outstation_fee IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM team_fee_history h WHERE h.team_id = t.id)
+      ON CONFLICT DO NOTHING`, [new Date().toISOString()]);
+    await pool.query(`UPDATE team t SET local_fee = h.local_fee, outstation_fee = h.outstation_fee
+      FROM (SELECT DISTINCT ON (team_id) team_id, local_fee, outstation_fee FROM team_fee_history
+            WHERE effective_from <= $1 ORDER BY team_id, effective_from DESC, created_at DESC) h
+      WHERE h.team_id = t.id AND (t.local_fee IS DISTINCT FROM h.local_fee OR t.outstation_fee IS DISTINCT FROM h.outstation_fee)`, [todayIST()]);
   } catch (err) { console.error("Fee sync failed (not fatal):", err.message); }
 }
 // Move already-assigned artists' UNPAID fees for events dated on/after `fromDate` to the rate in force on each event's date.

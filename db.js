@@ -313,6 +313,29 @@ async function setup() {
   )`);
   await pool.query(`CREATE INDEX IF NOT EXISTS team_fee_history_team_idx ON team_fee_history(team_id, effective_from)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS app_flags (key TEXT PRIMARY KEY, done_at TEXT)`);
+  // Lookup indexes — as the data grew, un-indexed lookups by lead/team/date were scanning whole tables on every screen.
+  // Each is created independently so a problem with one can never block startup. Purely additive: no data is touched.
+  for (const ddl of [
+    "CREATE INDEX IF NOT EXISTS idx_ea_lead ON event_assignments(lead_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ea_team ON event_assignments(team_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ea_token ON event_assignments(confirm_token)",
+    "CREATE INDEX IF NOT EXISTS idx_exp_lead ON expenses(lead_id)",
+    "CREATE INDEX IF NOT EXISTS idx_exp_team ON expenses(team_id)",
+    "CREATE INDEX IF NOT EXISTS idx_pay_lead ON payments(lead_id)",
+    "CREATE INDEX IF NOT EXISTS idx_leads_stage_date ON leads(stage, date)",
+    "CREATE INDEX IF NOT EXISTS idx_leads_date ON leads(date)",
+    "CREATE INDEX IF NOT EXISTS idx_act_lead ON activity_log(lead_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_act_created ON activity_log(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_notif_team ON notifications(team_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_tasks_lead ON tasks(lead_id)",
+    "CREATE INDEX IF NOT EXISTS idx_docs_lead ON documents(lead_id)",
+    "CREATE INDEX IF NOT EXISTS idx_docs_leg ON documents(travel_leg_id)",
+    "CREATE INDEX IF NOT EXISTS idx_legs_lead ON travel_legs(lead_id)",
+    "CREATE INDEX IF NOT EXISTS idx_legs_to ON travel_legs(to_lead_id)",
+    "CREATE INDEX IF NOT EXISTS idx_legs_from ON travel_legs(from_lead_id)",
+    "CREATE INDEX IF NOT EXISTS idx_temp_lead ON temp_artists(lead_id)",
+    "CREATE INDEX IF NOT EXISTS idx_feedback_lead ON feedback(lead_id)",
+  ]) { try { await pool.query(ddl); } catch (e) { console.error("Index skipped:", ddl, e.message); } }
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions TEXT`);
   await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS lead_id TEXT REFERENCES leads(id)`);
   await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS from_team_id TEXT REFERENCES team(id)`);
