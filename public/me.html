@@ -96,6 +96,7 @@
     function render() {
       const list = tab === "upcoming" ? data.upcoming : data.past;
       app.innerHTML = `<div class="hello">Hi ${esc(data.name.split(" ")[0])} 👋</div>
+        ${data.hasLogin ? `<div class="card" style="padding:12px 16px;"><div class="muted">You also have a login for the full app${data.username ? ` (username: <b>${esc(data.username)}</b>)` : ""}.</div><a href="/login" style="display:inline-block; margin-top:8px; padding:10px 16px; border-radius:10px; background:#C7401E; color:#fff; font-weight:700; text-decoration:none;">Log in to the app</a></div>` : ""}
         <div class="tabs"><button class="tab ${tab === "upcoming" ? "on" : ""}" data-tab="upcoming">Upcoming (${data.upcoming.length})</button><button class="tab ${tab === "past" ? "on" : ""}" data-tab="past">Past (${data.past.length})</button></div>
         ${list.length ? list.map(eventCard).join("") : `<div class="card"><div class="muted">${tab === "upcoming" ? "No upcoming events yet — we'll add them here as soon as you're booked." : "Nothing here yet."}</div></div>`}`;
       app.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; render(); }));

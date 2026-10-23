@@ -4667,12 +4667,13 @@ async function openArtistLinkModal(member) {
   const draw = () => {
     const url = `${location.origin}/me/${info.token}`;
     const first = (member.name || "").split(" ")[0];
-    const msg = `Hi ${first}, here is your personal Together, Out Loud link — your upcoming events, travel plan, tickets and payment status, all in one place. Please save it:\n${url}`;
+    const loginLine = info.username ? `\n\nYou can also log in to the full app here: ${location.origin}/login (username: ${info.username})` : "";
+    const msg = `Hi ${first}, here is your personal Together, Out Loud link — your upcoming events, travel plan, tickets and payment status, all in one place. Please save it:\n${url}${loginLine}`;
     root.innerHTML = `
       <div class="modal-overlay" id="overlay"><div class="modal-card" style="width:480px; max-width:96vw;">
         <div class="modal-head"><h3>My-events link — ${escH(member.name)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
-          <p class="muted small" style="margin-top:0;">One private link for ${escH(first)}. It shows only their own events, travel + tickets and pay status, and works without a login — it updates by itself as you add events.</p>
+          <p class="muted small" style="margin-top:0;">One private link for ${escH(first)}. It shows only their own events, travel + tickets and pay status, and works without a login — it updates by itself as you add events.${info.username ? ` They have a login too, so the page and the WhatsApp message also point to the login page.` : ""}</p>
           <input id="alUrl" readonly value="${escH(url)}" onclick="this.select()" />
           <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
             <button class="btn-primary" id="alCopy">Copy link</button>

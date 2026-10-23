@@ -4607,7 +4607,8 @@ app.post("/api/team/:id/portal-link", requireAuth, requireCapability("assign_tea
     await pool.query("UPDATE team SET portal_token = $1 WHERE id = $2", [token, m.id]);
     logActivity(req, `${req.body.regenerate ? "Reset" : "Created"} the my-events link for ${m.name}`, null);
   }
-  res.json({ token, name: m.name, phone: m.phone });
+  const login = (await pool.query("SELECT username FROM users WHERE team_id = $1 LIMIT 1", [m.id])).rows[0];
+  res.json({ token, name: m.name, phone: m.phone, username: login ? login.username : null });
 });
 async function loadArtistPortal(token) {
   if (!token || String(token).length < 16) return null;
@@ -4662,7 +4663,8 @@ app.get("/api/public/me/:token", async (req, res) => {
       pay: isPast ? { paid: !!r.pay_paid, amount: r.pay_amount != null ? Number(r.pay_amount) : null, date: r.payment_date, mode: r.payment_mode } : null,
     };
   });
-  res.json({ name: p.member.name, upcoming: events.filter((e) => !e.past), past: events.filter((e) => e.past).reverse() });
+  const login = (await pool.query("SELECT username FROM users WHERE team_id = $1 LIMIT 1", [p.member.id])).rows[0];
+  res.json({ name: p.member.name, hasLogin: !!login, username: login ? login.username : null, upcoming: events.filter((e) => !e.past), past: events.filter((e) => e.past).reverse() });
 });
 app.get("/api/public/me/:token/ticket/:docId", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
