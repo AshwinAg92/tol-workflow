@@ -347,7 +347,7 @@ function renderArtistCardPng(first, experience, dateLong, city) {
 <rect width="1200" height="630" fill="url(#bg)"/><rect width="1200" height="630" fill="url(#gl)"/>
 <rect x="24" y="24" width="1152" height="582" fill="none" stroke="#C1602B" stroke-width="3"/>
 <rect x="36" y="36" width="1128" height="558" fill="none" stroke="#C1602B" stroke-opacity="0.35" stroke-width="1.5"/>
-<image href="data:image/png;base64,${logo}" x="${600 - 45}" y="48" width="90" height="92"/>
+<image href="data:image/png;base64,${logo}" x="${600 - 50}" y="42" width="100" height="100"/>
 <text x="600" y="176" text-anchor="middle" font-family="Poppins" font-weight="700" font-size="20" letter-spacing="6" fill="#2B2420">TOGETHER, OUT LOUD</text>
 <text x="600" y="218" text-anchor="middle" font-family="Poppins" font-weight="700" font-size="18" letter-spacing="4" fill="#C1602B">YOUR PERFORMANCE</text>
 <text x="600" y="310" text-anchor="middle" font-family="Lora" font-weight="700" font-size="${fs1}" fill="#2B2420">Hi ${esc(first)}!</text>
@@ -376,7 +376,7 @@ function renderTripCardPng(o) {
 <rect width="1200" height="630" fill="url(#bg)"/><rect width="1200" height="630" fill="url(#gl)"/>
 <rect x="24" y="24" width="1152" height="582" fill="none" stroke="#C1602B" stroke-width="3"/>
 <rect x="36" y="36" width="1128" height="558" fill="none" stroke="#C1602B" stroke-opacity="0.35" stroke-width="1.5"/>
-<image href="data:image/png;base64,${logo}" x="555" y="48" width="90" height="92"/>
+<image href="data:image/png;base64,${logo}" x="550" y="42" width="100" height="100"/>
 <text x="600" y="172" text-anchor="middle" font-family="Poppins" font-weight="700" font-size="20" letter-spacing="6" fill="#2B2420">TOGETHER, OUT LOUD</text>
 <text x="600" y="212" text-anchor="middle" font-family="Poppins" font-weight="700" font-size="18" letter-spacing="4" fill="#C1602B">TRAVEL DETAILS &amp; IDS</text>
 <text x="600" y="296" text-anchor="middle" font-family="Lora" font-weight="700" font-size="${ns}" fill="#2B2420">${esc(name)}</text>
