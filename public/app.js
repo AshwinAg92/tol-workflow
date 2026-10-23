@@ -227,6 +227,10 @@ function travelBookingFieldsHtml(p, leg) {
   const mode = leg?.mode || "";
   const sugg = TRAVEL_CLASS_SUGGESTIONS[mode] || [];
   return `
+    <div class="row-2" style="margin-top:8px;">
+      <div><label>Departure time (optional)</label><input id="${p}DepTime" type="time" value="${leg?.departure_time || ""}" /></div>
+      <div><label>Arrival time (optional)</label><input id="${p}ArrTime" type="time" value="${leg?.arrival_time || ""}" /></div>
+    </div>
     <label style="margin-top:8px;">Which train / flight should the client book? <span class="muted small">(name &amp; number, optional)</span></label>
     <input id="${p}Service" value="${(leg?.preferred_service || "").replace(/"/g, "&quot;")}" placeholder="e.g. 12345 Kanchankanya Exp, or IndiGo 6E-123 (07:40)" />
     <div class="row-2" style="margin-top:8px;">
@@ -245,7 +249,15 @@ const readTravelBookingFields = (root, p) => ({
   preferredService: root.querySelector(`#${p}Service`)?.value.trim() || null,
   travelClass: root.querySelector(`#${p}Class`)?.value.trim() || null,
   foodIncluded: root.querySelector(`#${p}Food`)?.value || null,
+  departureTime: root.querySelector(`#${p}DepTime`)?.value || null,
+  arrivalTime: root.querySelector(`#${p}ArrTime`)?.value || null,
 });
+// "Departs 8 Jan 2027 at 7:40 AM · Arrives at 11:15 AM · Returns 12 Jan 2027" — every part optional.
+const legWhenText = (leg) => [
+  (leg.departure_at || leg.departure_time) ? `Departs ${leg.departure_at ? fmtDate(leg.departure_at.slice(0, 10)) : ""}${leg.departure_time ? `${leg.departure_at ? " " : ""}at ${fmtTimeHM(leg.departure_time)}` : ""}` : "",
+  leg.arrival_time ? `Arrives at ${fmtTimeHM(leg.arrival_time)}` : "",
+  leg.arrival_at ? `Returns ${fmtDate(leg.arrival_at.slice(0, 10))}` : "",
+].filter(Boolean).join(" · ");
 const TRAVEL_STATUS_LABELS = { not_booked: "Not booked yet", booked: "Booked", self_arranged: "Self-arranged" };
 
 // Preset reasons for moving a lead to Not Interested — feeds the month-end
@@ -6639,8 +6651,8 @@ async function openTravelShareModal(leadId) {
         ...(l.preferred_service ? [`   Please book: ${l.preferred_service}`] : []),
         ...(l.travel_class ? [`   Class: ${l.travel_class}`] : []),
         ...(l.food_included ? [`   Food: ${l.food_included === "included" ? "included" : "not included"}`] : []),
-        ...(l.departure_at ? [`   Depart: ${wall(l.departure_at)}`] : []),
-        ...(l.arrival_at ? [`   Arrive: ${wall(l.arrival_at)}`] : []),
+        ...(l.departure_at || l.departure_time ? [`   Depart: ${[l.departure_at ? wall(l.departure_at) : "", l.departure_time ? fmtTimeHM(l.departure_time) : ""].filter(Boolean).join(", ")}`] : []),
+        ...(l.arrival_at || l.arrival_time ? [`   Arrive: ${[l.arrival_at ? wall(l.arrival_at) : "", l.arrival_time ? fmtTimeHM(l.arrival_time) : ""].filter(Boolean).join(", ")}`] : []),
         `   Travelling: ${l.who.join(", ")}`,
       ]),
       "",
@@ -6967,7 +6979,7 @@ async function openTravelPlanModal(leadId) {
           </div>
           <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
         </div>
-        ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small" style="margin-top:6px;">${leg.departure_at ? `Departs ${fmtDate(leg.departure_at.slice(0, 10))}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Returns ${fmtDate(leg.arrival_at.slice(0, 10))}` : ""}</div>` : ""}
+        ${legWhenText(leg) ? `<div class="muted small" style="margin-top:6px;">${legWhenText(leg)}</div>` : ""}
         ${leg.booking_ref ? `<div class="muted small" style="margin-top:2px;">Ref: ${leg.booking_ref}</div>` : ""}
         ${leg.preferred_service || leg.travel_class || leg.food_included ? `<div class="small" style="margin-top:4px;">🎟 ${[leg.preferred_service ? escH(leg.preferred_service) : "", leg.travel_class ? "Class " + escH(leg.travel_class) : "", leg.food_included ? "Food " + FOOD_LABELS[leg.food_included].toLowerCase() : ""].filter(Boolean).join(" · ")}</div>` : ""}
         ${leg.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${leg.notes}</div>` : ""}
@@ -7264,7 +7276,7 @@ async function openTravelPlanViewModal(leadId, leadName) {
                   </div>
                   <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
                 </div>
-                ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small" style="margin-top:6px;">${leg.departure_at ? `Departs ${fmtDate(leg.departure_at.slice(0, 10))}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Returns ${fmtDate(leg.arrival_at.slice(0, 10))}` : ""}</div>` : ""}
+                ${legWhenText(leg) ? `<div class="muted small" style="margin-top:6px;">${legWhenText(leg)}</div>` : ""}
                 ${leg.booking_ref ? `<div class="muted small" style="margin-top:2px;">Ref: ${leg.booking_ref}</div>` : ""}
                 ${leg.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${leg.notes}</div>` : ""}
                 ${leg.tickets.length > 0 ? `
