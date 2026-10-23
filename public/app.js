@@ -1658,6 +1658,8 @@ function renderNav() {
       </div>
     `);
     row.querySelector(".nav-item").addEventListener("click", () => {
+      // Opening Leads from the menu starts with a clean name/city search (not whatever was typed or jumped to last time).
+      if (id === "leads") { leadsSearch = ""; leadsOnlyId = ""; leadsCityFilter = ""; }
       currentTab = id;
       renderNav();
       renderMain();
