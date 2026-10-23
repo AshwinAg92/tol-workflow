@@ -5303,7 +5303,7 @@ async function autoCloseNearDateLeads() {
   }
 }
 
-// ---------- Monthly data backup ----------
+// ---------- Daily data backup ----------
 // A full export of every table, emailed to the admin so there's always an
 // off-app copy of everything captured — not just leads, but payments,
 // expenses, team, quotes, assignments, tasks, documents metadata, and the
@@ -5419,23 +5419,34 @@ async function sendBackupEmail(recipient) {
   });
 }
 
-// Sends once per calendar month (checked hourly alongside autoCompletePastEvents),
-// tracked via a flag in message_templates so it can't double-send even across
-// restarts, and so it retries automatically on the next hourly check if the
-// first attempt in a given month fails (e.g. SMTP misconfigured).
-async function runMonthlyBackupCheck() {
+// Emailed EVERY DAY (checked hourly, sent after 10 PM IST so the day's work is in it). A flag in
+// message_templates stops a double-send across restarts, and a failed attempt retries on the next hourly
+// check. If a day's backup is still failing, the admin gets one in-app alert so it never fails silently.
+async function runDailyBackupCheck() {
   try {
-    const monthKey = new Date().toISOString().slice(0, 7); // "2026-08"
-    const flag = (await pool.query("SELECT template FROM message_templates WHERE key = 'last_backup_sent_month'")).rows[0];
-    if (flag?.template === monthKey) return; // already sent this month
-    await sendBackupEmail();
+    const ist = new Date(Date.now() + 5.5 * 3600 * 1000);
+    const dayKey = ist.toISOString().slice(0, 10); // IST calendar day, "2026-10-23"
+    if (ist.getUTCHours() < Number(process.env.BACKUP_HOUR_IST || 22)) return; // wait for 10 PM IST (override with BACKUP_HOUR_IST)
+    const flag = (await pool.query("SELECT template FROM message_templates WHERE key = 'last_backup_sent_day'")).rows[0];
+    if (flag?.template === dayKey) return; // already sent today
+    try {
+      await sendBackupEmail();
+    } catch (err) {
+      console.error("Daily backup failed (will retry next hour):", err.message);
+      const warned = (await pool.query("SELECT template FROM message_templates WHERE key = 'backup_fail_warned_day'")).rows[0];
+      if (warned?.template !== dayKey) {
+        await pool.query("INSERT INTO admin_notifications (id, message, assignment_id, audience, created_at) VALUES ($1,$2,NULL,'admin',$3)", [uuid(), `\u26a0\ufe0f Today's data backup email didn't go out (${String(err.message).slice(0, 120)}). It will keep retrying every hour.`, new Date().toISOString()]).catch(() => {});
+        await pool.query(`INSERT INTO message_templates (key, template, updated_at) VALUES ('backup_fail_warned_day', $1, $2) ON CONFLICT (key) DO UPDATE SET template = $1, updated_at = $2`, [dayKey, new Date().toISOString()]);
+      }
+      return;
+    }
     await pool.query(`
-      INSERT INTO message_templates (key, template, updated_at) VALUES ('last_backup_sent_month', $1, $2)
+      INSERT INTO message_templates (key, template, updated_at) VALUES ('last_backup_sent_day', $1, $2)
       ON CONFLICT (key) DO UPDATE SET template = $1, updated_at = $2
-    `, [monthKey, new Date().toISOString()]);
-    console.log(`Monthly backup emailed for ${monthKey}`);
+    `, [dayKey, new Date().toISOString()]);
+    console.log(`Daily backup emailed for ${dayKey}`);
   } catch (err) {
-    console.error("Monthly backup failed (will retry next hour):", err.message);
+    console.error("Daily backup check failed:", err.message);
   }
 }
 
@@ -5515,8 +5526,8 @@ ready.then(() => {
   setInterval(autoCompletePastEvents, 60 * 60 * 1000);
   autoCloseNearDateLeads();
   setInterval(autoCloseNearDateLeads, 60 * 60 * 1000);
-  runMonthlyBackupCheck();
-  setInterval(runMonthlyBackupCheck, 60 * 60 * 1000);
+  runDailyBackupCheck();
+  setInterval(runDailyBackupCheck, 60 * 60 * 1000);
   // Pre-warm the map's geocode cache in the background right after startup,
   // rather than waiting for the first visitor to trigger it. A cold cache
   // (e.g. right after a migration clears it) can take 20-30s+ to resolve
