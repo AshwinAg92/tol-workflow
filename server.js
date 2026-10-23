@@ -202,7 +202,7 @@ async function assignmentInManagerScope(user, assignmentId) {
   const a = (await pool.query("SELECT lead_id FROM event_assignments WHERE id = $1", [assignmentId])).rows[0];
   return !a || (await leadInManagerScope(user, a.lead_id));
 }
-const LEG_TYPES_OK = ["going", "return", "onward"];
+const LEG_TYPES_OK = ["going", "return", "going_onward", "return_onward", "onward"];
 const cleanLegType = (v) => (LEG_TYPES_OK.includes(v) ? v : null);
 const scopeDeny = (res) => res.status(403).json({ error: "You can only manage events allotted to you" });
 // Travel notes are the admin's private remarks — nobody else gets them.
@@ -210,8 +210,8 @@ const scopeDeny = (res) => res.status(403).json({ error: "You can only manage ev
 const cleanTime = (v) => (/^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || "")) ? String(v) : null);
 const fmt12 = (hm) => { if (!hm) return ""; const [h, m] = String(hm).split(":").map(Number); return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
 // The event an onward journey leaves from. Only meaningful for an onward leg, and never the event itself.
-async function cleanToLead(v, selfLeadId, legType) {
-  if (legType !== "onward" || !v || v === selfLeadId) return null;
+async function cleanToLead(v, selfLeadId, legType, needType) {
+  if (legType !== needType || !v || v === selfLeadId) return null;
   const r = (await pool.query("SELECT id FROM leads WHERE id = $1", [String(v)])).rows[0];
   return r ? r.id : null;
 }
@@ -2857,7 +2857,11 @@ app.get("/api/leads/:id/travel-legs", requireAuth, async (req, res) => {
   if (!(await canViewTravelLegs(req.user, req.params.id))) return res.status(403).json({ error: "Not available for this event" });
   const { rows: legsRaw } = await pool.query(`SELECT travel_legs.*, l.name AS home_event_name, l.date AS home_event_date FROM travel_legs LEFT JOIN leads l ON l.id = travel_legs.lead_id WHERE travel_legs.lead_id = $1 OR travel_legs.to_lead_id = $1 OR travel_legs.from_lead_id = $1 ORDER BY travel_legs.created_at ASC`, [req.params.id]);
   // A leg that belongs to the NEXT event but leaves from this one: shown here read-only, flagged so the UI can say where to edit it.
-  const legs = legsRaw.map((l) => ({ ...l, linked_from_other: l.lead_id !== req.params.id }));
+  // Seen from the connected event the direction flips: a "return & onward" from Puri is a "going" journey at Guwahati, and a "going & onward" into Guwahati is a "return" at Puri.
+  const legs = legsRaw.map((l) => {
+    const other = l.lead_id !== req.params.id;
+    return { ...l, linked_from_other: other, display_type: other ? (l.to_lead_id === req.params.id ? "going" : "return") : l.leg_type };
+  });
   const legIds = legs.map((l) => l.id);
   const [members, tickets] = legIds.length > 0 ? await Promise.all([
     pool.query(`SELECT travel_leg_members.leg_id, team.id AS team_id, team.name AS team_name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id = ANY($1)`, [legIds]),
@@ -2989,8 +2993,8 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
   if (!lead) return res.status(404).json({ error: "Event not found" });
   const { teamIds, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status } = req.body;
   const legType = cleanLegType(req.body.legType);
-  const toLeadId = await cleanToLead(req.body.toLeadId, req.params.id, legType);
-  const fromLeadId = await cleanToLead(req.body.fromLeadId, req.params.id, legType);
+  const toLeadId = await cleanToLead(req.body.toLeadId, req.params.id, legType, "return_onward");
+  const fromLeadId = await cleanToLead(req.body.fromLeadId, req.params.id, legType, "going_onward");
   const notes = req.user.access_level === "admin" ? req.body.notes : null;
   const managerNotes = req.body.managerNotes || null;
   if (!Array.isArray(teamIds) || teamIds.length === 0) return res.status(400).json({ error: "Select at least one artist" });
@@ -3044,9 +3048,9 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
   if (req.body.toLeadId !== undefined || req.body.fromLeadId !== undefined || req.body.legType !== undefined) {
     const finalType = req.body.legType !== undefined ? cleanLegType(req.body.legType) : leg.leg_type;
     const wanted = req.body.toLeadId !== undefined ? req.body.toLeadId : leg.to_lead_id;
-    values.push(await cleanToLead(wanted, leg.lead_id, finalType)); updates.push(`to_lead_id = $${values.length}`);
+    values.push(await cleanToLead(wanted, leg.lead_id, finalType, "return_onward")); updates.push(`to_lead_id = $${values.length}`);
     const wantedFrom = req.body.fromLeadId !== undefined ? req.body.fromLeadId : leg.from_lead_id;
-    values.push(await cleanToLead(wantedFrom, leg.lead_id, finalType)); updates.push(`from_lead_id = $${values.length}`);
+    values.push(await cleanToLead(wantedFrom, leg.lead_id, finalType, "going_onward")); updates.push(`from_lead_id = $${values.length}`);
   }
   if (updates.length > 0) {
     values.push(new Date().toISOString());
