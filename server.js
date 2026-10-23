@@ -4593,6 +4593,93 @@ function clientHubHtml(token, legs = []) {
 })();
 </script>`;
 }
+
+// ---------- Artist "my events" link — a no-login mini CRM for every artist and freelancer ----------
+// The token is the key (same model as the WhatsApp confirmation and trip links). It only ever shows the
+// artist their OWN events: client name, venue/timings, status, their travel + tickets and their own pay status —
+// never a client's phone/email or any client money.
+app.post("/api/team/:id/portal-link", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const m = (await pool.query("SELECT id, name, phone, portal_token FROM team WHERE id = $1", [req.params.id])).rows[0];
+  if (!m) return res.status(404).json({ error: "Team member not found" });
+  let token = m.portal_token;
+  if (!token || req.body.regenerate) {
+    token = crypto.randomBytes(18).toString("base64url");
+    await pool.query("UPDATE team SET portal_token = $1 WHERE id = $2", [token, m.id]);
+    logActivity(req, `${req.body.regenerate ? "Reset" : "Created"} the my-events link for ${m.name}`, null);
+  }
+  res.json({ token, name: m.name, phone: m.phone });
+});
+async function loadArtistPortal(token) {
+  if (!token || String(token).length < 16) return null;
+  const m = (await pool.query("SELECT id, name FROM team WHERE portal_token = $1", [String(token)])).rows[0];
+  if (!m) return null;
+  const rows = (await pool.query(`
+    SELECT ea.id AS assignment_id, ea.status, ea.note, ea.confirm_token,
+           leads.id AS lead_id, leads.name AS client_name, leads.event_type, leads.city, leads.date, leads.venue,
+           leads.event_time, leads.soundcheck_time, leads.pcs, leads.stage,
+           ex.paid AS pay_paid, ex.amount AS pay_amount, ex.payment_date, ex.payment_mode
+    FROM event_assignments ea
+    JOIN leads ON leads.id = ea.lead_id
+    LEFT JOIN expenses ex ON ex.team_id = ea.team_id AND ex.lead_id = ea.lead_id
+    WHERE ea.team_id = $1 AND leads.stage IN ('Confirmed', 'Completed', 'Tentative')
+    ORDER BY leads.date ASC
+  `, [m.id])).rows;
+  for (const r of rows) {
+    if (!r.confirm_token) { r.confirm_token = uuid(); await pool.query("UPDATE event_assignments SET confirm_token = $1 WHERE id = $2", [r.confirm_token, r.assignment_id]); }
+  }
+  const leadIds = rows.map((r) => r.lead_id);
+  const legs = leadIds.length ? (await pool.query(`
+    SELECT tl.id, tl.lead_id, tl.to_lead_id, tl.from_lead_id, tl.leg_type, tl.mode, tl.from_city, tl.to_city, tl.departure_at, tl.arrival_at,
+           tl.departure_time, tl.arrival_time, tl.status, tl.booking_ref, tl.preferred_service, tl.travel_class, tl.manager_notes
+    FROM travel_legs tl JOIN travel_leg_members tm ON tm.leg_id = tl.id AND tm.team_id = $1
+    WHERE tl.lead_id = ANY($2) OR tl.to_lead_id = ANY($2) OR tl.from_lead_id = ANY($2)
+    ORDER BY tl.departure_at ASC NULLS LAST
+  `, [m.id, leadIds])).rows : [];
+  const legIds = legs.map((l) => l.id);
+  const docs = legIds.length ? (await pool.query("SELECT id, original_name, travel_leg_id FROM documents WHERE travel_leg_id = ANY($1) ORDER BY uploaded_at ASC", [legIds])).rows : [];
+  return { member: m, rows, legs, docs };
+}
+app.get("/api/public/me/:token", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const p = await loadArtistPortal(req.params.token);
+  if (!p) return res.status(404).json({ error: "This link isn't valid — ask Team TOL for a fresh one." });
+  const today = new Date().toISOString().slice(0, 10);
+  const events = p.rows.map((r) => {
+    const mine = p.legs.filter((l) => l.lead_id === r.lead_id || l.to_lead_id === r.lead_id || l.from_lead_id === r.lead_id).map((l) => {
+      const other = l.lead_id !== r.lead_id;
+      const type = other ? (l.to_lead_id === r.lead_id ? "going" : "return") : l.leg_type;
+      return {
+        type, mode: l.mode, from: l.from_city, to: l.to_city, departureAt: l.departure_at ? String(l.departure_at).slice(0, 10) : null, arrivalAt: l.arrival_at ? String(l.arrival_at).slice(0, 10) : null,
+        departureTime: l.departure_time, arrivalTime: l.arrival_time, status: l.status, ref: l.booking_ref, service: l.preferred_service, travelClass: l.travel_class,
+        tickets: p.docs.filter((d) => d.travel_leg_id === l.id).map((d) => ({ id: d.id, name: d.original_name })),
+      };
+    });
+    const isPast = r.date < today;
+    return {
+      confirmToken: r.confirm_token, status: r.status, note: r.note, client: r.client_name, experience: packageName(r.event_type), city: r.city, date: r.date,
+      venue: r.venue, eventTime: r.event_time, soundcheckTime: r.soundcheck_time, pcs: r.pcs, tentative: r.stage === "Tentative", past: isPast,
+      travel: mine,
+      pay: isPast ? { paid: !!r.pay_paid, amount: r.pay_amount != null ? Number(r.pay_amount) : null, date: r.payment_date, mode: r.payment_mode } : null,
+    };
+  });
+  res.json({ name: p.member.name, upcoming: events.filter((e) => !e.past), past: events.filter((e) => e.past).reverse() });
+});
+app.get("/api/public/me/:token/ticket/:docId", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const p = await loadArtistPortal(req.params.token);
+  if (!p) return res.status(404).send("Link no longer available");
+  const d = (await pool.query(`SELECT original_name, mime_type, file_data FROM documents WHERE id = $1 AND travel_leg_id IN (SELECT leg_id FROM travel_leg_members WHERE team_id = $2)`, [req.params.docId, p.member.id])).rows[0];
+  if (!d || !d.file_data) return res.status(404).send("File not found");
+  res.setHeader("Content-Type", d.mime_type || "application/octet-stream");
+  res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(d.original_name)}"`);
+  res.send(d.file_data);
+});
+app.get("/me/:token", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  res.sendFile(path.join(__dirname, "public", "me.html"), { acceptRanges: false });
+});
+
 app.get("/trip/:token", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");

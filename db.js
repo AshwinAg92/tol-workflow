@@ -311,6 +311,9 @@ async function setup() {
   // account — most performers here don't have one. Backfilled once for any
   // assignment created before this existed; new ones get theirs at creation.
   await pool.query(`ALTER TABLE event_assignments ADD COLUMN IF NOT EXISTS confirm_token TEXT`);
+  // Personal no-login link for each artist/freelancer: their upcoming events, travel and pay status (/me/:token).
+  await pool.query(`ALTER TABLE team ADD COLUMN IF NOT EXISTS portal_token TEXT`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS team_portal_token_idx ON team(portal_token) WHERE portal_token IS NOT NULL`);
   const { rows: assignmentsNeedingToken } = await pool.query("SELECT id FROM event_assignments WHERE confirm_token IS NULL");
   for (const row of assignmentsNeedingToken) {
     await pool.query("UPDATE event_assignments SET confirm_token = $1 WHERE id = $2", [uuid(), row.id]);

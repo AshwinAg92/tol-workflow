@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My events — Together, Out Loud</title>
+  <meta name="description" content="Your upcoming events with Together, Out Loud." />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="My events — Together, Out Loud" />
+  <meta property="og:description" content="Your upcoming events with Together, Out Loud." />
+  <meta property="og:image" content="https://www.togetheroutloud.in/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="robots" content="noindex,nofollow" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="My events — Together, Out Loud" />
+  <meta name="twitter:image" content="https://www.togetheroutloud.in/og-image.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin:0; background:#FEF6ED; font-family:'Inter',sans-serif; color:#2B2420; display:flex; justify-content:center; padding:28px 14px 60px; min-height:100vh; }
+    .wrap { max-width:520px; width:100%; }
+    .tagline { font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:22px; color:#C7401E; text-align:center; margin:0 0 2px; }
+    .subhead { text-align:center; font-family:'JetBrains Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#8A6A54; margin-bottom:16px; }
+    .hello { font-family:'Space Grotesk',sans-serif; font-size:20px; font-weight:700; margin:0 0 12px; }
+    .tabs { display:flex; gap:8px; margin-bottom:14px; }
+    .tab { flex:1; padding:10px; border-radius:10px; border:1.5px solid #EAD9BE; background:#fff; font-weight:700; font-size:14px; color:#8A6A54; cursor:pointer; font-family:inherit; }
+    .tab.on { background:#C7401E; color:#fff; border-color:#C7401E; }
+    .card { background:#FFFDF8; border-radius:16px; padding:18px 18px 16px; box-shadow:0 4px 18px rgba(43,36,32,.07); border:1px solid #EAD9BE; margin-bottom:14px; }
+    .when { font-family:'JetBrains Mono',monospace; font-size:12px; color:#8A6A54; text-transform:uppercase; letter-spacing:.03em; }
+    .title { font-family:'Space Grotesk',sans-serif; font-size:18px; font-weight:700; margin:2px 0 4px; }
+    .pill { display:inline-block; font-size:12px; font-weight:700; border-radius:20px; padding:3px 11px; margin:4px 6px 4px 0; }
+    .p-pending { background:#FBEFD9; color:#B6752C; } .p-accepted { background:#E4F1F1; color:#1C7A80; } .p-declined { background:#F7E4DF; color:#A6432B; } .p-paid { background:#E3F4E5; color:#1E6B2B; } .p-tent { background:#EEE6F5; color:#6B4A8A; }
+    .row { display:flex; gap:9px; padding:6px 0; font-size:14px; } .row .ic { width:20px; text-align:center; flex-shrink:0; } .lbl { color:#8A6A54; font-size:12px; }
+    .sec { font-family:'JetBrains Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#8A6A54; margin:12px 0 4px; }
+    .leg { border-top:1px solid #EAD9BE; padding:8px 0; font-size:14px; }
+    .leg a { color:#1C7A80; font-weight:600; }
+    .btns { display:flex; gap:10px; margin-top:12px; }
+    button.act { flex:1; padding:12px; border-radius:10px; border:none; font-size:15px; font-weight:700; font-family:inherit; cursor:pointer; }
+    button.act:disabled { opacity:.5; }
+    .b-acc { background:#1C7A80; color:#fff; } .b-dec { background:#fff; color:#A6432B; border:1.5px solid #EAD9BE; }
+    textarea { width:100%; padding:10px; border:1.5px solid #EAD9BE; border-radius:9px; font-size:14px; font-family:inherit; background:#FFFDFA; min-height:56px; margin-top:6px; }
+    .save { width:100%; margin-top:6px; padding:10px; border-radius:9px; border:none; background:#F0DCC8; font-weight:700; font-family:inherit; cursor:pointer; }
+    .msg { font-size:13px; color:#2B2420; margin-top:6px; min-height:16px; }
+    .muted { color:#8A6A54; font-size:13px; } .error, .loading { text-align:center; padding:40px 0; color:#8A6A54; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="tagline">Together, Out Loud</div>
+    <div class="subhead">My events</div>
+    <div id="app"><div class="loading">Loading…</div></div>
+  </div>
+  <script>
+    const token = location.pathname.split("/").filter(Boolean)[1] || "";
+    const app = document.getElementById("app");
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const fmtDate = (d) => { if (!d) return ""; const x = new Date(String(d).slice(0, 10) + "T00:00:00"); return isNaN(x) ? d : x.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" }); };
+    const fmt12 = (t) => { if (!t) return ""; const m = /^(\d{1,2}):(\d{2})$/.exec(t); if (!m) return t; const h = +m[1]; return ((h % 12) || 12) + ":" + m[2] + " " + (h >= 12 ? "PM" : "AM"); };
+    const TYPE = { going: "➡ Going", return: "⬅ Return", going_onward: "🔗 Going & Onward", return_onward: "🔗 Return & Onward", onward: "🔗 Onward" };
+    const MODE = { flight: "Flight", train: "Train", bus: "Bus", car: "Car", cab: "Cab" };
+    const ST = { booked: "Booked", not_booked: "Not booked yet" };
+    let data = null, tab = "upcoming";
+
+    function eventCard(e, i) {
+      const rows = [["📍", e.venue ? e.venue + (e.city ? ", " + e.city : "") : e.city], ["🕒", e.eventTime ? "Event time: " + e.eventTime : ""], ["🎶", e.soundcheckTime ? "Sound check: " + e.soundcheckTime : ""], ["🎸", e.pcs ? e.pcs + " pcs" : ""]].filter((r) => r[1]);
+      const pill = { pending: ["p-pending", "Awaiting your response"], accepted: ["p-accepted", "You've accepted"], declined: ["p-declined", "You've declined"], cancel_requested: ["p-pending", "Cancellation requested"] }[e.status] || ["p-pending", e.status];
+      const rank = (t) => (t === "going" ? 0 : t === "going_onward" || t === "onward" ? 1 : t === "return" ? 2 : 3);
+      const legsSorted = [...e.travel].sort((a, b) => rank(a.type) - rank(b.type) || String(a.departureAt || "9999").localeCompare(String(b.departureAt || "9999")));
+      const travel = legsSorted.length ? legsSorted.map((l) => {
+        const when = [l.departureAt ? fmtDate(l.departureAt) : "", fmt12(l.departureTime)].filter(Boolean).join(", ");
+        const arr = [l.arrivalAt && l.type === "going" ? "" : "", fmt12(l.arrivalTime)].filter(Boolean).join("");
+        return `<div class="leg"><b>${TYPE[l.type] || ""}</b> ${esc(MODE[l.mode] || "")} — ${esc(l.from || "?")} → ${esc(l.to || "?")}
+          <div class="muted">${esc(when) || "Date not set"}${arr ? " · arrives " + esc(arr) : ""} · ${esc(ST[l.status] || l.status)}${l.ref ? " · Ref " + esc(l.ref) : ""}</div>
+          ${l.tickets.map((t) => `<div><a href="/api/public/me/${encodeURIComponent(token)}/ticket/${t.id}" target="_blank" rel="noopener">🎫 ${esc(t.name)}</a></div>`).join("")}</div>`;
+      }).join("") : `<div class="muted">Travel not added yet.</div>`;
+      const pay = e.pay ? `<div class="sec">Payment</div><span class="pill ${e.pay.paid ? "p-paid" : "p-pending"}">${e.pay.paid ? "Paid" : "Payment pending"}</span>${e.pay.paid && e.pay.date ? `<span class="muted">${esc(fmtDate(e.pay.date))}${e.pay.mode ? " · " + esc(e.pay.mode) : ""}</span>` : ""}${e.pay.amount ? `<div class="muted">₹${e.pay.amount.toLocaleString("en-IN")}</div>` : ""}` : "";
+      const respond = !e.past && e.status !== "cancel_requested" ? `
+        <div class="btns">
+          <button class="act b-acc" data-i="${i}" data-s="accepted" ${e.status === "accepted" ? "disabled" : ""}>✓ Accept</button>
+          ${e.status === "accepted" ? "" : `<button class="act b-dec" data-i="${i}" data-s="declined" ${e.status === "declined" ? "disabled" : ""}>✕ Decline</button>`}
+        </div>
+        ${e.status === "accepted" ? `<div class="muted" style="margin-top:6px;">Need to make a change? Please contact Team Together, Out Loud directly.</div>` : ""}
+        <textarea data-note="${i}" placeholder="Note for the organizer (optional) — e.g. running a bit late">${esc(e.note || "")}</textarea>
+        <button class="save" data-save="${i}">Save note</button>` : "";
+      return `<div class="card">
+        <div class="when">${esc(fmtDate(e.date))}</div>
+        <div class="title">${esc(e.client)}</div>
+        <div class="muted">${esc(e.experience)}</div>
+        <span class="pill ${pill[0]}">${pill[1]}</span>${e.tentative ? `<span class="pill p-tent">Tentative</span>` : ""}
+        <div style="margin-top:6px;">${rows.map((r) => `<div class="row"><div class="ic">${r[0]}</div><div>${esc(r[1])}</div></div>`).join("")}</div>
+        <div class="sec">Travel</div>${travel}${pay}${respond}
+        <div class="msg" id="msg${i}"></div></div>`;
+    }
+    function render() {
+      const list = tab === "upcoming" ? data.upcoming : data.past;
+      app.innerHTML = `<div class="hello">Hi ${esc(data.name.split(" ")[0])} 👋</div>
+        <div class="tabs"><button class="tab ${tab === "upcoming" ? "on" : ""}" data-tab="upcoming">Upcoming (${data.upcoming.length})</button><button class="tab ${tab === "past" ? "on" : ""}" data-tab="past">Past (${data.past.length})</button></div>
+        ${list.length ? list.map(eventCard).join("") : `<div class="card"><div class="muted">${tab === "upcoming" ? "No upcoming events yet — we'll add them here as soon as you're booked." : "Nothing here yet."}</div></div>`}`;
+      app.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; render(); }));
+      app.querySelectorAll("button.act").forEach((b) => b.addEventListener("click", () => respond(+b.dataset.i, b.dataset.s)));
+      app.querySelectorAll("[data-save]").forEach((b) => b.addEventListener("click", () => saveNote(+b.dataset.save)));
+    }
+    async function call(path, body) {
+      const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "Something went wrong");
+      return j;
+    }
+    async function respond(i, status) {
+      const e = data.upcoming[i], msg = document.getElementById("msg" + i), note = (app.querySelector(`[data-note="${i}"]`) || {}).value;
+      msg.textContent = "Saving…";
+      try {
+        await call(`/api/public/assignment/${encodeURIComponent(e.confirmToken)}/respond`, { status, note: (note || "").trim() });
+        e.status = status; e.note = (note || "").trim(); render();
+        document.getElementById("msg" + i).textContent = status === "accepted" ? "Thanks — see you there! 🎉" : "Got it — thanks for letting us know.";
+      } catch (err) { msg.textContent = err.message; }
+    }
+    async function saveNote(i) {
+      const e = data.upcoming[i], msg = document.getElementById("msg" + i), note = app.querySelector(`[data-note="${i}"]`).value.trim();
+      msg.textContent = "Saving…";
+      try { await call(`/api/public/assignment/${encodeURIComponent(e.confirmToken)}/note`, { note }); e.note = note; msg.textContent = "Note saved."; }
+      catch (err) { msg.textContent = err.message; }
+    }
+    (async () => {
+      try {
+        const r = await fetch(`/api/public/me/${encodeURIComponent(token)}`);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || "This link isn't valid.");
+        data = j; render();
+      } catch (err) { app.innerHTML = `<div class="error">${esc(err.message)}</div>`; }
+    })();
+  </script>
+</body>
+</html>

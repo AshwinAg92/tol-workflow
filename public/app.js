@@ -4525,6 +4525,7 @@ async function renderTeam(main, subTab = "team") {
           <div style="margin-top:4px;"><span class="muted">Upcoming shows (${m.activeShows.length}):</span> ${m.activeShows.length ? m.activeShows.map((s2) => escT(s2.name)).join(", ") : "none"}</div>
           <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">
             <button class="btn-ghost" data-view-events="${m.id}" style="font-size:12px; padding:4px 9px;">\ud83d\udcc5 Events</button>
+            ${canAssignTeam() ? `<button class="btn-ghost" data-artist-link="${m.id}" style="font-size:12px; padding:4px 9px;">\ud83d\udd17 My-events link</button>` : ""}
             ${canManage ? `<button class="btn-ghost" data-edit-member="${m.id}" style="font-size:12px; padding:4px 9px;">Edit</button>` : ""}
             ${canManage && !teamIdsWithLogin.has(m.id) ? `<button class="btn-ghost" data-add-login="${m.id}" style="font-size:12px; padding:4px 9px;">${m.kind === "freelance" ? "Give a login anyway" : "+ Add login"}</button>` : ""}
           </div>
@@ -4539,6 +4540,8 @@ async function renderTeam(main, subTab = "team") {
       card.querySelector(`[data-person-caret="${m.id}"]`).textContent = open ? "\u25b8" : "\u25be";
     });
     card.querySelector(`[data-view-events="${m.id}"]`).addEventListener("click", () => openTeamMemberEventsModal(m));
+    const linkBtn = card.querySelector(`[data-artist-link="${m.id}"]`);
+    if (linkBtn) linkBtn.addEventListener("click", () => openArtistLinkModal(m));
     card.dataset.search = [m.name, m.role, m.specialty, m.instruments, m.base_city, m.phone, m.email].filter(Boolean).join(" ").toLowerCase();
     card.dataset.city = m.base_city || "";
     card.dataset.kind = m.kind === "freelance" ? "freelance" : "core";
@@ -4656,6 +4659,50 @@ async function renderTeam(main, subTab = "team") {
 // accept/decline on their behalf here (many artists don't use their own
 // login) — changes are staged locally and only sent on "Save changes" so a
 // stray tap doesn't silently commit a status change.
+// A personal, no-login page for an artist/freelancer: their upcoming + past events, travel, tickets and pay status.
+async function openArtistLinkModal(member) {
+  const root = document.getElementById("modalRoot");
+  let info;
+  try { info = await api(`/api/team/${member.id}/portal-link`, { method: "POST", body: JSON.stringify({}) }); } catch (err) { return alert(err.message); }
+  const draw = () => {
+    const url = `${location.origin}/me/${info.token}`;
+    const first = (member.name || "").split(" ")[0];
+    const msg = `Hi ${first}, here is your personal Together, Out Loud link — your upcoming events, travel plan, tickets and payment status, all in one place. Please save it:\n${url}`;
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay"><div class="modal-card" style="width:480px; max-width:96vw;">
+        <div class="modal-head"><h3>My-events link — ${escH(member.name)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body">
+          <p class="muted small" style="margin-top:0;">One private link for ${escH(first)}. It shows only their own events, travel + tickets and pay status, and works without a login — it updates by itself as you add events.</p>
+          <input id="alUrl" readonly value="${escH(url)}" onclick="this.select()" />
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+            <button class="btn-primary" id="alCopy">Copy link</button>
+            <button class="btn-ghost" id="alWa">🟢 Send on WhatsApp</button>
+            <button class="btn-ghost" id="alReset" style="color:#A6432B;">Reset link</button>
+          </div>
+          <p class="muted small" id="alMsg" style="margin-top:8px;"></p>
+        </div>
+        <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
+      </div></div>`;
+    const close = () => (root.innerHTML = "");
+    root.querySelector("#closeModal").addEventListener("click", close);
+    root.querySelector("#cancelModal").addEventListener("click", close);
+    root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+    root.querySelector("#alCopy").addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(url); root.querySelector("#alMsg").textContent = "Link copied."; } catch { root.querySelector("#alUrl").select(); root.querySelector("#alMsg").textContent = "Press Ctrl+C to copy."; }
+    });
+    root.querySelector("#alWa").addEventListener("click", () => {
+      const dg = String(info.phone || "").replace(/\D/g, "");
+      const num = dg.length === 10 ? "91" + dg : dg;
+      window.open(num ? `https://wa.me/${num}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+    });
+    root.querySelector("#alReset").addEventListener("click", async () => {
+      if (!confirm(`Reset ${member.name}'s link? The old link will stop working and you'll need to send the new one.`)) return;
+      try { info = await api(`/api/team/${member.id}/portal-link`, { method: "POST", body: JSON.stringify({ regenerate: true }) }); draw(); root.querySelector("#alMsg").textContent = "New link created — the old one no longer works."; } catch (err) { alert(err.message); }
+    });
+  };
+  draw();
+}
+
 async function openTeamMemberEventsModal(member) {
   const canEdit = canAssignTeam();
   const root = document.getElementById("modalRoot");
