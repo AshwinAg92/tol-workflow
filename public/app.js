@@ -3961,7 +3961,10 @@ async function renderTravelCalendar(main) {
   main.innerHTML = `
     <div class="view-head">
       <div><h2>Travel Calendar</h2><p class="muted">Every artist's travel, pulled from each event's Travel plan, plus anything logged manually here.</p></div>
-      <button class="btn-primary" id="addManualTravelBtn">+ Log travel manually</button>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        ${CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost" id="travelBlockDatesBtn">🚫 Block dates</button>` : ""}
+        <button class="btn-primary" id="addManualTravelBtn">+ Log travel manually</button>
+      </div>
     </div>
     <div class="card" style="margin-bottom:16px; padding:0;">
       <button id="travelCalFilterToggle" style="width:100%; display:flex; justify-content:space-between; align-items:center; padding:12px 14px; background:none; border:none; cursor:pointer; text-align:left; font:inherit; color:inherit;">
@@ -4067,9 +4070,12 @@ async function renderTravelCalendar(main) {
     cells.forEach((d) => {
       const evs = d ? (eventsByDay[d] || []) : [];
       const dayEvents = d ? (showEvents[d] || []) : [];
+      const tcDateStr = d ? `${travelCalYear}-${String(travelCalMonth).padStart(2, "0")}-${String(d).padStart(2, "0")}` : null;
+      const tcBlocked = tcDateStr ? blockedOn(tcDateStr) : null;
       calCells.appendChild(el(`
-        <div class="cal-cell${d ? "" : " cal-cell-empty"}"${d ? ` data-day="${d}" style="cursor:pointer;" title="Click an empty spot to add travel on this date"` : ""}>
+        <div class="cal-cell${d ? "" : " cal-cell-empty"}"${d ? ` data-day="${d}" style="cursor:pointer;${tcBlocked ? " background:repeating-linear-gradient(45deg, #E5DFD1, #E5DFD1 6px, #DCD4C0 6px, #DCD4C0 12px);" : ""}" title="Click an empty spot to add travel on this date"` : ""}>
           ${d ? `<div class="cal-day">${d}</div>` : ""}
+          ${tcBlocked ? `<div class="cal-event cal-event-blocked" data-blocked-date="${tcDateStr}" style="cursor:pointer; background:#8A6A54;" title="Blocked${tcBlocked.reason ? `: ${tcBlocked.reason}` : ""}">🚫 Blocked</div>` : ""}
           ${dayEvents.map((l) => { const gap = eventTravelGaps(l, legs, tcCtx.assignments).length > 0; return `
             <div class="cal-event tc-event" data-event-id="${l.id}" style="cursor:pointer; background:#1F6F43;" title="Event: ${String(l.name).replace(/"/g, "")}${gap ? " — travel not planned for someone" : ""}">🎤 ${l.name}${gap ? " ⚠" : ""}</div>`; }).join("")}
           ${journeyPills(evs).map((g) => `
@@ -4085,6 +4091,9 @@ async function renderTravelCalendar(main) {
         const iso = `${travelCalYear}-${String(travelCalMonth).padStart(2, "0")}-${String(cell.dataset.day).padStart(2, "0")}`;
         openStandaloneTravelLegModal(null, () => renderTravelCalendar(main), iso);
       });
+    });
+    calCells.querySelectorAll("[data-blocked-date]").forEach((pill) => {
+      pill.addEventListener("click", () => { if (CURRENT_USER?.accessLevel === "admin") openBlockedDatesModal(() => renderTravelCalendar(main)); });
     });
     calCells.querySelectorAll(".tc-event").forEach((pill) => {
       pill.addEventListener("click", () => {
@@ -4211,6 +4220,8 @@ async function renderTravelCalendar(main) {
     redrawList();
   });
 
+  const travelBlockBtn = main.querySelector("#travelBlockDatesBtn");
+  if (travelBlockBtn) travelBlockBtn.addEventListener("click", () => openBlockedDatesModal(() => renderTravelCalendar(main)));
   main.querySelector("#addManualTravelBtn").addEventListener("click", () => openStandaloneTravelLegModal(null, () => renderTravelCalendar(main)));
 }
 
