@@ -11946,7 +11946,7 @@ function renderLoginScreen(errorMsg) {
   app.innerHTML = `
     <div class="login-screen">
       <div class="login-card card">
-        <img src="/logo.png?v=2" class="brand-mark" style="margin:0 auto 14px;" alt="Together, Out Loud" />
+        <img src="/logo.png?v=2" class="brand-mark" style="display:block; width:120px; height:120px; margin:0 auto 14px;" alt="Together, Out Loud" />
         <h2 style="text-align:center; margin-bottom:4px;">Together, Out Loud</h2>
         <p class="muted" style="text-align:center; margin-bottom:20px;">Sign in to the workflow app</p>
         ${errorMsg ? `<p style="color:#A6432B; font-size:13px; margin-bottom:10px;">${errorMsg}</p>` : ""}
