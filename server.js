@@ -215,6 +215,12 @@ async function cleanToLead(v, selfLeadId, legType, needType) {
   const r = (await pool.query("SELECT id FROM leads WHERE id = $1", [String(v)])).rows[0];
   return r ? r.id : null;
 }
+// Artists and freelancers are only ever told WHERE an event is — never the client's name.
+const placeOf = (row) => [row && row.venue, row && row.city].map((x) => String(x || "").trim()).filter(Boolean).join(", ") || "your event";
+const artistEventPhrase = async (leadId) => {
+  const r = (await pool.query("SELECT venue, city FROM leads WHERE id = $1", [leadId])).rows[0];
+  return `the event in ${placeOf(r)}`;
+};
 const cleanBookedBy = (x) => (x === "client" || x === "tol" || x === "other" ? x : null);
 const cleanFood = (v) => (v === "included" || v === "not_included" ? v : null);
 const cleanText = (v, n = 200) => (v == null || String(v).trim() === "" ? null : String(v).trim().slice(0, n));
@@ -2323,11 +2329,12 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     const now = new Date().toISOString();
     await pool.query("UPDATE leads SET cancelled_at = COALESCE(cancelled_at, $1) WHERE id = $2", [now, req.params.id]);
     const reasonSuffix = req.body.cancellation_reason ? ` Reason: ${req.body.cancellation_reason}` : "";
+    const cancelPhrase = await artistEventPhrase(req.params.id);
     for (const a of assigned) {
       await pool.query(`
         INSERT INTO notifications (id, team_id, message, created_at)
         VALUES ($1, $2, $3, $4)
-      `, [uuid(), a.team_id, `Event cancelled: ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""} — no longer happening.${reasonSuffix}`, now]);
+      `, [uuid(), a.team_id, `Event cancelled: ${cancelPhrase} on ${lead.date} — no longer happening.${reasonSuffix}`, now]);
     }
   }
 
@@ -2520,7 +2527,7 @@ app.post("/api/leads/:id/assignments", requireAuth, requireCapability("assign_te
     await pool.query(`
       INSERT INTO notifications (id, team_id, message, created_at)
       VALUES ($1, $2, $3, $4)
-    `, [uuid(), teamId, `You've been added to a new event: ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""}.`, now]);
+    `, [uuid(), teamId, `You've been added to a new event: ${await artistEventPhrase(req.params.id)} on ${lead.date}.`, now]);
   }
   const { rows } = await pool.query(`
     SELECT event_assignments.*, team.name AS team_name
@@ -2636,7 +2643,6 @@ app.get("/api/public/assignment/:token", async (req, res) => {
     status: r0.status,
     respondedAt: r0.responded_at,
     note: r0.note,
-    clientName: r0.client_name,
     experience: packageName(r0.event_type),
     city: r0.city,
     date: r0.date,
@@ -2860,12 +2866,14 @@ async function legIsAdminOnly(user, legId) {
 }
 app.get("/api/leads/:id/travel-legs", requireAuth, async (req, res) => {
   if (!(await canViewTravelLegs(req.user, req.params.id))) return res.status(403).json({ error: "Not available for this event" });
-  const { rows: legsRaw } = await pool.query(`SELECT travel_legs.*, l.name AS home_event_name, l.date AS home_event_date FROM travel_legs LEFT JOIN leads l ON l.id = travel_legs.lead_id WHERE travel_legs.lead_id = $1 OR travel_legs.to_lead_id = $1 OR travel_legs.from_lead_id = $1 ORDER BY travel_legs.created_at ASC`, [req.params.id]);
+  const { rows: legsRaw } = await pool.query(`SELECT travel_legs.*, l.name AS home_event_name, l.venue AS home_event_venue, l.city AS home_event_city, l.date AS home_event_date FROM travel_legs LEFT JOIN leads l ON l.id = travel_legs.lead_id WHERE travel_legs.lead_id = $1 OR travel_legs.to_lead_id = $1 OR travel_legs.from_lead_id = $1 ORDER BY travel_legs.created_at ASC`, [req.params.id]);
   // A leg that belongs to the NEXT event but leaves from this one: shown here read-only, flagged so the UI can say where to edit it.
   // Seen from the connected event the direction flips: a "return & onward" from Puri is a "going" journey at Guwahati, and a "going & onward" into Guwahati is a "return" at Puri.
   const legs = legsRaw.map((l) => {
     const other = l.lead_id !== req.params.id;
-    return { ...l, linked_from_other: other, display_type: other ? (l.to_lead_id === req.params.id ? "going" : "return") : l.leg_type };
+    const hideClient = req.user.access_level !== "admin" && (req.user.access_level !== "staff" || !!req.user.is_performer); // artists see the place, never the client
+    const { home_event_venue, home_event_city, ...rest } = l;
+    return { ...rest, home_event_name: hideClient ? placeOf({ venue: home_event_venue, city: home_event_city }) : l.home_event_name, linked_from_other: other, display_type: other ? (l.to_lead_id === req.params.id ? "going" : "return") : l.leg_type };
   });
   const legIds = legs.map((l) => l.id);
   const [members, tickets] = legIds.length > 0 ? await Promise.all([
@@ -3021,7 +3029,7 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
       await pool.query(`
         INSERT INTO notifications (id, team_id, message, created_at)
         VALUES ($1, $2, $3, $4)
-      `, [uuid(), teamId, `Your travel details for ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""} have been added — check My Events.`, now]).catch(() => {});
+      `, [uuid(), teamId, `Your travel details for ${await artistEventPhrase(lead.id)} on ${lead.date} have been added — check My Events.`, now]).catch(() => {});
     }
   }
 });
@@ -3091,14 +3099,14 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
       await pool.query(`
         INSERT INTO notifications (id, team_id, message, created_at)
         VALUES ($1, $2, $3, $4)
-      `, [uuid(), m.team_id, `Travel update for ${lead.name} on ${lead.date}: now "${TRAVEL_STATUS_LABELS[req.body.status] || req.body.status}".`, now]).catch(() => {});
+      `, [uuid(), m.team_id, `Travel update for ${await artistEventPhrase(leg.lead_id)} on ${lead.date}: now "${TRAVEL_STATUS_LABELS[req.body.status] || req.body.status}".`, now]).catch(() => {});
     }
   }
   for (const teamId of newlyAdded) {
     await pool.query(`
       INSERT INTO notifications (id, team_id, message, created_at)
       VALUES ($1, $2, $3, $4)
-    `, [uuid(), teamId, `Your travel details for ${lead.name} on ${lead.date}${lead.city ? ` in ${lead.city}` : ""} have been added — check My Events.`, now]).catch(() => {});
+    `, [uuid(), teamId, `Your travel details for ${await artistEventPhrase(leg.lead_id)} on ${lead.date} have been added — check My Events.`, now]).catch(() => {});
   }
 });
 
@@ -3299,7 +3307,8 @@ app.get("/api/my/events", requireAuth, async (req, res) => {
     WHERE event_assignments.team_id = $1
     ORDER BY leads.date ASC
   `, [req.user.team_id]);
-  res.json(rows);
+  // The artist is told where the event is, never the client's name.
+  res.json(rows.map((r) => ({ ...r, lead_name: placeOf(r) })));
 });
 
 app.post("/api/my/assignments/:id/respond", requireAuth, async (req, res) => {
@@ -3362,7 +3371,7 @@ app.post("/api/assignments/:id/resolve-cancel", requireAuth, requireCapability("
     await pool.query(`
       INSERT INTO notifications (id, team_id, message, created_at)
       VALUES ($1, $2, $3, $4)
-    `, [uuid(), a.team_id, `Your cancellation request for ${lead.name} (${lead.date}) was ${approve ? "approved" : "declined — you're still on this event"}.`, new Date().toISOString()]);
+    `, [uuid(), a.team_id, `Your cancellation request for ${await artistEventPhrase(a.lead_id)} (${lead.date}) was ${approve ? "approved" : "declined — you're still on this event"}.`, new Date().toISOString()]);
   }
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
   await checkTeamComplete(a.lead_id);
@@ -3467,7 +3476,10 @@ app.post("/api/messages/general", requireAuth, async (req, res) => {
 app.get("/api/my/notifications", requireAuth, async (req, res) => {
   if (!req.user.team_id) return res.json([]);
   const { rows } = await pool.query("SELECT * FROM notifications WHERE team_id = $1 ORDER BY created_at DESC", [req.user.team_id]);
-  res.json(rows);
+  // Older notifications were written with the client's name — swap any known client name for the location.
+  const leadsAll = (await pool.query("SELECT name, venue, city FROM leads WHERE name IS NOT NULL AND LENGTH(TRIM(name)) >= 3")).rows.sort((a, b) => b.name.length - a.name.length);
+  const scrub = (msg) => { let out = String(msg || ""); for (const l of leadsAll) { if (out.includes(l.name)) out = out.split(l.name).join(`the event in ${placeOf(l)}`); } return out; };
+  res.json(rows.map((n) => ({ ...n, message: scrub(n.message) })));
 });
 
 app.delete("/api/my/notifications/:id", requireAuth, async (req, res) => {
@@ -4657,7 +4669,7 @@ app.get("/api/public/me/:token", async (req, res) => {
     });
     const isPast = r.date < today;
     return {
-      confirmToken: r.confirm_token, status: r.status, note: r.note, client: r.client_name, experience: packageName(r.event_type), city: r.city, date: r.date,
+      confirmToken: r.confirm_token, status: r.status, note: r.note, place: placeOf({ venue: r.venue, city: r.city }), experience: packageName(r.event_type), city: r.city, date: r.date,
       venue: r.venue, eventTime: r.event_time, soundcheckTime: r.soundcheck_time, pcs: r.pcs, tentative: r.stage === "Tentative", past: isPast,
       travel: mine,
       pay: isPast ? { paid: !!r.pay_paid, amount: r.pay_amount != null ? Number(r.pay_amount) : null, date: r.payment_date, mode: r.payment_mode } : null,
@@ -5134,7 +5146,7 @@ const FEE_HEAD = "Artist fee — %";
 app.get("/api/my/revenue", requireAuth, async (req, res) => {
   if (!req.user.team_id) return res.json({ items: [] });
   const { rows } = await pool.query(`
-    SELECT ea.id AS assignment_id, ea.status, l.id AS lead_id, l.name AS lead_name, l.date, l.city, l.stage, l.occasion,
+    SELECT ea.id AS assignment_id, ea.status, l.id AS lead_id, l.name AS lead_name, l.venue, l.date, l.city, l.stage, l.occasion,
       ex.id AS expense_id, ex.amount, ex.paid, ex.member_received, ex.member_received_at, ex.payment_date, ex.payment_mode
     FROM event_assignments ea
     JOIN leads l ON l.id = ea.lead_id
@@ -5143,7 +5155,7 @@ app.get("/api/my/revenue", requireAuth, async (req, res) => {
       ORDER BY e.created_at ASC LIMIT 1) ex ON TRUE
     WHERE ea.team_id = $1 AND ea.status <> 'declined' AND l.stage IN ('Confirmed','Completed')
     ORDER BY l.date ASC`, [req.user.team_id, FEE_HEAD]);
-  res.json({ items: rows.map((r) => ({ ...r, received: !!(r.paid || r.member_received) })) });
+  res.json({ items: rows.map((r) => ({ ...r, lead_name: placeOf({ venue: r.venue, city: r.city }), received: !!(r.paid || r.member_received) })) });
 });
 app.post("/api/my/revenue/:expenseId/received", requireAuth, async (req, res) => {
   const ex = (await pool.query("SELECT * FROM expenses WHERE id = $1", [req.params.expenseId])).rows[0];

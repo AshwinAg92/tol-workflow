@@ -5952,7 +5952,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                 const confirmLink = a ? `${window.location.origin}/confirm.html?token=${a.confirm_token}` : "";
                 const waMsg = fillTemplate(MESSAGE_TEMPLATES.artist_confirmation || TEMPLATE_META.artist_confirmation.default, {
                   artistName: m.name,
-                  clientName: lead.name,
+                  clientName: "the event",  // artists are never told the client's name
                   experience: packageName(lead.event_type),
                   date: fmtDate(lead.date),
                   cityClause: lead.city ? ` in ${lead.city}` : "",
@@ -10515,7 +10515,7 @@ const TEMPLATE_META = {
     label: "Artist confirmation message",
     description: "Sent via the WhatsApp button next to each artist in an event's Team tab. Venue/timing/band size are only included for whoever has \"Manager\" in their role — other artists get the shorter version automatically.",
     placeholders: ["artistName", "clientName", "experience", "date", "cityClause", "venueClause", "eventTimeClause", "soundcheckClause", "pcsClause"],
-    default: "Hi {artistName}, confirming your performance for {clientName} — {experience} on {date}{cityClause}{venueClause}{eventTimeClause}{soundcheckClause}{pcsClause} Let us know if you have any questions!",
+    default: "Hi {artistName}, confirming your performance — {experience} on {date}{cityClause}{venueClause}{eventTimeClause}{soundcheckClause}{pcsClause} Let us know if you have any questions!",
   },
   tentative_confirm_info: {
     label: "Tentative → what happens next",

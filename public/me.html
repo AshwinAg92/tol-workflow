@@ -64,7 +64,7 @@
     let data = null, tab = "upcoming";
 
     function eventCard(e, i) {
-      const rows = [["📍", e.venue ? e.venue + (e.city ? ", " + e.city : "") : e.city], ["🕒", e.eventTime ? "Event time: " + e.eventTime : ""], ["🎶", e.soundcheckTime ? "Sound check: " + e.soundcheckTime : ""], ["🎸", e.pcs ? e.pcs + " pcs" : ""]].filter((r) => r[1]);
+      const rows = [ ["🕒", e.eventTime ? "Event time: " + e.eventTime : ""], ["🎶", e.soundcheckTime ? "Sound check: " + e.soundcheckTime : ""], ["🎸", e.pcs ? e.pcs + " pcs" : ""]].filter((r) => r[1]);
       const pill = { pending: ["p-pending", "Awaiting your response"], accepted: ["p-accepted", "You've accepted"], declined: ["p-declined", "You've declined"], cancel_requested: ["p-pending", "Cancellation requested"] }[e.status] || ["p-pending", e.status];
       const rank = (t) => (t === "going" ? 0 : t === "going_onward" || t === "onward" ? 1 : t === "return" ? 2 : 3);
       const legsSorted = [...e.travel].sort((a, b) => rank(a.type) - rank(b.type) || String(a.departureAt || "9999").localeCompare(String(b.departureAt || "9999")));
@@ -86,7 +86,7 @@
         <button class="save" data-save="${i}">Save note</button>` : "";
       return `<div class="card">
         <div class="when">${esc(fmtDate(e.date))}</div>
-        <div class="title">${esc(e.client)}</div>
+        <div class="title">${esc(e.place)}</div>
         <div class="muted">${esc(e.experience)}</div>
         <span class="pill ${pill[0]}">${pill[1]}</span>${e.tentative ? `<span class="pill p-tent">Tentative</span>` : ""}
         <div style="margin-top:6px;">${rows.map((r) => `<div class="row"><div class="ic">${r[0]}</div><div>${esc(r[1])}</div></div>`).join("")}</div>
