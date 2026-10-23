@@ -6970,8 +6970,10 @@ async function openTravelPlanModal(leadId) {
     const statusColor = leg.status === "not_booked" ? "#B6752C" : "#1C7A80";
     const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
     const names = leg.members.map((m) => m.name).join(", ") || "No one added yet";
+    const linked = !!leg.linked_from_other;
     return `
-      <div class="card" style="margin-bottom:10px;">
+      <div class="card" style="margin-bottom:10px;${linked ? " border-style:dashed;" : ""}">
+        ${linked ? `<div class="muted small" style="margin-bottom:6px;">🔗 Onward to <b>${escH(leg.home_event_name || "next event")}</b> — entered there, shown here so it isn't entered twice.</div>` : ""}
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
           <div>
             <div style="font-weight:600;">${legTypeBadge(leg.leg_type)}${names}</div>
@@ -6989,19 +6991,28 @@ async function openTravelPlanModal(leadId) {
             ${leg.tickets.map((t) => `
               <div class="doc-row" style="padding:6px 0;">
                 <div class="doc-name"><a href="${t.url}" target="_blank">🎫 ${t.original_name}</a></div>
-                <button class="icon-btn" data-delete-ticket="${t.id}" data-leg-id="${leg.id}" title="Delete">${ICON_X}</button>
+                ${linked ? "" : `<button class="icon-btn" data-delete-ticket="${t.id}" data-leg-id="${leg.id}" title="Delete">${ICON_X}</button>`}
               </div>
             `).join("")}
           </div>
         ` : ""}
-        <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
+        ${linked ? "" : `<div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
           <label class="btn-ghost" style="font-size:12px; padding:3px 8px; cursor:pointer;">+ Add ticket<input type="file" data-ticket-upload="${leg.id}" style="display:none;" /></label>
           <button class="btn-ghost" data-edit-leg="${leg.id}" style="font-size:12px; padding:3px 8px;">Edit</button>
           <button class="btn-ghost" data-delete-leg="${leg.id}" style="font-size:12px; padding:3px 8px; color:#A6432B;">Delete</button>
           <span class="muted small" data-ticket-status="${leg.id}"></span>
-        </div>
+        </div>`}
       </div>
     `;
+  }
+
+  // Events an onward journey could be leaving from: earlier ones, nearest first.
+  function prevEventOptionsHtml(selectedId) {
+    const cands = LEADS.filter((e) => e.id !== lead.id && ["Confirmed", "Completed"].includes(e.stage) && e.date && lead.date && e.date <= lead.date)
+      .sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 8);
+    const fallback = eventPrevOf(lead);
+    const sel = selectedId || (fallback && fallback.id) || "";
+    return `<option value="">Not linked</option>${cands.map((e) => `<option value="${e.id}" ${e.id === sel ? "selected" : ""}>${escH(e.name)}${e.city ? " — " + escH(e.city) : ""} (${fmtDate(e.date)})</option>`).join("")}`;
   }
 
   function legForm({ leg }) {
@@ -7023,6 +7034,11 @@ async function openTravelPlanModal(leadId) {
         <label>This journey is</label>
         <select id="${prefix}LegType" style="margin-bottom:4px;">${legTypeOptionsHtml(leg ? leg.leg_type : onwardHint.type)}</select>
         ${isNew && onwardHint.text ? `<div class="muted small" style="margin-bottom:8px;">${onwardHint.text}</div>` : `<div style="margin-bottom:8px;"></div>`}
+        <div id="${prefix}FromLeadWrap" style="display:${(leg ? leg.leg_type : onwardHint.type) === "onward" ? "block" : "none"}; margin-bottom:8px;">
+          <label>Leaving from which event?</label>
+          <select id="${prefix}FromLead">${prevEventOptionsHtml(leg ? leg.from_lead_id : "")}</select>
+          <div class="muted small">This one ticket will show on both events — no need to enter it twice.</div>
+        </div>
         <div class="row-2">
           <div><label>Mode</label><select id="${prefix}Mode">
             <option value="">Not set</option>
@@ -7122,6 +7138,15 @@ async function openTravelPlanModal(leadId) {
     root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
 
     wireTravelClassSuggestions(root, "new"); wireTravelClassSuggestions(root, "edit");
+    ["new", "edit"].forEach((p) => {
+      const typeSel = root.querySelector(`#${p}LegType`), wrap = root.querySelector(`#${p}FromLeadWrap`), fromSel = root.querySelector(`#${p}FromLead`);
+      if (!typeSel || !wrap) return;
+      typeSel.addEventListener("change", () => { wrap.style.display = typeSel.value === "onward" ? "block" : "none"; });
+      if (fromSel) fromSel.addEventListener("change", () => {
+        const ev = LEADS.find((e) => e.id === fromSel.value), city = root.querySelector(`#${p}FromCity`);
+        if (ev && ev.city && city && !city.value.trim()) city.value = ev.city;
+      });
+    });
     const addBtn = root.querySelector("#addLegBtn");
     if (addBtn) addBtn.addEventListener("click", () => { addingNew = true; renderModal(); });
     const linkBtn = root.querySelector("#linkLegBtn");
@@ -7177,6 +7202,7 @@ async function openTravelPlanModal(leadId) {
         const payload = {
           teamIds,
           legType: root.querySelector(`#${prefix}LegType`).value || null,
+          fromLeadId: root.querySelector(`#${prefix}LegType`).value === "onward" ? (root.querySelector(`#${prefix}FromLead`)?.value || null) : null,
           mode: root.querySelector(`#${prefix}Mode`).value || null,
           fromCity: root.querySelector(`#${prefix}FromCity`).value.trim() || null,
           toCity: root.querySelector(`#${prefix}ToCity`).value.trim() || null,

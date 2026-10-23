@@ -565,6 +565,8 @@ async function setup() {
   await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS food_included TEXT`);
   await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS departure_time TEXT`);
   await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS arrival_time TEXT`);
+  // An onward journey (e.g. Puri -> Guwahati) is stored once, on the event it arrives for; this points at the event it leaves from so both show it.
+  await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS from_lead_id TEXT REFERENCES leads(id) ON DELETE SET NULL`);
   // A journey (train/flight/car) can carry several artists at once — this
   // join table is what actually links artists to a leg now. The old
   // single team_id column on travel_legs stays in place (unused going

@@ -209,6 +209,12 @@ const scopeDeny = (res) => res.status(403).json({ error: "You can only manage ev
 // Managers (assign_team) additionally see the manager_notes they and other managers write.
 const cleanTime = (v) => (/^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || "")) ? String(v) : null);
 const fmt12 = (hm) => { if (!hm) return ""; const [h, m] = String(hm).split(":").map(Number); return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
+// The event an onward journey leaves from. Only meaningful for an onward leg, and never the event itself.
+async function cleanFromLead(v, selfLeadId, legType) {
+  if (legType !== "onward" || !v || v === selfLeadId) return null;
+  const r = (await pool.query("SELECT id FROM leads WHERE id = $1", [String(v)])).rows[0];
+  return r ? r.id : null;
+}
 const cleanFood = (v) => (v === "included" || v === "not_included" ? v : null);
 const cleanText = (v, n = 200) => (v == null || String(v).trim() === "" ? null : String(v).trim().slice(0, n));
 function legForUser(leg, user) {
@@ -2849,7 +2855,9 @@ async function legIsAdminOnly(user, legId) {
 }
 app.get("/api/leads/:id/travel-legs", requireAuth, async (req, res) => {
   if (!(await canViewTravelLegs(req.user, req.params.id))) return res.status(403).json({ error: "Not available for this event" });
-  const { rows: legs } = await pool.query(`SELECT * FROM travel_legs WHERE lead_id = $1 ORDER BY created_at ASC`, [req.params.id]);
+  const { rows: legsRaw } = await pool.query(`SELECT travel_legs.*, l.name AS home_event_name, l.date AS home_event_date FROM travel_legs LEFT JOIN leads l ON l.id = travel_legs.lead_id WHERE travel_legs.lead_id = $1 OR travel_legs.from_lead_id = $1 ORDER BY travel_legs.created_at ASC`, [req.params.id]);
+  // A leg that belongs to the NEXT event but leaves from this one: shown here read-only, flagged so the UI can say where to edit it.
+  const legs = legsRaw.map((l) => ({ ...l, linked_from_other: l.lead_id !== req.params.id }));
   const legIds = legs.map((l) => l.id);
   const [members, tickets] = legIds.length > 0 ? await Promise.all([
     pool.query(`SELECT travel_leg_members.leg_id, team.id AS team_id, team.name AS team_name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id = ANY($1)`, [legIds]),
@@ -2981,6 +2989,7 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
   if (!lead) return res.status(404).json({ error: "Event not found" });
   const { teamIds, mode, fromCity, toCity, departureAt, arrivalAt, bookingRef, status } = req.body;
   const legType = cleanLegType(req.body.legType);
+  const fromLeadId = await cleanFromLead(req.body.fromLeadId, req.params.id, legType);
   const notes = req.user.access_level === "admin" ? req.body.notes : null;
   const managerNotes = req.body.managerNotes || null;
   if (!Array.isArray(teamIds) || teamIds.length === 0) return res.status(400).json({ error: "Select at least one artist" });
@@ -2988,9 +2997,9 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
   const id = uuid();
   const now = new Date().toISOString();
   await pool.query(`
-    INSERT INTO travel_legs (id, lead_id, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, manager_notes, created_at, updated_at, leg_type, preferred_service, travel_class, food_included, departure_time, arrival_time)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14, $15, $16, $17, $18)
-  `, [id, req.params.id, mode || null, fromCity || null, toCity || lead.city || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, managerNotes, now, legType, cleanText(req.body.preferredService), cleanText(req.body.travelClass, 60), cleanFood(req.body.foodIncluded), cleanTime(req.body.departureTime), cleanTime(req.body.arrivalTime)]);
+    INSERT INTO travel_legs (id, lead_id, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, manager_notes, created_at, updated_at, leg_type, preferred_service, travel_class, food_included, departure_time, arrival_time, from_lead_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14, $15, $16, $17, $18, $19)
+  `, [id, req.params.id, mode || null, fromCity || null, toCity || lead.city || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, managerNotes, now, legType, cleanText(req.body.preferredService), cleanText(req.body.travelClass, 60), cleanFood(req.body.foodIncluded), cleanTime(req.body.departureTime), cleanTime(req.body.arrivalTime), fromLeadId]);
   for (const teamId of teamIds) {
     await pool.query(`INSERT INTO travel_leg_members (id, leg_id, team_id) VALUES ($1, $2, $3)`, [uuid(), id, teamId]);
   }
@@ -3020,16 +3029,22 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
     const dups = await sectorDuplicateNames({ leadId: lid || null, fromCity: fc, toCity: tc, departureAt: req.body.departureAt !== undefined ? req.body.departureAt : leg.departure_at, teamIds: Array.isArray(req.body.teamIds) ? req.body.teamIds : curMembers, excludeLegId: req.params.id });
     if (dups.length) return res.status(400).json({ error: dupTravelMessage(dups, fc, tc) });
   }
-  const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "manager_notes", "label", "lead_id", "leg_type", "preferred_service", "travel_class", "food_included", "departure_time", "arrival_time"];
-  const keyFor = (f) => (f === "manager_notes" ? "managerNotes" : f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f === "lead_id" ? "leadId" : f === "leg_type" ? "legType" : f === "preferred_service" ? "preferredService" : f === "travel_class" ? "travelClass" : f === "food_included" ? "foodIncluded" : f === "departure_time" ? "departureTime" : f === "arrival_time" ? "arrivalTime" : f);
+  const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "manager_notes", "label", "lead_id", "leg_type", "preferred_service", "travel_class", "food_included", "departure_time", "arrival_time", "from_lead_id"];
+  const keyFor = (f) => (f === "manager_notes" ? "managerNotes" : f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f === "lead_id" ? "leadId" : f === "leg_type" ? "legType" : f === "preferred_service" ? "preferredService" : f === "travel_class" ? "travelClass" : f === "food_included" ? "foodIncluded" : f === "departure_time" ? "departureTime" : f === "arrival_time" ? "arrivalTime" : f === "from_lead_id" ? "fromLeadId" : f);
   const updates = [];
   const values = [];
   fields.forEach((f) => {
     if (f === "notes" && req.user.access_level !== "admin") return; // admin-only remarks
     const key = keyFor(f);
+    if (f === "from_lead_id") return; // handled below, once the leg type is known
     if ((f === "departure_time" || f === "arrival_time") && req.body[key] && !cleanTime(req.body[key])) return; // ignore a malformed time instead of wiping the saved one
     if (req.body[key] !== undefined) { values.push(f === "leg_type" ? cleanLegType(req.body[key]) : f === "food_included" ? cleanFood(req.body[key]) : (f === "departure_time" || f === "arrival_time") ? cleanTime(req.body[key]) : f === "preferred_service" ? cleanText(req.body[key]) : f === "travel_class" ? cleanText(req.body[key], 60) : req.body[key]); updates.push(`${f} = $${values.length}`); }
   });
+  if (req.body.fromLeadId !== undefined || req.body.legType !== undefined) {
+    const finalType = req.body.legType !== undefined ? cleanLegType(req.body.legType) : leg.leg_type;
+    const wanted = req.body.fromLeadId !== undefined ? req.body.fromLeadId : leg.from_lead_id;
+    values.push(await cleanFromLead(wanted, leg.lead_id, finalType)); updates.push(`from_lead_id = $${values.length}`);
+  }
   if (updates.length > 0) {
     values.push(new Date().toISOString());
     updates.push(`updated_at = $${values.length}`);
@@ -4265,7 +4280,7 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
                 FROM event_assignments JOIN team ON team.id = event_assignments.team_id
                 WHERE event_assignments.lead_id = $1 ORDER BY team.name ASC`, [leadId]),
     pool.query("SELECT id, name, description, phone, musician_id FROM temp_artists WHERE lead_id = $1 AND migrated_assignment_id IS NULL", [leadId]),
-    pool.query("SELECT id, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time FROM travel_legs WHERE lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [leadId]),
+    pool.query("SELECT id, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time FROM travel_legs WHERE lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [leadId]),
     pool.query("SELECT token, team_ids, created_at, expires_at, revoked FROM travel_shares WHERE lead_id = $1 ORDER BY created_at DESC", [leadId]),
   ]);
   const teamIds = assigned.rows.map((r) => r.team_id);
@@ -4576,10 +4591,10 @@ app.get("/trip/:token", async (req, res) => {
   const allIds = JSON.parse(s.team_ids || "[]");
   const teamIds = allIds.filter((x) => !String(x).startsWith("g:"));
   const trav = await loadTravellers(s.lead_id, allIds);
-  const ticketDocs = s.include_tickets ? (await pool.query("SELECT id, original_name, mime_type, travel_leg_id FROM documents WHERE travel_leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1) ORDER BY uploaded_at ASC", [s.lead_id])).rows : [];
+  const ticketDocs = s.include_tickets ? (await pool.query("SELECT id, original_name, mime_type, travel_leg_id FROM documents WHERE travel_leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1 OR from_lead_id = $1) ORDER BY uploaded_at ASC", [s.lead_id])).rows : [];
   const [legs, members] = await Promise.all([
-    pool.query("SELECT id, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time FROM travel_legs WHERE lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [s.lead_id]),
-    pool.query("SELECT travel_leg_members.leg_id, team.id AS team_id, team.name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1)", [s.lead_id]),
+    pool.query("SELECT id, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time FROM travel_legs WHERE lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [s.lead_id]),
+    pool.query("SELECT travel_leg_members.leg_id, team.id AS team_id, team.name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1 OR from_lead_id = $1)", [s.lead_id]),
   ]);
   const legCards = legs.rows.map((l) => {
     const who = members.rows.filter((m) => m.leg_id === l.id && teamIds.includes(m.team_id)).map((m) => m.name);
@@ -4615,7 +4630,7 @@ app.get("/trip/:token/ticket/:docId", async (req, res) => {
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
   const s = await loadTravelShare(req.params.token);
   if (!s || !s.include_tickets) return res.status(404).send("Link no longer available");
-  const d = (await pool.query(`SELECT original_name, mime_type, file_data FROM documents WHERE id = $1 AND travel_leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $2)`, [req.params.docId, s.lead_id])).rows[0];
+  const d = (await pool.query(`SELECT original_name, mime_type, file_data FROM documents WHERE id = $1 AND travel_leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $2 OR from_lead_id = $2)`, [req.params.docId, s.lead_id])).rows[0];
   if (!d || !d.file_data) return res.status(404).send("File not found");
   res.setHeader("Content-Type", d.mime_type || "application/octet-stream");
   res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(d.original_name)}"`);
