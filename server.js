@@ -4917,7 +4917,7 @@ async function regFormPage(req, res, ok) {
     <label>Document type</label><select name="label${n}">${REG_LABELS.map((l, i) => `<option ${(n === 2 && i === 1) || (n === 3 && i === 5) ? "selected" : ""}>${l}</option>`).join("")}</select>
     <label>Photo or PDF</label><input type="file" name="file${n}" accept="image/*,application/pdf" ${req_ ? "required" : ""}></div>`;
   res.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Join Together, Out Loud</title><style>${css}</style></head><body><div class="w">
-<div style="text-align:center;margin-bottom:14px"><img src="/logo.png" alt="" width="64" height="64" style="object-fit:contain"><div style="letter-spacing:.16em;font-size:12px;font-weight:700;color:#B5541C;margin-top:4px">TOGETHER, OUT LOUD</div></div>
+<div style="text-align:center;margin-bottom:14px"><img src="/logo.png?v=2" alt="" width="64" height="64" style="object-fit:contain"><div style="letter-spacing:.16em;font-size:12px;font-weight:700;color:#B5541C;margin-top:4px">TOGETHER, OUT LOUD</div></div>
 <h1>Join Together, Out Loud</h1><p class="m">Artist registration. Please fill this in once — your details go only to our team and are used for bookings and travel.</p>
 <form id="f" autocomplete="on">
 <div class="hp"><label>Website</label><input name="website" tabindex="-1" autocomplete="off"></div>

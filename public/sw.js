@@ -3,7 +3,7 @@
 // with no signal still shows the last-synced data — read-only, since writes
 // need a live connection anyway. Two caches: one for the shell (rarely
 // changes shape), one for API GET responses (changes constantly).
-const SHELL_CACHE = "tol-shell-v1";
+const SHELL_CACHE = "tol-shell-v2";
 const API_CACHE = "tol-api-v1";
 const SHELL_URLS = ["/login", "/app.js", "/styles.css", "/manifest.json", "/logo.png", "/logo-icon.png"];
 

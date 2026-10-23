@@ -755,7 +755,7 @@ function loadLogoDataUrl() {
       resolve(_logoDataUrl);
     };
     img.onerror = () => resolve(null); // PDF still works without the logo if it fails to load
-    img.src = "/logo.png";
+    img.src = "/logo.png?v=2";
   });
 }
 
@@ -949,7 +949,7 @@ async function makeEventCard(lead, kind) {
 
   // Logo + brand
   try {
-    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = "/logo.png"; });
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = "/logo.png?v=2"; });
     const lh = 150, lw = (img.width / img.height) * lh;
     g.drawImage(img, W / 2 - lw / 2, 105, lw, lh);
   } catch { /* card still looks fine without the logo */ }
@@ -1025,7 +1025,7 @@ async function makeEventCardWide(lead, kind) {
     if ("letterSpacing" in g) g.letterSpacing = "0px";
   };
   try {
-    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = "/logo.png"; });
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = "/logo.png?v=2"; });
     const lh = 92, lw = (img.width / img.height) * lh;
     g.drawImage(img, W / 2 - lw / 2, 52, lw, lh);
   } catch { /* fine without logo */ }
@@ -1113,7 +1113,7 @@ async function makeQuoteCard(lead, f, wide) {
     g.fillStyle = "#F0A438"; g.beginPath(); g.arc(W / 2, y, 6, 0, Math.PI * 2); g.fill();
   };
   let logo = null;
-  try { logo = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = "/logo.png"; }); } catch { /* fine without */ }
+  try { logo = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = "/logo.png?v=2"; }); } catch { /* fine without */ }
 
   if (wide) {
     // Left: greeting; right: the amount panel.
@@ -11944,7 +11944,7 @@ function renderLoginScreen(errorMsg) {
   app.innerHTML = `
     <div class="login-screen">
       <div class="login-card card">
-        <img src="/logo.png" class="brand-mark" style="margin:0 auto 14px;" alt="Together, Out Loud" />
+        <img src="/logo.png?v=2" class="brand-mark" style="margin:0 auto 14px;" alt="Together, Out Loud" />
         <h2 style="text-align:center; margin-bottom:4px;">Together, Out Loud</h2>
         <p class="muted" style="text-align:center; margin-bottom:20px;">Sign in to the workflow app</p>
         ${errorMsg ? `<p style="color:#A6432B; font-size:13px; margin-bottom:10px;">${errorMsg}</p>` : ""}
@@ -12274,7 +12274,7 @@ async function renderPerformerApp() {
   app.innerHTML = `
     <div class="performer-app">
       <div class="performer-header">
-        <img src="/logo.png" class="brand-mark" alt="Together, Out Loud" />
+        <img src="/logo.png?v=2" class="brand-mark" alt="Together, Out Loud" />
         <div>
           <div class="brand-name">${CURRENT_USER.name || CURRENT_USER.username}</div>
           <div class="muted small">Together, Out Loud</div>
