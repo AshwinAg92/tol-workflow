@@ -3761,14 +3761,16 @@ function artistEventTravel(lead, teamId, legsAll) {
   const moves = artistMoves(teamId, legsAll, base);
   const D = lead.date;
   // An onward journey logged on this event that leaves after the event day (or from this event's city on the day) is a departure, not an arrival.
+  // An older "Onward" entry logged on another event that ends in this event's city just before it is this event's arrival.
+  const arrivesHereLegacy = (x) => x.type === "onward" && x.leg.lead_id !== lead.id && !!lead.city && normCity(x.to) === normCity(lead.city) && x.date >= addDaysYmd(D, -4) && x.date <= D;
   const leavesHere = (x) => x.type === "onward" && x.leg.lead_id === lead.id && normCity(x.to) !== normCity(lead.city)
     && (x.date > D || (x.date === D && normCity(x.from) === normCity(lead.city)));
   const goingIn = moves.filter((x) => x.leg.lead_id === lead.id && !x.derived && (x.type === "going" || x.type === "onward") && !leavesHere(x))
-    .concat(moves.filter((x) => x.leg.lead_id !== lead.id && x.leg.leg_type === "return_onward" && x.leg.to_lead_id === lead.id && !x.derived));
+    .concat(moves.filter((x) => x.leg.lead_id !== lead.id && !x.derived && ((x.leg.leg_type === "return_onward" && x.leg.to_lead_id === lead.id) || arrivesHereLegacy(x))));
   const returnOut = moves.filter((x) => (x.leg.lead_id === lead.id && (x.type === "return" || x.derived))
     || leavesHere(x)
     || (x.leg.lead_id !== lead.id && x.leg.leg_type === "going_onward" && x.leg.from_lead_id === lead.id && !x.derived)
-    || (x.type === "onward" && x.leg.lead_id !== lead.id && x.date >= D && x.date <= addDaysYmd(D, 4)));
+    || (x.type === "onward" && x.leg.lead_id !== lead.id && x.date >= D && x.date <= addDaysYmd(D, 4) && !arrivesHereLegacy(x)));
   const posOn = (n) => { let c = base; moves.forEach((x) => { if (x.date <= n && x.to) c = x.to; }); return c; };
   const nights = [];
   const start = goingIn.length ? goingIn[0].date : "";
