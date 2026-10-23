@@ -231,6 +231,12 @@ function travelBookingFieldsHtml(p, leg) {
       <div><label>Departure time (optional)</label><input id="${p}DepTime" type="time" value="${leg?.departure_time || ""}" /></div>
       <div><label>Arrival time (optional)</label><input id="${p}ArrTime" type="time" value="${leg?.arrival_time || ""}" /></div>
     </div>
+    <label style="margin-top:8px;">Who books this journey?</label>
+    <select id="${p}BookedBy">
+      <option value="" ${!leg?.booked_by ? "selected" : ""}>The client of the event it's entered on (default)</option>
+      <option value="tol" ${leg?.booked_by === "tol" ? "selected" : ""}>Team TOL books it</option>
+      <option value="other" ${leg?.booked_by === "other" ? "selected" : ""}>Someone else books it (clients are told not to)</option>
+    </select>
     <label style="margin-top:8px;">Which train / flight should the client book? <span class="muted small">(name &amp; number, optional)</span></label>
     <input id="${p}Service" value="${(leg?.preferred_service || "").replace(/"/g, "&quot;")}" placeholder="e.g. 12345 Kanchankanya Exp, or IndiGo 6E-123 (07:40)" />
     <div class="row-2" style="margin-top:8px;">
@@ -247,6 +253,7 @@ function wireTravelClassSuggestions(root, p) {
 }
 const readTravelBookingFields = (root, p) => ({
   preferredService: root.querySelector(`#${p}Service`)?.value.trim() || null,
+  bookedBy: root.querySelector(`#${p}BookedBy`)?.value || null,
   travelClass: root.querySelector(`#${p}Class`)?.value.trim() || null,
   foodIncluded: root.querySelector(`#${p}Food`)?.value || null,
   departureTime: root.querySelector(`#${p}DepTime`)?.value || null,
@@ -6667,7 +6674,7 @@ async function openTravelShareModal(leadId) {
       legs.length ? "✈️ *Travel plan:*" : "✈️ Travel plan: we will share it shortly.",
       ...legs.flatMap((l) => [
         `• ${cap(l.mode)} — ${l.from_city || "?"} → ${l.to_city || "?"}`,
-        ...(l.bookedElsewhere ? [`   ✅ No need to book this one — it is being booked separately, please skip it to avoid double booking.`] : []),
+        ...(l.bookedElsewhere ? [l.booked_by === "tol" ? `   ✅ No need to book this one — Team TOL is booking it.` : `   ✅ No need to book this one — it is being booked separately, please skip it to avoid double booking.`] : []),
         ...(!l.bookedElsewhere && l.preferred_service ? [`   Please book: ${l.preferred_service}`] : []),
         ...(!l.bookedElsewhere && l.travel_class ? [`   Class: ${l.travel_class}`] : []),
         ...(!l.bookedElsewhere && l.food_included ? [`   Food: ${l.food_included === "included" ? "included" : "not included"}`] : []),
@@ -7080,6 +7087,7 @@ async function openTravelPlanModal(leadId) {
         ${(() => { const pr = legProblems(leg, tcAssign, tcAllLegs); return pr.length ? `<div class="small" style="margin-top:6px; padding:6px 10px; background:#FDECE6; border-radius:8px; color:#A6432B;">${pr.map((x) => `⚠ ${escH(x)}`).join("<br>")}</div>` : ""; })()}
         ${legWhenText(leg) ? `<div class="muted small" style="margin-top:6px;">${legWhenText(leg)}</div>` : ""}
         ${leg.booking_ref ? `<div class="muted small" style="margin-top:2px;">Ref: ${leg.booking_ref}</div>` : ""}
+        ${leg.booked_by === "tol" ? `<div class="small" style="margin-top:4px;">🧾 Booked by Team TOL</div>` : leg.booked_by === "other" ? `<div class="small" style="margin-top:4px;">🧾 Booked by someone else</div>` : ""}
         ${leg.preferred_service || leg.travel_class || leg.food_included ? `<div class="small" style="margin-top:4px;">🎟 ${[leg.preferred_service ? escH(leg.preferred_service) : "", leg.travel_class ? "Class " + escH(leg.travel_class) : "", leg.food_included ? "Food " + FOOD_LABELS[leg.food_included].toLowerCase() : ""].filter(Boolean).join(" · ")}</div>` : ""}
         ${leg.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${leg.notes}</div>` : ""}
         ${leg.manager_notes ? `<div class="muted small" style="margin-top:2px;">🗒 Manager: ${leg.manager_notes}</div>` : ""}

@@ -568,6 +568,8 @@ async function setup() {
   // An onward journey (e.g. Puri -> Guwahati) is stored once, on the event it arrives for; to_lead_id points at the event it continues to (the next event), so both show it.
   await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS from_lead_id TEXT REFERENCES leads(id) ON DELETE SET NULL`);
   await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS to_lead_id TEXT REFERENCES leads(id) ON DELETE SET NULL`);
+  // Who books this journey: null = the client of the event it belongs to (automatic), 'client' = same, explicit; 'tol' = Team TOL books; 'other' = booked separately by someone else.
+  await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS booked_by TEXT`);
   // A journey (train/flight/car) can carry several artists at once — this
   // join table is what actually links artists to a leg now. The old
   // single team_id column on travel_legs stays in place (unused going

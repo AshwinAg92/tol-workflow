@@ -215,6 +215,7 @@ async function cleanToLead(v, selfLeadId, legType, needType) {
   const r = (await pool.query("SELECT id FROM leads WHERE id = $1", [String(v)])).rows[0];
   return r ? r.id : null;
 }
+const cleanBookedBy = (x) => (x === "client" || x === "tol" || x === "other" ? x : null);
 const cleanFood = (v) => (v === "included" || v === "not_included" ? v : null);
 const cleanText = (v, n = 200) => (v == null || String(v).trim() === "" ? null : String(v).trim().slice(0, n));
 function legForUser(leg, user) {
@@ -2977,9 +2978,9 @@ app.post("/api/travel-legs", requireAuth, requireCapability("assign_team"), asyn
   const id = uuid();
   const now = new Date().toISOString();
   await pool.query(`
-    INSERT INTO travel_legs (id, lead_id, label, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, manager_notes, created_at, updated_at, leg_type, preferred_service, travel_class, food_included, departure_time, arrival_time)
-    VALUES ($1, $13, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $14, $15, $16, $17, $18, $19)
-  `, [id, label.trim(), mode || null, fromCity || null, toCity || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, managerNotes, now, linkLeadId, cleanLegType(req.body.legType), cleanText(req.body.preferredService), cleanText(req.body.travelClass, 60), cleanFood(req.body.foodIncluded), cleanTime(req.body.departureTime), cleanTime(req.body.arrivalTime)]);
+    INSERT INTO travel_legs (id, lead_id, label, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, manager_notes, created_at, updated_at, leg_type, preferred_service, travel_class, food_included, departure_time, arrival_time, booked_by)
+    VALUES ($1, $13, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $14, $15, $16, $17, $18, $19, $20)
+  `, [id, label.trim(), mode || null, fromCity || null, toCity || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, managerNotes, now, linkLeadId, cleanLegType(req.body.legType), cleanText(req.body.preferredService), cleanText(req.body.travelClass, 60), cleanFood(req.body.foodIncluded), cleanTime(req.body.departureTime), cleanTime(req.body.arrivalTime), cleanBookedBy(req.body.bookedBy)]);
   for (const teamId of (Array.isArray(teamIds) ? teamIds : [])) {
     await pool.query(`INSERT INTO travel_leg_members (id, leg_id, team_id) VALUES ($1, $2, $3)`, [uuid(), id, teamId]);
   }
@@ -3002,9 +3003,9 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
   const id = uuid();
   const now = new Date().toISOString();
   await pool.query(`
-    INSERT INTO travel_legs (id, lead_id, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, manager_notes, created_at, updated_at, leg_type, preferred_service, travel_class, food_included, departure_time, arrival_time, to_lead_id, from_lead_id)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-  `, [id, req.params.id, mode || null, fromCity || null, toCity || lead.city || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, managerNotes, now, legType, cleanText(req.body.preferredService), cleanText(req.body.travelClass, 60), cleanFood(req.body.foodIncluded), cleanTime(req.body.departureTime), cleanTime(req.body.arrivalTime), toLeadId, fromLeadId]);
+    INSERT INTO travel_legs (id, lead_id, mode, from_city, to_city, departure_at, arrival_at, booking_ref, status, notes, manager_notes, created_at, updated_at, leg_type, preferred_service, travel_class, food_included, departure_time, arrival_time, to_lead_id, from_lead_id, booked_by)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+  `, [id, req.params.id, mode || null, fromCity || null, toCity || lead.city || null, departureAt || null, arrivalAt || null, bookingRef || null, status || "not_booked", notes || null, managerNotes, now, legType, cleanText(req.body.preferredService), cleanText(req.body.travelClass, 60), cleanFood(req.body.foodIncluded), cleanTime(req.body.departureTime), cleanTime(req.body.arrivalTime), toLeadId, fromLeadId, cleanBookedBy(req.body.bookedBy)]);
   for (const teamId of teamIds) {
     await pool.query(`INSERT INTO travel_leg_members (id, leg_id, team_id) VALUES ($1, $2, $3)`, [uuid(), id, teamId]);
   }
@@ -3034,8 +3035,8 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
     const dups = await sectorDuplicateNames({ leadId: lid || null, fromCity: fc, toCity: tc, departureAt: req.body.departureAt !== undefined ? req.body.departureAt : leg.departure_at, teamIds: Array.isArray(req.body.teamIds) ? req.body.teamIds : curMembers, excludeLegId: req.params.id });
     if (dups.length) return res.status(400).json({ error: dupTravelMessage(dups, fc, tc) });
   }
-  const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "manager_notes", "label", "lead_id", "leg_type", "preferred_service", "travel_class", "food_included", "departure_time", "arrival_time", "to_lead_id", "from_lead_id"];
-  const keyFor = (f) => (f === "manager_notes" ? "managerNotes" : f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f === "lead_id" ? "leadId" : f === "leg_type" ? "legType" : f === "preferred_service" ? "preferredService" : f === "travel_class" ? "travelClass" : f === "food_included" ? "foodIncluded" : f === "departure_time" ? "departureTime" : f === "arrival_time" ? "arrivalTime" : f === "to_lead_id" ? "toLeadId" : f === "from_lead_id" ? "fromLeadId" : f);
+  const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "manager_notes", "label", "lead_id", "leg_type", "preferred_service", "travel_class", "food_included", "departure_time", "arrival_time", "to_lead_id", "from_lead_id", "booked_by"];
+  const keyFor = (f) => (f === "manager_notes" ? "managerNotes" : f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f === "lead_id" ? "leadId" : f === "leg_type" ? "legType" : f === "preferred_service" ? "preferredService" : f === "travel_class" ? "travelClass" : f === "food_included" ? "foodIncluded" : f === "departure_time" ? "departureTime" : f === "arrival_time" ? "arrivalTime" : f === "to_lead_id" ? "toLeadId" : f === "from_lead_id" ? "fromLeadId" : f === "booked_by" ? "bookedBy" : f);
   const updates = [];
   const values = [];
   fields.forEach((f) => {
@@ -3043,7 +3044,7 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
     const key = keyFor(f);
     if (f === "to_lead_id" || f === "from_lead_id") return; // handled below, once the leg type is known
     if ((f === "departure_time" || f === "arrival_time") && req.body[key] && !cleanTime(req.body[key])) return; // ignore a malformed time instead of wiping the saved one
-    if (req.body[key] !== undefined) { values.push(f === "leg_type" ? cleanLegType(req.body[key]) : f === "food_included" ? cleanFood(req.body[key]) : (f === "departure_time" || f === "arrival_time") ? cleanTime(req.body[key]) : f === "preferred_service" ? cleanText(req.body[key]) : f === "travel_class" ? cleanText(req.body[key], 60) : req.body[key]); updates.push(`${f} = $${values.length}`); }
+    if (req.body[key] !== undefined) { values.push(f === "leg_type" ? cleanLegType(req.body[key]) : f === "food_included" ? cleanFood(req.body[key]) : (f === "departure_time" || f === "arrival_time") ? cleanTime(req.body[key]) : f === "preferred_service" ? cleanText(req.body[key]) : f === "travel_class" ? cleanText(req.body[key], 60) : f === "booked_by" ? cleanBookedBy(req.body[key]) : req.body[key]); updates.push(`${f} = $${values.length}`); }
   });
   if (req.body.toLeadId !== undefined || req.body.fromLeadId !== undefined || req.body.legType !== undefined) {
     const finalType = req.body.legType !== undefined ? cleanLegType(req.body.legType) : leg.leg_type;
@@ -4287,7 +4288,7 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
                 FROM event_assignments JOIN team ON team.id = event_assignments.team_id
                 WHERE event_assignments.lead_id = $1 ORDER BY team.name ASC`, [leadId]),
     pool.query("SELECT id, name, description, phone, musician_id FROM temp_artists WHERE lead_id = $1 AND migrated_assignment_id IS NULL", [leadId]),
-    pool.query("SELECT id, lead_id, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [leadId]),
+    pool.query("SELECT id, lead_id, booked_by, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [leadId]),
     pool.query("SELECT token, team_ids, created_at, expires_at, revoked FROM travel_shares WHERE lead_id = $1 ORDER BY created_at DESC", [leadId]),
   ]);
   const teamIds = assigned.rows.map((r) => r.team_id);
@@ -4313,7 +4314,7 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
       })),
     ],
     tempArtists: temps.rows.filter((t) => !t.musician_id).map((t) => t.name),
-    legs: legs.rows.map((l) => ({ ...l, bookedElsewhere: l.lead_id !== leadId, memberIds: members.rows.filter((m) => m.leg_id === l.id).map((m) => m.team_id), tickets: ticketRows.filter((t) => t.travel_leg_id === l.id).map((t) => ({ id: t.id, name: t.original_name })) })),
+    legs: legs.rows.map((l) => ({ ...l, bookedElsewhere: l.lead_id !== leadId || l.booked_by === "other" || l.booked_by === "tol", bookedByTol: l.booked_by === "tol" && l.lead_id === leadId, memberIds: members.rows.filter((m) => m.leg_id === l.id).map((m) => m.team_id), tickets: ticketRows.filter((t) => t.travel_leg_id === l.id).map((t) => ({ id: t.id, name: t.original_name })) })),
     shares: shares.rows.map((s) => ({ token: s.token, teamIds: JSON.parse(s.team_ids || "[]"), createdAt: s.created_at, expiresAt: s.expires_at, revoked: !!s.revoked })),
     clientUnread: Number((await pool.query("SELECT (SELECT COUNT(*) FROM travel_share_messages WHERE lead_id = $1 AND sender = 'client' AND read_by_team = 0) + (SELECT COUNT(*) FROM travel_share_files WHERE lead_id = $1 AND read_by_team = 0) AS n", [leadId])).rows[0].n),
   });
@@ -4600,15 +4601,17 @@ app.get("/trip/:token", async (req, res) => {
   const trav = await loadTravellers(s.lead_id, allIds);
   const ticketDocs = s.include_tickets ? (await pool.query("SELECT id, original_name, mime_type, travel_leg_id FROM documents WHERE travel_leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1) ORDER BY uploaded_at ASC", [s.lead_id])).rows : [];
   const [legs, members] = await Promise.all([
-    pool.query("SELECT id, lead_id, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [s.lead_id]),
+    pool.query("SELECT id, lead_id, booked_by, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [s.lead_id]),
     pool.query("SELECT travel_leg_members.leg_id, team.id AS team_id, team.name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1)", [s.lead_id]),
   ]);
+  // Not this client's to book: it belongs to another event, or it's marked as booked by Team TOL / someone else.
+  const notYours = (l) => l.lead_id !== s.lead_id || l.booked_by === "other" || l.booked_by === "tol";
   const legCards = legs.rows.map((l) => {
     const who = members.rows.filter((m) => m.leg_id === l.id && teamIds.includes(m.team_id)).map((m) => m.name);
     if (who.length === 0) return "";
     return `<div class="c"><b>${escHtml(l.mode ? l.mode[0].toUpperCase() + l.mode.slice(1) : "Travel")}</b> — ${escHtml(l.from_city || "?")} → ${escHtml(l.to_city || "?")}
-      ${l.lead_id !== s.lead_id ? `<div class="m" style="color:#1C7A80"><b>No need to book this one</b> — it is being booked separately, so please skip it to avoid double booking.</div>` : ""}
-      ${l.lead_id === s.lead_id && l.preferred_service ? `<div class="m">Please book: <b>${escHtml(l.preferred_service)}</b></div>` : ""}${l.lead_id === s.lead_id && l.travel_class ? `<div class="m">Class: ${escHtml(l.travel_class)}</div>` : ""}${l.lead_id !== s.lead_id ? "" : l.food_included === "included" ? `<div class="m">Food: included</div>` : l.food_included === "not_included" ? `<div class="m">Food: not included</div>` : ""}
+      ${notYours(l) ? `<div class="m" style="color:#1C7A80"><b>No need to book this one</b> — ${l.booked_by === "tol" && l.lead_id === s.lead_id ? "Team Together, Out Loud is booking it." : "it is being booked separately, so please skip it to avoid double booking."}</div>` : ""}
+      ${!notYours(l) && l.preferred_service ? `<div class="m">Please book: <b>${escHtml(l.preferred_service)}</b></div>` : ""}${!notYours(l) && l.travel_class ? `<div class="m">Class: ${escHtml(l.travel_class)}</div>` : ""}${notYours(l) ? "" : l.food_included === "included" ? `<div class="m">Food: included</div>` : l.food_included === "not_included" ? `<div class="m">Food: not included</div>` : ""}
       ${l.departure_at || l.departure_time ? `<div class="m">Depart: ${escHtml([l.departure_at ? fmtWall(String(l.departure_at).slice(0, 10)) : "", fmt12(l.departure_time)].filter(Boolean).join(", "))}</div>` : ""}${l.arrival_at || l.arrival_time ? `<div class="m">Arrive: ${escHtml([l.arrival_at ? fmtWall(String(l.arrival_at).slice(0, 10)) : "", fmt12(l.arrival_time)].filter(Boolean).join(", "))}</div>` : ""}
       <div style="margin-top:6px">Travelling: ${who.map(escHtml).join(", ")}</div>
       ${ticketDocs.filter((d) => d.travel_leg_id === l.id).map((d) => { const url = `/trip/${encodeURIComponent(req.params.token)}/ticket/${d.id}`; return `<div style="margin-top:8px"><span class="m">\ud83c\udfab ${escHtml(d.original_name)}</span>${/^image\//i.test(d.mime_type || "") && !/hei[cf]/i.test(d.mime_type) ? `<br><img src="${url}" alt="Ticket">` : ""}<br><a href="${url}" target="_blank" rel="noopener">Open ticket</a></div>`; }).join("")}</div>`;
