@@ -682,6 +682,33 @@ async function syncAllFees() {
     for (const r of ids) await syncCurrentFee(r.id);
   } catch (err) { console.error("Fee sync failed (not fatal):", err.message); }
 }
+// Move already-assigned artists' UNPAID fees for events dated on/after `fromDate` to the rate in force on each event's date.
+// Paid fees are never touched. Local vs outstation follows the same rule as the assign screen (event city = artist's base city).
+async function applyRateToAssignedEvents(teamId, fromDate) {
+  const m = (await pool.query("SELECT name, base_city FROM team WHERE id = $1", [teamId])).rows[0];
+  if (!m) return { updated: [], skippedPaid: [] };
+  const hist = (await pool.query("SELECT local_fee, outstation_fee, effective_from FROM team_fee_history WHERE team_id = $1 ORDER BY effective_from DESC, created_at DESC", [teamId])).rows;
+  const rateOn = (d) => hist.find((h) => h.effective_from <= d);
+  const rows = (await pool.query(`
+    SELECT expenses.id AS exp_id, expenses.amount, expenses.paid, leads.name AS lead_name, leads.date, leads.city
+    FROM expenses
+    JOIN leads ON leads.id = expenses.lead_id
+    JOIN event_assignments ea ON ea.lead_id = expenses.lead_id AND ea.team_id = expenses.team_id
+    WHERE expenses.team_id = $1 AND expenses.head LIKE 'Artist fee — %' AND leads.date >= $2 AND ea.status <> 'declined'
+    ORDER BY leads.date`, [teamId, fromDate])).rows;
+  const updated = [], skippedPaid = [];
+  for (const r of rows) {
+    const rate = rateOn(r.date);
+    if (!rate) continue;
+    const isLocal = m.base_city && r.city && String(m.base_city).trim().toLowerCase() === String(r.city).trim().toLowerCase();
+    const newFee = isLocal ? rate.local_fee : rate.outstation_fee;
+    if (!newFee || Number(newFee) === Number(r.amount)) continue;
+    if (r.paid) { skippedPaid.push({ event: r.lead_name, date: r.date, fee: Number(r.amount) }); continue; }
+    await pool.query("UPDATE expenses SET amount = $1 WHERE id = $2", [Number(newFee), r.exp_id]);
+    updated.push({ event: r.lead_name, date: r.date, from: Number(r.amount), to: Number(newFee) });
+  }
+  return { updated, skippedPaid };
+}
 app.get("/api/team/:id/fee-history", requireAuth, requireSection("accounts"), async (req, res) => {
   const m = (await pool.query("SELECT id, name FROM team WHERE id = $1", [req.params.id])).rows[0];
   if (!m) return res.status(404).json({ error: "Team member not found" });
@@ -704,8 +731,9 @@ app.post("/api/team/:id/fee-revisions", requireAuth, requireSection("accounts"),
   await pool.query("INSERT INTO team_fee_history (id, team_id, local_fee, outstation_fee, effective_from, note, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
     [id, m.id, localFee, outstationFee, effectiveFrom, note, await actorName(req.user), new Date().toISOString()]);
   await syncCurrentFee(m.id);
-  logActivity(req, `Revised ${m.name}'s fee from ${effectiveFrom}: local ${localFee ?? "—"}, outstation ${outstationFee ?? "—"}${note ? ` (${note})` : ""}`, null);
-  res.status(201).json({ id });
+  const applied = await applyRateToAssignedEvents(m.id, effectiveFrom);
+  logActivity(req, `Revised ${m.name}'s fee from ${effectiveFrom}: local ${localFee ?? "—"}, outstation ${outstationFee ?? "—"}${note ? ` (${note})` : ""}${applied.updated.length ? ` — updated ${applied.updated.length} assigned event${applied.updated.length > 1 ? "s" : ""}` : ""}`, null);
+  res.status(201).json({ id, ...applied });
 });
 app.delete("/api/team/:id/fee-revisions/:revId", requireAuth, requireSection("accounts"), async (req, res) => {
   const count = Number((await pool.query("SELECT COUNT(*) AS n FROM team_fee_history WHERE team_id = $1", [req.params.id])).rows[0].n);
@@ -713,8 +741,9 @@ app.delete("/api/team/:id/fee-revisions/:revId", requireAuth, requireSection("ac
   const r = (await pool.query("DELETE FROM team_fee_history WHERE id = $1 AND team_id = $2 RETURNING effective_from", [req.params.revId, req.params.id])).rows[0];
   if (!r) return res.status(404).json({ error: "Revision not found" });
   await syncCurrentFee(req.params.id);
-  logActivity(req, `Removed a fee revision (from ${r.effective_from}) for a team member`, null);
-  res.status(204).end();
+  const applied = await applyRateToAssignedEvents(req.params.id, r.effective_from);
+  logActivity(req, `Removed a fee revision (from ${r.effective_from}) for a team member${applied.updated.length ? ` — ${applied.updated.length} assigned event${applied.updated.length > 1 ? "s" : ""} reverted to the earlier rate` : ""}`, null);
+  res.json(applied);
 });
 
 // Update a team member's own details (name, role/title, phone, email).
@@ -753,6 +782,7 @@ app.patch("/api/team/:id", requireAuth, requireCapability("manage_team"), async 
     if (now.local_fee !== member.local_fee || now.outstation_fee !== member.outstation_fee) {
       await pool.query("INSERT INTO team_fee_history (id, team_id, local_fee, outstation_fee, effective_from, note, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
         [uuid(), member.id, now.local_fee, now.outstation_fee, todayIST(), "Edited in profile", await actorName(req.user), new Date().toISOString()]);
+      await applyRateToAssignedEvents(member.id, todayIST());
     }
   }
   const { local_fee, outstation_fee, ...savedMember } = (await pool.query("SELECT * FROM team WHERE id = $1", [member.id])).rows[0];

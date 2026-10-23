@@ -4692,7 +4692,7 @@ async function openFeeHistoryModal(member, onChange) {
           <label style="margin-top:8px;">Note (optional)</label>
           <input id="fhNote" placeholder="e.g. Yearly revision" />
           <button class="btn-primary full" id="fhSave" style="margin-top:10px;">Save revision</button>
-          <p class="muted small" id="fhMsg" style="margin-top:6px;">Events on or after that date use the new rate when you pick this artist. Fees already agreed for events don't change.</p>
+          <p class="muted small" id="fhMsg" style="margin-top:6px;">Events on or after that date take the new rate — including events this artist is already assigned to (unpaid fees only; paid ones stay as they are).</p>
           <div class="section-label" style="margin-top:16px;">History</div>
           ${data.history.map((h) => `
             <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
@@ -4715,13 +4715,21 @@ async function openFeeHistoryModal(member, onChange) {
       const body = { localFee: root.querySelector("#fhLocal").value, outstationFee: root.querySelector("#fhOut").value, effectiveFrom: root.querySelector("#fhDate").value, note: root.querySelector("#fhNote").value };
       if (!body.effectiveFrom) return alert("Pick the date this rate applies from.");
       btn.disabled = true;
-      try { await api(`/api/team/${member.id}/fee-revisions`, { method: "POST", body: JSON.stringify(body) }); await load(); await refreshTeamFees(); draw(); root.querySelector("#fhMsg").textContent = "Saved."; }
+      try { const r = await api(`/api/team/${member.id}/fee-revisions`, { method: "POST", body: JSON.stringify(body) }); await load(); await refreshTeamFees(); draw(); root.querySelector("#fhMsg").textContent = appliedText(r); if (typeof refreshLeads === "function") refreshLeads().catch(() => {}); }
       catch (err) { alert(err.message); btn.disabled = false; }
     });
     root.querySelectorAll("[data-del-rev]").forEach((b) => b.addEventListener("click", async () => {
       if (!confirm("Remove this revision? Rates go back to whatever applied before it.")) return;
-      try { await api(`/api/team/${member.id}/fee-revisions/${b.dataset.delRev}`, { method: "DELETE" }); await load(); await refreshTeamFees(); draw(); } catch (err) { alert(err.message); }
+      try { const r = await api(`/api/team/${member.id}/fee-revisions/${b.dataset.delRev}`, { method: "DELETE" }); await load(); await refreshTeamFees(); draw(); if (r && r.updated && r.updated.length) root.querySelector("#fhMsg").textContent = appliedText(r); if (typeof refreshLeads === "function") refreshLeads().catch(() => {}); } catch (err) { alert(err.message); }
     }));
+  };
+  // What happened to artists already assigned to events on/after the date.
+  const appliedText = (r) => {
+    const u = (r && r.updated) || [], k = (r && r.skippedPaid) || [];
+    let t = "Saved.";
+    if (u.length) t += ` Updated ${u.length} assigned event${u.length > 1 ? "s" : ""}: ` + u.map((x) => `${x.event} (${fmtDate(x.date)}) ${inr(x.from)} → ${inr(x.to)}`).join("; ") + ".";
+    if (k.length) t += ` Not changed because already paid: ` + k.map((x) => `${x.event} (${fmtDate(x.date)})`).join("; ") + ".";
+    return t;
   };
   // Keep the in-memory team list (used by the assign-team screen) in step with the change.
   async function refreshTeamFees() {
