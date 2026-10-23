@@ -6973,7 +6973,7 @@ async function openTravelPlanModal(leadId) {
     const linked = !!leg.linked_from_other;
     return `
       <div class="card" style="margin-bottom:10px;${linked ? " border-style:dashed;" : ""}">
-        ${linked ? `<div class="muted small" style="margin-bottom:6px;">🔗 Onward from <b>${escH(leg.home_event_name || "previous event")}</b> — entered there, shown here so it isn't entered twice.</div>` : ""}
+        ${linked ? `<div class="muted small" style="margin-bottom:6px;">🔗 Onward ${leg.to_lead_id === lead.id ? "from" : "to"} <b>${escH(leg.home_event_name || "another event")}</b> — entered there, shown here so it isn't entered twice.</div>` : ""}
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
           <div>
             <div style="font-weight:600;">${legTypeBadge(leg.leg_type)}${names}</div>
@@ -7006,11 +7006,18 @@ async function openTravelPlanModal(leadId) {
     `;
   }
 
-  // Events an onward journey could continue to: later ones, nearest first.
-  function nextEventOptionsHtml(selectedId) {
-    const cands = LEADS.filter((e) => e.id !== lead.id && ["Confirmed", "Completed"].includes(e.stage) && e.date && lead.date && e.date >= lead.date)
-      .sort((a, b) => (a.date > b.date ? 1 : -1)).slice(0, 8);
-    const sel = selectedId || (cands[0] && cands[0].id) || "";
+  // Events an onward journey can be linked to: the one before and the one after (nearest first). Default: next event if within a week, else previous.
+  function linkedEventOptions(kind, selectedId, isNew) {
+    const later = kind === "to";
+    const cands = LEADS.filter((e) => e.id !== lead.id && ["Confirmed", "Completed"].includes(e.stage) && e.date && lead.date && (later ? e.date >= lead.date : e.date <= lead.date))
+      .sort((x, y) => (later ? (x.date > y.date ? 1 : -1) : (x.date < y.date ? 1 : -1))).slice(0, 8);
+    let sel = selectedId || "";
+    if (!sel && isNew && cands[0]) {
+      const gap = Math.abs(new Date(cands[0].date + "T00:00:00") - new Date(lead.date + "T00:00:00")) / 86400000;
+      const nextC = LEADS.filter((e) => e.id !== lead.id && ["Confirmed", "Completed"].includes(e.stage) && e.date >= lead.date).sort((x, y) => (x.date > y.date ? 1 : -1))[0];
+      const nextGap = nextC ? (new Date(nextC.date + "T00:00:00") - new Date(lead.date + "T00:00:00")) / 86400000 : 999;
+      if (gap <= 7 && (later || nextGap > 7)) sel = cands[0].id;
+    }
     return `<option value="">Not linked</option>${cands.map((e) => `<option value="${e.id}" ${e.id === sel ? "selected" : ""}>${escH(e.name)}${e.city ? " — " + escH(e.city) : ""} (${fmtDate(e.date)})</option>`).join("")}`;
   }
 
@@ -7034,9 +7041,11 @@ async function openTravelPlanModal(leadId) {
         <select id="${prefix}LegType" style="margin-bottom:4px;">${legTypeOptionsHtml(leg ? leg.leg_type : onwardHint.type)}</select>
         ${isNew && onwardHint.text ? `<div class="muted small" style="margin-bottom:8px;">${onwardHint.text}</div>` : `<div style="margin-bottom:8px;"></div>`}
         <div id="${prefix}ToLeadWrap" style="display:${(leg ? leg.leg_type : onwardHint.type) === "onward" ? "block" : "none"}; margin-bottom:8px;">
-          <label>Which is the next event?</label>
-          <select id="${prefix}ToLead">${nextEventOptionsHtml(leg ? leg.to_lead_id : "")}</select>
-          <div class="muted small">This one ticket will show on both events — no need to enter it twice.</div>
+          <div class="row-2">
+            <div><label>Previous event</label><select id="${prefix}FromLead">${linkedEventOptions("from", leg ? leg.from_lead_id : "", isNew)}</select></div>
+            <div><label>Next event</label><select id="${prefix}ToLead">${linkedEventOptions("to", leg ? leg.to_lead_id : "", isNew)}</select></div>
+          </div>
+          <div class="muted small">Pick the event(s) this journey connects — it will show on each, so no double entry.</div>
         </div>
         <div class="row-2">
           <div><label>Mode</label><select id="${prefix}Mode">
@@ -7138,14 +7147,14 @@ async function openTravelPlanModal(leadId) {
 
     wireTravelClassSuggestions(root, "new"); wireTravelClassSuggestions(root, "edit");
     ["new", "edit"].forEach((p) => {
-      const typeSel = root.querySelector(`#${p}LegType`), wrap = root.querySelector(`#${p}ToLeadWrap`), fromSel = root.querySelector(`#${p}ToLead`);
+      const typeSel = root.querySelector(`#${p}LegType`), wrap = root.querySelector(`#${p}ToLeadWrap`);
+      const toSel = root.querySelector(`#${p}ToLead`), fromSel = root.querySelector(`#${p}FromLead`);
       if (!typeSel || !wrap) return;
-      const fillTo = () => { const ev = LEADS.find((e) => e.id === fromSel?.value), city = root.querySelector(`#${p}ToCity`); if (ev && ev.city && city) city.value = ev.city; };
-      typeSel.addEventListener("change", () => { wrap.style.display = typeSel.value === "onward" ? "block" : "none"; if (typeSel.value === "onward") fillTo(); });
-      if (fromSel) fromSel.addEventListener("change", () => {
-        const ev = LEADS.find((e) => e.id === fromSel.value), city = root.querySelector(`#${p}ToCity`);
-        if (ev && ev.city && city) city.value = ev.city;
-      });
+      const fill = (sel, field) => { const ev = LEADS.find((e) => e.id === sel?.value), c = root.querySelector(`#${p}${field}`); if (ev && ev.city && c) c.value = ev.city; };
+      const fillAll = () => { fill(toSel, "ToCity"); fill(fromSel, "FromCity"); };
+      typeSel.addEventListener("change", () => { wrap.style.display = typeSel.value === "onward" ? "block" : "none"; if (typeSel.value === "onward") fillAll(); });
+      if (toSel) toSel.addEventListener("change", () => fill(toSel, "ToCity"));
+      if (fromSel) fromSel.addEventListener("change", () => fill(fromSel, "FromCity"));
     });
     const addBtn = root.querySelector("#addLegBtn");
     if (addBtn) addBtn.addEventListener("click", () => { addingNew = true; renderModal(); });
@@ -7203,6 +7212,7 @@ async function openTravelPlanModal(leadId) {
           teamIds,
           legType: root.querySelector(`#${prefix}LegType`).value || null,
           toLeadId: root.querySelector(`#${prefix}LegType`).value === "onward" ? (root.querySelector(`#${prefix}ToLead`)?.value || null) : null,
+          fromLeadId: root.querySelector(`#${prefix}LegType`).value === "onward" ? (root.querySelector(`#${prefix}FromLead`)?.value || null) : null,
           mode: root.querySelector(`#${prefix}Mode`).value || null,
           fromCity: root.querySelector(`#${prefix}FromCity`).value.trim() || null,
           toCity: root.querySelector(`#${prefix}ToCity`).value.trim() || null,
