@@ -214,6 +214,38 @@ const RATE_INCLUSIONS = [
 ];
 // Travel plan mode/status labels — mirrors the same constants in server.js.
 const TRAVEL_MODE_LABELS = { flight: "Flight", train: "Train", bus: "Bus", car: "Car", self: "Self-arranged" };
+// What the client should book: suggestions for the class box depend on the mode chosen.
+const TRAVEL_CLASS_SUGGESTIONS = {
+  flight: ["Economy", "Premium Economy", "Business"],
+  train: ["SL (Sleeper)", "3A (AC 3 Tier)", "2A (AC 2 Tier)", "1A (First AC)", "CC (AC Chair Car)", "EC (Executive Chair Car)", "2S (Second Sitting)"],
+  bus: ["AC Sleeper", "Non-AC Sleeper", "AC Seater", "Volvo / Multi-axle"],
+  car: ["Sedan", "SUV / Innova", "Tempo Traveller"],
+};
+const FOOD_LABELS = { included: "Included", not_included: "Not included" };
+// Shared by both travel forms. `p` is the id prefix ("new", "edit" or "stl").
+function travelBookingFieldsHtml(p, leg) {
+  const mode = leg?.mode || "";
+  const sugg = TRAVEL_CLASS_SUGGESTIONS[mode] || [];
+  return `
+    <label style="margin-top:8px;">Which train / flight should the client book? <span class="muted small">(name &amp; number, optional)</span></label>
+    <input id="${p}Service" value="${(leg?.preferred_service || "").replace(/"/g, "&quot;")}" placeholder="e.g. 12345 Kanchankanya Exp, or IndiGo 6E-123 (07:40)" />
+    <div class="row-2" style="margin-top:8px;">
+      <div><label>Class</label><input id="${p}Class" list="${p}ClassList" value="${(leg?.travel_class || "").replace(/"/g, "&quot;")}" placeholder="e.g. 3A, Economy" /><datalist id="${p}ClassList">${sugg.map((x) => `<option value="${x}">`).join("")}</datalist></div>
+      <div><label>Food</label><select id="${p}Food"><option value="">Not specified</option><option value="included" ${leg?.food_included === "included" ? "selected" : ""}>Food included</option><option value="not_included" ${leg?.food_included === "not_included" ? "selected" : ""}>Food not included</option></select></div>
+    </div>`;
+}
+// Keep the class suggestions in step with the chosen mode.
+function wireTravelClassSuggestions(root, p) {
+  const modeSel = root.querySelector(`#${p}Mode`), list = root.querySelector(`#${p}ClassList`);
+  if (!modeSel || !list) return;
+  const draw = () => { list.innerHTML = (TRAVEL_CLASS_SUGGESTIONS[modeSel.value] || []).map((x) => `<option value="${x}">`).join(""); };
+  modeSel.addEventListener("change", draw);
+}
+const readTravelBookingFields = (root, p) => ({
+  preferredService: root.querySelector(`#${p}Service`)?.value.trim() || null,
+  travelClass: root.querySelector(`#${p}Class`)?.value.trim() || null,
+  foodIncluded: root.querySelector(`#${p}Food`)?.value || null,
+});
 const TRAVEL_STATUS_LABELS = { not_booked: "Not booked yet", booked: "Booked", self_arranged: "Self-arranged" };
 
 // Preset reasons for moving a lead to Not Interested — feeds the month-end
@@ -4222,6 +4254,7 @@ function openStandaloneTravelLegModal(legId, onDone, presetDate) {
             </div>
             <label>Booking ref / PNR (optional)</label>
             <input id="stlBookingRef" value="${leg?.booking_ref || ""}" />
+            ${travelBookingFieldsHtml("stl", leg)}
             ${CURRENT_USER?.accessLevel === "admin" ? `<label style="margin-top:8px;">Notes (private — only you see these)</label>
             <input id="stlNotes" value="${leg?.notes || ""}" />` : ""}
             <label style="margin-top:8px;">${CURRENT_USER?.accessLevel === "admin" ? "Manager's notes (visible to managers)" : "Your notes (visible to admin & managers)"}</label>
@@ -4257,6 +4290,7 @@ function openStandaloneTravelLegModal(legId, onDone, presetDate) {
     root.querySelector("#cancelModal").addEventListener("click", close);
     root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
 
+    wireTravelClassSuggestions(root, "stl");
     const deleteBtn = root.querySelector("#stlDeleteBtn");
     if (deleteBtn) {
       deleteBtn.addEventListener("click", async () => {
@@ -4281,6 +4315,7 @@ function openStandaloneTravelLegModal(legId, onDone, presetDate) {
         departureAt: root.querySelector("#stlDeparture").value || null,
         arrivalAt: root.querySelector("#stlArrival").value || null,
         bookingRef: root.querySelector("#stlBookingRef").value.trim() || null,
+        ...readTravelBookingFields(root, "stl"),
         status: root.querySelector("#stlStatus").value,
         leadId: root.querySelector("#stlLead").value || null,
         notes: root.querySelector("#stlNotes")?.value.trim() || null,
@@ -6601,6 +6636,9 @@ async function openTravelShareModal(leadId) {
       legs.length ? "✈️ *Travel plan:*" : "✈️ Travel plan: we will share it shortly.",
       ...legs.flatMap((l) => [
         `• ${cap(l.mode)} — ${l.from_city || "?"} → ${l.to_city || "?"}`,
+        ...(l.preferred_service ? [`   Please book: ${l.preferred_service}`] : []),
+        ...(l.travel_class ? [`   Class: ${l.travel_class}`] : []),
+        ...(l.food_included ? [`   Food: ${l.food_included === "included" ? "included" : "not included"}`] : []),
         ...(l.departure_at ? [`   Depart: ${wall(l.departure_at)}`] : []),
         ...(l.arrival_at ? [`   Arrive: ${wall(l.arrival_at)}`] : []),
         `   Travelling: ${l.who.join(", ")}`,
@@ -6931,6 +6969,7 @@ async function openTravelPlanModal(leadId) {
         </div>
         ${(leg.departure_at || leg.arrival_at) ? `<div class="muted small" style="margin-top:6px;">${leg.departure_at ? `Departs ${fmtDate(leg.departure_at.slice(0, 10))}` : ""}${leg.departure_at && leg.arrival_at ? " · " : ""}${leg.arrival_at ? `Returns ${fmtDate(leg.arrival_at.slice(0, 10))}` : ""}</div>` : ""}
         ${leg.booking_ref ? `<div class="muted small" style="margin-top:2px;">Ref: ${leg.booking_ref}</div>` : ""}
+        ${leg.preferred_service || leg.travel_class || leg.food_included ? `<div class="small" style="margin-top:4px;">🎟 ${[leg.preferred_service ? escH(leg.preferred_service) : "", leg.travel_class ? "Class " + escH(leg.travel_class) : "", leg.food_included ? "Food " + FOOD_LABELS[leg.food_included].toLowerCase() : ""].filter(Boolean).join(" · ")}</div>` : ""}
         ${leg.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${leg.notes}</div>` : ""}
         ${leg.manager_notes ? `<div class="muted small" style="margin-top:2px;">🗒 Manager: ${leg.manager_notes}</div>` : ""}
         ${leg.tickets.length > 0 ? `
@@ -6991,6 +7030,7 @@ async function openTravelPlanModal(leadId) {
         </div>
         <label>Booking ref / PNR (optional)</label>
         <input id="${prefix}BookingRef" value="${leg?.booking_ref || ""}" placeholder="e.g. PNR or booking number" />
+        ${travelBookingFieldsHtml(prefix, leg)}
         ${CURRENT_USER?.accessLevel === "admin" ? `<label style="margin-top:8px;">Notes (private — only you see these)</label>
         <input id="${prefix}Notes" value="${leg?.notes || ""}" placeholder="e.g. Booked by client" />` : ""}
         <label style="margin-top:8px;">${CURRENT_USER?.accessLevel === "admin" ? "Manager's notes (visible to managers)" : "Your notes (visible to admin & managers)"}</label>
@@ -7069,6 +7109,7 @@ async function openTravelPlanModal(leadId) {
     root.querySelector("#cancelModal").addEventListener("click", close);
     root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
 
+    wireTravelClassSuggestions(root, "new"); wireTravelClassSuggestions(root, "edit");
     const addBtn = root.querySelector("#addLegBtn");
     if (addBtn) addBtn.addEventListener("click", () => { addingNew = true; renderModal(); });
     const linkBtn = root.querySelector("#linkLegBtn");
@@ -7130,6 +7171,7 @@ async function openTravelPlanModal(leadId) {
           departureAt: root.querySelector(`#${prefix}Departure`).value || null,
           arrivalAt: root.querySelector(`#${prefix}Arrival`).value || null,
           bookingRef: root.querySelector(`#${prefix}BookingRef`).value.trim() || null,
+          ...readTravelBookingFields(root, prefix),
           status: root.querySelector(`#${prefix}Status`).value,
           notes: root.querySelector(`#${prefix}Notes`)?.value.trim() || null,
           managerNotes: root.querySelector(`#${prefix}ManagerNotes`).value.trim() || null,
