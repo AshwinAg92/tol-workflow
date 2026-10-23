@@ -1428,7 +1428,9 @@
     if (statCities && data.distinctCities) statCities.dataset.count = String(data.distinctCities);
     const statIntl = document.getElementById('statIntlNum');
     if (statIntl && Array.isArray(data.internationalCountries)) {
-      statIntl.textContent = data.internationalCountries.length ? data.internationalCountries.join(' & ') : 'Growing internationally';
+      const cs = data.internationalCountries;
+      // "Bhutan, Croatia, Nepal & Thailand" — commas between, a single "&" before the last one
+      statIntl.textContent = cs.length ? (cs.length > 1 ? cs.slice(0, -1).join(', ') + ' & ' + cs[cs.length - 1] : cs[0]) : 'Growing internationally';
     }
 
     waitFor(() => window.jsVectorMap, () => {
