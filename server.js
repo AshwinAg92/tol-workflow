@@ -5659,6 +5659,19 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 3300;
 ready.then(() => {
   app.listen(PORT, () => console.log(`TOL workflow app running on http://localhost:${PORT}`));
+  // TEMPORARY (credential rotation): when ROTATE_DB_PASSWORD is set, change this database login's password to that value.
+  // The value is never logged. Removed again right after the rotation.
+  (async () => {
+    const pw = process.env.ROTATE_DB_PASSWORD;
+    if (!pw) return;
+    try {
+      if (!/^[A-Za-z0-9]{24,64}$/.test(pw)) throw new Error("password format not accepted");
+      const user = (await pool.query("SELECT current_user AS u")).rows[0].u;
+      if (!/^[A-Za-z0-9_]+$/.test(user)) throw new Error("unexpected role name");
+      await pool.query(`ALTER ROLE "${user}" WITH PASSWORD '${pw}'`);
+      console.log("DB password rotation: role password updated.");
+    } catch (err) { console.error("DB password rotation FAILED:", err.message); }
+  })();
   autoCompletePastEvents();
   setInterval(autoCompletePastEvents, 60 * 60 * 1000);
   autoCloseNearDateLeads();
