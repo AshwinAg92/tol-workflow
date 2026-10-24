@@ -9470,6 +9470,150 @@ async function openTentativeConfirmInfoModal(lead) {
   });
 }
 
+// ---------- Booking-confirmation PDF (the link in the short confirmation message) ----------
+// Everything that used to make the WhatsApp message long — event details, the client's own notes, fees, terms — lives here.
+function confirmationTermsLines(lead) {
+  const included = parseRateInclusions(lead.rate_inclusions);
+  const includedLabels = included.map((id) => RATE_INCLUSIONS.find((o) => o.id === id)?.label || id);
+  const lines = [];
+  if (includedLabels.length > 0) lines.push(`Included in the agreed fee: ${includedLabels.join(", ")}.`);
+  else if (lead.rate_type === "inclusive") lines.push("Included in the agreed fee: travel & accommodation (all-in).");
+  else lines.push("The agreed fee is for the performance only - travel, stay and food are not included.");
+  lines.push(`To be arranged by the Client: ${clientArrangementsPhrase(lead).replace(/^the /, "")}.`);
+  const note = (lead.rate_note || "").trim();
+  if (note) lines.push(`Note: ${note}`);
+  return lines;
+}
+// A contract-style booking agreement. The WhatsApp message stays short; this carries every detail.
+async function buildConfirmationPdfBase64(lead) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const finalAmount = Number(lead.final_amount || lead.quote_amount || 0);
+  const received = Number(lead.received || 0);
+  const isPheras = lead.event_type === "pheras";
+  const ref = `TOL-${String(lead.date || "").replace(/-/g, "")}-${String(lead.id || "").replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase()}`;
+  const { pageWidth, marginX } = await pdfLetterhead(doc, "BOOKING AGREEMENT", "Together, Out Loud - Performance booking confirmation");
+  const contentW = pageWidth - marginX * 2;
+  let y = 40;
+  const ensure = (h) => { if (y + h > 276) { doc.addPage(); y = 20; } };
+  const text = (str, x, w, { size = 9.5, bold = false, color = PDF_COLORS.dark, gap = 4.8 } = {}) => {
+    doc.setFont("helvetica", bold ? "bold" : "normal"); doc.setFontSize(size); doc.setTextColor(...color);
+    doc.splitTextToSize(String(str), w).forEach((ln) => { ensure(gap); doc.text(ln, x, y); y += gap; });
+  };
+  let clause = 0;
+  const section = (title) => {
+    ensure(22); clause += 1; y += 1.5;
+    doc.setFont("times", "bold"); doc.setFontSize(12.5); doc.setTextColor(...PDF_COLORS.rust);
+    doc.text(`${clause}.  ${title.toUpperCase()}`, marginX, y);
+    doc.setDrawColor(...PDF_COLORS.line); doc.setLineWidth(0.3); doc.line(marginX, y + 2, pageWidth - marginX, y + 2);
+    y += 8; doc.setTextColor(...PDF_COLORS.dark);
+  };
+  const kv = (rows) => rows.filter(([, v]) => v && String(v).trim()).forEach(([k, v]) => {
+    const lines = doc.splitTextToSize(String(v), contentW - 48);
+    ensure(lines.length * 4.8 + 1);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...PDF_COLORS.muted); doc.text(k.toUpperCase(), marginX + 2, y);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(...PDF_COLORS.dark);
+    lines.forEach((ln, n) => doc.text(ln, marginX + 46, y + n * 4.8));
+    y += lines.length * 4.8 + 1;
+  });
+
+  // Reference + date issued
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...PDF_COLORS.muted);
+  doc.text(`Reference: ${ref}`, marginX, y); doc.text(`Issued: ${fmtDate(new Date().toISOString().slice(0, 10))}`, pageWidth - marginX, y, { align: "right" });
+  y += 8;
+  text(`This agreement confirms the booking between Together, Out Loud ("TOL") and the Client named below for the performance described in this document.`, marginX, contentW, { size: 9.5 });
+  y += 1;
+
+  section("Parties");
+  kv([["Performer", "Together, Out Loud (TOL)"], ["Client", lead.name], ["Contact", [lead.phone, lead.email].filter(Boolean).join("  |  ")], ["Client's city", [lead.city, lead.state].filter((v) => v && String(v).trim()).join(", ")]]);
+
+  section("Event details");
+  const where = [lead.venue, lead.city].filter((v) => v && String(v).trim()).join(", ");
+  kv([
+    ["Experience", packageName(lead.event_type)],
+    ["Date", lead.date ? fmtDate(lead.date) : ""],
+    ["Venue / location", where],
+    ["Occasion", occasionLabel(lead)],
+    ["Expected guests", lead.guest_range],
+    ["Band size", lead.pcs && !isPheras ? `${lead.pcs} pieces` : ""],
+    ["Duration", isPheras ? "For the length of the ceremony" : (lead.duration || "75-90 minutes")],
+    ["Sound check", lead.soundcheck_time ? fmtTimeHM(lead.soundcheck_time) : ""],
+    ["Event time", lead.event_time ? fmtTimeHM(lead.event_time) : ""],
+  ]);
+  const notes = (lead.details || "").trim();
+  if (notes) {
+    y += 2; text("Client's notes and requirements (as shared by the Client):", marginX + 2, contentW - 4, { size: 9, bold: true, color: PDF_COLORS.muted });
+    doc.setFillColor(...PDF_COLORS.peach);
+    const lines = doc.splitTextToSize(notes.replace(/\r/g, ""), contentW - 10);
+    ensure(Math.min(lines.length, 6) * 4.8 + 6);
+    const boxTop = y - 2; const startPage = doc.internal.getCurrentPageInfo().pageNumber;
+    if (lines.length * 4.8 + 4 < 240) doc.roundedRect(marginX + 2, boxTop, contentW - 4, lines.length * 4.8 + 4, 1.5, 1.5, "F");
+    y += 2;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(...PDF_COLORS.dark);
+    lines.forEach((ln) => { ensure(5); doc.text(ln, marginX + 6, y); y += 4.8; });
+    y += 3;
+  }
+
+  section("Performance fee and payment");
+  if (finalAmount > 0) {
+    const rows = [["Total performance fee", inrPdf(finalAmount)], ["Advance received", inrPdf(received)], ["Outstanding balance", inrPdf(Math.max(finalAmount - received, 0))]];
+    rows.forEach(([label, val], idx) => {
+      ensure(8);
+      if (idx % 2 === 0) { doc.setFillColor(248, 240, 230); doc.rect(marginX, y - 5, contentW, 7.5, "F"); }
+      const last = idx === rows.length - 1;
+      doc.setFont("helvetica", last ? "bold" : "normal"); doc.setFontSize(10.5); doc.setTextColor(...(last ? PDF_COLORS.rustDark : PDF_COLORS.dark));
+      doc.text(label, marginX + 4, y); doc.text(val, pageWidth - marginX - 4, y, { align: "right" });
+      y += 7.5;
+    });
+    y += 2;
+  } else {
+    text("The performance fee will be as separately agreed in writing.", marginX + 2, contentW - 4);
+  }
+  text("This booking is confirmed on receipt of the advance, which blocks the date for the Client.", marginX + 2, contentW - 4, { size: 9.5 });
+
+  section("Inclusions and Client's responsibilities");
+  y = pdfList(doc, confirmationTermsLines(lead), marginX + 3, contentW - 3, y, { bulletColor: PDF_COLORS.rust, size: 9.8 });
+  text("Not included in the fee unless stated above: stage setup; lights and sound; travel and accommodation for the team (from the previous city of performance); team meals; airport/station transfers.", marginX + 2, contentW - 4, { size: 9, color: PDF_COLORS.muted });
+
+  section("Terms and conditions");
+  const terms = [
+    "An advance payment is required to confirm and block the date; the booking is confirmed only upon its receipt.",
+    "Strictly no food, alcohol or beverages to be consumed or served during the session.",
+    isPheras ? "Musical Pheras runs for the length of the ceremony, without a fixed session duration." : "The session runs for 75 to 90 minutes.",
+    "Venue technical requirements (power, stage and sound arrangements) are the Client's responsibility unless stated otherwise above.",
+  ];
+  y = pdfList(doc, terms, marginX + 3, contentW - 3, y, { numbered: true, bulletColor: PDF_COLORS.brown, size: 9.8 });
+
+  ensure(48); y += 8;
+  doc.setDrawColor(...PDF_COLORS.line); doc.setLineWidth(0.3);
+  const colW = (contentW - 12) / 2;
+  doc.line(marginX, y + 18, marginX + colW, y + 18); doc.line(marginX + colW + 12, y + 18, marginX + contentW, y + 18);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(...PDF_COLORS.dark);
+  doc.text("For Together, Out Loud", marginX, y + 24); doc.text("Client", marginX + colW + 12, y + 24);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...PDF_COLORS.muted);
+  doc.text("Authorised signatory", marginX, y + 29); doc.text(lead.name || "", marginX + colW + 12, y + 29);
+  doc.text("Date:", marginX, y + 36); doc.text("Date:", marginX + colW + 12, y + 36);
+  y += 44;
+
+  // Footer on every page
+  const pages = doc.internal.getNumberOfPages();
+  for (let n = 1; n <= pages; n++) {
+    doc.setPage(n);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...PDF_COLORS.muted);
+    doc.text("Together, Out Loud  |  togetheroutloud.in", marginX, 289);
+    doc.text(`Page ${n} of ${pages}  |  Ref ${ref}`, pageWidth - marginX, 289, { align: "right" });
+  }
+  return doc.output("datauristring").split(",")[1];
+}
+// Builds the PDF, stores it, and returns its public link (null if anything goes wrong — the message then falls back to the full text).
+async function publishConfirmationPdf(lead) {
+  try {
+    const b64 = await buildConfirmationPdfBase64(lead);
+    const r = await api(`/api/leads/${lead.id}/confirmation-pdf`, { method: "POST", body: JSON.stringify({ pdfBase64: b64 }) });
+    return r && r.url ? window.location.origin + r.url : null;
+  } catch (err) { console.error("Confirmation PDF failed:", err); return null; }
+}
+
 async function openConfirmationMessageModal(lead) {
   const root = document.getElementById("modalRoot");
   const docs = await api("/api/documents");
@@ -9485,7 +9629,9 @@ async function openConfirmationMessageModal(lead) {
   const isPheras = lead.event_type === "pheras";
   const amountLine = lead.final_amount ? `\nTotal: ₹${Number(lead.final_amount).toLocaleString("en-IN")}` : "";
   const tpl = MESSAGE_TEMPLATES.confirmed || TEMPLATE_META.confirmed.default;
-  let message = fillTemplate(tpl, {
+  const pdfLink = await publishConfirmationPdf(lead);
+  let message = fillTemplate(pdfLink ? tpl : (MESSAGE_TEMPLATES.confirmed ? tpl : TEMPLATE_META.confirmed.longDefault), {
+    pdfLink: pdfLink || "",
     firstName,
     clientName: lead.name || "",
     experience: packageName(lead.event_type),
@@ -9503,14 +9649,20 @@ async function openConfirmationMessageModal(lead) {
     clientArrangements: clientArrangementsPhrase(lead),
     rateTermsBlock: confirmationTermsBlock(lead),
   });
+  // A custom-saved template from before the PDF existed: add the PDF link just before the sign-off.
+  if (pdfLink && !tpl.includes("{pdfLink}")) {
+    const pdfLine = `📄 Full booking details, notes & terms (PDF): ${pdfLink}`;
+    const so = message.match(/\n(Warm regards,)/);
+    message = so ? message.slice(0, so.index) + `\n\n${pdfLine}` + message.slice(so.index) : `${message}\n\n${pdfLine}`;
+  }
   // A custom-saved template won't have {notesLine} — slot the client's notes in right after the Occasion line.
-  if (!tpl.includes("{notesLine}") && (lead.details || "").trim()) {
+  if (!pdfLink && !tpl.includes("{notesLine}") && (lead.details || "").trim()) {
     const notesText = `Client notes: ${String(lead.details).trim().replace(/\s*\n\s*/g, " ")}`;
     message = /^Occasion:.*$/m.test(message) ? message.replace(/^(Occasion:.*)$/m, `$1\n${notesText.replace(/\$/g, "$$$$")}`) : message;
   }
   // A custom-saved template from before this block existed won't have the
   // placeholder — slot the terms in before the sign-off so they're never missing.
-  if (!tpl.includes("{rateTermsBlock}")) {
+  if (!pdfLink && !tpl.includes("{rateTermsBlock}")) {
     const termsBlock = confirmationTermsBlock(lead);
     const signoff = message.match(/\n(Warm regards,)/);
     message = signoff
@@ -9524,6 +9676,7 @@ async function openConfirmationMessageModal(lead) {
   if (isPheras) {
     message = message.replace(/^Duration:.*\n?/m, "");
   }
+  message = message.replace(/^[^\n]*(Occasion|Location):[ \t]*\n/gm, "");
   const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
   const waLink = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}` : null;
   const mailLink = lead.email ? `mailto:${lead.email}?subject=${encodeURIComponent("Your event is confirmed — Together, Out Loud")}&body=${encodeURIComponent(message)}` : null;
@@ -10602,9 +10755,10 @@ const TEMPLATE_META = {
   },
   confirmed: {
     label: "Confirmed client message",
-    description: "Starting text shown when you confirm an event — you can still tweak it per-send before it goes out. Location, Set, Duration, Fee, Advance, Outstanding, and what the client needs to arrange are pulled automatically from the lead.",
-    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "amountLine", "location", "occasion", "notesLine", "pieces", "duration", "performanceFee", "advance", "outstanding", "clientArrangements", "rateTermsBlock"],
-    default: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe are pleased to confirm our booking for: {clientName}\nLocation: {location}\nDate: {date}\nOccasion: {occasion}{notesLine}\nSet: {pieces} Pieces\nDuration: {duration}\nPerformance Fee: ₹{performanceFee}/-\nAdvance: ₹{advance}/-\nOutstanding: ₹{outstanding}\n\n{rateTermsBlock}\n\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
+    description: "Short message sent when you confirm an event — the basics only. The full details (client's notes, fees, inclusions, terms) are in a contract-style PDF linked via {pdfLink}. You can still tweak the message per-send. Location, Set, Duration, Fee, Advance, Outstanding, and what the client needs to arrange are pulled automatically from the lead.",
+    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "amountLine", "location", "occasion", "notesLine", "pieces", "duration", "performanceFee", "advance", "outstanding", "clientArrangements", "rateTermsBlock", "pdfLink"],
+    default: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) is now confirmed! 🎉\n\n📅 Date: {date}\n📍 Location: {location}\n🎉 Occasion: {occasion}\n\n📄 Your detailed booking confirmation (PDF):\n{pdfLink}\n\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
+    longDefault: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe are pleased to confirm our booking for: {clientName}\nLocation: {location}\nDate: {date}\nOccasion: {occasion}{notesLine}\nSet: {pieces} Pieces\nDuration: {duration}\nPerformance Fee: ₹{performanceFee}/-\nAdvance: ₹{advance}/-\nOutstanding: ₹{outstanding}\n\n{rateTermsBlock}\n\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
   },
   document_share: {
     label: "Document share message",

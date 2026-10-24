@@ -313,6 +313,14 @@ async function setup() {
   )`);
   await pool.query(`CREATE INDEX IF NOT EXISTS team_fee_history_team_idx ON team_fee_history(team_id, effective_from)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS app_flags (key TEXT PRIMARY KEY, done_at TEXT)`);
+  // The booking-confirmation PDF that goes out as a link in the (now short) confirmation message — one per event, refreshed each time it is sent.
+  await pool.query(`CREATE TABLE IF NOT EXISTS booking_pdfs (
+    token TEXT PRIMARY KEY,
+    lead_id TEXT NOT NULL UNIQUE REFERENCES leads(id) ON DELETE CASCADE,
+    pdf BYTEA NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`);
   // Lookup indexes — as the data grew, un-indexed lookups by lead/team/date were scanning whole tables on every screen.
   // Each is created independently so a problem with one can never block startup. Purely additive: no data is touched.
   for (const ddl of [
@@ -1009,7 +1017,7 @@ async function setup() {
   const defaultTemplates = {
     followup: "Hi {firstName}, just following up on your enquiry with Together, Out Loud for {experience}{dateClause}. Let us know if you have any questions or would like to go ahead — happy to help!\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
     tentative_followup: "Hi {firstName}, following up on your {experience}{dateClause} — we've tentatively held this date for you with Together, Out Loud. Let us know if you'd like to go ahead so we can lock it in for you!\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
-    confirmed: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe look forward to creating a memorable experience with you. — Together, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
+    confirmed: "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) is now confirmed! 🎉\n\n📅 Date: {date}\n📍 Location: {location}\n🎉 Occasion: {occasion}\n\n📄 Your detailed booking confirmation (PDF):\n{pdfLink}\n\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
     document_share: "Hi! Sharing the {label} for your event with Together, Out Loud: {link}\n\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
     bank_details: "Company name: Next Generation Group\nAccount number: 10189214106\nIFSC: IDFB0060384\nSWIFT code: IDFBINBBMUM\nBank name: IDFC FIRST\nBranch: SILIGURI-SEVOKE ROAD BRANCH",
   };
@@ -1019,6 +1027,11 @@ async function setup() {
       [key, template, new Date().toISOString()]
     );
   }
+  // One-time: a confirmation message still on the original (unedited) wording becomes the short version that links the PDF.
+  // Anything the owner has customised is left exactly as written.
+  await pool.query(`UPDATE message_templates SET template = $1, updated_at = $2 WHERE key = 'confirmed' AND template = $3`,
+    ["Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) is now confirmed! 🎉\n\n📅 Date: {date}\n📍 Location: {location}\n🎉 Occasion: {occasion}\n\n📄 Your detailed booking confirmation (PDF):\n{pdfLink}\n\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in", new Date().toISOString(),
+     "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe look forward to creating a memorable experience with you. — Together, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in"]);
 
   // One quotation template per package/experience — same content Ashwin already had,
   // just split out so each experience can be worded differently going forward.

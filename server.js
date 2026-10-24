@@ -299,7 +299,9 @@ async function upsertB2bContact({ name, phone, company, city, instagram }) {
 const app = express();
 app.use(compression()); // gzip: app.js 780KB -> ~170KB, API JSON ~5x smaller
 app.use(cors());
-app.use(express.json());
+const _jsonSmall = express.json();
+// The confirmation-PDF upload carries a few hundred KB of base64, so it gets its own larger parser on the route itself.
+app.use((req, res, next) => (/\/confirmation-pdf$/.test(req.path) ? next() : _jsonSmall(req, res, next)));
 // A dropped DB connection mid-query throws inside a route handler that has
 // no individual try/catch. The global unhandledRejection listener above
 // stops that from crashing the whole process, but it can't send a response
@@ -476,6 +478,30 @@ app.get("/confirm.html", async (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
   res.send(html);
+});
+// ---------- Booking-confirmation PDF (link goes in the confirmation message) ----------
+// The PDF itself is built in the browser (same letterhead as quotes/ledgers) and stored here so the client gets a plain link.
+// One per event: re-sending refreshes the same link, so an old link never goes stale or breaks.
+app.post("/api/leads/:id/confirmation-pdf", requireAuth, requireSection("accounts"), express.json({ limit: "6mb" }), async (req, res) => {
+  const lead = (await pool.query("SELECT id FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const b64 = String((req.body && req.body.pdfBase64) || "").replace(/^data:application\/pdf;[^,]*,/, "");
+  const buf = Buffer.from(b64, "base64");
+  if (buf.length < 500 || buf.slice(0, 5).toString() !== "%PDF-") return res.status(400).json({ error: "That isn't a valid PDF." });
+  if (buf.length > 4 * 1024 * 1024) return res.status(400).json({ error: "PDF is too large." });
+  const now = new Date().toISOString();
+  const row = (await pool.query(`INSERT INTO booking_pdfs (token, lead_id, pdf, created_at, updated_at) VALUES ($1,$2,$3,$4,$4)
+    ON CONFLICT (lead_id) DO UPDATE SET pdf = EXCLUDED.pdf, updated_at = EXCLUDED.updated_at RETURNING token`, [uuid().replace(/-/g, ""), lead.id, buf, now])).rows[0];
+  res.json({ token: row.token, url: `/booking/${row.token}.pdf` });
+});
+app.get("/booking/:token.pdf", async (req, res) => {
+  const row = (await pool.query("SELECT bp.pdf, l.name FROM booking_pdfs bp JOIN leads l ON l.id = bp.lead_id WHERE bp.token = $1", [req.params.token])).rows[0];
+  if (!row) return res.status(404).send("This booking confirmation link isn't valid any more.");
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `inline; filename="Booking-Confirmation-${String(row.name || "").replace(/[^a-z0-9]+/gi, "-").slice(0, 40) || "TOL"}.pdf"`);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  res.send(row.pdf);
 });
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
 // Document files are served from Postgres now — see /api/documents/:id/file below.
