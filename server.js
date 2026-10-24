@@ -3261,6 +3261,8 @@ app.post("/api/travel-legs/:id/tickets", requireAuth, requireCapability("assign_
     INSERT INTO documents (id, lead_id, travel_leg_id, original_name, notes, uploaded_at, mime_type, file_data)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
   `, [id, leg.lead_id, leg.id, req.file.originalname, req.body.notes || null, new Date().toISOString(), req.file.mimetype, req.file.buffer]);
+  // A ticket on the journey means it is booked.
+  if (leg.status === "not_booked") await pool.query("UPDATE travel_legs SET status = 'booked', updated_at = $1 WHERE id = $2", [new Date().toISOString(), leg.id]);
   const doc = (await pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents WHERE id = $1`, [id])).rows[0];
   res.status(201).json({ ...doc, url: `/api/documents/${doc.id}/file` });
 });
@@ -4536,6 +4538,7 @@ async function attachClientFileToLeg(fileId, legId) {
   const docId = uuid();
   await pool.query("INSERT INTO documents (id, lead_id, travel_leg_id, original_name, notes, uploaded_at, mime_type, file_data) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
     [docId, f.lead_id, leg.id, f.original_name, `Uploaded by ${f.uploader_name || "client"} via travel link${f.label ? " \u2014 " + f.label : ""}`, new Date().toISOString(), f.mime_type, f.file_data]);
+  await pool.query("UPDATE travel_legs SET status = 'booked', updated_at = $1 WHERE id = $2 AND status = 'not_booked'", [new Date().toISOString(), leg.id]);
   await pool.query("UPDATE travel_share_files SET leg_id = $1, document_id = $2 WHERE id = $3", [leg.id, docId, fileId]);
   return { ok: true };
 }
