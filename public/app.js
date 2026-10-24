@@ -9584,16 +9584,6 @@ async function buildConfirmationPdfBase64(lead) {
   ];
   y = pdfList(doc, terms, marginX + 3, contentW - 3, y, { numbered: true, bulletColor: PDF_COLORS.brown, size: 9.8 });
 
-  ensure(48); y += 8;
-  doc.setDrawColor(...PDF_COLORS.line); doc.setLineWidth(0.3);
-  const colW = (contentW - 12) / 2;
-  doc.line(marginX, y + 18, marginX + colW, y + 18); doc.line(marginX + colW + 12, y + 18, marginX + contentW, y + 18);
-  doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(...PDF_COLORS.dark);
-  doc.text("For Together, Out Loud", marginX, y + 24); doc.text("Client", marginX + colW + 12, y + 24);
-  doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...PDF_COLORS.muted);
-  doc.text("Authorised signatory", marginX, y + 29); doc.text(lead.name || "", marginX + colW + 12, y + 29);
-  doc.text("Date:", marginX, y + 36); doc.text("Date:", marginX + colW + 12, y + 36);
-  y += 44;
 
   // Footer on every page
   const pages = doc.internal.getNumberOfPages();
