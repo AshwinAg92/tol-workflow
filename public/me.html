@@ -70,9 +70,9 @@
       const legsSorted = [...e.travel].sort((a, b) => rank(a.type) - rank(b.type) || String(a.departureAt || "9999").localeCompare(String(b.departureAt || "9999")));
       const travel = legsSorted.length ? legsSorted.map((l) => {
         const when = [l.departureAt ? fmtDate(l.departureAt) : "", fmt12(l.departureTime)].filter(Boolean).join(", ");
-        const arr = [l.arrivalAt && l.type === "going" ? "" : "", fmt12(l.arrivalTime)].filter(Boolean).join("");
+        const arr = fmt12(l.arrivalTime) || "";
         return `<div class="leg"><b>${TYPE[l.type] || ""}</b> ${esc(MODE[l.mode] || "")} — ${esc(l.from || "?")} → ${esc(l.to || "?")}
-          <div class="muted">${esc(when) || "Date not set"}${arr ? " · arrives " + esc(arr) : ""} · ${esc(ST[l.status] || l.status)}${l.ref ? " · Ref " + esc(l.ref) : ""}</div>
+          <div class="muted">${esc(when) || "Date not set"}${arr ? " · arrives " + esc(arr) : ""}${l.arrivalAt ? " · returns " + esc(fmtDate(l.arrivalAt)) : ""} · ${esc(ST[l.status] || l.status)}${l.ref ? " · Ref " + esc(l.ref) : ""}</div>
           ${l.tickets.map((t) => `<div><a href="/api/public/me/${encodeURIComponent(token)}/ticket/${t.id}" target="_blank" rel="noopener">🎫 ${esc(t.name)}</a></div>`).join("")}</div>`;
       }).join("") : `<div class="muted">Travel not added yet.</div>`;
       const pay = e.pay ? `<div class="sec">Payment</div><span class="pill ${e.pay.paid ? "p-paid" : "p-pending"}">${e.pay.paid ? "Paid" : "Payment pending"}</span>${e.pay.paid && e.pay.date ? `<span class="muted">${esc(fmtDate(e.pay.date))}${e.pay.mode ? " · " + esc(e.pay.mode) : ""}</span>` : ""}${e.pay.amount ? `<div class="muted">₹${e.pay.amount.toLocaleString("en-IN")}</div>` : ""}` : "";
