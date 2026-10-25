@@ -12479,6 +12479,7 @@ function renderPerformerTabBar() {
   const tabs = [
     { id: "home", label: "Home" },
     { id: "events", label: "Events", badge: pendingCount },
+    { id: "earnings", label: "Earnings" },
     { id: "tasks", label: "Tasks", badge: openTasksCount },
     { id: "messages", label: "Messages", badge: unreadCount },
   ];
@@ -12500,6 +12501,7 @@ function renderPerformerTabContent() {
   const body = document.getElementById("performerBody");
   if (!body || !performerData) return;
   const { events, tasks, announcements, notifications } = performerData;
+  if (performerTab === "earnings") { renderMyRevenue(body).catch(() => { body.innerHTML = `<p class="muted small">Couldn't load your earnings — please try again.</p>`; }); return; }
 
   const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined", cancel_requested: "Cancellation requested" };
   const statusColor = { pending: "#B6752C", accepted: "#1C7A80", declined: "#A6432B", cancel_requested: "#B6752C" };
