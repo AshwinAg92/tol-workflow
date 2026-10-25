@@ -313,6 +313,15 @@ async function setup() {
   )`);
   await pool.query(`CREATE INDEX IF NOT EXISTS team_fee_history_team_idx ON team_fee_history(team_id, effective_from)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS app_flags (key TEXT PRIMARY KEY, done_at TEXT)`);
+  // Days an artist has marked themselves unavailable (shown as a clash when the team assigns them).
+  await pool.query(`CREATE TABLE IF NOT EXISTS artist_unavailable (
+    id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    note TEXT,
+    created_at TEXT,
+    UNIQUE (team_id, date)
+  )`);
   // The booking-confirmation PDF that goes out as a link in the (now short) confirmation message — one per event, refreshed each time it is sent.
   await pool.query(`CREATE TABLE IF NOT EXISTS booking_pdfs (
     token TEXT PRIMARY KEY,

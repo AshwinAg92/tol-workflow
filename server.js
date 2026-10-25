@@ -3082,6 +3082,10 @@ app.get("/api/travel-context", requireAuth, requireCapability("assign_team"), as
     teamId: m.teamId, from: l.departure_at.slice(0, 10), to: (l.arrival_at || l.departure_at).slice(0, 10), kind: "travel", leadId: l.lead_id,
     label: l.lead_id && inScope(l.lead_id) ? `${l.from_city || "?"} → ${l.to_city || "?"} (${l.lead_name || "travel"})` : "travelling",
   })));
+  const todayIst = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+  (await pool.query("SELECT team_id, date, note FROM artist_unavailable WHERE date >= $1", [todayIst])).rows.forEach((u) => busy.push({
+    teamId: u.team_id, from: u.date, to: u.date, kind: "unavailable", leadId: null, label: u.note ? `marked unavailable: ${u.note}` : "marked unavailable",
+  }));
   res.json({ assignments, busy });
 });
 
@@ -3619,6 +3623,40 @@ app.get("/api/my/notifications", requireAuth, async (req, res) => {
   const leadsAll = (await pool.query("SELECT name, venue, city FROM leads WHERE name IS NOT NULL AND LENGTH(TRIM(name)) >= 3")).rows.sort((a, b) => b.name.length - a.name.length);
   const scrub = (msg) => { let out = String(msg || ""); for (const l of leadsAll) { if (out.includes(l.name)) out = out.split(l.name).join(`the event in ${placeOf(l)}`); } return out; };
   res.json(rows.map((n) => ({ ...n, message: scrub(n.message) })));
+});
+
+// ---------- Artist availability: days a musician marks as "not available" ----------
+const isoDay = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || "")) && !isNaN(new Date(d + "T00:00:00Z"));
+app.get("/api/my/unavailable", requireAuth, async (req, res) => {
+  if (!req.user.team_id) return res.json([]);
+  const today = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+  const { rows } = await pool.query("SELECT id, date, note FROM artist_unavailable WHERE team_id = $1 AND date >= $2 ORDER BY date ASC", [req.user.team_id, today]);
+  res.json(rows);
+});
+app.post("/api/my/unavailable", requireAuth, async (req, res) => {
+  if (!req.user.team_id) return res.status(400).json({ error: "This login isn't linked to a team member" });
+  const { from, to, note } = req.body || {};
+  const end = to || from;
+  if (!isoDay(from) || !isoDay(end)) return res.status(400).json({ error: "Pick a valid date" });
+  if (end < from) return res.status(400).json({ error: "The last day can't be before the first day" });
+  const days = [];
+  for (let t = new Date(from + "T00:00:00Z"); t.toISOString().slice(0, 10) <= end && days.length <= 92; t = new Date(t.getTime() + 86400000)) days.push(t.toISOString().slice(0, 10));
+  if (days.length > 92) return res.status(400).json({ error: "Please mark at most 3 months at a time" });
+  const cleanNote = String(note || "").trim().slice(0, 140) || null;
+  for (const d of days) {
+    await pool.query("INSERT INTO artist_unavailable (id, team_id, date, note, created_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (team_id, date) DO UPDATE SET note = EXCLUDED.note", [uuid(), req.user.team_id, d, cleanNote, new Date().toISOString()]);
+  }
+  // Tell the artist if they are already booked on any of those days — the team has to sort that out, not the calendar.
+  const conflicts = (await pool.query(`SELECT l.date FROM event_assignments ea JOIN leads l ON l.id = ea.lead_id WHERE ea.team_id = $1 AND ea.status <> 'declined' AND l.stage IN ('Confirmed','Tentative') AND l.date = ANY($2) ORDER BY l.date`, [req.user.team_id, days])).rows.map((r) => r.date);
+  if (conflicts.length) {
+    const who = (await pool.query("SELECT name FROM team WHERE id = $1", [req.user.team_id])).rows[0];
+    await pool.query("INSERT INTO admin_notifications (id, message, assignment_id, audience, created_at) VALUES ($1,$2,NULL,'coordination',$3)", [uuid(), `${who ? who.name : "An artist"} marked ${conflicts.join(", ")} as unavailable but is already assigned on that date.`, new Date().toISOString()]).catch(() => {});
+  }
+  res.status(201).json({ added: days.length, conflicts });
+});
+app.delete("/api/my/unavailable/:id", requireAuth, async (req, res) => {
+  await pool.query("DELETE FROM artist_unavailable WHERE id = $1 AND team_id = $2", [req.params.id, req.user.team_id || ""]);
+  res.status(204).end();
 });
 
 app.delete("/api/my/notifications", requireAuth, async (req, res) => {

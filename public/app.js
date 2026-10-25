@@ -12602,7 +12602,55 @@ function renderPerformerTabContent() {
       </div>
       <div class="section-label">Calendar</div>
       <div class="card" id="perfCalCard" style="margin-bottom:20px;">${performerCalendarMarkup(activeEvents)}</div>
+      <div class="section-label">📅 Days I'm not available</div>
+      <div class="card" id="perfUnavailCard" style="margin-bottom:20px;">
+        <p class="muted small" style="margin-top:0;">Mark days you can't play. The team sees this when planning, so you won't be booked on them.</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <div style="flex:1; min-width:130px;"><label class="muted small">From</label><input type="date" id="unFrom" /></div>
+          <div style="flex:1; min-width:130px;"><label class="muted small">To (optional)</label><input type="date" id="unTo" /></div>
+        </div>
+        <input type="text" id="unNote" placeholder="Reason (optional) — e.g. family function" maxlength="140" style="margin-top:8px;" />
+        <div style="display:flex; align-items:center; gap:8px; margin-top:8px;"><button class="btn-primary" id="unAddBtn">Mark unavailable</button><span class="muted small" id="unMsg"></span></div>
+        <div id="unList" style="margin-top:10px;"></div>
+      </div>
     `;
+    (async () => {
+      const list = body.querySelector("#unList"), msg = body.querySelector("#unMsg");
+      const draw = async () => {
+        let rows = [];
+        try { rows = await api("/api/my/unavailable"); } catch { rows = []; }
+        // Collapse consecutive days (same reason) into one line so a week away is not seven rows.
+        const groups = [];
+        rows.forEach((r) => {
+          const last = groups[groups.length - 1];
+          const next = last && new Date(new Date(last.to + "T00:00:00Z").getTime() + 86400000).toISOString().slice(0, 10);
+          if (last && next === r.date && (last.note || "") === (r.note || "")) { last.to = r.date; last.ids.push(r.id); }
+          else groups.push({ from: r.date, to: r.date, note: r.note, ids: [r.id] });
+        });
+        list.innerHTML = groups.length === 0 ? `<p class="muted small" style="margin:0;">No days marked.</p>` : groups.map((g) => `
+          <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+            <div><b>${g.from === g.to ? fmtDate(g.from) : `${fmtDate(g.from)} → ${fmtDate(g.to)}`}</b>${g.note ? `<div class="muted small">${String(g.note).replace(/&/g, "&amp;").replace(/</g, "&lt;")}</div>` : ""}</div>
+            <button class="icon-btn" data-un-remove="${g.ids.join(",")}" title="Remove">${ICON_X}</button>
+          </div>`).join("");
+        list.querySelectorAll("[data-un-remove]").forEach((b) => b.addEventListener("click", async () => {
+          for (const id of b.dataset.unRemove.split(",")) await api(`/api/my/unavailable/${id}`, { method: "DELETE" });
+          draw();
+        }));
+      };
+      body.querySelector("#unAddBtn").addEventListener("click", async () => {
+        const from = body.querySelector("#unFrom").value, to = body.querySelector("#unTo").value, note = body.querySelector("#unNote").value;
+        if (!from) { msg.textContent = "Pick the first day."; return; }
+        msg.textContent = "Saving…";
+        try {
+          const r = await api("/api/my/unavailable", { method: "POST", body: JSON.stringify({ from, to: to || from, note }) });
+          msg.textContent = "Saved ✓";
+          body.querySelector("#unFrom").value = ""; body.querySelector("#unTo").value = ""; body.querySelector("#unNote").value = "";
+          if (r.conflicts && r.conflicts.length) alert(`You're already assigned on ${r.conflicts.map(fmtDate).join(", ")}. The team has been told — please also message them.`);
+          draw();
+        } catch (e) { msg.textContent = e.message || "Couldn't save"; }
+      });
+      draw();
+    })();
     wireCalendarGridPerformer(document.getElementById("perfCalCard"), activeEvents);
     wirePushNotifBanner(body.querySelector("#pushNotifBanner"));
     body.querySelectorAll("[data-goto-tab]").forEach((btn) => {
