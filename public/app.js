@@ -12577,6 +12577,7 @@ function renderPerformerTabContent() {
 
   if (performerTab === "home") {
     body.innerHTML = `
+      <div class="card" id="pushNotifBanner" style="margin-bottom:16px; display:none;"></div>
       ${pendingEvents.length > 0 ? `
         <div class="card" style="margin-bottom:20px; border-color:#C1602B; background:#FBF3D9;">
           <strong>${pendingEvents.length} event${pendingEvents.length > 1 ? "s" : ""} waiting on your response.</strong>
@@ -12603,6 +12604,7 @@ function renderPerformerTabContent() {
       <div class="card" id="perfCalCard" style="margin-bottom:20px;">${performerCalendarMarkup(activeEvents)}</div>
     `;
     wireCalendarGridPerformer(document.getElementById("perfCalCard"), activeEvents);
+    wirePushNotifBanner(body.querySelector("#pushNotifBanner"));
     body.querySelectorAll("[data-goto-tab]").forEach((btn) => {
       btn.addEventListener("click", () => {
         performerTab = btn.dataset.gotoTab;
@@ -12892,7 +12894,7 @@ function wirePushNotifBanner(card) {
   }
   if (Notification.permission === "denied") {
     card.style.display = "block";
-    card.innerHTML = `<div class="section-label">🔕 Notifications are turned off</div><p class="muted small" style="margin-top:-4px;">To get alerted on new queries, enable notifications for this app in your phone's Settings.</p>`;
+    card.innerHTML = `<div class="section-label">🔕 Notifications are turned off</div><p class="muted small" style="margin-top:-4px;">To get alerts, enable notifications for this app in your phone's Settings.</p>`;
     return;
   }
   if (!isStandalonePWA()) {
@@ -12902,8 +12904,8 @@ function wirePushNotifBanner(card) {
   }
   card.style.display = "block";
   card.innerHTML = `
-    <div class="section-label">🔔 Get notified on new queries</div>
-    <p class="muted small" style="margin-top:-4px; margin-bottom:10px;">Turn on notifications so a new query pings your phone the moment it comes in.</p>
+    <div class="section-label">🔔 Get notified</div>
+    <p class="muted small" style="margin-top:-4px; margin-bottom:10px;">${CURRENT_USER && CURRENT_USER.accessLevel === "performer" ? "Turn on notifications to hear about new events, travel updates and payments on your phone." : "Turn on notifications so a new query pings your phone the moment it comes in."}</p>
     <button class="btn-primary" id="enablePushBtn">Enable notifications</button>
     <span class="muted small" id="pushEnableStatus" style="margin-left:8px;"></span>
   `;
@@ -12919,7 +12921,7 @@ function wirePushNotifBanner(card) {
         return;
       }
       await subscribeToPush();
-      card.innerHTML = `<div class="section-label">🔔 Notifications enabled ✓</div><p class="muted small" style="margin-top:-4px;">You'll get a ping whenever a new query comes in.</p>`;
+      card.innerHTML = `<div class="section-label">🔔 Notifications enabled ✓</div><p class="muted small" style="margin-top:-4px;">${CURRENT_USER && CURRENT_USER.accessLevel === "performer" ? "You'll get a ping for new events, travel updates and payments." : "You'll get a ping whenever a new query comes in."}</p>`;
     } catch (err) {
       status.textContent = "Couldn't enable — try again.";
       btn.disabled = false;

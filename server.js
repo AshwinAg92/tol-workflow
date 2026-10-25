@@ -1895,7 +1895,8 @@ async function sendPushToAll(title, body, url = "/login", { adminOnly = false } 
   if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return;
   const { rows } = adminOnly
     ? (await pool.query(`SELECT push_subscriptions.* FROM push_subscriptions JOIN users ON users.id = push_subscriptions.user_id WHERE users.access_level = 'admin'`))
-    : (await pool.query(`SELECT * FROM push_subscriptions`));
+    // Everyone except artist-only logins: a new-query alert names a client, which artists never see.
+    : (await pool.query(`SELECT push_subscriptions.* FROM push_subscriptions JOIN users ON users.id = push_subscriptions.user_id WHERE users.access_level <> 'performer'`));
   if (rows.length === 0) return;
   const payload = JSON.stringify({ title, body, url });
   await Promise.all(rows.map(async (sub) => {
@@ -1908,6 +1909,25 @@ async function sendPushToAll(title, body, url = "/login", { adminOnly = false } 
       } else {
         console.error("Push send failed:", err.message);
       }
+    }
+  }));
+}
+
+// An artist's in-app update, plus a phone push to that artist's own devices (if they've turned notifications on).
+async function addTeamNotification(teamId, message, createdAt) {
+  await pool.query("INSERT INTO notifications (id, team_id, message, created_at) VALUES ($1, $2, $3, $4)", [uuid(), teamId, message, createdAt || new Date().toISOString()]);
+  sendPushToTeam(teamId, "Together, Out Loud", message).catch((e) => console.error("Artist push failed (not fatal):", e.message));
+}
+// Push to one artist's own phones only (their subscriptions are tied to their login).
+async function sendPushToTeam(teamId, title, body, url = "/login") {
+  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY || !teamId) return;
+  const { rows } = await pool.query(`SELECT push_subscriptions.* FROM push_subscriptions JOIN users ON users.id = push_subscriptions.user_id WHERE users.team_id = $1`, [teamId]);
+  const payload = JSON.stringify({ title, body, url });
+  await Promise.all(rows.map(async (sub) => {
+    try { await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload); }
+    catch (err) {
+      if (err.statusCode === 404 || err.statusCode === 410) await pool.query(`DELETE FROM push_subscriptions WHERE endpoint = $1`, [sub.endpoint]);
+      else console.error("Push send failed:", err.message);
     }
   }));
 }
@@ -2466,10 +2486,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     const reasonSuffix = req.body.cancellation_reason ? ` Reason: ${req.body.cancellation_reason}` : "";
     const cancelPhrase = await artistEventPhrase(req.params.id);
     for (const a of assigned) {
-      await pool.query(`
-        INSERT INTO notifications (id, team_id, message, created_at)
-        VALUES ($1, $2, $3, $4)
-      `, [uuid(), a.team_id, `Event cancelled: ${cancelPhrase} on ${lead.date} — no longer happening.${reasonSuffix}`, now]);
+      await addTeamNotification(a.team_id, `Event cancelled: ${cancelPhrase} on ${lead.date} — no longer happening.${reasonSuffix}`, now);
     }
   }
 
@@ -2659,10 +2676,7 @@ app.post("/api/leads/:id/assignments", requireAuth, requireCapability("assign_te
       INSERT INTO event_assignments (id, lead_id, team_id, status, paid, created_at, confirm_token)
       VALUES ($1, $2, $3, 'pending', 0, $4, $5)
     `, [uuid(), req.params.id, teamId, now, uuid()]);
-    await pool.query(`
-      INSERT INTO notifications (id, team_id, message, created_at)
-      VALUES ($1, $2, $3, $4)
-    `, [uuid(), teamId, `You've been added to a new event: ${await artistEventPhrase(req.params.id)} on ${lead.date}.`, now]);
+    await addTeamNotification(teamId, `You've been added to a new event: ${await artistEventPhrase(req.params.id)} on ${lead.date}.`, now);
   }
   const { rows } = await pool.query(`
     SELECT event_assignments.*, team.name AS team_name
@@ -3161,10 +3175,7 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
   if (members.length > 0) {
     logActivity(req, `Travel added for ${members.map((m) => m.name).join(", ")}: ${lead.name} (${lead.date})`, lead.id);
     for (const teamId of teamIds) {
-      await pool.query(`
-        INSERT INTO notifications (id, team_id, message, created_at)
-        VALUES ($1, $2, $3, $4)
-      `, [uuid(), teamId, `Your travel details for ${await artistEventPhrase(lead.id)} on ${lead.date} have been added — check My Events.`, now]).catch(() => {});
+      await addTeamNotification(teamId, `Your travel details for ${await artistEventPhrase(lead.id)} on ${lead.date} have been added — check My Events.`, now).catch(() => {});
     }
   }
 });
@@ -3231,17 +3242,11 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
   if (req.body.status !== undefined && req.body.status !== leg.status) {
     const allMembers = (await pool.query("SELECT team_id FROM travel_leg_members WHERE leg_id = $1", [req.params.id])).rows;
     for (const m of allMembers) {
-      await pool.query(`
-        INSERT INTO notifications (id, team_id, message, created_at)
-        VALUES ($1, $2, $3, $4)
-      `, [uuid(), m.team_id, `Travel update for ${await artistEventPhrase(leg.lead_id)} on ${lead.date}: now "${TRAVEL_STATUS_LABELS[req.body.status] || req.body.status}".`, now]).catch(() => {});
+      await addTeamNotification(m.team_id, `Travel update for ${await artistEventPhrase(leg.lead_id)} on ${lead.date}: now "${TRAVEL_STATUS_LABELS[req.body.status] || req.body.status}".`, now).catch(() => {});
     }
   }
   for (const teamId of newlyAdded) {
-    await pool.query(`
-      INSERT INTO notifications (id, team_id, message, created_at)
-      VALUES ($1, $2, $3, $4)
-    `, [uuid(), teamId, `Your travel details for ${await artistEventPhrase(leg.lead_id)} on ${lead.date} have been added — check My Events.`, now]).catch(() => {});
+    await addTeamNotification(teamId, `Your travel details for ${await artistEventPhrase(leg.lead_id)} on ${lead.date} have been added — check My Events.`, now).catch(() => {});
   }
 });
 
@@ -3505,10 +3510,7 @@ app.post("/api/assignments/:id/resolve-cancel", requireAuth, requireCapability("
 
   const lead = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [a.lead_id])).rows[0];
   if (lead) {
-    await pool.query(`
-      INSERT INTO notifications (id, team_id, message, created_at)
-      VALUES ($1, $2, $3, $4)
-    `, [uuid(), a.team_id, `Your cancellation request for ${await artistEventPhrase(a.lead_id)} (${lead.date}) was ${approve ? "approved" : "declined — you're still on this event"}.`, new Date().toISOString()]);
+    await addTeamNotification(a.team_id, `Your cancellation request for ${await artistEventPhrase(a.lead_id)} (${lead.date}) was ${approve ? "approved" : "declined — you're still on this event"}.`, new Date().toISOString());
   }
   res.json((await pool.query("SELECT * FROM event_assignments WHERE id = $1", [a.id])).rows[0]);
   await checkTeamComplete(a.lead_id);
@@ -4126,6 +4128,13 @@ app.patch("/api/expenses/:id", requireAuth, requireSection("accounts"), requireA
     paymentMode !== undefined ? paymentMode : exp.payment_mode,
     exp.id,
   ]);
+  // Tell the artist when their own fee is marked paid.
+  if (!exp.paid && nowPaid && exp.team_id && exp.lead_id && /^Artist fee/i.test(exp.head || "")) {
+    try {
+      const l = (await pool.query("SELECT date FROM leads WHERE id = $1", [exp.lead_id])).rows[0];
+      if (l) await addTeamNotification(exp.team_id, `Your fee for ${await artistEventPhrase(exp.lead_id)} on ${l.date} has been paid.`);
+    } catch (e) { console.error("Fee-paid notification failed (not fatal):", e.message); }
+  }
   res.json((await pool.query("SELECT * FROM expenses WHERE id = $1", [exp.id])).rows[0]);
 });
 
