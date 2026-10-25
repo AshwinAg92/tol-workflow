@@ -3619,6 +3619,12 @@ app.get("/api/my/notifications", requireAuth, async (req, res) => {
   res.json(rows.map((n) => ({ ...n, message: scrub(n.message) })));
 });
 
+app.delete("/api/my/notifications", requireAuth, async (req, res) => {
+  if (!req.user.team_id) return res.status(204).end();
+  await pool.query("DELETE FROM notifications WHERE team_id = $1", [req.user.team_id]);
+  res.status(204).end();
+});
+
 app.delete("/api/my/notifications/:id", requireAuth, async (req, res) => {
   const n = (await pool.query("SELECT * FROM notifications WHERE id = $1", [req.params.id])).rows[0];
   if (!n) return res.status(204).end();

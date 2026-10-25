@@ -12665,7 +12665,7 @@ function renderPerformerTabContent() {
   else if (performerTab === "messages") {
     body.innerHTML = `
       ${notifications.length > 0 ? `
-        <div class="section-label">🔔 Updates for you</div>
+        <div style="display:flex; justify-content:space-between; align-items:center;"><div class="section-label">🔔 Updates for you</div><button class="btn-ghost" id="perfClearAllNotifs" style="font-size:12px; padding:4px 10px;">Clear all</button></div>
         <div class="card" id="perfNotifCard" style="margin-bottom:20px; border-color:#C1602B;">
           ${notifications.map((n) => `
             <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:flex-start;">
@@ -12705,6 +12705,15 @@ function renderPerformerTabContent() {
         renderPerformerTabBar();
         renderPerformerTabContent();
       });
+    });
+
+    const perfClearAll = body.querySelector("#perfClearAllNotifs");
+    if (perfClearAll) perfClearAll.addEventListener("click", async () => {
+      perfClearAll.disabled = true;
+      try { await api("/api/my/notifications", { method: "DELETE" }); } catch (e) { alert(e.message || "Couldn't clear"); perfClearAll.disabled = false; return; }
+      performerData.notifications = [];
+      renderPerformerTabBar();
+      renderPerformerTabContent();
     });
 
     const perfGeneralMsgBtn = body.querySelector("#sendGeneralMsgBtn");
