@@ -12731,6 +12731,9 @@ function renderPerformerTabContent() {
 }
 
 function wirePerformerEventActions(body) {
+  body.querySelectorAll("[data-view-travel]").forEach((btn) => {
+    btn.addEventListener("click", () => openTravelPlanViewModal(btn.dataset.viewTravel, btn.dataset.viewTravelName));
+  });
   body.querySelectorAll("[data-respond-select]").forEach((sel) => {
     sel.addEventListener("change", async () => {
       const value = sel.value;
