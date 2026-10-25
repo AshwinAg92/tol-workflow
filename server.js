@@ -5438,6 +5438,26 @@ async function autoCompletePastEvents() {
 // linger in the active pipeline. Deliberately excludes Tentative — that
 // stage means a date is already provisionally held for them, so it needs a
 // human call rather than a silent auto-close. Runs at boot and hourly.
+// Evening-before reminder: from 5 pm India time the day before, each artist who accepted gets one note with where to be and when.
+// A flag per assignment (app_flags) guarantees it is sent once, even across restarts.
+async function sendDayBeforeReminders() {
+  try {
+    const ist = new Date(Date.now() + 5.5 * 3600 * 1000);
+    if (ist.getUTCHours() < Number(process.env.REMINDER_FROM_HOUR || 17)) return;
+    const tomorrow = new Date(ist.getTime() + 86400000).toISOString().slice(0, 10);
+    const { rows } = await pool.query(`
+      SELECT ea.id AS aid, ea.team_id, l.id AS lead_id, l.date, l.venue, l.city, l.event_time, l.soundcheck_time
+      FROM event_assignments ea JOIN leads l ON l.id = ea.lead_id
+      WHERE l.date = $1 AND l.stage = 'Confirmed' AND ea.status = 'accepted'`, [tomorrow]);
+    for (const r of rows) {
+      const won = await pool.query("INSERT INTO app_flags (key, done_at) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING key", [`remind:${r.aid}`, new Date().toISOString()]);
+      if (!won.rows.length) continue;
+      const bits = [r.soundcheck_time ? `Sound check ${fmt12(r.soundcheck_time)}` : "", r.event_time ? `Event ${fmt12(r.event_time)}` : ""].filter(Boolean).join(" · ");
+      await addTeamNotification(r.team_id, `Tomorrow: ${await artistEventPhrase(r.lead_id)}.${bits ? " " + bits + "." : ""} Open the app for travel and details.`);
+    }
+  } catch (err) { console.error("sendDayBeforeReminders failed (not fatal):", err.message); }
+}
+
 async function autoCloseNearDateLeads() {
   try {
     const cutoff = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
@@ -5681,6 +5701,8 @@ ready.then(() => {
   setInterval(autoCompletePastEvents, 60 * 60 * 1000);
   autoCloseNearDateLeads();
   setInterval(autoCloseNearDateLeads, 60 * 60 * 1000);
+  sendDayBeforeReminders();
+  setInterval(sendDayBeforeReminders, 30 * 60 * 1000);
   // One-time catch-up: revisions saved before "apply to already-assigned events" existed only changed the suggested
   // rate. Apply them once to unpaid fees of events on/after each artist's earliest revision date.
   (async () => {
