@@ -891,6 +891,21 @@ function pdfWarmClosing(doc, pageWidth, text, y) {
   doc.text("instagram.com/togetheroutloudclub  ·  togetheroutloud.in", pageWidth / 2, y, { align: "center" });
 }
 
+// Open a WhatsApp chat with pre-filled text. On phones, go straight to the WhatsApp app (the wa.me web page
+// can show emoji as ◆?); if the app doesn't take over within a few seconds, fall back to the normal wa.me link.
+function goWhatsApp(url) {
+  const isPhone = /iPhone|iPad|Android/i.test(navigator.userAgent || "");
+  const m = /^https:\/\/wa\.me\/(\d*)\?text=(.*)$/s.exec(String(url));
+  if (!isPhone || !m) { window.location.href = url; return; }
+  const app = `whatsapp://send?${m[1] ? `phone=${m[1]}&` : ""}text=${m[2]}`;
+  let left = false;
+  const onLeave = () => { left = true; };
+  document.addEventListener("visibilitychange", onLeave, { once: true });
+  window.addEventListener("pagehide", onLeave, { once: true });
+  setTimeout(() => { document.removeEventListener("visibilitychange", onLeave); if (!left && !document.hidden) window.location.href = url; }, 3500);
+  window.location.href = app;
+}
+
 // wa.me links can only pre-fill text — there's no way to attach a file to
 // one, which is why every "send on WhatsApp" flow used to download the PDF
 // and open a chat with just the message, leaving the file to be attached by
@@ -914,7 +929,7 @@ async function sharePdfOrDownload(doc, filename, { text, digitsOnly } = {}) {
   }
   doc.save(filename);
   if (digitsOnly && text) {
-    window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(text)}`;
+    goWhatsApp(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(text)}`);
   }
   return { method: "download" };
 }
@@ -1968,7 +1983,7 @@ function openBulkWhatsappFollowupModal(leadIds, main) {
     });
     root.querySelector("#bulkWaOpenBtn").addEventListener("click", async () => {
       const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
-      if (digitsOnly) window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
+      if (digitsOnly) goWhatsApp(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`);
       try {
         await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ logFollowup: true }) });
       } catch (err) { /* WhatsApp already opened; move on regardless */ }
@@ -2622,7 +2637,7 @@ async function renderLeadsLog(main, skipRefresh) {
       });
       const digitsOnly = (other.whatsapp_number || other.phone || "").replace(/\D/g, "");
       if (!digitsOnly) return;
-      window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
+      goWhatsApp(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`);
     });
   });
 
@@ -2650,7 +2665,7 @@ async function renderLeadsLog(main, skipRefresh) {
         dateClause: lead.date ? ` on ${fmtDate(lead.date)}` : "",
       });
       const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
-      if (digitsOnly) window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`;
+      if (digitsOnly) goWhatsApp(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(msg)}`);
       try {
         const updated = await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ logFollowup: true }) });
         const wasNotInterested = lead.stage !== "Not Interested" && updated.stage === "Not Interested";
@@ -3067,7 +3082,7 @@ function openQuoteViewModal(q) {
         const link = await publishQuoteCard({ name: q.lead_name, event_type: q.event_type }, parseQuoteBody(q.body, q));
         text = withCardLinkAtEnd(q.body, link);
       } catch (e) { /* send as plain text */ }
-      window.location.href = `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+      goWhatsApp(`https://wa.me/${digits}?text=${encodeURIComponent(text)}`);
     });
     root.querySelector("#editQuoteBtn").addEventListener("click", () => { editing = true; draw(); });
     root.querySelector("#deleteQuoteBtn").addEventListener("click", async () => {
@@ -3398,7 +3413,7 @@ async function renderQuotation(main) {
       // Same-tab navigation, not window.open(..., "_blank") — on iOS Safari,
       // opening a wa.me link in a new tab leaves a blank tab behind once the
       // WhatsApp app takes over the handoff.
-      if (result.whatsapp.link) window.location.href = result.whatsapp.link;
+      if (result.whatsapp.link) goWhatsApp(result.whatsapp.link);
     } catch (err) {
       alert(err.message);
     } finally {
@@ -4897,7 +4912,7 @@ async function openTeamMemberEventsModal(member) {
   if (showWhatsApp) {
     root.querySelector("#whatsappEventsBtn").addEventListener("click", () => {
       const digits = (member.phone || "").replace(/\D/g, "");
-      window.location.href = `https://wa.me/${digits}?text=${encodeURIComponent(buildWhatsAppMessage())}`;
+      goWhatsApp(`https://wa.me/${digits}?text=${encodeURIComponent(buildWhatsAppMessage())}`);
     });
   }
 
@@ -6221,7 +6236,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     row.querySelector(".contact-wa-btn").addEventListener("click", (e) => {
       const { name, phone } = rowInfo(e.currentTarget);
       if (!phone) return alert("Add a phone number first.");
-      window.location.href = `https://wa.me/${phone}?text=${encodeURIComponent(`Hi${name ? ` ${name.split(" ")[0]}` : ""}, regarding ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${eventWhere() ? ` at ${eventWhere()}` : ""} — Together, Out Loud.`)}`;
+      goWhatsApp(`https://wa.me/${phone}?text=${encodeURIComponent(`Hi${name ? ` ${name.split(" ")[0]}` : ""}, regarding ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${eventWhere() ? ` at ${eventWhere()}` : ""} — Together, Out Loud.`)}`);
     });
     row.querySelectorAll(".contact-rider-btn").forEach((btn) => btn.addEventListener("click", () => {
       const { name, phone } = rowInfo(btn);
@@ -6230,7 +6245,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       if (!doc) return;
       const label = doc.notes || doc.original_name;
       const msg = `Hi${name ? ` ${name.split(" ")[0]}` : ""}, sharing the ${label} for ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${eventWhere() ? ` at ${eventWhere()}` : ""}${lead.soundcheck_time ? `. Sound check: ${fmtTimeHM(lead.soundcheck_time)}` : ""}${lead.event_time ? `. Event time: ${fmtTimeHM(lead.event_time)}` : ""}.\n\n📎 ${label}: ${window.location.origin + doc.url}\n\nPlease go through it and let us know if anything needs a change.\n\nTogether, Out Loud`;
-      window.location.href = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+      goWhatsApp(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`);
     }));
   }
   root.querySelectorAll("#contactRows .contact-row").forEach(wireContactRow);
@@ -6269,7 +6284,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
         return `📞 ${role}: ${row.querySelector(".ct-name").value.trim()} ${ph}`.replace(/\s+/g, " ").trim();
       }),
     ].filter(Boolean).join("\n");
-    window.location.href = `https://wa.me/?text=${encodeURIComponent(lines)}`;
+    goWhatsApp(`https://wa.me/?text=${encodeURIComponent(lines)}`);
   });
   root.querySelector("#openTravelPlanFromTeamBtn").addEventListener("click", () => openTravelPlanModal(leadId));
   const shareBtn = root.querySelector("#openTravelShareBtn");
@@ -6429,7 +6444,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       }
       const a = byTeamId[m.id];
       if (a) waMsg += `\n\nAccept or decline here: ${window.location.origin}/confirm.html?token=${a.confirm_token}`;
-      window.location.href = `https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}`;
+      goWhatsApp(`https://wa.me/${waDigits}?text=${encodeURIComponent(waMsg)}`);
     });
   });
   root.querySelectorAll(".copy-confirm-link-btn").forEach((btn) => {
@@ -6705,7 +6720,7 @@ async function openRegistrationLinkModal() {
     });
     root.querySelector("#regWaBtn")?.addEventListener("click", () => {
       const msg = `Hi! Please fill in this short form with your details and upload your ID so we can add you to the Together, Out Loud team:\n\n${linkOf(info.token)}\n\nThank you!`;
-      window.location.href = `https://wa.me/?text=${encodeURIComponent(msg)}`;
+      goWhatsApp(`https://wa.me/?text=${encodeURIComponent(msg)}`);
     });
   }
   draw();
@@ -7085,7 +7100,7 @@ async function openTravelShareModal(leadId) {
         if (!out) return;
         const phone = normPhone(clientPhone);
         if (!phone) { alert("Add the client's WhatsApp number first."); return; }
-        window.location.href = `https://wa.me/${phone}?text=${encodeURIComponent(out.text)}`;
+        goWhatsApp(`https://wa.me/${phone}?text=${encodeURIComponent(out.text)}`);
         await reload();
       } catch (err) { alert(err.message); }
       finally { busy = false; const b = root.querySelector("#tsSendBtn"); if (b) b.disabled = false; }
@@ -9179,7 +9194,7 @@ async function renderDocuments(main) {
       const fullUrl = window.location.origin + doc.url;
       const waPhone = (lead.whatsapp_number || lead.phone).replace(/\D/g, "");
       const waText = encodeURIComponent(fillTemplate(MESSAGE_TEMPLATES.document_share || TEMPLATE_META.document_share.default, { label: doc.notes || "document", link: fullUrl }));
-      window.location.href = `https://wa.me/${waPhone}?text=${waText}`;
+      goWhatsApp(`https://wa.me/${waPhone}?text=${waText}`);
       sel.value = "";
     });
   });
@@ -9465,7 +9480,7 @@ async function openTentativeConfirmInfoModal(lead) {
     btn.disabled = false;
     // The card link goes first so WhatsApp builds its preview from the card, not the later links.
     const full = cardLink ? withCardLinkAtEnd(text, cardLink) : text;
-    window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(full)}`;
+    goWhatsApp(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(full)}`);
   });
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
     window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Next steps to confirm your event — Together, Out Loud")}&body=${encodeURIComponent(root.querySelector("#tiMessage").value)}`;
@@ -9785,7 +9800,7 @@ async function openConfirmationMessageModal(lead) {
     } catch (err) { cardLink = null; }
     btn.disabled = false;
     const full = cardLink ? withCardLinkAtEnd(text, cardLink) : text;
-    window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(full)}`;
+    goWhatsApp(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(full)}`);
   });
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
     window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Your event is confirmed — Together, Out Loud")}&body=${encodeURIComponent(finalMessage())}`;
@@ -10046,7 +10061,7 @@ async function openTechRiderModal(lead) {
     const digits = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
     const tpl = MESSAGE_TEMPLATES.tech_rider_message || TEMPLATE_META.tech_rider_message.default;
     const msg = fillTemplate(tpl, { firstName: (lead.name || "").split(" ")[0] || "there", experience: packageName(lead.event_type), date: fmtDate(lead.date), link: link() });
-    window.location.href = digits ? `https://wa.me/${digits}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+    goWhatsApp(digits ? `https://wa.me/${digits}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`);
   });
   q("#trRemove")?.addEventListener("click", async () => {
     if (!confirm("Remove this rider? The link you sent will stop working.")) return;
@@ -10104,7 +10119,7 @@ async function openCancellationMessageModal(lead, onDone) {
   const stamp = async () => {
     try { const r = await api(`/api/leads/${lead.id}/cancellation-message-sent`, { method: "POST" }); lead.cancel_msg_sent_at = r.at; const l2 = LEADS.find((x) => x.id === lead.id); if (l2) l2.cancel_msg_sent_at = r.at; } catch {}
   };
-  root.querySelector("#cxWa")?.addEventListener("click", async () => { const t = root.querySelector("#cxMsg").value; await stamp(); window.location.href = `https://wa.me/${digits}?text=${encodeURIComponent(t)}`; });
+  root.querySelector("#cxWa")?.addEventListener("click", async () => { const t = root.querySelector("#cxMsg").value; await stamp(); goWhatsApp(`https://wa.me/${digits}?text=${encodeURIComponent(t)}`); });
   root.querySelector("#cxMail")?.addEventListener("click", async () => { const t = root.querySelector("#cxMsg").value; await stamp(); window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Your booking with Together, Out Loud — cancellation confirmation")}&body=${encodeURIComponent(t)}`; });
 }
 
@@ -10140,7 +10155,7 @@ async function openThankYouMessageModal(lead) {
 
   if (waLink) root.querySelector("#waBtn").addEventListener("click", () => {
     const text = root.querySelector("#tyMessage").value;
-    window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(text)}`;
+    goWhatsApp(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(text)}`);
     markLeadThanked(lead);
   });
   if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
@@ -10237,7 +10252,7 @@ function openBulkThankYouModal(leadIds, main) {
     });
     root.querySelector("#bulkThanksOpenBtn").addEventListener("click", async () => {
       const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
-      window.location.href = `https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}`;
+      goWhatsApp(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}`);
       await markLeadThanked(lead);
       sentCount++;
       index++;
