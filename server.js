@@ -4956,6 +4956,159 @@ app.get("/api/leads/:id/travel-acks", requireAuth, requireCapability("assign_tea
   for (const c of crew) out.push({ teamId: c.id, name: c.name, ...(await travelAckState(req.params.id, c.id)) });
   res.json(await hideAdminTravel(req.user, out.map((o) => ({ ...o, members: [{ teamId: o.teamId }] }))).then((r) => r.map(({ members, ...x }) => x)));
 });
+
+// ---------- Send each artist their own travel plan ----------
+const MODE_EMOJI = { flight: "✈️", train: "🚆", bus: "🚌", car: "🚗", self: "🧳", stay: "🌙" };
+// The message for one artist and one event, in trip order. {LINK} is filled in by the screen with their personal page.
+async function artistPlanText(leadId, teamId) {
+  const lead = (await pool.query("SELECT venue, city, date FROM leads WHERE id = $1", [leadId])).rows[0];
+  const member = (await pool.query("SELECT name FROM team WHERE id = $1", [teamId])).rows[0];
+  if (!lead || !member) return null;
+  const legsRaw = (await pool.query(`SELECT tl.* FROM travel_legs tl JOIN travel_leg_members tm ON tm.leg_id = tl.id AND tm.team_id = $2
+    WHERE tl.lead_id = $1 OR tl.to_lead_id = $1 OR tl.from_lead_id = $1`, [leadId, teamId])).rows;
+  if (!legsRaw.length) return null;
+  const legs = orderLegs(legsRaw);
+  const ids = legs.map((l) => l.id);
+  const others = (await pool.query("SELECT m.leg_id, team.name FROM travel_leg_members m JOIN team ON team.id = m.team_id WHERE m.leg_id = ANY($1) AND m.team_id <> $2", [ids, teamId])).rows;
+  const docs = (await pool.query("SELECT DISTINCT travel_leg_id FROM documents WHERE travel_leg_id = ANY($1)", [ids])).rows.map((d) => d.travel_leg_id);
+  const day = (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v || ""); if (!m) return ""; return new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00Z`).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }); };
+  const lines = [`Hi ${String(member.name).split(" ")[0]},`, "", `Your travel plan for ${placeOf(lead)} on ${day(lead.date)} ${String(lead.date).slice(0, 4)}:`, ""];
+  let n = 0, inTrip = false;
+  legs.forEach((l) => {
+    n += 1;
+    const em = MODE_EMOJI[l.mode] || "🧳";
+    if (l.mode === "stay") {
+      lines.push(`${n}. ${em} Night stay — ${l.to_city || l.from_city || ""}${l.preferred_service ? " · " + l.preferred_service : ""}`);
+      const when = [l.departure_at ? `Check-in ${day(l.departure_at)}` : "", l.arrival_at ? `Check-out ${day(l.arrival_at)}` : ""].filter(Boolean).join(" · ");
+      if (when) lines.push(`   ${when}`);
+    } else {
+      lines.push(`${n}. ${em} ${({ flight: "Flight", train: "Train", bus: "Bus", car: "Car", self: "Self-arranged" })[l.mode] || "Travel"} — ${[l.from_city, l.to_city].filter(Boolean).join(" → ")}`);
+      const when = [l.departure_at ? day(l.departure_at) : "", l.departure_time ? fmt12(l.departure_time) : "", l.arrival_time ? `arrives ${fmt12(l.arrival_time)}` : ""].filter(Boolean).join(" · ");
+      if (when) lines.push(`   ${when}`);
+    }
+    if (l.status === "not_booked") lines.push("   Not booked yet — we will confirm.");
+    if (l.booking_ref) lines.push(`   Ref: ${l.booking_ref}`);
+    if (docs.includes(l.id)) lines.push("   Ticket: in your link below");
+    const withNames = others.filter((o) => o.leg_id === l.id).map((o) => String(o.name).split(" ")[0]);
+    if (withNames.length) lines.push(`   With: ${withNames.join(", ")}`);
+  });
+  lines.push("", "Please open your plan and tap \"Got it\":", "{LINK}", "", "Team Together, Out Loud");
+  return lines.join("\n");
+}
+// Who needs their plan, whether it was sent, and whether they have seen it. Admin-only travellers stay hidden from managers.
+app.get("/api/leads/:id/travel-send", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (!(await leadInManagerScope(req.user, req.params.id))) return scopeDeny(res);
+  const crew = (await pool.query(`SELECT DISTINCT team.id, team.name, team.phone, team.portal_token FROM travel_leg_members m JOIN travel_legs tl ON tl.id = m.leg_id JOIN team ON team.id = m.team_id
+    WHERE tl.lead_id = $1 OR tl.to_lead_id = $1 OR tl.from_lead_id = $1 ORDER BY team.name`, [req.params.id])).rows;
+  const adminTeams = req.user.access_level === "admin" ? new Set() : new Set((await pool.query("SELECT team_id FROM users WHERE access_level = 'admin' AND team_id IS NOT NULL")).rows.map((r) => r.team_id));
+  const out = [];
+  for (const c of crew.filter((x) => !adminTeams.has(x.id))) {
+    let token = c.portal_token;
+    if (!token) { token = crypto.randomBytes(18).toString("base64url"); await pool.query("UPDATE team SET portal_token = $1 WHERE id = $2", [token, c.id]); }
+    const hash = await planHashFor(req.params.id, c.id);
+    const sent = (await pool.query("SELECT sent_at, plan_hash FROM travel_sends WHERE team_id = $1 AND lead_id = $2", [c.id, req.params.id])).rows[0];
+    out.push({ teamId: c.id, name: c.name, phone: c.phone, token, text: await artistPlanText(req.params.id, c.id), sentState: !sent ? "never" : sent.plan_hash === hash ? "sent" : "changed", sentAt: sent ? sent.sent_at : null, seen: (await travelAckState(req.params.id, c.id)).state });
+  }
+  res.json(out);
+});
+app.post("/api/leads/:id/travel-send/:teamId/mark", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (!(await leadInManagerScope(req.user, req.params.id))) return scopeDeny(res);
+  const hash = await planHashFor(req.params.id, req.params.teamId);
+  if (!hash) return res.status(400).json({ error: "No travel for this person" });
+  await pool.query("INSERT INTO travel_sends (team_id, lead_id, sent_at, plan_hash) VALUES ($1,$2,$3,$4) ON CONFLICT (team_id, lead_id) DO UPDATE SET sent_at = EXCLUDED.sent_at, plan_hash = EXCLUDED.plan_hash", [req.params.teamId, req.params.id, new Date().toISOString(), hash]);
+  res.json({ ok: true });
+});
+
+// ---------- Travel Desk: every upcoming event, one status line each, one next action ----------
+async function buildTravelDesk(user) {
+  const isAdmin = user.access_level === "admin";
+  const scope = isScopedManager(user) ? await assignedLeadIdSet(user) : null;
+  const adminTeams = isAdmin ? new Set() : new Set((await pool.query("SELECT team_id FROM users WHERE access_level = 'admin' AND team_id IS NOT NULL")).rows.map((r) => r.team_id));
+  const todayIst = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+  const horizon = new Date(Date.now() + 5.5 * 3600e3 + 120 * 86400e3).toISOString().slice(0, 10);
+  let leads = (await pool.query("SELECT id, name, date, city, venue, event_type FROM leads WHERE stage = 'Confirmed' AND date >= $1 AND date <= $2 ORDER BY date ASC", [todayIst, horizon])).rows;
+  if (scope) leads = leads.filter((l) => scope.has(l.id));
+  if (!leads.length) return { events: [], needsAction: 0 };
+  const ids = leads.map((l) => l.id);
+  const crewRows = (await pool.query(`SELECT ea.lead_id, team.id AS team_id, team.name, team.base_city FROM event_assignments ea JOIN team ON team.id = ea.team_id WHERE ea.lead_id = ANY($1) AND ea.status <> 'declined'`, [ids])).rows.filter((c) => !adminTeams.has(c.team_id));
+  const legs = (await pool.query("SELECT id, lead_id, mode, status, from_city, to_city, departure_at FROM travel_legs WHERE lead_id = ANY($1)", [ids])).rows;
+  const mem = legs.length ? (await pool.query("SELECT leg_id, team_id FROM travel_leg_members WHERE leg_id = ANY($1)", [legs.map((l) => l.id)])).rows : [];
+  const docLegs = new Set(legs.length ? (await pool.query("SELECT DISTINCT travel_leg_id FROM documents WHERE travel_leg_id = ANY($1)", [legs.map((l) => l.id)])).rows.map((d) => d.travel_leg_id) : []);
+  const norm = (c) => String(c || "").trim().toLowerCase();
+  const events = [];
+  for (const l of leads) {
+    const myLegs = legs.filter((x) => x.lead_id === l.id).map((x) => ({ ...x, team: mem.filter((m) => m.leg_id === x.id).map((m) => m.team_id).filter((t) => !adminTeams.has(t)) }))
+      .filter((x) => adminTeams.size === 0 || x.team.length > 0 || !mem.some((m) => m.leg_id === x.id));
+    const crew = crewRows.filter((c) => c.lead_id === l.id);
+    const needsTravel = crew.filter((c) => !(norm(c.base_city) && (norm(l.city).includes(norm(c.base_city)) || norm(c.base_city).includes(norm(l.city)))));
+    const traveller = new Set(myLegs.flatMap((x) => x.team));
+    const missing = needsTravel.filter((c) => !traveller.has(c.team_id)).map((c) => c.name.split(" ")[0]);
+    const unbooked = myLegs.filter((x) => x.status === "not_booked");
+    const noTicket = myLegs.filter((x) => x.mode !== "stay" && x.status === "booked" && !docLegs.has(x.id));
+    const people = [...traveller];
+    let sent = 0, seen = 0;
+    for (const t of people) {
+      const hash = await planHashFor(l.id, t);
+      const sd = (await pool.query("SELECT plan_hash FROM travel_sends WHERE team_id = $1 AND lead_id = $2", [t, l.id])).rows[0];
+      if (sd && sd.plan_hash === hash) sent += 1;
+      if ((await travelAckState(l.id, t)).state === "seen") seen += 1;
+    }
+    const days = Math.round((new Date(l.date + "T00:00:00Z") - new Date(todayIst + "T00:00:00Z")) / 864e5);
+    let next = "All set", kind = "done";
+    if (missing.length) { next = `Add travel for ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ` +${missing.length - 3}` : ""}`; kind = "plan"; }
+    else if (unbooked.length) { next = `Book ${unbooked.length} item${unbooked.length > 1 ? "s" : ""}`; kind = "book"; }
+    else if (noTicket.length) { next = `Attach ${noTicket.length} ticket${noTicket.length > 1 ? "s" : ""}`; kind = "tickets"; }
+    else if (people.length && sent < people.length) { next = `Send plan to ${people.length - sent}`; kind = "send"; }
+    else if (people.length && seen < people.length) { next = `Waiting for ${people.length - seen} to confirm`; kind = "wait"; }
+    else if (!people.length && crew.length === 0) { next = "Assign the team"; kind = "plan"; }
+    else if (!people.length && !needsTravel.length) { next = "Everyone is local — no travel needed"; kind = "done"; }
+    events.push({ leadId: l.id, name: isAdmin || !scope ? l.name : l.name, date: l.date, city: l.city, daysLeft: days, crew: crew.length,
+      planned: missing.length === 0 && crew.length > 0, missing: missing.length, legs: myLegs.length, unbooked: unbooked.length, noTicket: noTicket.length, people: people.length, sent, seen,
+      urgent: days <= 7 && (unbooked.length > 0 || missing.length > 0), next, kind, done: kind === "done" });
+  }
+  return { events, needsAction: events.filter((e) => !e.done).length };
+}
+app.get("/api/travel-desk", requireAuth, requireCapability("assign_team"), async (req, res) => { res.json(await buildTravelDesk(req.user)); });
+
+// ---------- Travel-day reminders to artists, and one alert to the organiser when travel is still unbooked close to the date ----------
+async function sendTravelReminders() {
+  try {
+    const ist = new Date(Date.now() + 5.5 * 3600e3);
+    const hour = ist.getUTCHours();
+    const today = ist.toISOString().slice(0, 10);
+    const tomorrow = new Date(ist.getTime() + 86400e3).toISOString().slice(0, 10);
+    const fromEve = Number(process.env.REMINDER_FROM_HOUR || 17);
+    const dayOf = (kind, when, due) => async () => {
+      const { rows } = await pool.query(`
+        SELECT tl.id, tl.mode, tl.from_city, tl.to_city, tl.departure_time, tl.booking_ref, tl.status, tm.team_id, l.id AS lead_id
+        FROM travel_legs tl JOIN travel_leg_members tm ON tm.leg_id = tl.id JOIN leads l ON l.id = tl.lead_id
+        JOIN event_assignments ea ON ea.lead_id = l.id AND ea.team_id = tm.team_id
+        WHERE LEFT(tl.departure_at, 10) = $1 AND tl.mode <> 'stay' AND tl.status IN ('booked','self_arranged')
+          AND l.stage = 'Confirmed' AND ea.status <> 'declined'`, [when]);
+      for (const r of rows) {
+        const won = await pool.query("INSERT INTO app_flags (key, done_at) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING key", [`${kind}:${r.id}:${r.team_id}`, new Date().toISOString()]);
+        if (!won.rows.length) continue;
+        const what = `${({ flight: "Flight", train: "Train", bus: "Bus", car: "Car", self: "Travel" })[r.mode] || "Travel"} ${[r.from_city, r.to_city].filter(Boolean).join(" → ")}`;
+        await addTeamNotification(r.team_id, `${due}: ${what}${r.departure_time ? " at " + fmt12(r.departure_time) : ""}.${r.booking_ref ? " Ref " + r.booking_ref + "." : ""} Open your travel plan for tickets.`);
+      }
+    };
+    if (hour >= fromEve) await dayOf("travelrem1", tomorrow, "Tomorrow")();
+    if (hour >= 6 && hour < 13) await dayOf("travelrem0", today, "Today")();
+    // Organiser alert: travel still unbooked 7 days or less before the event (once per event).
+    const soon = new Date(ist.getTime() + 7 * 86400e3).toISOString().slice(0, 10);
+    const { rows: open } = await pool.query(`
+      SELECT l.id, l.name, l.date, COUNT(*) AS n FROM travel_legs tl JOIN leads l ON l.id = tl.lead_id
+      WHERE l.stage = 'Confirmed' AND l.date >= $1 AND l.date <= $2 AND tl.status = 'not_booked' GROUP BY l.id, l.name, l.date`, [today, soon]);
+    for (const o of open) {
+      const won = await pool.query("INSERT INTO app_flags (key, done_at) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING key", [`unbooked7:${o.id}`, new Date().toISOString()]);
+      if (!won.rows.length) continue;
+      const msg = `⚠️ Travel still not booked — ${escHtml(o.name)} (${escHtml(o.date)}): ${o.n} item${Number(o.n) > 1 ? "s" : ""} to book.`;
+      await pool.query("INSERT INTO admin_notifications (id, message, assignment_id, audience, created_at) VALUES ($1,$2,NULL,'coordination',$3)", [uuid(), msg, new Date().toISOString()]);
+      sendPushToAll("Travel not booked", `${o.name} (${o.date}): ${o.n} to book`, "/login", { adminOnly: true }).catch(() => {});
+    }
+  } catch (err) { console.error("sendTravelReminders failed (not fatal):", err.message); }
+}
+
 async function loadArtistPortal(token) {
   if (!token || String(token).length < 16) return null;
   const m = (await pool.query("SELECT id, name FROM team WHERE portal_token = $1", [String(token)])).rows[0];
@@ -5884,6 +6037,8 @@ ready.then(() => {
   setInterval(autoCloseNearDateLeads, 60 * 60 * 1000);
   sendDayBeforeReminders();
   setInterval(sendDayBeforeReminders, 30 * 60 * 1000);
+  sendTravelReminders();
+  setInterval(sendTravelReminders, 30 * 60 * 1000);
   // One-time catch-up: revisions saved before "apply to already-assigned events" existed only changed the suggested
   // rate. Apply them once to unpaid fees of events on/after each artist's earliest revision date.
   (async () => {

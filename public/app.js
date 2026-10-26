@@ -399,6 +399,7 @@ const NAV = [
   { id: "accounts", label: "Accounts" },
   { id: "tasks", label: "Tasks & Chats" },
   { id: "calendar", label: "Calendar" },
+  { id: "traveldesk", label: "Travel Desk" },
   { id: "travelcal", label: "Travel Calendar" },
   { id: "documents", label: "Documents" },
   { id: "b2b", label: "B2B Contacts" },
@@ -420,6 +421,7 @@ const NAV_GROUPS = {
   mycash: "Pipeline",
   tasks: "Operations",
   calendar: "Operations",
+  traveldesk: "Operations",
   travelcal: "Operations",
   documents: "Operations",
   b2b: "Operations",
@@ -430,7 +432,7 @@ const NAV_GROUPS = {
 // "settings", "website", and "travelcal" are admin/permission-gated directly
 // in renderNav and aren't something a manager can be granted piecemeal, so
 // they're excluded from the staff permission checklist.
-const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "dashboard" && n.id !== "settings" && n.id !== "website" && n.id !== "travelcal");
+const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "dashboard" && n.id !== "settings" && n.id !== "website" && n.id !== "travelcal" && n.id !== "traveldesk");
 
 // Fills a {placeholder} template with values — any placeholder with no matching value
 // is left as an empty string rather than showing the raw {token} in the sent message.
@@ -1661,7 +1663,7 @@ function renderNav() {
   const perms = CURRENT_USER?.accessLevel === "staff" ? CURRENT_USER.permissions : null;
   let visibleNav = NAV.filter((n) => {
     if (n.id === "settings" || n.id === "website") return CURRENT_USER?.accessLevel === "admin";
-    if (n.id === "travelcal") return canAssignTeam();
+    if (n.id === "travelcal" || n.id === "traveldesk") return canAssignTeam();
     if (n.id === "quotation") return hasAccountsAccess() && (!Array.isArray(perms) || perms.includes("quotation"));
     // Team tab (and the Musicians pool inside it) is admin-only for now — a manager
     // shouldn't be able to browse the wider musician pool. Re-open later by relaxing this.
@@ -7257,6 +7259,7 @@ async function openTravelPlanModal(leadId) {
       // (the onward journey is now entered from the earlier event, choosing the next event — no suggestion needed here)
     }
   } catch { /* the note is a nice-to-have */ }
+  let sendRows = null; // the "send plan" panel (null = closed)
   let acks = [];
   try { acks = await api(`/api/leads/${leadId}/travel-acks`); } catch { acks = []; }
   let addingNew = false;
@@ -7517,8 +7520,22 @@ async function openTravelPlanModal(leadId) {
               <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:${legs.length > 0 ? "6px" : "0"};">
                 <button class="btn-ghost" id="addLegBtn">+ Add travel</button>
                 <button class="btn-ghost" id="linkLegBtn">🔗 Link existing travel</button>
+                ${legs.some((l) => !l.linked_from_other) ? `<button class="btn-primary" id="sendPlanBtn">📲 Send plan to artists</button>` : ""}
               </div>
             ` : "")}
+            ${sendRows ? `<div class="card" id="sendPlanPanel" style="margin-top:12px; background:#F4F8F6; border-color:#1C7A80;">
+              <div style="font-weight:600; margin-bottom:2px;">📲 Send each artist their own plan</div>
+              <div class="muted small" style="margin-bottom:8px;">Opens WhatsApp with their plan and a personal link where they can see tickets and tap "Got it".</div>
+              ${sendRows.length === 0 ? `<div class="muted small">No artist is on a journey yet.</div>` : sendRows.map((r) => `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 0; border-top:1px solid #D9E6E1; flex-wrap:wrap;">
+                  <div><b>${escH(r.name)}</b><div class="small muted">${r.sentState === "sent" ? `✓ Sent ${fmtDate(String(r.sentAt).slice(0, 10))}` : r.sentState === "changed" ? `⟳ Plan changed since sent ${fmtDate(String(r.sentAt).slice(0, 10))}` : "Not sent yet"}${r.seen === "seen" ? " · ✓ seen" : r.seen === "changed" ? " · changed since seen" : ""}</div></div>
+                  <div style="display:flex; gap:6px;">
+                    <button class="btn-primary" data-send-wa="${r.teamId}" ${r.phone ? "" : "disabled title=\"No phone number saved\""} style="font-size:12px; padding:4px 10px;">${r.sentState === "never" ? "WhatsApp" : "Send again"}</button>
+                    <button class="btn-ghost" data-send-copy="${r.teamId}" style="font-size:12px; padding:4px 10px;">Copy</button>
+                  </div>
+                </div>`).join("")}
+              <div style="margin-top:8px;"><button class="btn-ghost" id="sendPlanClose" style="font-size:12px; padding:3px 10px;">Close</button></div>
+            </div>` : ""}
           </div>
           <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Close</button></div>
         </div>
@@ -7659,6 +7676,25 @@ async function openTravelPlanModal(leadId) {
     root.querySelectorAll("[data-move-leg]").forEach((b) => b.addEventListener("click", async () => {
       try { await api(`/api/travel-legs/${b.dataset.moveLeg}/move`, { method: "POST", body: JSON.stringify({ dir: Number(b.dataset.dir) }) }); } catch (e) { return alert(e.message); }
       const updated = await api(`/api/leads/${leadId}/travel-legs`); legs.length = 0; legs.push(...updated); renderModal();
+    }));
+    const sendBtn = root.querySelector("#sendPlanBtn");
+    if (sendBtn) sendBtn.addEventListener("click", async () => {
+      sendBtn.disabled = true;
+      try { sendRows = await api(`/api/leads/${leadId}/travel-send`); } catch (e) { sendBtn.disabled = false; return alert(e.message); }
+      renderModal(); const pn = root.querySelector("#sendPlanPanel"); if (pn) pn.scrollIntoView({ block: "nearest" });
+    });
+    const sendClose = root.querySelector("#sendPlanClose"); if (sendClose) sendClose.addEventListener("click", () => { sendRows = null; renderModal(); });
+    const planText = (r) => String(r.text || "").replace("{LINK}", `${location.origin}/me/${r.token}`);
+    const markSent = async (r) => { try { await api(`/api/leads/${leadId}/travel-send/${r.teamId}/mark`, { method: "POST" }); sendRows = await api(`/api/leads/${leadId}/travel-send`); renderModal(); } catch { /* the message was still opened */ } };
+    root.querySelectorAll("[data-send-wa]").forEach((b) => b.addEventListener("click", async () => {
+      const r = (sendRows || []).find((x) => x.teamId === b.dataset.sendWa); if (!r) return;
+      const digits = String(r.phone || "").replace(/\D/g, ""); const num = digits.length === 10 ? "91" + digits : digits;
+      await markSent(r);
+      goWhatsApp(`https://wa.me/${num}?text=${encodeURIComponent(planText(r))}`);
+    }));
+    root.querySelectorAll("[data-send-copy]").forEach((b) => b.addEventListener("click", async () => {
+      const r = (sendRows || []).find((x) => x.teamId === b.dataset.sendCopy); if (!r) return;
+      try { await navigator.clipboard.writeText(planText(r)); b.textContent = "Copied ✓"; await markSent(r); } catch { alert("Couldn't copy — try WhatsApp instead."); }
     }));
     const cOpen = root.querySelector("#combineOpenBtn"); if (cOpen) cOpen.addEventListener("click", () => { combineOpen = true; renderModal(); });
     const cCancel = root.querySelector("#combineCancelBtn"); if (cCancel) cCancel.addEventListener("click", () => { combineOpen = false; renderModal(); });
@@ -7915,6 +7951,34 @@ async function openTravelPlanViewModal(leadId, leadName) {
     };
     api(`/api/my/events/${leadId}/travel-ack`).then(paint).catch(() => {});
   }
+}
+
+// ---------- Travel Desk ----------
+async function renderTravelDesk(main) {
+  main.innerHTML = `<div class="view-head"><div><h2>Travel Desk</h2><p class="muted">Upcoming events, soonest first, with the one thing to do next.</p></div></div><p class="muted small">Loading…</p>`;
+  let d;
+  try { d = await api("/api/travel-desk"); } catch (e) { main.innerHTML += `<p class="muted">Couldn't load: ${escH(e.message)}</p>`; return; }
+  const chip = (text, ok) => `<span class="small" style="display:inline-block; border-radius:10px; padding:2px 9px; margin:2px 4px 2px 0; background:${ok ? "#E4F1F1" : "#FBEFD9"}; color:${ok ? "#1C7A80" : "#9A5E12"}; white-space:nowrap;">${text}</span>`;
+  const row = (e) => `<div class="card" style="margin-bottom:10px; padding:12px 14px; ${e.urgent ? "border-color:#C0462B;" : ""}">
+      <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap;">
+        <div style="min-width:180px;"><div style="font-weight:700;">${escH(e.name)}</div>
+          <div class="muted small">${fmtDate(e.date)}${e.city ? " · " + escH(e.city) : ""} · ${e.daysLeft <= 0 ? "today" : e.daysLeft + " day" + (e.daysLeft > 1 ? "s" : "") + " left"}${e.urgent ? ` <b style="color:#C0462B;">· act now</b>` : ""}</div></div>
+        <button class="${e.done ? "btn-ghost" : "btn-primary"}" data-desk-open="${e.leadId}" style="font-size:13px; padding:6px 12px;">${escH(e.next)} →</button>
+      </div>
+      <div style="margin-top:6px;">
+        ${chip(e.planned ? "Trip planned" : `Missing ${e.missing}`, e.planned)}
+        ${chip(e.unbooked ? `${e.unbooked} to book` : e.legs ? "All booked" : "—", !e.unbooked && e.legs > 0)}
+        ${chip(e.noTicket ? `${e.noTicket} ticket${e.noTicket > 1 ? "s" : ""} to attach` : e.legs ? "Tickets in" : "—", !e.noTicket && e.legs > 0)}
+        ${chip(`Sent ${e.sent}/${e.people}`, e.people > 0 && e.sent === e.people)}
+        ${chip(`Seen ${e.seen}/${e.people}`, e.people > 0 && e.seen === e.people)}
+      </div></div>`;
+  const todo = d.events.filter((e) => !e.done), done = d.events.filter((e) => e.done);
+  main.innerHTML = `<div class="view-head"><div><h2>Travel Desk</h2><p class="muted">Confirmed events in the next 120 days, soonest first, with the one thing to do next.</p></div></div>
+    ${todo.length ? `<div class="section-label" style="margin:8px 0;">Needs action (${todo.length})</div>${todo.map(row).join("")}` : `<div class="card"><div style="font-weight:600;">Nothing needs travel action right now.</div></div>`}
+    ${done.length ? `<details style="margin-top:14px;"><summary class="muted" style="cursor:pointer;">All set (${done.length})</summary><div style="margin-top:8px;">${done.map(row).join("")}</div></details>` : ""}`;
+  main.querySelectorAll("[data-desk-open]").forEach((b) => b.addEventListener("click", async () => {
+    await openTravelPlanModal(b.dataset.deskOpen);
+  }));
 }
 
 // ---------- Accounts ----------
@@ -8386,6 +8450,8 @@ async function renderDashboard(main) {
     isAdmin ? Promise.resolve({ content: "" }) : api("/api/my/admin-note").catch(() => ({ content: "" })),
     isAdmin ? api("/api/admin/team-notes").catch(() => []) : Promise.resolve([]),
   ]);
+  let travelDeskSummary = null;
+  if (canAssignTeam()) { try { travelDeskSummary = await api("/api/travel-desk"); } catch { travelDeskSummary = null; } }
   main.innerHTML = `
     <div class="view-head">
       <div><h2>Dashboard</h2><p class="muted">The three things that matter today — click any card to see the list.</p></div>
@@ -8396,6 +8462,7 @@ async function renderDashboard(main) {
       </div>
     </div>
     <div id="gcalSyncNote" class="small" style="display:none; margin:-6px 0 12px; padding:8px 12px; border-radius:8px;"></div>
+    ${travelDeskSummary && travelDeskSummary.needsAction > 0 ? `<div class="card" id="travelDeskCard" style="margin-bottom:16px; cursor:pointer; border-color:#C1602B; display:flex; justify-content:space-between; align-items:center; gap:10px;"><div><b>✈ ${travelDeskSummary.needsAction} event${travelDeskSummary.needsAction > 1 ? "s" : ""} need travel action</b><div class="muted small">${escH(travelDeskSummary.events.filter((e) => !e.done).slice(0, 2).map((e) => `${e.name}: ${e.next}`).join(" · "))}</div></div><span class="btn-ghost" style="font-size:12px; padding:3px 10px;">Open Travel Desk →</span></div>` : ""}
     <div class="card" id="stickyNoteCard" style="margin-bottom:16px; background:#FBF3D9; border-color:#E8D488;">
       <div class="section-label" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
         <span>📌 Sticky note</span>
@@ -8760,6 +8827,8 @@ async function renderDashboard(main) {
       if (label) label.textContent = origLabel;
     }
   });
+  const tdCard = main.querySelector("#travelDeskCard");
+  if (tdCard) tdCard.addEventListener("click", () => { currentTab = "traveldesk"; renderNav(); renderMain(); });
   main.querySelector("#dashRefreshBtn").addEventListener("click", async () => {
     const btn = main.querySelector("#dashRefreshBtn");
     btn.disabled = true;
@@ -12421,6 +12490,7 @@ function renderMain() {
   else if (currentTab === "mycash") renderMyCash(main);
   else if (currentTab === "settings") renderSettings(main);
   else if (currentTab === "travelcal") renderTravelCalendar(main);
+  else if (currentTab === "traveldesk") renderTravelDesk(main);
   else if (currentTab === "website") renderWebsiteContent(main);
 }
 

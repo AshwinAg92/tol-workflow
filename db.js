@@ -318,6 +318,8 @@ async function setup() {
   await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS group_id TEXT`);
   await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS trip_order INT`);
   // An artist's "Got it" on their travel plan for an event; plan_hash lets a later change show as "updated since you confirmed".
+  // When an artist's plan for an event was sent (and what it said then), so the organiser can see who still needs it.
+  await pool.query(`CREATE TABLE IF NOT EXISTS travel_sends (team_id TEXT NOT NULL, lead_id TEXT NOT NULL, sent_at TEXT NOT NULL, plan_hash TEXT, PRIMARY KEY (team_id, lead_id))`);
   await pool.query(`CREATE TABLE IF NOT EXISTS travel_acks (team_id TEXT NOT NULL, lead_id TEXT NOT NULL, acked_at TEXT NOT NULL, plan_hash TEXT, PRIMARY KEY (team_id, lead_id))`);
   await pool.query(`CREATE TABLE IF NOT EXISTS artist_unavailable (
     id TEXT PRIMARY KEY,
