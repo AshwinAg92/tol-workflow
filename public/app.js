@@ -7195,11 +7195,11 @@ function legProblems(leg, assignmentsAll, allLegs) {
         if (!cityOk(leg.from_city, prev.city)) out.push(`Leaves from ${leg.from_city}, but ${prev.name} is in ${prev.city}.`);
       } else out.push("Pick the previous event this journey continues from.");
       if (dep && dep > own.date) out.push(`Departs ${fmtDate(dep)}, after ${ev(own)} — too late to reach it.`);
-      if (!cityOk(leg.to_city, own.city)) out.push(`Goes to ${leg.to_city}, but ${own.name} is in ${own.city}.`);
+      if (lastOfTrip && !cityOk(leg.to_city, own.city)) out.push(`Goes to ${leg.to_city}, but ${own.name} is in ${own.city}.`);
     }
     if (t === "return_onward") {
       if (dep && dep < own.date) out.push(`Leaves ${fmtDate(dep)}, before ${ev(own)} has happened.`);
-      if (!cityOk(leg.from_city, own.city)) out.push(`Leaves from ${leg.from_city}, but ${own.name} is in ${own.city}.`);
+      if (firstOfTrip && !cityOk(leg.from_city, own.city)) out.push(`Leaves from ${leg.from_city}, but ${own.name} is in ${own.city}.`);
       if (next) {
         if (next.date && next.date < own.date) out.push(`The next event (${ev(next)}) is before ${own.name}.`);
         if (dep && next.date && dep > next.date) out.push(`Departs ${fmtDate(dep)}, after ${ev(next)} — too late to reach it.`);
@@ -7319,7 +7319,8 @@ async function openTravelPlanModal(leadId) {
       const adding = nextLegFrom && members.some((m) => m.id === nextLegFrom.id);
       if (members.length < 2 && !adding) return legCard(leg);
       const cities = [];
-      members.forEach((m) => { if (m.mode === "stay") return; if (m.from_city && cities[cities.length - 1] !== m.from_city) cities.push(m.from_city); if (m.to_city && cities[cities.length - 1] !== m.to_city) cities.push(m.to_city); });
+      const sameCity = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+      members.forEach((m) => { if (m.mode === "stay") return; if (m.from_city && !sameCity(cities[cities.length - 1], m.from_city)) cities.push(m.from_city); if (m.to_city && !sameCity(cities[cities.length - 1], m.to_city)) cities.push(m.to_city); });
       return `<div style="border:2px solid #8A5FA8; border-radius:12px; padding:8px 8px 0; margin-bottom:12px;">
         <div class="small" style="margin:0 4px 8px; font-weight:600; color:#6B4488;">🔀 One trip · ${members.filter((m) => m.mode !== "stay").length} leg${members.filter((m) => m.mode !== "stay").length > 1 ? "s" : ""}${members.some((m) => m.mode === "stay") ? ` · ${members.filter((m) => m.mode === "stay").length} night stay` : ""} · ${cities.map(escH).join(" → ")}</div>
         ${members.map((m, i) => legCard(m, { i, n: members.length })).join("")}
