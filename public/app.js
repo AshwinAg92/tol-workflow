@@ -7140,6 +7140,16 @@ function legProblems(leg, assignmentsAll, allLegs) {
   const t = leg.leg_type || "going";
   const dep = ymd(leg.departure_at), arr = ymd(leg.arrival_at);
   const own = LEADS.find((l) => l.id === leg.lead_id);
+  // A combo shares one plan: going legs are checked against the first date the traveller plays, return legs against the last.
+  let ownF = own, ownL = own;
+  if (own && own.combo_group_id) {
+    const sibs = LEADS.filter((x) => x.combo_group_id === own.combo_group_id);
+    const mem = new Set((leg.members || []).map((m) => m.teamId));
+    let ds = assignmentsAll && mem.size ? sibs.filter((x) => assignmentsAll.some((a) => a.lead_id === x.id && mem.has(a.team_id) && a.status !== "declined")).map((x) => x.date) : [];
+    if (!ds.length) ds = sibs.map((x) => x.date);
+    ds = ds.filter(Boolean).sort();
+    if (ds.length) { ownF = { ...own, date: ds[0] }; ownL = { ...own, date: ds[ds.length - 1] }; }
+  }
   const prev = leg.from_lead_id ? LEADS.find((l) => l.id === leg.from_lead_id) : null;
   const next = leg.to_lead_id ? LEADS.find((l) => l.id === leg.to_lead_id) : null;
   // In a multi-leg trip only the last leg has to reach the event city and only the first has to leave from it.
@@ -7172,20 +7182,21 @@ function legProblems(leg, assignmentsAll, allLegs) {
     }
   }
   if (own && own.date && dep) {
-    const gap = Math.round((new Date(own.date + "T00:00:00") - new Date(dep + "T00:00:00")) / 864e5);
-    if (t === "going" && !isNaN(gap) && gap > 5) out.push(`Departs ${gap} days before the event (${fmtDate(own.date)}) — please check the date.`);
-    if (t === "return" && !isNaN(gap) && gap < -7) out.push(`Leaves ${-gap} days after the event (${fmtDate(own.date)}) — please check the date.`);
+    const refDate = baseLegType(t) === "return" ? ownL.date : ownF.date;
+    const gap = Math.round((new Date(refDate + "T00:00:00") - new Date(dep + "T00:00:00")) / 864e5);
+    if (t === "going" && !isNaN(gap) && gap > 5) out.push(`Departs ${gap} days before the event (${fmtDate(refDate)}) — please check the date.`);
+    if (t === "return" && !isNaN(gap) && gap < -7) out.push(`Leaves ${-gap} days after the event (${fmtDate(refDate)}) — please check the date.`);
   }
   if (own && own.date) {
     const going = baseLegType(t) === "going" && t !== "onward";
     const returning = baseLegType(t) === "return";
     if (going) {
-      if (dep && dep > own.date) out.push(`Departs ${fmtDate(dep)}, after ${ev(own)} — too late to reach it.`);
-      if (arr && arr < own.date) out.push(`The return date (${fmtDate(arr)}) is before ${ev(own)}.`);
+      if (dep && dep > ownF.date) out.push(`Departs ${fmtDate(dep)}, after ${ev(ownF)} — too late to reach it.`);
+      if (arr && arr < ownL.date) out.push(`The return date (${fmtDate(arr)}) is before ${ev(ownL)}.`);
       if (lastOfTrip && !cityOk(leg.to_city, own.city)) out.push(`Goes to ${leg.to_city}, but ${own.name} is in ${own.city}.`);
     }
     if (returning) {
-      if (dep && dep < own.date) out.push(`Leaves ${fmtDate(dep)}, before ${ev(own)} has happened.`);
+      if (dep && dep < ownL.date) out.push(`Leaves ${fmtDate(dep)}, before ${ev(ownL)} has happened.`);
       if (firstOfTrip && !cityOk(leg.from_city, own.city)) out.push(`Leaves from ${leg.from_city}, but ${own.name} is in ${own.city}.`);
     }
     if (t === "going_onward") {
@@ -7194,11 +7205,11 @@ function legProblems(leg, assignmentsAll, allLegs) {
         if (dep && prev.date && dep < prev.date) out.push(`Departs ${fmtDate(dep)}, before ${ev(prev)} has happened.`);
         if (!cityOk(leg.from_city, prev.city)) out.push(`Leaves from ${leg.from_city}, but ${prev.name} is in ${prev.city}.`);
       } else out.push("Pick the previous event this journey continues from.");
-      if (dep && dep > own.date) out.push(`Departs ${fmtDate(dep)}, after ${ev(own)} — too late to reach it.`);
+      if (dep && dep > ownF.date) out.push(`Departs ${fmtDate(dep)}, after ${ev(ownF)} — too late to reach it.`);
       if (lastOfTrip && !cityOk(leg.to_city, own.city)) out.push(`Goes to ${leg.to_city}, but ${own.name} is in ${own.city}.`);
     }
     if (t === "return_onward") {
-      if (dep && dep < own.date) out.push(`Leaves ${fmtDate(dep)}, before ${ev(own)} has happened.`);
+      if (dep && dep < ownL.date) out.push(`Leaves ${fmtDate(dep)}, before ${ev(ownL)} has happened.`);
       if (firstOfTrip && !cityOk(leg.from_city, own.city)) out.push(`Leaves from ${leg.from_city}, but ${own.name} is in ${own.city}.`);
       if (next) {
         if (next.date && next.date < own.date) out.push(`The next event (${ev(next)}) is before ${own.name}.`);
@@ -7244,6 +7255,17 @@ async function openTravelPlanModal(leadId) {
     api(`/api/leads/${leadId}/travel-legs`),
     api(`/api/leads/${leadId}/assignments`),
   ]);
+  // A combo is one travel plan: everyone on any of its dates can be put on a journey, and each person's own dates are shown.
+  const comboLeads = lead.combo_group_id ? LEADS.filter((x) => x.combo_group_id === lead.combo_group_id).sort((a, b) => String(a.date).localeCompare(String(b.date))) : [];
+  const isCombo = comboLeads.length > 1;
+  const playsOn = {}; // team_id -> [lead ids they are on]
+  if (isCombo) {
+    for (const cl of comboLeads) {
+      const list = cl.id === leadId ? assignments : await api(`/api/leads/${cl.id}/assignments`).catch(() => []);
+      list.filter((a) => a.status !== "declined").forEach((a) => { (playsOn[a.team_id] = playsOn[a.team_id] || []).push(cl.id); if (!assignments.some((x) => x.team_id === a.team_id)) assignments.push(a); });
+    }
+  }
+  const playsText = (teamId) => { const ids = playsOn[teamId] || []; return ids.length === comboLeads.length ? "both days" : comboLeads.filter((c) => ids.includes(c.id)).map((c) => fmtDate(c.date)).join(", ") + " only"; };
   let prevNoteHtml = "";
   let tcAssign = null, tcAllLegs = null; // every event's crew and every journey, for the sanity checks
   let onwardHint = { type: "going", fromCity: "", text: "" };
@@ -7291,6 +7313,35 @@ async function openTravelPlanModal(leadId) {
         <div><label>Booking ref / PNR (optional)</label><input id="nlRef" /></div>
       </div>
       <div style="display:flex; gap:8px; margin-top:10px;"><button class="btn-primary" id="nlSave">Save leg</button><button class="btn-ghost" id="nlCancel">Cancel</button></div>
+    </div>`;
+  }
+  // Combo banner: which days each person plays, and a one-tap night stay for those playing on consecutive days.
+  function comboStayNeeds() {
+    const out = [];
+    if (!isCombo) return out;
+    const dates = comboLeads.map((c) => ({ id: c.id, date: c.date }));
+    Object.keys(playsOn).forEach((tid) => {
+      const mine = dates.filter((d) => playsOn[tid].includes(d.id)).map((d) => d.date).sort();
+      for (let i = 0; i < mine.length - 1; i++) {
+        const night = mine[i], out2 = mine[i + 1];
+        const has = legs.some((l) => l.mode === "stay" && (l.members || []).some((m) => String(m.teamId) === String(tid)) && ymd(l.departure_at) <= night && ymd(l.arrival_at) >= out2);
+        const local = (() => { const t = TEAM.find((x) => String(x.id) === String(tid)); return t && t.base_city && lead.city && (normCity(lead.city).includes(normCity(t.base_city)) || normCity(t.base_city).includes(normCity(lead.city))); })();
+        if (!has && !local) out.push({ teamId: tid, night, out: out2 });
+      }
+    });
+    return out;
+  }
+  function comboBannerHtml() {
+    if (!isCombo) return "";
+    const needs = comboStayNeeds();
+    const byNight = {};
+    needs.forEach((n) => { const k = n.night + "|" + n.out; (byNight[k] = byNight[k] || []).push(n.teamId); });
+    const nameOf = (id) => ((assignments.find((a) => String(a.team_id) === String(id)) || {}).team_name || "").split(" ")[0];
+    return `<div class="card" style="margin-bottom:10px; background:#F6F0FA; border-color:#8A5FA8;">
+      <div style="font-weight:600;">🔗 Combo · ${comboLeads.map((c) => fmtDate(c.date)).join(" + ")} · one travel plan</div>
+      <div class="small" style="margin-top:4px;">${Object.keys(playsOn).map((tid) => `<span style="display:inline-block; margin:2px 8px 2px 0;"><b>${escH(nameOf(tid))}</b> <span class="muted">${escH(playsText(tid))}</span></span>`).join("")}</div>
+      <div class="muted small" style="margin-top:4px;">Add each journey once. Pick only the people who are travelling on it.</div>
+      ${Object.entries(byNight).map(([k, ids]) => { const [n, o] = k.split("|"); return `<div style="margin-top:8px;"><button class="btn-ghost" data-combo-stay="${k}" data-teams="${ids.join(",")}" style="font-size:12px; padding:4px 10px;">🌙 Add night stay · ${fmtDate(n)} → ${fmtDate(o)} for ${ids.map(nameOf).join(", ")}</button></div>`; }).join("")}
     </div>`;
   }
   function stayBox(last, edit) {
@@ -7506,11 +7557,12 @@ async function openTravelPlanModal(leadId) {
       <div class="modal-overlay" id="overlay">
         <div class="modal-card" style="width:640px; max-width:96vw;">
           <div class="modal-head">
-            <h3>Travel plan — ${lead.name}${lead.city ? ` <span class="muted" style="font-weight:400; font-size:14px;">(${lead.city}, ${fmtDate(lead.date)})</span>` : ""}</h3>
+            <h3>Travel plan — ${lead.name}${lead.city ? ` <span class="muted" style="font-weight:400; font-size:14px;">(${lead.city}, ${isCombo ? comboLeads.map((c) => fmtDate(c.date)).join(" + ") : fmtDate(lead.date)})</span>` : ""}</h3>
             <button class="icon-btn" id="closeModal">${ICON_X}</button>
           </div>
           <div class="modal-body">
             ${prevNoteHtml}
+            ${comboBannerHtml()}
             ${acks && acks.length ? `<div class="small" style="margin-bottom:10px; padding:8px 12px; background:#F4F0E8; border-radius:8px;"><b>Seen by artists:</b> ${acks.map((a) => a.state === "seen" ? `<span style="color:#1C7A80;">✓ ${escH(a.name.split(" ")[0])}</span>` : a.state === "changed" ? `<span style="color:#B6752C;">⟳ ${escH(a.name.split(" ")[0])} (plan changed)</span>` : `<span class="muted">○ ${escH(a.name.split(" ")[0])} (not yet)</span>`).join(" &nbsp; ")}</div>` : ""}
             ${legs.length === 0 && !addingNew && !linkingExisting ? `<p class="muted small">No travel added yet.</p>` : ""}
             ${(() => { const loose = sortLegsForDisplay(legs).filter((x) => !x.group_id && !x.linked_from_other); const nc = (c) => String(c || "").trim().toLowerCase(); const roundTrip = loose.length === 2 && nc(loose[0].from_city) === nc(loose[1].to_city) && nc(loose[0].to_city) === nc(loose[1].from_city); if (loose.length < 2 || roundTrip || addingNew || nextLegFrom) return ""; if (!combineOpen) return `<div style="margin-bottom:10px;"><button class="btn-ghost" id="combineOpenBtn" style="font-size:12px; padding:3px 10px;">🔀 Combine journeys into one trip</button></div>`; return `<div class="card" style="margin-bottom:12px; background:#F6F0FA; border-color:#8A5FA8;"><div style="font-weight:600; margin-bottom:6px;">Tick the journeys that form one trip</div>${loose.map((x) => `<label style="display:flex; gap:8px; align-items:center; padding:3px 0;"><input type="checkbox" data-combine-pick="${x.id}" style="width:auto;" /> <span class="small">${escH([x.from_city, x.to_city].filter(Boolean).join(" → ") || "Route not set")} · ${TRAVEL_MODE_LABELS[x.mode] || "Mode not set"}${x.departure_at ? " · " + fmtDate(x.departure_at) : ""}</span></label>`).join("")}<div style="display:flex; gap:8px; margin-top:8px;"><button class="btn-primary" id="combineBtn">Combine</button><button class="btn-ghost" id="combineCancelBtn">Cancel</button></div></div>`; })()}
@@ -7613,6 +7665,18 @@ async function openTravelPlanModal(leadId) {
       const t = root.querySelector("#stHotel"); if (t) t.focus();
     }));
     {
+      root.querySelectorAll("[data-combo-stay]").forEach((b) => b.addEventListener("click", async () => {
+        const [night, out2] = b.dataset.comboStay.split("|"), tids = b.dataset.teams.split(",");
+        b.disabled = true;
+        try {
+          // The stay follows the going journey of these travellers when they have one, so it sits between going and return.
+          const goLeg = sortLegsForDisplay(legs).find((l) => l.mode !== "stay" && !l.linked_from_other && ["going", "going_onward"].includes(l.leg_type) && (l.members || []).some((m) => tids.includes(String(m.teamId))));
+          const payload = { teamIds: tids, legType: "going", mode: "stay", status: "not_booked", fromCity: lead.city, toCity: lead.city, departureAt: night, arrivalAt: out2, ...(goLeg ? { groupWith: goLeg.id, insertAfter: goLeg.id } : {}) };
+          await api(`/api/leads/${leadId}/travel-legs`, { method: "POST", body: JSON.stringify(payload) });
+          const updated = await api(`/api/leads/${leadId}/travel-legs`); tcAllLegs = await api("/api/travel-legs").catch(() => tcAllLegs);
+          legs.length = 0; legs.push(...updated); renderModal();
+        } catch (err) { alert(err.message); b.disabled = false; }
+      }));
       const stSave = root.querySelector("#stSave");
       if (stSave && (nextLegFrom || editingStayId)) stSave.addEventListener("click", async () => {
         if (editingStayId) {
@@ -7963,7 +8027,7 @@ async function renderTravelDesk(main) {
   const row = (e) => `<div class="card" style="margin-bottom:10px; padding:12px 14px; ${e.urgent ? "border-color:#C0462B;" : ""}">
       <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap;">
         <div style="min-width:180px;"><div style="font-weight:700;">${escH(e.name)}</div>
-          <div class="muted small">${fmtDate(e.date)}${e.city ? " · " + escH(e.city) : ""} · ${e.daysLeft <= 0 ? "today" : e.daysLeft + " day" + (e.daysLeft > 1 ? "s" : "") + " left"}${e.urgent ? ` <b style="color:#C0462B;">· act now</b>` : ""}</div></div>
+          <div class="muted small">${e.combo ? `🔗 ${e.dates.map((d) => fmtDate(d)).join(" + ")}` : fmtDate(e.date)}${e.city ? " · " + escH(e.city) : ""} · ${e.daysLeft <= 0 ? "today" : e.daysLeft + " day" + (e.daysLeft > 1 ? "s" : "") + " left"}${e.urgent ? ` <b style="color:#C0462B;">· act now</b>` : ""}</div></div>
         <button class="${e.done ? "btn-ghost" : "btn-primary"}" data-desk-open="${e.leadId}" style="font-size:13px; padding:6px 12px;">${escH(e.next)} →</button>
       </div>
       <div style="margin-top:6px;">
