@@ -3265,6 +3265,7 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
     }
   }
   const members = (await pool.query(`SELECT name FROM team WHERE id = ANY($1)`, [teamIds])).rows;
+  if (mode !== "stay") await pool.query("UPDATE leads SET no_travel = FALSE WHERE no_travel AND id = ANY($1)", [await comboLeadIds(req.params.id)]); // travel turned out to be needed
   res.status(201).json({ id });
   if (members.length > 0) {
     logActivity(req, `Travel added for ${members.map((m) => m.name).join(", ")}: ${lead.name} (${lead.date})`, lead.id);
