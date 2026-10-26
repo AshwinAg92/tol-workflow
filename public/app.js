@@ -7569,7 +7569,7 @@ async function openTravelPlanModal(leadId) {
             ${renderLegsGrouped(sortLegsForDisplay(legs))}
             ${addingNew ? legForm({}) : ""}
             ${linkingExisting ? linkForm() : ""}
-            ${assignments.length === 0 ? `<p class="muted small" style="margin-top:10px;">No one's assigned to this event yet — add the team first.</p>` : (!addingNew && !linkingExisting ? `
+            ${assignments.length === 0 ? `<div style="margin-top:10px;"><p class="muted small">No one's assigned to this event yet — add the team first.</p><button class="btn-primary" id="tpAssignBtn">👥 Assign team</button></div>` : (!addingNew && !linkingExisting ? `
               <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:${legs.length > 0 ? "6px" : "0"};">
                 <button class="btn-ghost" id="addLegBtn">+ Add travel</button>
                 <button class="btn-ghost" id="linkLegBtn">🔗 Link existing travel</button>
@@ -7665,6 +7665,7 @@ async function openTravelPlanModal(leadId) {
       const t = root.querySelector("#stHotel"); if (t) t.focus();
     }));
     {
+      root.querySelector("#tpAssignBtn")?.addEventListener("click", () => openAssignTeamModal(leadId));
       root.querySelectorAll("[data-combo-stay]").forEach((b) => b.addEventListener("click", async () => {
         const [night, out2] = b.dataset.comboStay.split("|"), tids = b.dataset.teams.split(",");
         b.disabled = true;
@@ -8030,7 +8031,8 @@ async function renderTravelDesk(main) {
           <div class="muted small">${e.combo ? `🔗 ${e.dates.map((d) => fmtDate(d)).join(" + ")}` : fmtDate(e.date)}${e.city ? " · " + escH(e.city) : ""} · ${e.daysLeft <= 0 ? "today" : e.daysLeft + " day" + (e.daysLeft > 1 ? "s" : "") + " left"}${e.urgent ? ` <b style="color:#C0462B;">· act now</b>` : ""}</div></div>
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
           ${e.noTravel ? `<button class="btn-ghost" data-desk-notravel="${e.leadId}" data-val="0" style="font-size:12px; padding:5px 10px;">Undo</button>` : (!e.legs ? `<button class="btn-ghost" data-desk-notravel="${e.leadId}" data-val="1" style="font-size:12px; padding:5px 10px;">No travel needed</button>` : "")}
-          <button class="${e.done ? "btn-ghost" : "btn-primary"}" data-desk-open="${e.leadId}" style="font-size:13px; padding:6px 12px;">${escH(e.next)} →</button>
+          <button class="btn-ghost" data-desk-team="${e.leadId}" style="font-size:12px; padding:5px 10px;">👥 Team</button>
+          <button class="${e.done ? "btn-ghost" : "btn-primary"}" ${e.crew === 0 && !e.noTravel ? "data-desk-team" : "data-desk-open"}="${e.leadId}" style="font-size:13px; padding:6px 12px;">${escH(e.next)} →</button>
         </div>
       </div>
       <div style="margin-top:6px;">
@@ -8047,6 +8049,13 @@ async function renderTravelDesk(main) {
   main.querySelectorAll("[data-desk-notravel]").forEach((b) => b.addEventListener("click", async () => {
     b.disabled = true;
     try { await api(`/api/leads/${b.dataset.deskNotravel}/no-travel`, { method: "POST", body: JSON.stringify({ value: b.dataset.val === "1" }) }); await renderTravelDesk(main); } catch (err) { alert(err.message); b.disabled = false; }
+  }));
+  // Assign the team from here; when that window closes, the Desk refreshes with the new crew.
+  main.querySelectorAll("[data-desk-team]").forEach((b) => b.addEventListener("click", async () => {
+    await openAssignTeamModal(b.dataset.deskTeam);
+    const mr = document.getElementById("modalRoot");
+    const obs = new MutationObserver(() => { if (!mr.querySelector(".modal-overlay")) { obs.disconnect(); if (currentTab === "traveldesk") renderTravelDesk(main); } });
+    obs.observe(mr, { childList: true, subtree: true });
   }));
   main.querySelectorAll("[data-desk-open]").forEach((b) => b.addEventListener("click", async () => {
     await openTravelPlanModal(b.dataset.deskOpen);
