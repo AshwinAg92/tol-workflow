@@ -7232,6 +7232,7 @@ async function openTravelPlanModal(leadId) {
   let nextLegFrom = null; // the leg a new connecting leg continues from (same trip)
   let editingLegId = null;
   let linkingExisting = false;
+  let combineOpen = false;
   let unlinkedLegs = null; // lazy-loaded — travel logged elsewhere (e.g. Travel Calendar) with no event attached yet
 
   // Legs of one trip (same group_id) sit together in one box: "Guwahati → Kolkata → Ahmedabad".
@@ -7454,7 +7455,7 @@ async function openTravelPlanModal(leadId) {
           <div class="modal-body">
             ${prevNoteHtml}
             ${legs.length === 0 && !addingNew && !linkingExisting ? `<p class="muted small">No travel added yet.</p>` : ""}
-            ${(() => { const loose = sortLegsForDisplay(legs).filter((x) => !x.group_id && !x.linked_from_other); return loose.length >= 2 && !addingNew && !nextLegFrom ? `<div class="card" style="margin-bottom:12px; background:#F6F0FA; border-color:#8A5FA8;"><div style="font-weight:600; margin-bottom:4px;">🔀 Is this one trip with several legs?</div><div class="muted small" style="margin-bottom:6px;">Tick the journeys that belong together. You can reorder them afterwards with ▲ ▼.</div>${loose.map((x) => `<label style="display:flex; gap:8px; align-items:center; padding:3px 0;"><input type="checkbox" data-combine-pick="${x.id}" ${baseLegType(x.leg_type) === "return" ? "" : "checked"} style="width:auto;" /> <span class="small">${escH([x.from_city, x.to_city].filter(Boolean).join(" → ") || "Route not set")} · ${TRAVEL_MODE_LABELS[x.mode] || "Mode not set"}${x.departure_at ? " · " + fmtDate(x.departure_at) : ""}</span></label>`).join("")}<button class="btn-primary" id="combineBtn" style="margin-top:8px;">Combine into one trip</button></div>` : ""; })()}
+            ${(() => { const loose = sortLegsForDisplay(legs).filter((x) => !x.group_id && !x.linked_from_other); const nc = (c) => String(c || "").trim().toLowerCase(); const roundTrip = loose.length === 2 && nc(loose[0].from_city) === nc(loose[1].to_city) && nc(loose[0].to_city) === nc(loose[1].from_city); if (loose.length < 2 || roundTrip || addingNew || nextLegFrom) return ""; if (!combineOpen) return `<div style="margin-bottom:10px;"><button class="btn-ghost" id="combineOpenBtn" style="font-size:12px; padding:3px 10px;">🔀 Combine journeys into one trip</button></div>`; return `<div class="card" style="margin-bottom:12px; background:#F6F0FA; border-color:#8A5FA8;"><div style="font-weight:600; margin-bottom:6px;">Tick the journeys that form one trip</div>${loose.map((x) => `<label style="display:flex; gap:8px; align-items:center; padding:3px 0;"><input type="checkbox" data-combine-pick="${x.id}" style="width:auto;" /> <span class="small">${escH([x.from_city, x.to_city].filter(Boolean).join(" → ") || "Route not set")} · ${TRAVEL_MODE_LABELS[x.mode] || "Mode not set"}${x.departure_at ? " · " + fmtDate(x.departure_at) : ""}</span></label>`).join("")}<div style="display:flex; gap:8px; margin-top:8px;"><button class="btn-primary" id="combineBtn">Combine</button><button class="btn-ghost" id="combineCancelBtn">Cancel</button></div></div>`; })()}
             ${renderLegsGrouped(sortLegsForDisplay(legs))}
             ${addingNew ? legForm({}) : ""}
             ${linkingExisting ? linkForm() : ""}
@@ -7564,11 +7565,14 @@ async function openTravelPlanModal(leadId) {
       try { await api(`/api/travel-legs/${b.dataset.moveLeg}/move`, { method: "POST", body: JSON.stringify({ dir: Number(b.dataset.dir) }) }); } catch (e) { return alert(e.message); }
       const updated = await api(`/api/leads/${leadId}/travel-legs`); legs.length = 0; legs.push(...updated); renderModal();
     }));
+    const cOpen = root.querySelector("#combineOpenBtn"); if (cOpen) cOpen.addEventListener("click", () => { combineOpen = true; renderModal(); });
+    const cCancel = root.querySelector("#combineCancelBtn"); if (cCancel) cCancel.addEventListener("click", () => { combineOpen = false; renderModal(); });
     const combineBtn = root.querySelector("#combineBtn");
     if (combineBtn) combineBtn.addEventListener("click", async () => {
       const ids = [...root.querySelectorAll("[data-combine-pick]:checked")].map((c) => c.dataset.combinePick);
       if (ids.length < 2) return alert("Tick at least two journeys.");
       try { await api(`/api/leads/${leadId}/combine-legs`, { method: "POST", body: JSON.stringify({ ids }) }); } catch (e) { return alert(e.message); }
+      combineOpen = false;
       const updated = await api(`/api/leads/${leadId}/travel-legs`); legs.length = 0; legs.push(...updated); renderModal();
     });
     root.querySelectorAll("[data-ungroup-leg]").forEach((b) => b.addEventListener("click", async () => {
