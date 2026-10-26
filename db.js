@@ -314,6 +314,8 @@ async function setup() {
   await pool.query(`CREATE INDEX IF NOT EXISTS team_fee_history_team_idx ON team_fee_history(team_id, effective_from)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS app_flags (key TEXT PRIMARY KEY, done_at TEXT)`);
   // Days an artist has marked themselves unavailable (shown as a clash when the team assigns them).
+  // Several legs of one trip (e.g. Guwahati → Kolkata → Ahmedabad) share a group_id and show as one entry.
+  await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS group_id TEXT`);
   await pool.query(`CREATE TABLE IF NOT EXISTS artist_unavailable (
     id TEXT PRIMARY KEY,
     team_id TEXT NOT NULL,

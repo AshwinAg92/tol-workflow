@@ -1017,10 +1017,16 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   const teamCounts = (await pool.query(`SELECT lead_id, COUNT(*) AS total, COUNT(*) FILTER (WHERE status = 'accepted') AS accepted, COUNT(*) FILTER (WHERE status = 'declined') AS declined FROM event_assignments GROUP BY lead_id`)).rows;
   const teamByLead = {};
   teamCounts.forEach((t) => (teamByLead[t.lead_id] = { total: Number(t.total), accepted: Number(t.accepted), declined: Number(t.declined) }));
-  const travelCounts = (await pool.query(`SELECT travel_legs.lead_id, COUNT(*) AS total,
-      COUNT(*) FILTER (WHERE travel_legs.status IN ('booked','self_arranged')) AS booked,
-      COUNT(*) FILTER (WHERE travel_legs.status = 'self_arranged' OR (travel_legs.status = 'booked' AND EXISTS (SELECT 1 FROM documents d WHERE d.travel_leg_id = travel_legs.id))) AS done
-    FROM travel_legs WHERE travel_legs.lead_id IS NOT NULL GROUP BY travel_legs.lead_id`)).rows;
+  // A trip made of several legs (same group_id) counts once: booked / done only when every leg is.
+  const travelCounts = (await pool.query(`SELECT lead_id, COUNT(*) AS total,
+      COUNT(*) FILTER (WHERE all_booked) AS booked,
+      COUNT(*) FILTER (WHERE all_done) AS done
+    FROM (
+      SELECT travel_legs.lead_id, COALESCE(travel_legs.group_id, travel_legs.id) AS trip,
+        bool_and(travel_legs.status IN ('booked','self_arranged')) AS all_booked,
+        bool_and(travel_legs.status = 'self_arranged' OR (travel_legs.status = 'booked' AND EXISTS (SELECT 1 FROM documents d WHERE d.travel_leg_id = travel_legs.id))) AS all_done
+      FROM travel_legs WHERE travel_legs.lead_id IS NOT NULL GROUP BY travel_legs.lead_id, COALESCE(travel_legs.group_id, travel_legs.id)
+    ) t GROUP BY lead_id`)).rows;
   const travelByLead = {};
   travelCounts.forEach((t) => (travelByLead[t.lead_id] = { total: Number(t.total), booked: Number(t.booked), done: Number(t.done) }));
   // Admin-only: other events' travel that overlaps a still-open lead's date, so a
@@ -3153,6 +3159,31 @@ app.post("/api/travel-legs", requireAuth, requireCapability("assign_team"), asyn
   res.status(201).json({ id });
 });
 
+// Put a leg in the same trip as another leg of the same event (the other leg's trip id, or its own id if it has none yet).
+async function joinLegGroup(legId, otherId) {
+  const both = (await pool.query("SELECT id, lead_id, group_id FROM travel_legs WHERE id = ANY($1)", [[legId, otherId]])).rows;
+  const a = both.find((r) => r.id === legId), b = both.find((r) => r.id === otherId);
+  if (!a || !b || a.lead_id !== b.lead_id) return null;
+  const g = b.group_id || b.id;
+  await pool.query("UPDATE travel_legs SET group_id = $1 WHERE id = ANY($2)", [g, [legId, otherId]]);
+  return g;
+}
+app.post("/api/travel-legs/:id/group", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (isScopedManager(req.user)) { const lg = (await pool.query("SELECT lead_id FROM travel_legs WHERE id = $1", [req.params.id])).rows[0]; if (lg && !(await leadInManagerScope(req.user, lg.lead_id))) return scopeDeny(res); }
+  const g = await joinLegGroup(req.params.id, String((req.body || {}).withLegId || ""));
+  if (!g) return res.status(400).json({ error: "Those two journeys aren't part of the same event" });
+  res.json({ ok: true, groupId: g });
+});
+app.post("/api/travel-legs/:id/ungroup", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (isScopedManager(req.user)) { const lg = (await pool.query("SELECT lead_id FROM travel_legs WHERE id = $1", [req.params.id])).rows[0]; if (lg && !(await leadInManagerScope(req.user, lg.lead_id))) return scopeDeny(res); }
+  const leg = (await pool.query("SELECT id, group_id FROM travel_legs WHERE id = $1", [req.params.id])).rows[0];
+  if (!leg) return res.status(404).json({ error: "Travel leg not found" });
+  await pool.query("UPDATE travel_legs SET group_id = NULL WHERE id = $1", [leg.id]);
+  // A trip left with a single leg is just a journey again.
+  if (leg.group_id) await pool.query("UPDATE travel_legs SET group_id = NULL WHERE group_id = $1 AND (SELECT COUNT(*) FROM travel_legs x WHERE x.group_id = $1) = 1", [leg.group_id]);
+  res.json({ ok: true });
+});
+
 app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
   if (!(await leadInManagerScope(req.user, req.params.id))) return scopeDeny(res);
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
@@ -3174,6 +3205,7 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
   for (const teamId of teamIds) {
     await pool.query(`INSERT INTO travel_leg_members (id, leg_id, team_id) VALUES ($1, $2, $3)`, [uuid(), id, teamId]);
   }
+  if (req.body.groupWith) await joinLegGroup(id, req.body.groupWith);
   const members = (await pool.query(`SELECT name FROM team WHERE id = ANY($1)`, [teamIds])).rows;
   res.status(201).json({ id });
   if (members.length > 0) {
