@@ -5040,7 +5040,7 @@ async function buildTravelDesk(user) {
   const adminTeams = isAdmin ? new Set() : new Set((await pool.query("SELECT team_id FROM users WHERE access_level = 'admin' AND team_id IS NOT NULL")).rows.map((r) => r.team_id));
   const todayIst = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
   const horizon = new Date(Date.now() + 5.5 * 3600e3 + 120 * 86400e3).toISOString().slice(0, 10);
-  let leads = (await pool.query("SELECT id, name, date, city, venue, event_type, combo_group_id FROM leads WHERE stage = 'Confirmed' AND date >= $1 AND date <= $2 ORDER BY date ASC", [todayIst, horizon])).rows;
+  let leads = (await pool.query("SELECT id, name, date, city, venue, event_type, combo_group_id, no_travel FROM leads WHERE stage = 'Confirmed' AND date >= $1 AND date <= $2 ORDER BY date ASC", [todayIst, horizon])).rows;
   if (scope) leads = leads.filter((l) => scope.has(l.id));
   if (!leads.length) return { events: [], needsAction: 0 };
   const ids = leads.map((l) => l.id);
@@ -5078,19 +5078,30 @@ async function buildTravelDesk(user) {
     }
     const days = Math.round((new Date(l.date + "T00:00:00Z") - new Date(todayIst + "T00:00:00Z")) / 864e5);
     let next = "All set", kind = "done";
-    if (missing.length) { next = `Add travel for ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ` +${missing.length - 3}` : ""}`; kind = "plan"; }
+    const noTravel = grp.some((x) => x.no_travel);
+    if (noTravel && !myLegs.length) { next = "No travel needed"; kind = "done"; }
+    else if (missing.length) { next = `Add travel for ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ` +${missing.length - 3}` : ""}`; kind = "plan"; }
     else if (unbooked.length) { next = `Book ${unbooked.length} item${unbooked.length > 1 ? "s" : ""}`; kind = "book"; }
     else if (noTicket.length) { next = `Attach ${noTicket.length} ticket${noTicket.length > 1 ? "s" : ""}`; kind = "tickets"; }
     else if (people.length && sent < people.length) { next = `Send plan to ${people.length - sent}`; kind = "send"; }
     else if (people.length && seen < people.length) { next = `Waiting for ${people.length - seen} to confirm`; kind = "wait"; }
     else if (!people.length && crew.length === 0) { next = "Assign the team"; kind = "plan"; }
     else if (!people.length && !needsTravel.length) { next = "Everyone is local — no travel needed"; kind = "done"; }
-    events.push({ leadId: l.id, name: l.name, date: l.date, dates: grp.map((x) => x.date), combo: grp.length > 1, city: l.city, daysLeft: days, crew: crew.length,
-      planned: missing.length === 0 && crew.length > 0, missing: missing.length, legs: myLegs.length, unbooked: unbooked.length, noTicket: noTicket.length, people: people.length, sent, seen,
+    events.push({ leadId: l.id, name: l.name, noTravel: noTravel && !myLegs.length, date: l.date, dates: grp.map((x) => x.date), combo: grp.length > 1, city: l.city, daysLeft: days, crew: crew.length,
+      planned: noTravel || (missing.length === 0 && crew.length > 0), missing: missing.length, legs: myLegs.length, unbooked: unbooked.length, noTicket: noTicket.length, people: people.length, sent, seen,
       urgent: days <= 7 && (unbooked.length > 0 || missing.length > 0), next, kind, done: kind === "done" });
   }
   return { events, needsAction: events.filter((e) => !e.done).length };
 }
+// Some events need no travel at all (local, self-arranged): mark it so the Travel Desk stops asking. Applies to the whole combo.
+app.post("/api/leads/:id/no-travel", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (!(await leadInManagerScope(req.user, req.params.id))) return scopeDeny(res);
+  const on = !!(req.body || {}).value;
+  const ids = await comboLeadIds(req.params.id);
+  await pool.query("UPDATE leads SET no_travel = $1 WHERE id = ANY($2)", [on, ids]);
+  logActivity(req, on ? "Marked: no travel needed for this event" : "Travel is needed again for this event", req.params.id);
+  res.json({ ok: true, noTravel: on });
+});
 app.get("/api/travel-desk", requireAuth, requireCapability("assign_team"), async (req, res) => { res.json(await buildTravelDesk(req.user)); });
 
 // ---------- Travel-day reminders to artists, and one alert to the organiser when travel is still unbooked close to the date ----------

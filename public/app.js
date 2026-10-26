@@ -8028,7 +8028,10 @@ async function renderTravelDesk(main) {
       <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap;">
         <div style="min-width:180px;"><div style="font-weight:700;">${escH(e.name)}</div>
           <div class="muted small">${e.combo ? `🔗 ${e.dates.map((d) => fmtDate(d)).join(" + ")}` : fmtDate(e.date)}${e.city ? " · " + escH(e.city) : ""} · ${e.daysLeft <= 0 ? "today" : e.daysLeft + " day" + (e.daysLeft > 1 ? "s" : "") + " left"}${e.urgent ? ` <b style="color:#C0462B;">· act now</b>` : ""}</div></div>
-        <button class="${e.done ? "btn-ghost" : "btn-primary"}" data-desk-open="${e.leadId}" style="font-size:13px; padding:6px 12px;">${escH(e.next)} →</button>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          ${e.noTravel ? `<button class="btn-ghost" data-desk-notravel="${e.leadId}" data-val="0" style="font-size:12px; padding:5px 10px;">Undo</button>` : (!e.legs ? `<button class="btn-ghost" data-desk-notravel="${e.leadId}" data-val="1" style="font-size:12px; padding:5px 10px;">No travel needed</button>` : "")}
+          <button class="${e.done ? "btn-ghost" : "btn-primary"}" data-desk-open="${e.leadId}" style="font-size:13px; padding:6px 12px;">${escH(e.next)} →</button>
+        </div>
       </div>
       <div style="margin-top:6px;">
         ${chip(e.planned ? "Trip planned" : `Missing ${e.missing}`, e.planned)}
@@ -8041,6 +8044,10 @@ async function renderTravelDesk(main) {
   main.innerHTML = `<div class="view-head"><div><h2>Travel Desk</h2><p class="muted">Confirmed events in the next 120 days, soonest first, with the one thing to do next.</p></div></div>
     ${todo.length ? `<div class="section-label" style="margin:8px 0;">Needs action (${todo.length})</div>${todo.map(row).join("")}` : `<div class="card"><div style="font-weight:600;">Nothing needs travel action right now.</div></div>`}
     ${done.length ? `<details style="margin-top:14px;"><summary class="muted" style="cursor:pointer;">All set (${done.length})</summary><div style="margin-top:8px;">${done.map(row).join("")}</div></details>` : ""}`;
+  main.querySelectorAll("[data-desk-notravel]").forEach((b) => b.addEventListener("click", async () => {
+    b.disabled = true;
+    try { await api(`/api/leads/${b.dataset.deskNotravel}/no-travel`, { method: "POST", body: JSON.stringify({ value: b.dataset.val === "1" }) }); await renderTravelDesk(main); } catch (err) { alert(err.message); b.disabled = false; }
+  }));
   main.querySelectorAll("[data-desk-open]").forEach((b) => b.addEventListener("click", async () => {
     await openTravelPlanModal(b.dataset.deskOpen);
   }));
