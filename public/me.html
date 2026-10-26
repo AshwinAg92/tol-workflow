@@ -70,13 +70,20 @@
       const travel = legsSorted.length ? legsSorted.map((l, li) => {
         const inTrip = l.groupId ? legsSorted.filter((x) => x.groupId === l.groupId) : [];
         const pos = l.groupId ? inTrip.indexOf(l) + 1 : 0;
-        const head = l.groupId && pos === 1 ? `<div class="sec" style="margin-top:14px;">One trip · ${inTrip.length} legs · ${esc(inTrip.map((x, i) => (i === 0 ? [x.from, x.to] : [x.to]).filter(Boolean).join(" → ")).join(" → "))}</div>` : "";
+        const head = l.groupId && pos === 1 ? `<div class="sec" style="margin-top:14px;">One trip · ${inTrip.filter((x) => x.mode !== "stay").length} legs · ${esc(inTrip.filter((x) => x.mode !== "stay").map((x, i) => (i === 0 ? [x.from, x.to] : [x.to]).filter(Boolean).join(" → ")).join(" → "))}</div>` : "";
         const when = [l.departureAt ? fmtDate(l.departureAt) : "", fmt12(l.departureTime)].filter(Boolean).join(", ");
         const arr = fmt12(l.arrivalTime) || "";
+        if (l.mode === "stay") return `${head}<div class="leg">${pos ? `<b>${pos}.</b> ` : ""}<b>🌙 Night stay</b> — ${esc(l.to || l.from || "")}${l.service ? ` · ${esc(l.service)}` : ""}
+          <div class="muted">${[l.departureAt ? "Check-in " + esc(fmtDate(l.departureAt)) : "", l.arrivalAt ? "Check-out " + esc(fmtDate(l.arrivalAt)) : ""].filter(Boolean).join(" · ") || "Dates not set"} · ${esc(ST[l.status] || l.status)}${l.ref ? " · Ref " + esc(l.ref) : ""}</div>
+          ${l.tickets.map((t) => `<div><a href="/api/public/me/${encodeURIComponent(token)}/ticket/${t.id}" target="_blank" rel="noopener">🎫 ${esc(t.name)}</a></div>`).join("")}</div>`;
         return `${head}<div class="leg">${pos ? `<b>${pos}.</b> ` : ""}<b>${TYPE[l.type] || ""}</b> ${esc(MODE[l.mode] || "")} — ${esc(l.from || "?")} → ${esc(l.to || "?")}
           <div class="muted">${esc(when) || "Date not set"}${arr ? " · arrives " + esc(arr) : ""}${l.arrivalAt ? " · returns " + esc(fmtDate(l.arrivalAt)) : ""} · ${esc(ST[l.status] || l.status)}${l.ref ? " · Ref " + esc(l.ref) : ""}</div>
           ${l.tickets.map((t) => `<div><a href="/api/public/me/${encodeURIComponent(token)}/ticket/${t.id}" target="_blank" rel="noopener">🎫 ${esc(t.name)}</a></div>`).join("")}</div>`;
       }).join("") : `<div class="muted">Travel not added yet.</div>`;
+      const ack = e.travelAck || { state: "none" };
+      const ackHtml = e.past || !legsSorted.length || ack.state === "none" ? "" : ack.state === "seen"
+        ? `<div class="muted" style="margin-top:8px;">✓ You confirmed this plan on ${esc(fmtDate(ack.at))}</div>`
+        : `${ack.state === "changed" ? `<div class="muted" style="margin-top:8px; color:#A6432B;">Your travel plan changed after you confirmed it. Please check it again.</div>` : ""}<button class="save" data-ack="${i}" style="background:#E4F1F1; color:#1C7A80;">✓ Got it — I've seen my travel plan</button>`;
       const pay = e.pay ? `<div class="sec">Payment</div><span class="pill ${e.pay.paid ? "p-paid" : "p-pending"}">${e.pay.paid ? "Paid" : "Payment pending"}</span>${e.pay.paid && e.pay.date ? `<span class="muted">${esc(fmtDate(e.pay.date))}${e.pay.mode ? " · " + esc(e.pay.mode) : ""}</span>` : ""}${e.pay.amount ? `<div class="muted">₹${e.pay.amount.toLocaleString("en-IN")}</div>` : ""}` : "";
       const respond = !e.past && e.status !== "cancel_requested" ? `
         <div class="btns">
@@ -92,7 +99,7 @@
         <div class="muted">${esc(e.experience)}</div>
         <span class="pill ${pill[0]}">${pill[1]}</span>${e.tentative ? `<span class="pill p-tent">Tentative</span>` : ""}
         <div style="margin-top:6px;">${rows.map((r) => `<div class="row"><div class="ic">${r[0]}</div><div>${esc(r[1])}</div></div>`).join("")}</div>
-        <div class="sec">Travel</div>${travel}${pay}${respond}
+        <div class="sec">Travel</div>${travel}${ackHtml}${pay}${respond}
         <div class="msg" id="msg${i}"></div></div>`;
     }
     function render() {
@@ -104,6 +111,11 @@
       app.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; render(); }));
       app.querySelectorAll("button.act").forEach((b) => b.addEventListener("click", () => respond(+b.dataset.i, b.dataset.s)));
       app.querySelectorAll("[data-save]").forEach((b) => b.addEventListener("click", () => saveNote(+b.dataset.save)));
+      app.querySelectorAll("[data-ack]").forEach((b) => b.addEventListener("click", async () => {
+        const e = data.upcoming[+b.dataset.ack]; b.disabled = true;
+        try { const r = await call(`/api/public/me/${encodeURIComponent(token)}/travel-ack`, { confirmToken: e.confirmToken }); e.travelAck = r.ack; render(); }
+        catch (err) { b.disabled = false; document.getElementById("msg" + b.dataset.ack).textContent = err.message; }
+      }));
     }
     async function call(path, body) {
       const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

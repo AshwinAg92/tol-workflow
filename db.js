@@ -317,6 +317,8 @@ async function setup() {
   // Several legs of one trip (e.g. Guwahati → Kolkata → Ahmedabad) share a group_id and show as one entry.
   await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS group_id TEXT`);
   await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS trip_order INT`);
+  // An artist's "Got it" on their travel plan for an event; plan_hash lets a later change show as "updated since you confirmed".
+  await pool.query(`CREATE TABLE IF NOT EXISTS travel_acks (team_id TEXT NOT NULL, lead_id TEXT NOT NULL, acked_at TEXT NOT NULL, plan_hash TEXT, PRIMARY KEY (team_id, lead_id))`);
   await pool.query(`CREATE TABLE IF NOT EXISTS artist_unavailable (
     id TEXT PRIMARY KEY,
     team_id TEXT NOT NULL,

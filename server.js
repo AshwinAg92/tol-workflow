@@ -3244,7 +3244,7 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
   const notes = req.user.access_level === "admin" ? req.body.notes : null;
   const managerNotes = req.body.managerNotes || null;
   if (!Array.isArray(teamIds) || teamIds.length === 0) return res.status(400).json({ error: "Select at least one artist" });
-  { const fc = fromCity, tc = toCity || lead.city; const dups = await sectorDuplicateNames({ leadId: req.params.id, fromCity: fc, toCity: tc, teamIds }); if (dups.length) return res.status(400).json({ error: dupTravelMessage(dups, fc, tc) }); }
+  if (mode !== "stay") { const fc = fromCity, tc = toCity || lead.city; const dups = await sectorDuplicateNames({ leadId: req.params.id, fromCity: fc, toCity: tc, teamIds }); if (dups.length) return res.status(400).json({ error: dupTravelMessage(dups, fc, tc) }); }
   const id = uuid();
   const now = new Date().toISOString();
   await pool.query(`
@@ -3255,6 +3255,14 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
     await pool.query(`INSERT INTO travel_leg_members (id, leg_id, team_id) VALUES ($1, $2, $3)`, [uuid(), id, teamId]);
   }
   if (req.body.groupWith) await joinLegGroup(id, req.body.groupWith);
+  if (req.body.groupWith && req.body.insertAfter) { // a stay (or leg) placed right after a chosen leg instead of at the end
+    const g = (await pool.query("SELECT group_id FROM travel_legs WHERE id = $1", [id])).rows[0];
+    if (g && g.group_id) {
+      const ids = (await pool.query("SELECT id FROM travel_legs WHERE group_id = $1 ORDER BY trip_order ASC NULLS LAST", [g.group_id])).rows.map((r) => r.id).filter((x) => x !== id);
+      const at = ids.indexOf(String(req.body.insertAfter));
+      if (at >= 0) { ids.splice(at + 1, 0, id); for (let i = 0; i < ids.length; i++) await pool.query("UPDATE travel_legs SET trip_order = $1 WHERE id = $2", [i, ids[i]]); }
+    }
+  }
   const members = (await pool.query(`SELECT name FROM team WHERE id = ANY($1)`, [teamIds])).rows;
   res.status(201).json({ id });
   if (members.length > 0) {
@@ -3275,7 +3283,7 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
     const fc = req.body.fromCity !== undefined ? req.body.fromCity : leg.from_city;
     const tc = req.body.toCity !== undefined ? req.body.toCity : leg.to_city;
     const lid = req.body.leadId !== undefined ? req.body.leadId : leg.lead_id;
-    const dups = await sectorDuplicateNames({ leadId: lid || null, fromCity: fc, toCity: tc, departureAt: req.body.departureAt !== undefined ? req.body.departureAt : leg.departure_at, teamIds: Array.isArray(req.body.teamIds) ? req.body.teamIds : curMembers, excludeLegId: req.params.id });
+    const dups = leg.mode === "stay" ? [] : await sectorDuplicateNames({ leadId: lid || null, fromCity: fc, toCity: tc, departureAt: req.body.departureAt !== undefined ? req.body.departureAt : leg.departure_at, teamIds: Array.isArray(req.body.teamIds) ? req.body.teamIds : curMembers, excludeLegId: req.params.id });
     if (dups.length) return res.status(400).json({ error: dupTravelMessage(dups, fc, tc) });
   }
   const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "manager_notes", "label", "lead_id", "leg_type", "preferred_service", "travel_class", "food_included", "departure_time", "arrival_time", "to_lead_id", "from_lead_id", "booked_by"];
@@ -4604,7 +4612,7 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
       })),
     ],
     tempArtists: temps.rows.filter((t) => !t.musician_id).map((t) => t.name),
-    legs: orderLegs(legs.rows).map((l) => ({ ...l, bookedElsewhere: l.lead_id !== leadId || l.booked_by === "other" || l.booked_by === "tol", bookedByTol: l.booked_by === "tol" && l.lead_id === leadId, memberIds: members.rows.filter((m) => m.leg_id === l.id).map((m) => m.team_id), tickets: ticketRows.filter((t) => t.travel_leg_id === l.id).map((t) => ({ id: t.id, name: t.original_name })) })),
+    legs: orderLegs(legs.rows.filter((l) => l.mode !== "stay")).map((l) => ({ ...l, bookedElsewhere: l.lead_id !== leadId || l.booked_by === "other" || l.booked_by === "tol", bookedByTol: l.booked_by === "tol" && l.lead_id === leadId, memberIds: members.rows.filter((m) => m.leg_id === l.id).map((m) => m.team_id), tickets: ticketRows.filter((t) => t.travel_leg_id === l.id).map((t) => ({ id: t.id, name: t.original_name })) })),
     shares: shares.rows.map((s) => ({ token: s.token, teamIds: JSON.parse(s.team_ids || "[]"), createdAt: s.created_at, expiresAt: s.expires_at, revoked: !!s.revoked })),
     clientUnread: Number((await pool.query("SELECT (SELECT COUNT(*) FROM travel_share_messages WHERE lead_id = $1 AND sender = 'client' AND read_by_team = 0) + (SELECT COUNT(*) FROM travel_share_files WHERE lead_id = $1 AND read_by_team = 0) AS n", [leadId])).rows[0].n),
   });
@@ -4896,6 +4904,58 @@ app.post("/api/team/:id/portal-link", requireAuth, requireCapability("assign_tea
   const login = (await pool.query("SELECT username FROM users WHERE team_id = $1 LIMIT 1", [m.id])).rows[0];
   res.json({ token, name: m.name, phone: m.phone, username: login ? login.username : null });
 });
+// What an artist's plan for one event currently says (journeys + stays they are on). A change in any of it = a new hash.
+async function planHashFor(leadId, teamId) {
+  const { rows } = await pool.query(`SELECT tl.id, tl.group_id, tl.trip_order, tl.mode, tl.from_city, tl.to_city, tl.departure_at, tl.arrival_at, tl.departure_time, tl.arrival_time, tl.status, tl.booking_ref, tl.preferred_service
+    FROM travel_legs tl JOIN travel_leg_members tm ON tm.leg_id = tl.id AND tm.team_id = $2
+    WHERE tl.lead_id = $1 OR tl.to_lead_id = $1 OR tl.from_lead_id = $1`, [leadId, teamId]);
+  if (!rows.length) return null;
+  const docs = (await pool.query("SELECT travel_leg_id, COUNT(*) AS n FROM documents WHERE travel_leg_id = ANY($1) GROUP BY travel_leg_id", [rows.map((r) => r.id)])).rows;
+  const txt = orderLegs(rows).map((r) => [r.mode, r.from_city, r.to_city, r.departure_at, r.arrival_at, r.departure_time, r.arrival_time, r.status, r.booking_ref, r.preferred_service, (docs.find((d) => d.travel_leg_id === r.id) || {}).n || 0].join("|")).join("\n");
+  return crypto.createHash("sha1").update(txt).digest("hex");
+}
+async function travelAckState(leadId, teamId) {
+  const hash = await planHashFor(leadId, teamId);
+  if (!hash) return { state: "none", at: null };
+  const a = (await pool.query("SELECT acked_at, plan_hash FROM travel_acks WHERE team_id = $1 AND lead_id = $2", [teamId, leadId])).rows[0];
+  if (!a) return { state: "unseen", at: null };
+  return { state: a.plan_hash === hash ? "seen" : "changed", at: a.acked_at };
+}
+async function recordTravelAck(leadId, teamId) {
+  const hash = await planHashFor(leadId, teamId);
+  if (!hash) return false;
+  await pool.query("INSERT INTO travel_acks (team_id, lead_id, acked_at, plan_hash) VALUES ($1,$2,$3,$4) ON CONFLICT (team_id, lead_id) DO UPDATE SET acked_at = EXCLUDED.acked_at, plan_hash = EXCLUDED.plan_hash", [teamId, leadId, new Date().toISOString(), hash]);
+  return true;
+}
+// Artist, no login: confirm "Got it" on the travel plan of one of their events.
+app.post("/api/public/me/:token/travel-ack", async (req, res) => {
+  const p = await loadArtistPortal(req.params.token);
+  if (!p) return res.status(404).json({ error: "This link isn't valid." });
+  const row = p.rows.find((r) => r.confirm_token === String((req.body || {}).confirmToken || ""));
+  if (!row) return res.status(404).json({ error: "Event not found" });
+  if (!(await recordTravelAck(row.lead_id, p.member.id))) return res.status(400).json({ error: "No travel added yet" });
+  res.json({ ok: true, ack: await travelAckState(row.lead_id, p.member.id) });
+});
+// Artist, logged in.
+app.post("/api/my/events/:leadId/travel-ack", requireAuth, async (req, res) => {
+  if (!req.user.team_id) return res.status(403).json({ error: "Not an artist login" });
+  const a = (await pool.query("SELECT 1 FROM event_assignments WHERE lead_id = $1 AND team_id = $2", [req.params.leadId, req.user.team_id])).rows[0];
+  if (!a) return res.status(403).json({ error: "Not your event" });
+  if (!(await recordTravelAck(req.params.leadId, req.user.team_id))) return res.status(400).json({ error: "No travel added yet" });
+  res.json({ ok: true, ack: await travelAckState(req.params.leadId, req.user.team_id) });
+});
+app.get("/api/my/events/:leadId/travel-ack", requireAuth, async (req, res) => {
+  if (!req.user.team_id) return res.json({ state: "none", at: null });
+  res.json(await travelAckState(req.params.leadId, req.user.team_id));
+});
+// Organiser: who has seen the plan for this event.
+app.get("/api/leads/:id/travel-acks", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (!(await leadInManagerScope(req.user, req.params.id))) return scopeDeny(res);
+  const crew = (await pool.query("SELECT DISTINCT team.id, team.name FROM travel_leg_members m JOIN travel_legs tl ON tl.id = m.leg_id JOIN team ON team.id = m.team_id WHERE tl.lead_id = $1 OR tl.to_lead_id = $1 OR tl.from_lead_id = $1 ORDER BY team.name", [req.params.id])).rows;
+  const out = [];
+  for (const c of crew) out.push({ teamId: c.id, name: c.name, ...(await travelAckState(req.params.id, c.id)) });
+  res.json(await hideAdminTravel(req.user, out.map((o) => ({ ...o, members: [{ teamId: o.teamId }] }))).then((r) => r.map(({ members, ...x }) => x)));
+});
 async function loadArtistPortal(token) {
   if (!token || String(token).length < 16) return null;
   const m = (await pool.query("SELECT id, name FROM team WHERE portal_token = $1", [String(token)])).rows[0];
@@ -4945,10 +5005,11 @@ app.get("/api/public/me/:token", async (req, res) => {
     return {
       confirmToken: r.confirm_token, status: r.status, note: r.note, place: placeOf({ venue: r.venue, city: r.city }), experience: packageName(r.event_type), city: r.city, date: r.date,
       venue: r.venue, eventTime: r.event_time, soundcheckTime: r.soundcheck_time, pcs: r.pcs, tentative: r.stage === "Tentative", past: isPast,
-      travel: mine,
+      travel: mine, travelAck: null,
       pay: isPast ? { paid: !!r.pay_paid, amount: r.pay_amount != null ? Number(r.pay_amount) : null, date: r.payment_date, mode: r.payment_mode } : null,
     };
   });
+  for (const e of events) { const row = p.rows.find((r) => r.confirm_token === e.confirmToken); e.travelAck = e.travel.length && row ? await travelAckState(row.lead_id, p.member.id) : { state: "none", at: null }; }
   const login = (await pool.query("SELECT username FROM users WHERE team_id = $1 LIMIT 1", [p.member.id])).rows[0];
   res.json({ name: p.member.name, hasLogin: !!login, username: login ? login.username : null, upcoming: events.filter((e) => !e.past), past: events.filter((e) => e.past).reverse() });
 });
@@ -4984,7 +5045,7 @@ app.get("/trip/:token", async (req, res) => {
     pool.query("SELECT id, lead_id, booked_by, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time, group_id, trip_order FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [s.lead_id]),
     pool.query("SELECT travel_leg_members.leg_id, team.id AS team_id, team.name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1)", [s.lead_id]),
   ]);
-  legs.rows = orderLegs(legs.rows);
+  legs.rows = orderLegs(legs.rows.filter((l) => l.mode !== "stay"));
   // Not this client's to book: it belongs to another event, or it's marked as booked by Team TOL / someone else.
   const notYours = (l) => l.lead_id !== s.lead_id || l.booked_by === "other" || l.booked_by === "tol";
   const legCards = legs.rows.map((l) => {
