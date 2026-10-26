@@ -7569,7 +7569,8 @@ async function openTravelPlanModal(leadId) {
     const cCancel = root.querySelector("#combineCancelBtn"); if (cCancel) cCancel.addEventListener("click", () => { combineOpen = false; renderModal(); });
     const combineBtn = root.querySelector("#combineBtn");
     if (combineBtn) combineBtn.addEventListener("click", async () => {
-      const ids = [...root.querySelectorAll("[data-combine-pick]:checked")].map((c) => c.dataset.combinePick);
+      const dateOf = (id) => String((legs.find((x) => x.id === id) || {}).departure_at || "9999");
+      const ids = [...root.querySelectorAll("[data-combine-pick]:checked")].map((c) => c.dataset.combinePick).sort((a, b) => dateOf(a).localeCompare(dateOf(b)));
       if (ids.length < 2) return alert("Tick at least two journeys.");
       try { await api(`/api/leads/${leadId}/combine-legs`, { method: "POST", body: JSON.stringify({ ids }) }); } catch (e) { return alert(e.message); }
       combineOpen = false;
