@@ -7233,19 +7233,40 @@ async function openTravelPlanModal(leadId) {
   let unlinkedLegs = null; // lazy-loaded — travel logged elsewhere (e.g. Travel Calendar) with no event attached yet
 
   // Legs of one trip (same group_id) sit together in one box: "Guwahati → Kolkata → Ahmedabad".
+  // "+ Next leg" adds its fields inside that same box (no separate window).
+  function nextLegBox(last) {
+    const e = (v) => escH(v == null ? "" : v);
+    return `<div class="card" id="nextLegBox" style="margin-bottom:10px; background:#FBF7EF; border-color:#C1602B;">
+      <div style="font-weight:600; margin-bottom:6px;">Next leg</div>
+      <div class="row-2">
+        <div><label>Mode</label><select id="nlMode"><option value="">Not set</option>${Object.entries(TRAVEL_MODE_LABELS).map(([id, label]) => `<option value="${id}" ${last.mode === id ? "selected" : ""}>${label}</option>`).join("")}</select></div>
+        <div><label>Status</label><select id="nlStatus">${Object.entries(TRAVEL_STATUS_LABELS).map(([id, label]) => `<option value="${id}" ${id === "not_booked" ? "selected" : ""}>${label}</option>`).join("")}</select></div>
+      </div>
+      <div class="row-2">
+        <div><label>From city</label><input id="nlFrom" value="${e(last.to_city)}" /></div>
+        <div><label>To city</label><input id="nlTo" value="${e(lead.city)}" /></div>
+      </div>
+      <div class="row-2">
+        <div><label>Departure date</label><input type="date" id="nlDep" /></div>
+        <div><label>Booking ref / PNR (optional)</label><input id="nlRef" /></div>
+      </div>
+      <div style="display:flex; gap:8px; margin-top:10px;"><button class="btn-primary" id="nlSave">Save leg</button><button class="btn-ghost" id="nlCancel">Cancel</button></div>
+    </div>`;
+  }
   function renderLegsGrouped(sorted) {
     const done = new Set();
     return sorted.map((leg) => {
-      if (!leg.group_id) return legCard(leg);
-      if (done.has(leg.group_id)) return "";
-      const members = sorted.filter((x) => x.group_id === leg.group_id).sort((a, b) => String(a.departure_at || "9999").localeCompare(String(b.departure_at || "9999")));
-      done.add(leg.group_id);
-      if (members.length < 2) return legCard(leg);
+      const members = leg.group_id ? sorted.filter((x) => x.group_id === leg.group_id).sort((a, b) => String(a.departure_at || "9999").localeCompare(String(b.departure_at || "9999"))) : [leg];
+      if (leg.group_id) { if (done.has(leg.group_id)) return ""; done.add(leg.group_id); }
+      const last = members[members.length - 1];
+      const adding = nextLegFrom && members.some((m) => m.id === nextLegFrom.id);
+      if (members.length < 2 && !adding) return legCard(leg);
       const cities = [];
       members.forEach((m) => { if (m.from_city && cities[cities.length - 1] !== m.from_city) cities.push(m.from_city); if (m.to_city) cities.push(m.to_city); });
       return `<div style="border:2px solid #8A5FA8; border-radius:12px; padding:8px 8px 0; margin-bottom:12px;">
-        <div class="small" style="margin:0 4px 8px; font-weight:600; color:#6B4488;">🔀 One trip · ${members.length} legs · ${cities.map(escH).join(" → ")}</div>
+        <div class="small" style="margin:0 4px 8px; font-weight:600; color:#6B4488;">🔀 One trip · ${members.length} leg${members.length > 1 ? "s" : ""} · ${cities.map(escH).join(" → ")}</div>
         ${members.map(legCard).join("")}
+        ${adding ? nextLegBox(last) : `<div style="margin:0 0 8px;"><button class="btn-ghost" data-next-leg="${last.id}" style="font-size:12px; padding:3px 10px;">+ Next leg</button></div>`}
       </div>`;
     }).join("");
   }
@@ -7287,8 +7308,7 @@ async function openTravelPlanModal(leadId) {
         ${linked ? "" : `<div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
           <label class="btn-ghost" style="font-size:12px; padding:3px 8px; cursor:pointer;">+ Add ticket<input type="file" data-ticket-upload="${leg.id}" style="display:none;" /></label>
           <button class="btn-ghost" data-edit-leg="${leg.id}" style="font-size:12px; padding:3px 8px;">Edit</button>
-          <button class="btn-ghost" data-next-leg="${leg.id}" style="font-size:12px; padding:3px 8px;" title="Same trip continues — add the next leg">+ Next leg</button>
-          ${!leg.group_id && legs.filter((x) => x.id !== leg.id && !x.linked_from_other).length ? `<button class="btn-ghost" data-join-leg="${leg.id}" style="font-size:12px; padding:3px 8px;" title="Make this and another journey one trip">Join a trip</button>` : ""}
+          ${leg.group_id ? "" : `<button class="btn-ghost" data-next-leg="${leg.id}" style="font-size:12px; padding:3px 8px;" title="Same trip continues — add the next leg here">+ Next leg</button>`}
           ${leg.group_id ? `<button class="btn-ghost" data-ungroup-leg="${leg.id}" style="font-size:12px; padding:3px 8px;" title="Make this a separate journey again">Separate</button>` : ""}
           <button class="btn-ghost" data-delete-leg="${leg.id}" style="font-size:12px; padding:3px 8px; color:#A6432B;">Delete</button>
           <span class="muted small" data-ticket-status="${leg.id}"></span>
@@ -7432,7 +7452,7 @@ async function openTravelPlanModal(leadId) {
             ${prevNoteHtml}
             ${legs.length === 0 && !addingNew && !linkingExisting ? `<p class="muted small">No travel added yet.</p>` : ""}
             ${renderLegsGrouped(sortLegsForDisplay(legs))}
-            ${addingNew ? legForm({ seed: nextLegFrom }) : ""}
+            ${addingNew ? legForm({}) : ""}
             ${linkingExisting ? linkForm() : ""}
             ${assignments.length === 0 ? `<p class="muted small" style="margin-top:10px;">No one's assigned to this event yet — add the team first.</p>` : (!addingNew && !linkingExisting ? `
               <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:${legs.length > 0 ? "6px" : "0"};">
@@ -7508,16 +7528,34 @@ async function openTravelPlanModal(leadId) {
     const addBtn = root.querySelector("#addLegBtn");
     if (addBtn) addBtn.addEventListener("click", () => { addingNew = true; nextLegFrom = null; renderModal(); });
     root.querySelectorAll("[data-next-leg]").forEach((b) => b.addEventListener("click", () => {
-      nextLegFrom = legs.find((x) => x.id === b.dataset.nextLeg) || null; addingNew = !!nextLegFrom; editingLegId = null; renderModal();
+      nextLegFrom = legs.find((x) => x.id === b.dataset.nextLeg) || null; addingNew = false; editingLegId = null; renderModal();
+      const t = root.querySelector("#nlTo"); if (t) { t.focus(); t.select(); }
     }));
-    root.querySelectorAll("[data-join-leg]").forEach((b) => b.addEventListener("click", async () => {
-      const others = legs.filter((x) => x.id !== b.dataset.joinLeg && !x.linked_from_other);
-      const pick = prompt("Make this part of one trip with which journey? Type its number:\n\n" + others.map((x, i) => `${i + 1}. ${[x.from_city, x.to_city].filter(Boolean).join(" → ") || "Journey"}${x.departure_at ? " · " + fmtDate(x.departure_at.slice(0, 10)) : ""}`).join("\n"));
-      const o = others[Number(pick) - 1];
-      if (!o) return;
-      try { await api(`/api/travel-legs/${b.dataset.joinLeg}/group`, { method: "POST", body: JSON.stringify({ withLegId: o.id }) }); } catch (e) { return alert(e.message); }
-      const updated = await api(`/api/leads/${leadId}/travel-legs`); legs.length = 0; legs.push(...updated); renderModal();
-    }));
+    {
+      const nlSave = root.querySelector("#nlSave"), nlCancel = root.querySelector("#nlCancel");
+      if (nlCancel) nlCancel.addEventListener("click", () => { nextLegFrom = null; renderModal(); });
+      if (nlSave && nextLegFrom) nlSave.addEventListener("click", async () => {
+        const base = nextLegFrom;
+        const members = legs.filter((x) => (base.group_id ? x.group_id === base.group_id : x.id === base.id)).sort((a, b) => String(a.departure_at || "9999").localeCompare(String(b.departure_at || "9999")));
+        const last = members[members.length - 1];
+        const teamIds = (last.members || []).map((m) => m.teamId);
+        const v = (id) => root.querySelector(id).value.trim();
+        const payload = { teamIds, legType: ["return", "return_onward"].includes(last.leg_type) ? "return" : "going", mode: v("#nlMode") || null, status: root.querySelector("#nlStatus").value,
+          fromCity: v("#nlFrom") || null, toCity: v("#nlTo") || null, departureAt: root.querySelector("#nlDep").value || null, bookingRef: v("#nlRef") || null, groupWith: base.id };
+        if (!payload.toCity) return alert("Enter the 'To city' for this leg.");
+        const draft = { id: "draft-new", group_id: base.group_id || base.id, lead_id: leadId, leg_type: payload.legType, from_city: payload.fromCity, to_city: payload.toCity, departure_at: payload.departureAt, status: payload.status, members: last.members || [] };
+        const issues = legProblems(draft, tcAssign, [...(tcAllLegs || []), { ...base, group_id: base.group_id || base.id }, draft]);
+        if (issues.length && !confirm(`Please check this journey:\n\n${issues.map((x) => "• " + x).join("\n")}\n\nSave anyway?`)) return;
+        nlSave.disabled = true;
+        try {
+          await api(`/api/leads/${leadId}/travel-legs`, { method: "POST", body: JSON.stringify(payload) });
+          nextLegFrom = null;
+          const updated = await api(`/api/leads/${leadId}/travel-legs`);
+          tcAllLegs = await api("/api/travel-legs").catch(() => tcAllLegs);
+          legs.length = 0; legs.push(...updated); renderModal();
+        } catch (err) { alert(err.message); nlSave.disabled = false; }
+      });
+    }
     root.querySelectorAll("[data-ungroup-leg]").forEach((b) => b.addEventListener("click", async () => {
       try { await api(`/api/travel-legs/${b.dataset.ungroupLeg}/ungroup`, { method: "POST" }); } catch (e) { return alert(e.message); }
       const updated = await api(`/api/leads/${leadId}/travel-legs`); legs.length = 0; legs.push(...updated); renderModal();
