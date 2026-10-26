@@ -5045,7 +5045,7 @@ async function buildTravelDesk(user) {
   if (!leads.length) return { events: [], needsAction: 0 };
   const ids = leads.map((l) => l.id);
   const crewRows = (await pool.query(`SELECT ea.lead_id, team.id AS team_id, team.name, team.base_city FROM event_assignments ea JOIN team ON team.id = ea.team_id WHERE ea.lead_id = ANY($1) AND ea.status <> 'declined'`, [ids])).rows.filter((c) => !adminTeams.has(c.team_id));
-  const legs = (await pool.query("SELECT id, lead_id, mode, status, from_city, to_city, departure_at FROM travel_legs WHERE lead_id = ANY($1)", [ids])).rows;
+  const legs = (await pool.query("SELECT id, lead_id, to_lead_id, from_lead_id, mode, status, from_city, to_city, departure_at FROM travel_legs WHERE lead_id = ANY($1) OR to_lead_id = ANY($1) OR from_lead_id = ANY($1)", [ids])).rows;
   const mem = legs.length ? (await pool.query("SELECT leg_id, team_id FROM travel_leg_members WHERE leg_id = ANY($1)", [legs.map((l) => l.id)])).rows : [];
   const docLegs = new Set(legs.length ? (await pool.query("SELECT DISTINCT travel_leg_id FROM documents WHERE travel_leg_id = ANY($1)", [legs.map((l) => l.id)])).rows.map((d) => d.travel_leg_id) : []);
   const norm = (c) => String(c || "").trim().toLowerCase();
@@ -5059,7 +5059,7 @@ async function buildTravelDesk(user) {
   for (const grp of groups) {
     const l = grp[0];
     const gids = new Set(grp.map((x) => x.id));
-    const myLegs = legs.filter((x) => gids.has(x.lead_id)).map((x) => ({ ...x, team: mem.filter((m) => m.leg_id === x.id).map((m) => m.team_id).filter((t) => !adminTeams.has(t)) }))
+    const myLegs = legs.filter((x) => gids.has(x.lead_id) || gids.has(x.to_lead_id) || gids.has(x.from_lead_id)).map((x) => ({ ...x, team: mem.filter((m) => m.leg_id === x.id).map((m) => m.team_id).filter((t) => !adminTeams.has(t)) }))
       .filter((x) => adminTeams.size === 0 || x.team.length > 0 || !mem.some((m) => m.leg_id === x.id));
     const crewAll = crewRows.filter((c) => gids.has(c.lead_id));
     const crew = [...new Map(crewAll.map((c) => [c.team_id, c])).values()];
