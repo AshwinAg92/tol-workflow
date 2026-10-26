@@ -3160,12 +3160,42 @@ app.post("/api/travel-legs", requireAuth, requireCapability("assign_team"), asyn
 });
 
 // Put a leg in the same trip as another leg of the same event (the other leg's trip id, or its own id if it has none yet).
+// Number a trip's legs 0,1,2… (existing order = trip_order, then departure date); `last` puts one leg at the end.
+async function renumberTrip(groupId, lastId) {
+  const rows = (await pool.query("SELECT id FROM travel_legs WHERE group_id = $1 ORDER BY trip_order ASC NULLS LAST, departure_at ASC NULLS LAST, created_at ASC", [groupId])).rows.map((r) => r.id);
+  if (lastId && rows.includes(lastId)) rows.splice(rows.indexOf(lastId), 1), rows.push(lastId);
+  for (let i = 0; i < rows.length; i++) await pool.query("UPDATE travel_legs SET trip_order = $1 WHERE id = $2", [i, rows[i]]);
+}
+app.post("/api/travel-legs/:id/move", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const leg = (await pool.query("SELECT id, lead_id, group_id FROM travel_legs WHERE id = $1", [req.params.id])).rows[0];
+  if (!leg || !leg.group_id) return res.status(400).json({ error: "This journey isn't part of a trip" });
+  if (isScopedManager(req.user) && !(await leadInManagerScope(req.user, leg.lead_id))) return scopeDeny(res);
+  await renumberTrip(leg.group_id);
+  const rows = (await pool.query("SELECT id FROM travel_legs WHERE group_id = $1 ORDER BY trip_order ASC", [leg.group_id])).rows.map((r) => r.id);
+  const i = rows.indexOf(leg.id), j = i + (Number((req.body || {}).dir) < 0 ? -1 : 1);
+  if (j >= 0 && j < rows.length) { [rows[i], rows[j]] = [rows[j], rows[i]]; for (let k = 0; k < rows.length; k++) await pool.query("UPDATE travel_legs SET trip_order = $1 WHERE id = $2", [k, rows[k]]); }
+  res.json({ ok: true });
+});
+// Combine several separate journeys of one event into a single trip, in the order given.
+app.post("/api/leads/:id/combine-legs", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (isScopedManager(req.user) && !(await leadInManagerScope(req.user, req.params.id))) return scopeDeny(res);
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(String) : [];
+  if (ids.length < 2) return res.status(400).json({ error: "Pick at least two journeys" });
+  const rows = (await pool.query("SELECT id, group_id FROM travel_legs WHERE lead_id = $1 AND id = ANY($2)", [req.params.id, ids])).rows;
+  if (rows.length !== ids.length) return res.status(400).json({ error: "Those journeys aren't all part of this event" });
+  const g = rows.find((r) => r.group_id)?.group_id || ids[0];
+  const old = [...new Set(rows.map((r) => r.group_id).filter((x) => x && x !== g))];
+  await pool.query("UPDATE travel_legs SET group_id = $1 WHERE id = ANY($2) OR group_id = ANY($3)", [g, ids, old]);
+  for (let i = 0; i < ids.length; i++) await pool.query("UPDATE travel_legs SET trip_order = $1 WHERE id = $2", [i, ids[i]]);
+  res.json({ ok: true, groupId: g });
+});
 async function joinLegGroup(legId, otherId) {
   const both = (await pool.query("SELECT id, lead_id, group_id FROM travel_legs WHERE id = ANY($1)", [[legId, otherId]])).rows;
   const a = both.find((r) => r.id === legId), b = both.find((r) => r.id === otherId);
   if (!a || !b || a.lead_id !== b.lead_id) return null;
   const g = b.group_id || b.id;
   await pool.query("UPDATE travel_legs SET group_id = $1 WHERE id = ANY($2)", [g, [legId, otherId]]);
+  await renumberTrip(g, legId);
   return g;
 }
 app.post("/api/travel-legs/:id/group", requireAuth, requireCapability("assign_team"), async (req, res) => {

@@ -7126,6 +7126,8 @@ async function openTravelShareModal(leadId) {
 // ---------- Travel sanity checks: anything that makes a journey impossible or doubtful ----------
 // Returns plain-English warnings for one journey (dates against the events it serves, city mismatches,
 // travellers missing from the connected event's crew, a traveller already somewhere else that day).
+const tripSeq = (x) => (x.trip_order != null ? x.trip_order : 1e6) ;
+const tripCmp = (a, b) => tripSeq(a) - tripSeq(b) || String(a.departure_at || "9999").localeCompare(String(b.departure_at || "9999"));
 function legProblems(leg, assignmentsAll, allLegs) {
   const out = [];
   const t = leg.leg_type || "going";
@@ -7135,8 +7137,8 @@ function legProblems(leg, assignmentsAll, allLegs) {
   const next = leg.to_lead_id ? LEADS.find((l) => l.id === leg.to_lead_id) : null;
   // In a multi-leg trip only the last leg has to reach the event city and only the first has to leave from it.
   const tripLegs = leg.group_id ? [...(allLegs || []).filter((x) => x.group_id === leg.group_id && x.id !== leg.id), leg] : null;
-  const lastOfTrip = !tripLegs || tripLegs.every((x) => String(x.departure_at || "") <= String(leg.departure_at || ""));
-  const firstOfTrip = !tripLegs || tripLegs.every((x) => String(x.departure_at || "9999") >= String(leg.departure_at || "9999"));
+  const lastOfTrip = !tripLegs || tripLegs.slice().sort(tripCmp).pop() === leg;
+  const firstOfTrip = !tripLegs || tripLegs.slice().sort(tripCmp)[0] === leg;
   const isCode = (c) => /^[A-Za-z]{2,4}$/.test(String(c || "").trim()); // airport / station codes can't be compared to a city name
   const cityOk = (a, b) => { const x = normCity(a), y = normCity(b); return !x || !y || isCode(a) || isCode(b) || x.includes(y) || y.includes(x); };
   const ev = (e) => `${e.name} (${fmtDate(e.date)})`;
@@ -7256,7 +7258,7 @@ async function openTravelPlanModal(leadId) {
   function renderLegsGrouped(sorted) {
     const done = new Set();
     return sorted.map((leg) => {
-      const members = leg.group_id ? sorted.filter((x) => x.group_id === leg.group_id).sort((a, b) => String(a.departure_at || "9999").localeCompare(String(b.departure_at || "9999"))) : [leg];
+      const members = leg.group_id ? sorted.filter((x) => x.group_id === leg.group_id).sort(tripCmp) : [leg];
       if (leg.group_id) { if (done.has(leg.group_id)) return ""; done.add(leg.group_id); }
       const last = members[members.length - 1];
       const adding = nextLegFrom && members.some((m) => m.id === nextLegFrom.id);
@@ -7265,13 +7267,13 @@ async function openTravelPlanModal(leadId) {
       members.forEach((m) => { if (m.from_city && cities[cities.length - 1] !== m.from_city) cities.push(m.from_city); if (m.to_city) cities.push(m.to_city); });
       return `<div style="border:2px solid #8A5FA8; border-radius:12px; padding:8px 8px 0; margin-bottom:12px;">
         <div class="small" style="margin:0 4px 8px; font-weight:600; color:#6B4488;">🔀 One trip · ${members.length} leg${members.length > 1 ? "s" : ""} · ${cities.map(escH).join(" → ")}</div>
-        ${members.map(legCard).join("")}
+        ${members.map((m, i) => legCard(m, { i, n: members.length })).join("")}
         ${adding ? nextLegBox(last) : `<div style="margin:0 0 8px;"><button class="btn-ghost" data-next-leg="${last.id}" style="font-size:12px; padding:3px 10px;">+ Next leg</button></div>`}
       </div>`;
     }).join("");
   }
 
-  function legCard(leg) {
+  function legCard(leg, pos) {
     const editing = editingLegId === leg.id;
     if (editing) return legForm({ leg });
     const statusColor = leg.status === "not_booked" ? "#B6752C" : "#1C7A80";
@@ -7282,7 +7284,8 @@ async function openTravelPlanModal(leadId) {
       <div class="card" style="margin-bottom:10px;${linked ? " border-style:dashed;" : ""}">
         ${linked ? `<div class="muted small" style="margin-bottom:6px;">🔗 Continues ${leg.to_lead_id === lead.id ? "from" : "to"} <b>${escH(leg.home_event_name || "another event")}</b> — entered there, shown here so it isn't entered twice.</div>` : ""}
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
-          <div>
+          ${pos ? `<div style="display:flex; flex-direction:column; gap:2px; flex-shrink:0;"><div style="text-align:center; font-weight:700; color:#6B4488;">${pos.i + 1}</div><button class="btn-ghost" data-move-leg="${leg.id}" data-dir="-1" ${pos.i === 0 ? "disabled" : ""} style="padding:0 7px; font-size:13px;" title="Move earlier">▲</button><button class="btn-ghost" data-move-leg="${leg.id}" data-dir="1" ${pos.i === pos.n - 1 ? "disabled" : ""} style="padding:0 7px; font-size:13px;" title="Move later">▼</button></div>` : ""}
+          <div style="flex:1;">
             <div style="font-weight:600;">${legTypeBadge(leg.display_type || leg.leg_type)}${names}</div>
             <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${route ? ` · ${route}` : ""}</div>
           </div>
@@ -7451,6 +7454,7 @@ async function openTravelPlanModal(leadId) {
           <div class="modal-body">
             ${prevNoteHtml}
             ${legs.length === 0 && !addingNew && !linkingExisting ? `<p class="muted small">No travel added yet.</p>` : ""}
+            ${(() => { const loose = sortLegsForDisplay(legs).filter((x) => !x.group_id && !x.linked_from_other); return loose.length >= 2 && !addingNew && !nextLegFrom ? `<div class="card" style="margin-bottom:12px; background:#F6F0FA; border-color:#8A5FA8;"><div style="font-weight:600; margin-bottom:4px;">🔀 Is this one trip with several legs?</div><div class="muted small" style="margin-bottom:6px;">Tick the journeys that belong together. You can reorder them afterwards with ▲ ▼.</div>${loose.map((x) => `<label style="display:flex; gap:8px; align-items:center; padding:3px 0;"><input type="checkbox" data-combine-pick="${x.id}" ${baseLegType(x.leg_type) === "return" ? "" : "checked"} style="width:auto;" /> <span class="small">${escH([x.from_city, x.to_city].filter(Boolean).join(" → ") || "Route not set")} · ${TRAVEL_MODE_LABELS[x.mode] || "Mode not set"}${x.departure_at ? " · " + fmtDate(x.departure_at) : ""}</span></label>`).join("")}<button class="btn-primary" id="combineBtn" style="margin-top:8px;">Combine into one trip</button></div>` : ""; })()}
             ${renderLegsGrouped(sortLegsForDisplay(legs))}
             ${addingNew ? legForm({}) : ""}
             ${linkingExisting ? linkForm() : ""}
@@ -7536,7 +7540,7 @@ async function openTravelPlanModal(leadId) {
       if (nlCancel) nlCancel.addEventListener("click", () => { nextLegFrom = null; renderModal(); });
       if (nlSave && nextLegFrom) nlSave.addEventListener("click", async () => {
         const base = nextLegFrom;
-        const members = legs.filter((x) => (base.group_id ? x.group_id === base.group_id : x.id === base.id)).sort((a, b) => String(a.departure_at || "9999").localeCompare(String(b.departure_at || "9999")));
+        const members = legs.filter((x) => (base.group_id ? x.group_id === base.group_id : x.id === base.id)).sort(tripCmp);
         const last = members[members.length - 1];
         const teamIds = (last.members || []).map((m) => m.teamId);
         const v = (id) => root.querySelector(id).value.trim();
@@ -7556,6 +7560,17 @@ async function openTravelPlanModal(leadId) {
         } catch (err) { alert(err.message); nlSave.disabled = false; }
       });
     }
+    root.querySelectorAll("[data-move-leg]").forEach((b) => b.addEventListener("click", async () => {
+      try { await api(`/api/travel-legs/${b.dataset.moveLeg}/move`, { method: "POST", body: JSON.stringify({ dir: Number(b.dataset.dir) }) }); } catch (e) { return alert(e.message); }
+      const updated = await api(`/api/leads/${leadId}/travel-legs`); legs.length = 0; legs.push(...updated); renderModal();
+    }));
+    const combineBtn = root.querySelector("#combineBtn");
+    if (combineBtn) combineBtn.addEventListener("click", async () => {
+      const ids = [...root.querySelectorAll("[data-combine-pick]:checked")].map((c) => c.dataset.combinePick);
+      if (ids.length < 2) return alert("Tick at least two journeys.");
+      try { await api(`/api/leads/${leadId}/combine-legs`, { method: "POST", body: JSON.stringify({ ids }) }); } catch (e) { return alert(e.message); }
+      const updated = await api(`/api/leads/${leadId}/travel-legs`); legs.length = 0; legs.push(...updated); renderModal();
+    });
     root.querySelectorAll("[data-ungroup-leg]").forEach((b) => b.addEventListener("click", async () => {
       try { await api(`/api/travel-legs/${b.dataset.ungroupLeg}/ungroup`, { method: "POST" }); } catch (e) { return alert(e.message); }
       const updated = await api(`/api/leads/${leadId}/travel-legs`); legs.length = 0; legs.push(...updated); renderModal();
