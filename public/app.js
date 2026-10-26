@@ -7318,6 +7318,12 @@ async function openTravelPlanModal(leadId) {
     return `
       <div class="card" style="margin-bottom:10px; border-color:#C1602B;">
         <div style="font-weight:600; margin-bottom:8px;">${isNew ? (seed ? "Add the next leg of this trip" : "Add travel") : "Editing travel"}</div>
+        ${isNew && !seed ? `
+        <label>Is this a single journey or a trip with several legs?</label>
+        <div class="rate-inclusions-grid" style="margin-bottom:10px;">
+          <label class="rate-inclusion-pill"><input type="radio" name="newKind" value="single" checked /> Single journey</label>
+          <label class="rate-inclusion-pill"><input type="radio" name="newKind" value="multi" /> Multi journey (several legs)</label>
+        </div>` : ""}
         <label>Who's travelling together on this journey?</label>
         <div class="rate-inclusions-grid" style="margin-bottom:10px;">
           ${assignments.map((a) => `
@@ -7361,6 +7367,11 @@ async function openTravelPlanModal(leadId) {
         <label>Booking ref / PNR (optional)</label>
         <input id="${prefix}BookingRef" value="${leg?.booking_ref || ""}" placeholder="e.g. PNR or booking number" />
         ${travelBookingFieldsHtml(prefix, leg)}
+        ${isNew && !seed ? `<div id="newMultiWrap" style="display:none; margin-top:12px;">
+          <div class="muted small" style="margin-bottom:6px;">The journey above is <b>Leg 1</b>. Add the legs that follow — each with its own mode, route, date and status.</div>
+          <div id="newExtraLegs"></div>
+          <button type="button" class="btn-ghost" id="newAddExtraLeg">+ Add another leg</button>
+        </div>` : ""}
         ${CURRENT_USER?.accessLevel === "admin" ? `<label style="margin-top:8px;">Notes (private — only you see these)</label>
         <input id="${prefix}Notes" value="${leg?.notes || ""}" placeholder="e.g. Booked by client" />` : ""}
         <label style="margin-top:8px;">${CURRENT_USER?.accessLevel === "admin" ? "Manager's notes (visible to managers)" : "Your notes (visible to admin & managers)"}</label>
@@ -7454,6 +7465,46 @@ async function openTravelPlanModal(leadId) {
       if (toSel) toSel.addEventListener("change", () => fill(toSel, "ToCity"));
       if (fromSel) fromSel.addEventListener("change", () => fill(fromSel, "FromCity"));
     });
+    {
+      // Single / multi choice: choosing multi opens the next-leg fields straight away.
+      const wrap = root.querySelector("#newMultiWrap"), box = root.querySelector("#newExtraLegs");
+      const addExtra = () => {
+        const n = box.querySelectorAll("[data-extra-leg]").length + 2;
+        const lastTo = [...box.querySelectorAll("[data-extra-to]")].pop()?.value || root.querySelector("#newToCity")?.value || "";
+        const d = document.createElement("div");
+        d.className = "card"; d.setAttribute("data-extra-leg", "1"); d.style.cssText = "margin-bottom:10px; background:#FBF7EF;";
+        d.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;"><b>Leg ${n}</b><button type="button" class="btn-ghost" data-extra-remove style="font-size:12px; padding:2px 8px;">Remove</button></div>
+          <div class="row-2">
+            <div><label>Mode</label><select data-extra-mode><option value="">Not set</option>${Object.entries(TRAVEL_MODE_LABELS).map(([id, label]) => `<option value="${id}">${label}</option>`).join("")}</select></div>
+            <div><label>Status</label><select data-extra-status>${Object.entries(TRAVEL_STATUS_LABELS).map(([id, label]) => `<option value="${id}">${label}</option>`).join("")}</select></div>
+          </div>
+          <div class="row-2">
+            <div><label>From city</label><input data-extra-from value="${escH(lastTo)}" /></div>
+            <div><label>To city</label><input data-extra-to placeholder="e.g. ${escH(lead.city || "event city")}" /></div>
+          </div>
+          <div class="row-2">
+            <div><label>Departure date</label><input type="date" data-extra-dep /></div>
+            <div><label>Booking ref / PNR (optional)</label><input data-extra-ref /></div>
+          </div>`;
+        box.appendChild(d);
+        // This leg's "From" follows the previous leg's "To" until it is edited by hand.
+        const prevToEl = [...box.querySelectorAll("[data-extra-to]")].slice(-2, -1)[0] || root.querySelector("#newToCity");
+        const fromEl = d.querySelector("[data-extra-from]");
+        if (prevToEl) prevToEl.addEventListener("input", () => { if (!fromEl.dataset.touched) fromEl.value = prevToEl.value; });
+        fromEl.addEventListener("input", () => { fromEl.dataset.touched = "1"; });
+        d.querySelector("[data-extra-remove]").addEventListener("click", () => { d.remove(); box.querySelectorAll("[data-extra-leg] b").forEach((x, i) => (x.textContent = `Leg ${i + 2}`)); if (!box.querySelector("[data-extra-leg]")) { const s1 = root.querySelector('input[name="newKind"][value="single"]'); if (s1) { s1.checked = true; wrap.style.display = "none"; } } });
+      };
+      root.querySelectorAll('input[name="newKind"]').forEach((r) => r.addEventListener("change", () => {
+        const multi = root.querySelector('input[name="newKind"][value="multi"]').checked;
+        wrap.style.display = multi ? "block" : "none";
+        const to1 = root.querySelector("#newToCity");
+        if (multi && to1 && to1.value.trim() === (lead.city || "").trim()) to1.value = ""; // leg 1 ends at the first stop, not the event city
+        if (multi && !box.querySelector("[data-extra-leg]")) addExtra();
+      }));
+      const addMore = root.querySelector("#newAddExtraLeg");
+      if (addMore) addMore.addEventListener("click", addExtra);
+    }
     const addBtn = root.querySelector("#addLegBtn");
     if (addBtn) addBtn.addEventListener("click", () => { addingNew = true; nextLegFrom = null; renderModal(); });
     root.querySelectorAll("[data-next-leg]").forEach((b) => b.addEventListener("click", () => {
@@ -7540,14 +7591,37 @@ async function openTravelPlanModal(leadId) {
         {
           // Warn before saving something that can't work — never blocks, the person may know better.
           const draft = { id: isNew ? null : btn.dataset.saveLeg, group_id: isNew ? (nextLegFrom ? (nextLegFrom.group_id || nextLegFrom.id) : null) : ((legs.find((x) => x.id === btn.dataset.saveLeg) || {}).group_id || null), lead_id: leadId, leg_type: payload.legType || "going", from_lead_id: payload.fromLeadId, to_lead_id: payload.toLeadId, from_city: payload.fromCity, to_city: payload.toCity || lead.city, departure_at: payload.departureAt, arrival_at: payload.arrivalAt, status: payload.status, members: teamIds.map((id) => ({ teamId: id })) };
-          const issues = legProblems(draft, tcAssign, tcAllLegs);
+          const extrasDraft = isNew ? [...root.querySelectorAll("[data-extra-leg]")].map((d) => ({ mode: d.querySelector("[data-extra-mode]").value || null, status: d.querySelector("[data-extra-status]").value, fromCity: d.querySelector("[data-extra-from]").value.trim() || null, toCity: d.querySelector("[data-extra-to]").value.trim() || null, departureAt: d.querySelector("[data-extra-dep]").value || null, bookingRef: d.querySelector("[data-extra-ref]").value.trim() || null })) : [];
+          extrasDraft.forEach((x, i) => { if (!x.fromCity) x.fromCity = i === 0 ? payload.toCity : extrasDraft[i - 1].toCity; });
+          if (extrasDraft.some((x) => !x.toCity)) return alert("Each extra leg needs a 'To city'.");
+          let issues;
+          if (extrasDraft.length) {
+            const tripId = "new-trip";
+            const base = payload.legType === "return" || payload.legType === "return_onward" ? "return" : "going";
+            const drafts = [{ ...draft, id: "draft-0", group_id: tripId }, ...extrasDraft.map((x, i) => ({ id: `draft-${i + 1}`, group_id: tripId, lead_id: leadId, leg_type: base, from_city: x.fromCity, to_city: x.toCity, departure_at: x.departureAt, status: x.status, members: teamIds.map((id) => ({ teamId: id })) }))];
+            issues = [...new Set(drafts.flatMap((dr) => legProblems(dr, tcAssign, [...(tcAllLegs || []), ...drafts])))];
+          } else issues = legProblems(draft, tcAssign, tcAllLegs);
           if (issues.length && !confirm(`Please check this journey:\n\n${issues.map((x) => "• " + x).join("\n")}\n\nSave anyway?`)) return;
         }
         btn.disabled = true;
         try {
           if (isNew) {
             if (nextLegFrom) payload.groupWith = nextLegFrom.id;
-            await api(`/api/leads/${leadId}/travel-legs`, { method: "POST", body: JSON.stringify(payload) });
+            const created = await api(`/api/leads/${leadId}/travel-legs`, { method: "POST", body: JSON.stringify(payload) });
+            // Multi journey: the extra legs become part of the same trip.
+            const extras = [...root.querySelectorAll("[data-extra-leg]")];
+            if (extras.length) {
+              let prevTo = payload.toCity;
+              const base = payload.legType === "return" || payload.legType === "return_onward" ? "return" : "going";
+              for (const d of extras) {
+                await api(`/api/leads/${leadId}/travel-legs`, { method: "POST", body: JSON.stringify({
+                  teamIds, legType: base, mode: d.querySelector("[data-extra-mode]").value || null, status: d.querySelector("[data-extra-status]").value,
+                  fromCity: d.querySelector("[data-extra-from]").value.trim() || prevTo || null, toCity: d.querySelector("[data-extra-to]").value.trim() || null,
+                  departureAt: d.querySelector("[data-extra-dep]").value || null, bookingRef: d.querySelector("[data-extra-ref]").value.trim() || null,
+                  managerNotes: payload.managerNotes, groupWith: created.id }) });
+                prevTo = d.querySelector("[data-extra-to]").value.trim() || prevTo;
+              }
+            }
             addingNew = false; nextLegFrom = null;
           } else {
             await api(`/api/travel-legs/${btn.dataset.saveLeg}`, { method: "PATCH", body: JSON.stringify(payload) });
