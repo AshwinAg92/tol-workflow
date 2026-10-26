@@ -1924,6 +1924,13 @@ async function addTeamNotification(teamId, message, createdAt) {
   await pool.query("INSERT INTO notifications (id, team_id, message, created_at) VALUES ($1, $2, $3, $4)", [uuid(), teamId, message, createdAt || new Date().toISOString()]);
   sendPushToTeam(teamId, "Together, Out Loud", message).catch((e) => console.error("Artist push failed (not fatal):", e.message));
 }
+// Travel notices: an identical message to the same person within the hour is sent once (a trip of several legs would otherwise repeat it).
+async function addTravelNotification(teamId, message, createdAt) {
+  const since = new Date(Date.now() - 3600e3).toISOString();
+  const dup = (await pool.query("SELECT 1 FROM notifications WHERE team_id = $1 AND message = $2 AND created_at >= $3 LIMIT 1", [teamId, message, since])).rows[0];
+  if (dup) return;
+  return addTeamNotification(teamId, message, createdAt);
+}
 // Push to one artist's own phones only (their subscriptions are tied to their login).
 async function sendPushToTeam(teamId, title, body, url = "/login") {
   if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY || !teamId) return;
@@ -2994,6 +3001,18 @@ app.delete("/api/feedback/:id", requireAuth, requireAdmin, async (req, res) => {
 const TRAVEL_MODE_LABELS = { flight: "Flight", train: "Train", bus: "Bus", car: "Car", self: "Self-arranged" };
 const TRAVEL_STATUS_LABELS = { not_booked: "Not booked yet", booked: "Booked", self_arranged: "Self-arranged" };
 
+// The order every person sees a journey list in: legs of one trip stay together in the order the organiser set (trip_order),
+// and trips / single journeys are ordered by when they start.
+function orderLegs(rows) {
+  const dep = (l) => String(l.departure_at || "9999");
+  const seq = (l) => (l.trip_order != null ? Number(l.trip_order) : 1e6);
+  const groups = new Map();
+  rows.forEach((l) => { const k = l.group_id || l.id; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(l); });
+  const list = [...groups.values()].map((g) => ({ legs: g.slice().sort((a, b) => seq(a) - seq(b) || dep(a).localeCompare(dep(b))), start: g.map(dep).sort()[0] }));
+  list.sort((a, b) => a.start.localeCompare(b.start));
+  return list.flatMap((x) => x.legs);
+}
+
 async function canViewTravelLegs(user, leadId) {
   if (userHasSection(user, "assign_team") || user.access_level === "admin") return true;
   if (!user.team_id) return false;
@@ -3035,7 +3054,7 @@ app.get("/api/leads/:id/travel-legs", requireAuth, async (req, res) => {
     pool.query(`SELECT travel_leg_members.leg_id, team.id AS team_id, team.name AS team_name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id = ANY($1)`, [legIds]),
     pool.query(`SELECT ${DOC_LIST_COLUMNS} FROM documents WHERE travel_leg_id = ANY($1) ORDER BY uploaded_at ASC`, [legIds]),
   ]) : [{ rows: [] }, { rows: [] }];
-  res.json(await hideAdminTravel(req.user, legs.map((leg) => ({
+  res.json(await hideAdminTravel(req.user, orderLegs(legs).map((leg) => ({
     ...legForUser(leg, req.user),
     members: members.rows.filter((m) => m.leg_id === leg.id).map((m) => ({ teamId: m.team_id, name: m.team_name })),
     tickets: tickets.rows.filter((t) => t.travel_leg_id === leg.id).map((t) => ({ ...t, url: `/api/documents/${t.id}/file` })),
@@ -3241,7 +3260,7 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
   if (members.length > 0) {
     logActivity(req, `Travel added for ${members.map((m) => m.name).join(", ")}: ${lead.name} (${lead.date})`, lead.id);
     for (const teamId of teamIds) {
-      await addTeamNotification(teamId, `Your travel details for ${await artistEventPhrase(lead.id)} on ${lead.date} have been added — check My Events.`, now).catch(() => {});
+      await addTravelNotification(teamId, `Your travel details for ${await artistEventPhrase(lead.id)} on ${lead.date} have been added — check My Events.`, now).catch(() => {});
     }
   }
 });
@@ -3308,11 +3327,11 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
   if (req.body.status !== undefined && req.body.status !== leg.status) {
     const allMembers = (await pool.query("SELECT team_id FROM travel_leg_members WHERE leg_id = $1", [req.params.id])).rows;
     for (const m of allMembers) {
-      await addTeamNotification(m.team_id, `Travel update for ${await artistEventPhrase(leg.lead_id)} on ${lead.date}: now "${TRAVEL_STATUS_LABELS[req.body.status] || req.body.status}".`, now).catch(() => {});
+      await addTravelNotification(m.team_id, `Travel update for ${await artistEventPhrase(leg.lead_id)} on ${lead.date}: now "${TRAVEL_STATUS_LABELS[req.body.status] || req.body.status}".`, now).catch(() => {});
     }
   }
   for (const teamId of newlyAdded) {
-    await addTeamNotification(teamId, `Your travel details for ${await artistEventPhrase(leg.lead_id)} on ${lead.date} have been added — check My Events.`, now).catch(() => {});
+    await addTravelNotification(teamId, `Your travel details for ${await artistEventPhrase(leg.lead_id)} on ${lead.date} have been added — check My Events.`, now).catch(() => {});
   }
 });
 
@@ -4559,7 +4578,7 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
                 FROM event_assignments JOIN team ON team.id = event_assignments.team_id
                 WHERE event_assignments.lead_id = $1 ORDER BY team.name ASC`, [leadId]),
     pool.query("SELECT id, name, description, phone, musician_id FROM temp_artists WHERE lead_id = $1 AND migrated_assignment_id IS NULL", [leadId]),
-    pool.query("SELECT id, lead_id, booked_by, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [leadId]),
+    pool.query("SELECT id, lead_id, booked_by, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time, group_id, trip_order FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [leadId]),
     pool.query("SELECT token, team_ids, created_at, expires_at, revoked FROM travel_shares WHERE lead_id = $1 ORDER BY created_at DESC", [leadId]),
   ]);
   const teamIds = assigned.rows.map((r) => r.team_id);
@@ -4585,7 +4604,7 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
       })),
     ],
     tempArtists: temps.rows.filter((t) => !t.musician_id).map((t) => t.name),
-    legs: legs.rows.map((l) => ({ ...l, bookedElsewhere: l.lead_id !== leadId || l.booked_by === "other" || l.booked_by === "tol", bookedByTol: l.booked_by === "tol" && l.lead_id === leadId, memberIds: members.rows.filter((m) => m.leg_id === l.id).map((m) => m.team_id), tickets: ticketRows.filter((t) => t.travel_leg_id === l.id).map((t) => ({ id: t.id, name: t.original_name })) })),
+    legs: orderLegs(legs.rows).map((l) => ({ ...l, bookedElsewhere: l.lead_id !== leadId || l.booked_by === "other" || l.booked_by === "tol", bookedByTol: l.booked_by === "tol" && l.lead_id === leadId, memberIds: members.rows.filter((m) => m.leg_id === l.id).map((m) => m.team_id), tickets: ticketRows.filter((t) => t.travel_leg_id === l.id).map((t) => ({ id: t.id, name: t.original_name })) })),
     shares: shares.rows.map((s) => ({ token: s.token, teamIds: JSON.parse(s.team_ids || "[]"), createdAt: s.created_at, expiresAt: s.expires_at, revoked: !!s.revoked })),
     clientUnread: Number((await pool.query("SELECT (SELECT COUNT(*) FROM travel_share_messages WHERE lead_id = $1 AND sender = 'client' AND read_by_team = 0) + (SELECT COUNT(*) FROM travel_share_files WHERE lead_id = $1 AND read_by_team = 0) AS n", [leadId])).rows[0].n),
   });
@@ -4898,7 +4917,7 @@ async function loadArtistPortal(token) {
   const leadIds = rows.map((r) => r.lead_id);
   const legs = leadIds.length ? (await pool.query(`
     SELECT tl.id, tl.lead_id, tl.to_lead_id, tl.from_lead_id, tl.leg_type, tl.mode, tl.from_city, tl.to_city, tl.departure_at, tl.arrival_at,
-           tl.departure_time, tl.arrival_time, tl.status, tl.booking_ref, tl.preferred_service, tl.travel_class, tl.manager_notes
+           tl.departure_time, tl.arrival_time, tl.status, tl.booking_ref, tl.preferred_service, tl.travel_class, tl.manager_notes, tl.group_id, tl.trip_order
     FROM travel_legs tl JOIN travel_leg_members tm ON tm.leg_id = tl.id AND tm.team_id = $1
     WHERE tl.lead_id = ANY($2) OR tl.to_lead_id = ANY($2) OR tl.from_lead_id = ANY($2)
     ORDER BY tl.departure_at ASC NULLS LAST
@@ -4913,11 +4932,11 @@ app.get("/api/public/me/:token", async (req, res) => {
   if (!p) return res.status(404).json({ error: "This link isn't valid — ask Team TOL for a fresh one." });
   const today = new Date().toISOString().slice(0, 10);
   const events = p.rows.map((r) => {
-    const mine = p.legs.filter((l) => l.lead_id === r.lead_id || l.to_lead_id === r.lead_id || l.from_lead_id === r.lead_id).map((l) => {
+    const mine = orderLegs(p.legs.filter((l) => l.lead_id === r.lead_id || l.to_lead_id === r.lead_id || l.from_lead_id === r.lead_id)).map((l) => {
       const other = l.lead_id !== r.lead_id;
       const type = other ? (l.to_lead_id === r.lead_id ? "going" : "return") : l.leg_type;
       return {
-        type, mode: l.mode, from: l.from_city, to: l.to_city, departureAt: l.departure_at ? String(l.departure_at).slice(0, 10) : null, arrivalAt: l.arrival_at ? String(l.arrival_at).slice(0, 10) : null,
+        groupId: l.group_id || null, tripOrder: l.trip_order, type, mode: l.mode, from: l.from_city, to: l.to_city, departureAt: l.departure_at ? String(l.departure_at).slice(0, 10) : null, arrivalAt: l.arrival_at ? String(l.arrival_at).slice(0, 10) : null,
         departureTime: l.departure_time, arrivalTime: l.arrival_time, status: l.status, ref: l.booking_ref, service: l.preferred_service, travelClass: l.travel_class,
         tickets: p.docs.filter((d) => d.travel_leg_id === l.id).map((d) => ({ id: d.id, name: d.original_name })),
       };
@@ -4962,9 +4981,10 @@ app.get("/trip/:token", async (req, res) => {
   const trav = await loadTravellers(s.lead_id, allIds);
   const ticketDocs = s.include_tickets ? (await pool.query("SELECT id, original_name, mime_type, travel_leg_id FROM documents WHERE travel_leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1) ORDER BY uploaded_at ASC", [s.lead_id])).rows : [];
   const [legs, members] = await Promise.all([
-    pool.query("SELECT id, lead_id, booked_by, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [s.lead_id]),
+    pool.query("SELECT id, lead_id, booked_by, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time, group_id, trip_order FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [s.lead_id]),
     pool.query("SELECT travel_leg_members.leg_id, team.id AS team_id, team.name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1)", [s.lead_id]),
   ]);
+  legs.rows = orderLegs(legs.rows);
   // Not this client's to book: it belongs to another event, or it's marked as booked by Team TOL / someone else.
   const notYours = (l) => l.lead_id !== s.lead_id || l.booked_by === "other" || l.booked_by === "tol";
   const legCards = legs.rows.map((l) => {

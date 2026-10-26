@@ -66,12 +66,14 @@
     function eventCard(e, i) {
       const rows = [ ["🕒", e.eventTime ? "Event time: " + e.eventTime : ""], ["🎶", e.soundcheckTime ? "Sound check: " + e.soundcheckTime : ""], ["🎸", e.pcs ? e.pcs + " pcs" : ""]].filter((r) => r[1]);
       const pill = { pending: ["p-pending", "Awaiting your response"], accepted: ["p-accepted", "You've accepted"], declined: ["p-declined", "You've declined"], cancel_requested: ["p-pending", "Cancellation requested"] }[e.status] || ["p-pending", e.status];
-      const rank = (t) => (t === "going" ? 0 : t === "going_onward" || t === "onward" ? 1 : t === "return" ? 2 : 3);
-      const legsSorted = [...e.travel].sort((a, b) => rank(a.type) - rank(b.type) || String(a.departureAt || "9999").localeCompare(String(b.departureAt || "9999")));
-      const travel = legsSorted.length ? legsSorted.map((l) => {
+      const legsSorted = e.travel; // already in trip order from the server
+      const travel = legsSorted.length ? legsSorted.map((l, li) => {
+        const inTrip = l.groupId ? legsSorted.filter((x) => x.groupId === l.groupId) : [];
+        const pos = l.groupId ? inTrip.indexOf(l) + 1 : 0;
+        const head = l.groupId && pos === 1 ? `<div class="sec" style="margin-top:14px;">One trip · ${inTrip.length} legs · ${esc(inTrip.map((x, i) => (i === 0 ? [x.from, x.to] : [x.to]).filter(Boolean).join(" → ")).join(" → "))}</div>` : "";
         const when = [l.departureAt ? fmtDate(l.departureAt) : "", fmt12(l.departureTime)].filter(Boolean).join(", ");
         const arr = fmt12(l.arrivalTime) || "";
-        return `<div class="leg"><b>${TYPE[l.type] || ""}</b> ${esc(MODE[l.mode] || "")} — ${esc(l.from || "?")} → ${esc(l.to || "?")}
+        return `${head}<div class="leg">${pos ? `<b>${pos}.</b> ` : ""}<b>${TYPE[l.type] || ""}</b> ${esc(MODE[l.mode] || "")} — ${esc(l.from || "?")} → ${esc(l.to || "?")}
           <div class="muted">${esc(when) || "Date not set"}${arr ? " · arrives " + esc(arr) : ""}${l.arrivalAt ? " · returns " + esc(fmtDate(l.arrivalAt)) : ""} · ${esc(ST[l.status] || l.status)}${l.ref ? " · Ref " + esc(l.ref) : ""}</div>
           ${l.tickets.map((t) => `<div><a href="/api/public/me/${encodeURIComponent(token)}/ticket/${t.id}" target="_blank" rel="noopener">🎫 ${esc(t.name)}</a></div>`).join("")}</div>`;
       }).join("") : `<div class="muted">Travel not added yet.</div>`;

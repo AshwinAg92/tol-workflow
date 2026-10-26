@@ -7145,6 +7145,20 @@ function legProblems(leg, assignmentsAll, allLegs) {
   const nameOf = (m) => m.name || (TEAM.find((x) => x.id === m.teamId) || {}).name || "";
   if (dep && arr && arr < dep && baseLegType(t) === "going") out.push(`The return date (${fmtDate(arr)}) is before the departure date (${fmtDate(dep)}).`);
   if (leg.status === "booked" && !dep) out.push("Marked booked, but there's no departure date.");
+  // Legs of one trip must follow each other: in date order, each starting where the last one ended.
+  if (tripLegs && tripLegs.length > 1) {
+    const ordered = tripLegs.slice().sort(tripCmp), pv = ordered[ordered.indexOf(leg) - 1];
+    if (pv) {
+      const pd = ymd(pv.departure_at), pr = [pv.from_city, pv.to_city].filter(Boolean).join(" → ");
+      if (dep && pd && dep < pd) out.push(`Departs ${fmtDate(dep)}, before the previous leg (${pr}) on ${fmtDate(pd)}.`);
+      if (!cityOk(leg.from_city, pv.to_city)) out.push(`Starts from ${leg.from_city}, but the previous leg (${pr}) ends in ${pv.to_city}.`);
+    }
+  }
+  if (own && own.date && dep) {
+    const gap = Math.round((new Date(own.date + "T00:00:00") - new Date(dep + "T00:00:00")) / 864e5);
+    if (t === "going" && !isNaN(gap) && gap > 5) out.push(`Departs ${gap} days before the event (${fmtDate(own.date)}) — please check the date.`);
+    if (t === "return" && !isNaN(gap) && gap < -7) out.push(`Leaves ${-gap} days after the event (${fmtDate(own.date)}) — please check the date.`);
+  }
   if (own && own.date) {
     const going = baseLegType(t) === "going" && t !== "onward";
     const returning = baseLegType(t) === "return";
@@ -7751,16 +7765,19 @@ async function openTravelPlanViewModal(leadId, leadName) {
       <div class="modal-card" style="width:560px; max-width:96vw;">
         <div class="modal-head"><h3>Travel plan — ${leadName}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
-          ${legs.length === 0 ? `<p class="muted small">No travel added yet for this event.</p>` : legs.map((leg) => {
+          ${legs.length === 0 ? `<p class="muted small">No travel added yet for this event.</p>` : legs.map((leg, idx) => {
+            const tripLegsHere = leg.group_id ? legs.filter((x) => x.group_id === leg.group_id) : [];
+            const tripPos = leg.group_id ? tripLegsHere.indexOf(leg) + 1 : 0;
+            const tripHead = leg.group_id && tripPos === 1 ? `<div class="small" style="margin:12px 2px 6px; font-weight:600; color:#6B4488;">🔀 One trip · ${tripLegsHere.length} legs · ${tripLegsHere.map((x, i) => (i === 0 ? [x.from_city, x.to_city] : [x.to_city]).filter(Boolean).map(escH).join(" → ")).join(" → ")}</div>` : "";
             const isMine = CURRENT_USER?.teamId && leg.members.some((m) => m.teamId === CURRENT_USER.teamId);
             const statusColor = leg.status === "not_booked" ? "#B6752C" : "#1C7A80";
             const route = [leg.from_city, leg.to_city].filter(Boolean).join(" → ");
             const names = leg.members.map((m) => (CURRENT_USER?.teamId && m.teamId === CURRENT_USER.teamId ? `${m.name} (You)` : m.name)).join(", ") || "No one added yet";
-            return `
-              <div class="card" style="margin-bottom:10px; ${isMine ? "border-color:#C1602B;" : ""}">
+            return `${tripHead}
+              <div class="card" style="margin-bottom:10px; ${isMine ? "border-color:#C1602B;" : ""}${leg.group_id ? " border-left:4px solid #8A5FA8;" : ""}">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
                   <div>
-                    <div style="font-weight:600;">${names}</div>
+                    <div style="font-weight:600;">${tripPos ? `<span style="color:#6B4488;">${tripPos}.</span> ` : ""}${names}</div>
                     <div class="muted small">${TRAVEL_MODE_LABELS[leg.mode] || "Mode not set"}${route ? ` · ${route}` : ""}</div>
                   </div>
                   <span class="tag" style="color:${statusColor}; flex-shrink:0;">${TRAVEL_STATUS_LABELS[leg.status] || leg.status}</span>
