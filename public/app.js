@@ -2270,14 +2270,14 @@ async function renderLeadsLog(main, skipRefresh) {
         <div style="display:flex; flex-direction:column; gap:3px;">
           <label class="muted small" for="leadsDateInput">Event date</label>
           <div style="display:flex; align-items:center; gap:4px;">
-            <input id="leadsDateInput" type="date" value="${leadsDateFilter}" />
+            <input id="leadsDateInput" data-no-clear type="date" value="${leadsDateFilter}" />
             ${leadsDateFilter ? `<button class="btn-ghost" id="clearEventDateBtn" style="padding:4px 8px;" title="Clear event date">✕</button>` : ""}
           </div>
         </div>
         <div style="display:flex; flex-direction:column; gap:3px;">
           <label class="muted small" for="leadsQuoteDateInput">Quote sent on</label>
           <div style="display:flex; align-items:center; gap:4px;">
-            <input id="leadsQuoteDateInput" type="date" value="${leadsQuoteDateFilter}" />
+            <input id="leadsQuoteDateInput" data-no-clear type="date" value="${leadsQuoteDateFilter}" />
             ${leadsQuoteDateFilter ? `<button class="btn-ghost" id="clearQuoteDateBtn" style="padding:4px 8px;" title="Clear quote date">✕</button>` : ""}
           </div>
         </div>
@@ -4325,7 +4325,7 @@ function openStandaloneTravelLegModal(legId, onDone, presetDate) {
             </div>
             <div class="row-2">
               <div><label>Departure (optional)</label><input id="stlDeparture" type="date" value="${leg?.departure_at ? leg.departure_at.slice(0, 10) : (leg ? "" : (presetDate || ""))}" /></div>
-              <div><label>Return (optional) <a href="#" data-clear-date="stlArrival" class="small" style="margin-left:6px; color:#A6432B;">✕ Clear</a></label><input id="stlArrival" type="date" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 10) : ""}" /></div>
+              <div><label>Return (optional)</label><input id="stlArrival" type="date" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 10) : ""}" /></div>
             </div>
             <label>Booking ref / PNR (optional)</label>
             <input id="stlBookingRef" value="${leg?.booking_ref || ""}" />
@@ -7497,7 +7497,7 @@ async function openTravelPlanModal(leadId) {
         </div>
         <div class="row-2">
           <div><label>Departure (optional)</label><input id="${prefix}Departure" type="date" value="${leg?.departure_at ? leg.departure_at.slice(0, 10) : ""}" /></div>
-          <div><label>Return (optional) <a href="#" data-clear-date="${prefix}Arrival" class="small" style="margin-left:6px; color:#A6432B;">✕ Clear</a></label><input id="${prefix}Arrival" type="date" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 10) : ""}" /></div>
+          <div><label>Return (optional)</label><input id="${prefix}Arrival" type="date" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 10) : ""}" /></div>
         </div>
         <label>Booking ref / PNR (optional)</label>
         <input id="${prefix}BookingRef" value="${leg?.booking_ref || ""}" placeholder="e.g. PNR or booking number" />
@@ -13552,11 +13552,26 @@ function startClientAlerts() {
   document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
 }
 
-// iPhone date pickers don't always clear with their own "Reset": give optional dates a Clear link.
-document.addEventListener("click", (ev) => {
-  const a = ev.target.closest && ev.target.closest("[data-clear-date]");
-  if (!a) return;
-  ev.preventDefault();
-  const inp = document.getElementById(a.dataset.clearDate);
-  if (inp) { inp.value = ""; inp.dispatchEvent(new Event("input", { bubbles: true })); inp.dispatchEvent(new Event("change", { bubbles: true })); }
-});
+// Every optional date field in the CRM gets the same small "✕ Clear" under it (iPhone date pickers' own Reset doesn't always clear).
+(function () {
+  function wire(inp) {
+    if (inp.dataset.clearWired || inp.required || inp.disabled || inp.readOnly || inp.dataset.noClear != null) return;
+    inp.dataset.clearWired = "1";
+    const a = document.createElement("a");
+    a.href = "#"; a.className = "date-clear small"; a.textContent = "✕ Clear";
+    a.style.cssText = "display:none; position:absolute; z-index:2; color:#A6432B; text-decoration:none; white-space:nowrap; line-height:1;";
+    const par = inp.parentElement;
+    if (par && getComputedStyle(par).position === "static") par.style.position = "relative";
+    inp.insertAdjacentElement("afterend", a);
+    // Sits at the right end of the line just above the field (where its label is), so it never moves the layout.
+    const place = () => { a.style.top = Math.max(0, inp.offsetTop - 15) + "px"; a.style.left = Math.max(0, inp.offsetLeft + inp.offsetWidth - a.offsetWidth) + "px"; };
+    const sync = () => { a.style.display = inp.value ? "block" : "none"; if (inp.value) place(); };
+    inp.addEventListener("input", sync); inp.addEventListener("change", sync);
+    a.addEventListener("click", (ev) => { ev.preventDefault(); inp.value = ""; inp.dispatchEvent(new Event("input", { bubbles: true })); inp.dispatchEvent(new Event("change", { bubbles: true })); inp.dispatchEvent(new Event("blur")); sync(); });
+    sync();
+  }
+  let queued = false;
+  const scan = () => { queued = false; document.querySelectorAll('input[type="date"]:not([data-clear-wired])').forEach(wire); };
+  new MutationObserver(() => { if (!queued) { queued = true; requestAnimationFrame(scan); } }).observe(document.documentElement, { childList: true, subtree: true });
+  scan();
+})();
