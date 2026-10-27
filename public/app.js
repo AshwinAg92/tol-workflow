@@ -7170,7 +7170,7 @@ function legProblems(leg, assignmentsAll, allLegs) {
     return out;
   }
   const nameOf = (m) => m.name || (TEAM.find((x) => x.id === m.teamId) || {}).name || "";
-  if (dep && arr && arr < dep && baseLegType(t) === "going") out.push(`The return date (${fmtDate(arr)}) is before the departure date (${fmtDate(dep)}).`);
+  if (dep && arr && arr < dep && baseLegType(t) === "going") out.push(`The "Return" date on this entry (${fmtDate(arr)}) is before the departure date (${fmtDate(dep)}).`);
   if (leg.status === "booked" && !dep) out.push("Marked booked, but there's no departure date.");
   // Legs of one trip must follow each other: in date order, each starting where the last one ended.
   if (tripLegs && tripLegs.length > 1) {
@@ -7192,7 +7192,10 @@ function legProblems(leg, assignmentsAll, allLegs) {
     const returning = baseLegType(t) === "return";
     if (going) {
       if (dep && dep > ownF.date) out.push(`Departs ${fmtDate(dep)}, after ${ev(ownF)} — too late to reach it.`);
-      if (arr && arr < ownL.date) out.push(`The return date (${fmtDate(arr)}) is before ${ev(ownL)}.`);
+      if (arr && arr < ownL.date) {
+        const sepReturn = (allLegs || []).some((x) => x.id !== leg.id && x.mode !== "stay" && baseLegType(x.leg_type || "going") === "return" && (x.members || []).some((m) => (leg.members || []).some((y) => y.teamId === m.teamId)));
+        out.push(sepReturn ? `The "Return" date on this entry (${fmtDate(arr)}) is before ${ev(ownL)}. The return is already a separate entry, so edit this one and clear its Return date.` : `The "Return" date on this entry (${fmtDate(arr)}) is before ${ev(ownL)}.`);
+      }
       if (lastOfTrip && !cityOk(leg.to_city, own.city)) out.push(`Goes to ${leg.to_city}, but ${own.name} is in ${own.city}.`);
     }
     if (returning) {
