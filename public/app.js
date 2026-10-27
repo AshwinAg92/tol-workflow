@@ -4325,7 +4325,7 @@ function openStandaloneTravelLegModal(legId, onDone, presetDate) {
             </div>
             <div class="row-2">
               <div><label>Departure (optional)</label><input id="stlDeparture" type="date" value="${leg?.departure_at ? leg.departure_at.slice(0, 10) : (leg ? "" : (presetDate || ""))}" /></div>
-              <div><label>Return (optional)</label><input id="stlArrival" type="date" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 10) : ""}" /></div>
+              <div><label>Return (optional) <a href="#" data-clear-date="stlArrival" class="small" style="margin-left:6px; color:#A6432B;">✕ Clear</a></label><input id="stlArrival" type="date" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 10) : ""}" /></div>
             </div>
             <label>Booking ref / PNR (optional)</label>
             <input id="stlBookingRef" value="${leg?.booking_ref || ""}" />
@@ -7497,7 +7497,7 @@ async function openTravelPlanModal(leadId) {
         </div>
         <div class="row-2">
           <div><label>Departure (optional)</label><input id="${prefix}Departure" type="date" value="${leg?.departure_at ? leg.departure_at.slice(0, 10) : ""}" /></div>
-          <div><label>Return (optional)</label><input id="${prefix}Arrival" type="date" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 10) : ""}" /></div>
+          <div><label>Return (optional) <a href="#" data-clear-date="${prefix}Arrival" class="small" style="margin-left:6px; color:#A6432B;">✕ Clear</a></label><input id="${prefix}Arrival" type="date" value="${leg?.arrival_at ? leg.arrival_at.slice(0, 10) : ""}" /></div>
         </div>
         <label>Booking ref / PNR (optional)</label>
         <input id="${prefix}BookingRef" value="${leg?.booking_ref || ""}" placeholder="e.g. PNR or booking number" />
@@ -13551,3 +13551,12 @@ function startClientAlerts() {
   setInterval(check, 20000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
 }
+
+// iPhone date pickers don't always clear with their own "Reset": give optional dates a Clear link.
+document.addEventListener("click", (ev) => {
+  const a = ev.target.closest && ev.target.closest("[data-clear-date]");
+  if (!a) return;
+  ev.preventDefault();
+  const inp = document.getElementById(a.dataset.clearDate);
+  if (inp) { inp.value = ""; inp.dispatchEvent(new Event("input", { bubbles: true })); inp.dispatchEvent(new Event("change", { bubbles: true })); }
+});
