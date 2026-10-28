@@ -148,6 +148,8 @@ nav { display:flex; flex-direction:column; gap:2px; }
 .email-status.unsent { background:var(--warning-bg); color:#8A5A20; }
 
 .modal-overlay { position:fixed; inset:0; background:rgba(30,22,15,0.5); display:flex; align-items:center; justify-content:center; z-index:60; }
+.modal-overlay, .modal-card { font-family:'Inter',sans-serif; }
+.modal-card button, .modal-card input, .modal-card select, .modal-card textarea { font-family:inherit; }
 .modal-card { background:#fff; border-radius:14px; width:440px; max-width:92vw; max-height:88vh; overflow-y:auto; box-sizing:border-box; box-shadow:var(--shadow-md); }
 .modal-head { display:flex; justify-content:space-between; align-items:center; padding:16px 18px; border-bottom:1px solid var(--hairline); }
 .modal-head h3 { margin:0; font-size:17px; }
