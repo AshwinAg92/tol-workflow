@@ -18,6 +18,13 @@ let leadsSortBy = "date";
 let leadsB2bOnly = false;
 let leadsClashOnly = false;
 let leadsDueOnly = false;
+let leadsNoAdvanceOnly = false;
+// Confirmed, still to happen, and nothing received yet (a combo's money sits on its primary event).
+function noAdvance(l) {
+  if (!l || l.stage !== "Confirmed" || !l.date || l.date < new Date().toISOString().slice(0, 10)) return false;
+  const prim = l.combo_group_id ? (l.is_combo_primary ? l : LEADS.find((x) => x.combo_group_id === l.combo_group_id && x.is_combo_primary)) : null;
+  return !((prim || l).received > 0);
+}
 // The occasion as the client meant it ("Other" → the text they typed).
 function occasionLabel(l) { return !l || !l.occasion ? "" : (l.occasion === "Other" && l.occasion_other ? l.occasion_other : l.occasion); }
 // Highlighted "Occasion + client's notes" block — needed to plan the gig, so it is shown plainly, not buried.
@@ -2240,6 +2247,7 @@ async function renderLeadsLog(main, skipRefresh) {
     .filter((l) => !leadsQuoteDateFilter || (l.last_quoted_at || "").slice(0, 10) === leadsQuoteDateFilter)
     .filter((l) => !leadsB2bOnly || l.is_b2b)
     .filter((l) => !leadsDueOnly || isDueToday(l))
+    .filter((l) => !leadsNoAdvanceOnly || noAdvance(l))
     .filter((l) => !leadsClashOnly || (l.date && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) && dateClashes(l).length > 0));
   const filtered = leadsFilter === "all" ? baseFiltered : baseFiltered.filter((l) => l.event_type === leadsFilter);
   const countFor = (id) => baseFiltered.filter((l) => l.event_type === id).length;
@@ -2292,8 +2300,9 @@ async function renderLeadsLog(main, skipRefresh) {
         </select>
         <button class="btn-ghost${leadsB2bOnly ? " filter-chip-active" : ""}" id="leadsB2bToggle" style="${leadsB2bOnly ? "background:#8A5FA8; color:#fff; border-color:#8A5FA8;" : ""}">🏢 B2B only</button>
         ${(() => { const n = LEADS.filter((l) => l.date && l.date >= todayStr && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) && dateClashes(l).length > 0).length; return `<button class="btn-ghost${leadsClashOnly ? " filter-chip-active" : ""}" id="leadsClashToggle" style="${leadsClashOnly ? "background:#C1602B; color:#fff; border-color:#C1602B;" : n ? "color:#8A5A1F; border-color:#E8C48A;" : ""}">⚠️ Same-date clashes${n ? ` (${n})` : ""}</button>`; })()}
+        ${hasAccountsAccess() ? (() => { const n = LEADS.filter(noAdvance).length; return `<button class="btn-ghost${leadsNoAdvanceOnly ? " filter-chip-active" : ""}" id="leadsNoAdvanceToggle" style="${leadsNoAdvanceOnly ? "background:#B6752C; color:#fff; border-color:#B6752C;" : n ? "color:#8A5A1F; border-color:#E8C48A;" : ""}" title="Confirmed events that are still to happen and have no payment received yet.">💰 No advance${n ? ` (${n})` : ""}</button>`; })() : ""}
         ${(() => { const n = LEADS.filter(isDueToday).length; return `<button class="btn-ghost${leadsDueOnly ? " filter-chip-active" : ""}" id="leadsDueToggle" style="${leadsDueOnly ? "background:#1C7A80; color:#fff; border-color:#1C7A80;" : ""}" title="Open leads never followed up, quiet for 3+ days, or with a quote about to lapse. Snoozed leads are left out.">\uD83D\uDCDE Today's follow-ups${n ? ` (${n})` : ""}</button>`; })()}
-        ${(leadsSearch || leadsOnlyId || leadsCityFilter || leadsDateFilter || leadsQuoteDateFilter || leadsStageFilter !== "all" || leadsB2bOnly || leadsClashOnly || leadsDueOnly) ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
+        ${(leadsSearch || leadsOnlyId || leadsCityFilter || leadsDateFilter || leadsQuoteDateFilter || leadsStageFilter !== "all" || leadsB2bOnly || leadsClashOnly || leadsDueOnly || leadsNoAdvanceOnly) ? `<button class="btn-ghost" id="clearAllFilters">Clear filters</button>` : ""}
       </div>
     </div>
 
@@ -2339,8 +2348,9 @@ async function renderLeadsLog(main, skipRefresh) {
   main.querySelector("#leadsB2bToggle").addEventListener("click", () => { leadsB2bOnly = !leadsB2bOnly; renderLeadsLog(main, true); });
   main.querySelector("#leadsClashToggle").addEventListener("click", () => { leadsClashOnly = !leadsClashOnly; renderLeadsLog(main, true); });
   main.querySelector("#leadsDueToggle").addEventListener("click", () => { leadsDueOnly = !leadsDueOnly; renderLeadsLog(main, true); });
+  main.querySelector("#leadsNoAdvanceToggle")?.addEventListener("click", () => { leadsNoAdvanceOnly = !leadsNoAdvanceOnly; renderLeadsLog(main, true); });
   const clearAllBtn = main.querySelector("#clearAllFilters");
-  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsOnlyId = ""; leadsCityFilter = ""; leadsDateFilter = ""; leadsQuoteDateFilter = ""; leadsStageFilter = "all"; leadsB2bOnly = false; leadsClashOnly = false; leadsDueOnly = false; renderLeadsLog(main, true); });
+  if (clearAllBtn) clearAllBtn.addEventListener("click", () => { leadsSearch = ""; leadsOnlyId = ""; leadsCityFilter = ""; leadsDateFilter = ""; leadsQuoteDateFilter = ""; leadsStageFilter = "all"; leadsB2bOnly = false; leadsClashOnly = false; leadsDueOnly = false; leadsNoAdvanceOnly = false; renderLeadsLog(main, true); });
 
   const filterRow = main.querySelector("#filterRow");
   const allChip = el(`<button class="filter-chip${leadsFilter === "all" ? " filter-chip-active" : ""}">All <span class="mono">${baseFiltered.length}</span></button>`);
@@ -2425,6 +2435,7 @@ async function renderLeadsLog(main, skipRefresh) {
               <div>
                 <div class="lead-name">${l.name}${l.is_b2b ? ` <span class="mono small" style="background:#8A5FA8; color:#fff; border-radius:4px; padding:1px 6px; font-size:10.5px; font-weight:600; vertical-align:middle;">B2B</span>` : ""}</div>
                 <div class="muted small">${l.phone ? `<a href="tel:${l.phone.replace(/\s+/g, "")}" style="color:inherit; text-decoration:underline;">${l.phone}</a>` : ""}</div>
+                ${hasAccountsAccess() && noAdvance(l) ? `<div class="small" style="color:#B6752C; font-weight:600;">💰 No advance received yet</div>` : ""}
                 ${l.combo_group_id ? `<div class="muted small" style="color:#8A5FA8;" title="Linked bookings share one client — pricing and payments live on the primary event.">🔗 Combo with ${comboSiblings.map((s) => `${packageName(s.event_type)} (${fmtDate(s.date)})`).join(", ")}</div>` : ""}
                 ${planningBlockHtml(l)}
                 ${l.alt_date ? `<div class="muted small" style="color:#B6752C;">Alt date: ${fmtDate(l.alt_date)}</div>` : ""}
