@@ -294,6 +294,18 @@
   }
   .contact-btn:hover{transform:translateY(-2px); border-color:var(--terracotta);}
 
+  /* quick enquiry form */
+  .quick-enq{max-width:760px; margin:30px auto 0; background:var(--paper); border:2px solid var(--hairline); border-radius:18px; padding:22px; text-align:left;}
+  .quick-enq .qe-grid{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
+  .quick-enq label{display:block; font-size:12.5px; font-weight:600; color:var(--muted,#7A6552); margin-bottom:4px;}
+  .quick-enq input,.quick-enq select{width:100%; box-sizing:border-box; padding:12px 14px; border:2px solid var(--hairline); border-radius:12px; font:inherit; font-size:16px; background:#fff; color:var(--ink);}
+  .quick-enq input:focus,.quick-enq select:focus{outline:none; border-color:var(--terracotta);}
+  .quick-enq .qe-go{width:100%; margin-top:14px; border:0; cursor:pointer; font-family:'Space Grotesk',sans-serif; font-size:16px;}
+  .quick-enq .qe-err{display:none; margin-top:10px; color:#A6432B; font-size:14px;}
+  .quick-enq .qe-ok{display:none; text-align:center; padding:14px 4px;}
+  .quick-enq .qe-more{margin-top:10px; text-align:center; font-size:13px;}
+  @media(max-width:600px){.quick-enq .qe-grid{grid-template-columns:1fr;}}
+
   /* upcoming events */
   .upcoming{padding:80px 0; background:var(--paper); border-top:1px solid var(--hairline); border-bottom:1px solid var(--hairline);}
   .event-card{
@@ -964,6 +976,22 @@
   <div class="wrap">
     <span class="tag">GET IN TOUCH</span>
     <h2 style="margin-top:14px; font-size:clamp(28px,4vw,42px);">Let's talk about your event.</h2>
+    <p style="margin-top:10px; color:var(--muted,#7A6552);">Tell us the basics and we'll get back to you on WhatsApp.</p>
+    <form class="quick-enq" id="quickEnq" novalidate>
+      <div id="qeFields">
+        <div class="qe-grid">
+          <div><label for="qeName">Your name</label><input id="qeName" autocomplete="name" required /></div>
+          <div><label for="qePhone">WhatsApp number</label><input id="qePhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="98765 43210" required /></div>
+          <div><label for="qeCity">Event city</label><input id="qeCity" autocomplete="address-level2" required /></div>
+          <div><label for="qeDate">Event date</label><input id="qeDate" type="date" required /></div>
+        </div>
+        <div style="margin-top:12px;"><label for="qeFormat">What are you planning?</label><select id="qeFormat"></select></div>
+        <button class="btn-primary qe-go" id="qeGo" type="submit">Send enquiry →</button>
+        <div class="qe-err" id="qeErr" role="alert"></div>
+        <div class="qe-more">Want to share more details? <a href="/lead-form.html" style="text-decoration:underline;">Use the full enquiry form</a></div>
+      </div>
+      <div class="qe-ok" id="qeOk"><div style="font-size:34px;">🎶</div><h3 style="margin-top:6px;">Thank you — we've got it.</h3><p style="margin-top:6px;">We'll reach out on WhatsApp shortly.</p></div>
+    </form>
     <div class="contact-actions">
       <a class="contact-btn" href="https://wa.me/919832302001" target="_blank" rel="noopener noreferrer">💬 WhatsApp</a>
       <a class="contact-btn" href="https://www.instagram.com/togetheroutloudclub" target="_blank" rel="noopener noreferrer">📷 Instagram</a>
@@ -1512,5 +1540,27 @@
 <script async src="//www.instagram.com/embed.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/js/jsvectormap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/maps/world.js"></script>
+<script>
+(function(){
+  var f=document.getElementById('quickEnq'); if(!f) return;
+  var sel=document.getElementById('qeFormat'), err=document.getElementById('qeErr'), go=document.getElementById('qeGo');
+  var d=document.getElementById('qeDate'); d.min=new Date(Date.now()+5.5*3600e3).toISOString().slice(0,10);
+  fetch('/api/config').then(function(r){return r.json()}).then(function(c){
+    sel.innerHTML='<option value="">Choose an experience…</option>'+(c.experiences||[]).map(function(e){return '<option value="'+e.id+'">'+e.name+'</option>'}).join('')+'';
+  }).catch(function(){});
+  function phoneOf(v){var t=String(v||'').trim(); if(!t) return ''; if(t[0]==='+') return t; var digits=t.replace(/\D/g,''); if(digits.length===10) return '+91 '+digits; if(digits.length===12&&digits.indexOf('91')===0) return '+91 '+digits.slice(2); return t;}
+  f.addEventListener('submit',function(ev){
+    ev.preventDefault(); err.style.display='none';
+    var name=document.getElementById('qeName').value.trim(), phone=phoneOf(document.getElementById('qePhone').value), city=document.getElementById('qeCity').value.trim(), date=d.value, fmt=sel.value;
+    if(!name||!phone||!city||!date||!fmt){err.textContent='Please fill in all the fields.'; err.style.display='block'; return;}
+    if(phone.replace(/\D/g,'').length<10){err.textContent='Please enter a valid WhatsApp number.'; err.style.display='block'; return;}
+    go.disabled=true; go.textContent='Sending…';
+    fetch('/api/leads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,phone:phone,whatsappNumber:phone,whatsappOptin:true,city:city,date:date,eventType:fmt,details:'Quick enquiry from the website home page'})})
+    .then(function(r){return r.json().then(function(j){if(!r.ok) throw new Error(j.error||'Something went wrong'); return j;});})
+    .then(function(){document.getElementById('qeFields').style.display='none'; document.getElementById('qeOk').style.display='block'; if(typeof gtag==='function') gtag('event','generate_lead',{event_category:'quick_enquiry'});})
+    .catch(function(e){err.textContent=e.message; err.style.display='block'; go.disabled=false; go.textContent='Send enquiry →';});
+  });
+})();
+</script>
 </body>
 </html>
