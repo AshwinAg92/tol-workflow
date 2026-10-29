@@ -1699,7 +1699,11 @@ function renderNav() {
     `);
     row.querySelector(".nav-item").addEventListener("click", () => {
       // Opening Leads from the menu starts with a clean name/city search (not whatever was typed or jumped to last time).
-      if (id === "leads") { leadsSearch = ""; leadsOnlyId = ""; leadsCityFilter = ""; }
+      if (id === "leads") {
+        leadsSearch = ""; leadsOnlyId = ""; leadsCityFilter = "";
+        leadsStageFilter = "all"; leadsDateFilter = ""; leadsQuoteDateFilter = "";
+        leadsB2bOnly = false; leadsClashOnly = false; leadsDueOnly = false; leadsNoAdvanceOnly = false;
+      }
       currentTab = id;
       renderNav();
       renderMain();
