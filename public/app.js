@@ -8058,7 +8058,6 @@ async function renderTravelDesk(main) {
         ${chip(e.unbooked ? `${e.unbooked} to book` : e.legs ? "All booked" : "—", !e.unbooked && e.legs > 0)}
         ${chip(e.noTicket ? `${e.noTicket} ticket${e.noTicket > 1 ? "s" : ""} to attach` : e.legs ? "Tickets in" : "—", !e.noTicket && e.legs > 0)}
         ${chip(`Sent ${e.sent}/${e.people}`, e.people > 0 && e.sent === e.people)}
-        ${chip(`Seen ${e.seen}/${e.people}`, e.people > 0 && e.seen === e.people)}
       </div></div>`;
   const todo = d.events.filter((e) => !e.done), done = d.events.filter((e) => e.done);
   main.innerHTML = `<div class="view-head"><div><h2>Travel Desk</h2><p class="muted">Confirmed events in the next 120 days, soonest first, with the one thing to do next.</p></div></div>
