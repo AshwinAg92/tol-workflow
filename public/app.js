@@ -7408,7 +7408,7 @@ async function openTravelPlanModal(leadId) {
     const linked = !!leg.linked_from_other;
     return `
       <div class="card" style="margin-bottom:10px;${linked ? " border-style:dashed;" : ""}">
-        ${linked ? `<div class="muted small" style="margin-bottom:6px;">🔗 Continues ${leg.to_lead_id === lead.id ? "from" : "to"} <b>${escH(leg.home_event_name || "another event")}</b> — entered there, shown here so it isn't entered twice.</div>` : ""}
+        ${linked ? `<div class="muted small" style="margin-bottom:6px;">🔗 Continues ${leg.to_lead_id === lead.id ? "from" : "to"} <b>${escH(leg.home_event_name || "another event")}</b> — entered there, shown here so it isn't entered twice. You can edit it from here too.</div>` : ""}
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
           ${pos ? `<div style="display:flex; flex-direction:column; gap:2px; flex-shrink:0;"><div style="text-align:center; font-weight:700; color:#6B4488;">${pos.i + 1}</div><button class="btn-ghost" data-move-leg="${leg.id}" data-dir="-1" ${pos.i === 0 ? "disabled" : ""} style="padding:0 7px; font-size:13px;" title="Move earlier">▲</button><button class="btn-ghost" data-move-leg="${leg.id}" data-dir="1" ${pos.i === pos.n - 1 ? "disabled" : ""} style="padding:0 7px; font-size:13px;" title="Move later">▼</button></div>` : ""}
           <div style="flex:1;">
@@ -7429,12 +7429,12 @@ async function openTravelPlanModal(leadId) {
             ${leg.tickets.map((t) => `
               <div class="doc-row" style="padding:6px 0;">
                 <div class="doc-name"><a href="${t.url}" target="_blank">🎫 ${t.original_name}</a></div>
-                ${linked ? "" : `<button class="icon-btn" data-delete-ticket="${t.id}" data-leg-id="${leg.id}" title="Delete">${ICON_X}</button>`}
+                <button class="icon-btn" data-delete-ticket="${t.id}" data-leg-id="${leg.id}" title="Delete">${ICON_X}</button>
               </div>
             `).join("")}
           </div>
         ` : ""}
-        ${linked ? "" : `<div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
+        ${`<div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
           <label class="btn-ghost" style="font-size:12px; padding:3px 8px; cursor:pointer;">+ Add ticket<input type="file" data-ticket-upload="${leg.id}" style="display:none;" /></label>
           <button class="btn-ghost" data-edit-leg="${leg.id}" style="font-size:12px; padding:3px 8px;">Edit</button>
           ${leg.mode === "stay" ? "" : `<button class="btn-ghost" data-next-stay="${leg.id}" style="font-size:12px; padding:3px 8px;" title="Add a hotel night right after this journey">🌙 Night stay</button>`}
@@ -7448,13 +7448,16 @@ async function openTravelPlanModal(leadId) {
   }
 
   // The event this onward journey links to: the one before (going & onward) or after (return & onward), nearest first; pre-selected when within a week.
-  function linkedEventOptions(kind, selectedId, isNew) {
+  function linkedEventOptions(kind, selectedId, isNew, ownerId) {
     const later = kind === "to";
-    const cands = LEADS.filter((e) => e.id !== lead.id && ["Confirmed", "Completed"].includes(e.stage) && e.date && lead.date && (later ? e.date >= lead.date : e.date <= lead.date))
+    // Candidates are measured from the event the entry belongs to (it can be shown here from a neighbouring event), and the saved link is always kept.
+    const ref = (ownerId && LEADS.find((e) => e.id === ownerId)) || lead;
+    const cands = LEADS.filter((e) => (e.id !== ref.id || e.id === selectedId) && ["Confirmed", "Completed"].includes(e.stage) && e.date && ref.date && (later ? e.date >= ref.date : e.date <= ref.date))
       .sort((x, y) => (later ? (x.date > y.date ? 1 : -1) : (x.date < y.date ? 1 : -1))).slice(0, 8);
+    if (selectedId && !cands.some((e) => e.id === selectedId)) { const sl = LEADS.find((e) => e.id === selectedId); if (sl) cands.unshift(sl); }
     let sel = selectedId || "";
     if (!sel && isNew && cands[0]) {
-      const gap = Math.abs(new Date(cands[0].date + "T00:00:00") - new Date(lead.date + "T00:00:00")) / 86400000;
+      const gap = Math.abs(new Date(cands[0].date + "T00:00:00") - new Date(ref.date + "T00:00:00")) / 86400000;
       if (gap <= 7) sel = cands[0].id;
     }
     return `<option value="">Not linked</option>${cands.map((e) => `<option value="${e.id}" ${e.id === sel ? "selected" : ""}>${escH(e.name)}${e.city ? " — " + escH(e.city) : ""} (${fmtDate(e.date)})</option>`).join("")}`;
@@ -7489,12 +7492,12 @@ async function openTravelPlanModal(leadId) {
         ${(() => { const t = leg ? leg.leg_type : onwardHint.type; return `
         <div id="${prefix}FromLeadWrap" style="display:${t === "going_onward" ? "block" : "none"}; margin-bottom:8px;">
           <label>Previous event (this journey continues from it)</label>
-          <select id="${prefix}FromLead">${linkedEventOptions("from", leg ? leg.from_lead_id : "", isNew)}</select>
+          <select id="${prefix}FromLead">${linkedEventOptions("from", leg ? leg.from_lead_id : "", isNew, leg ? leg.lead_id : null)}</select>
           <div class="muted small">It will show on that event as a Return — no double entry.</div>
         </div>
         <div id="${prefix}ToLeadWrap" style="display:${t === "return_onward" ? "block" : "none"}; margin-bottom:8px;">
           <label>Next event (this journey continues to it)</label>
-          <select id="${prefix}ToLead">${linkedEventOptions("to", leg ? leg.to_lead_id : "", isNew)}</select>
+          <select id="${prefix}ToLead">${linkedEventOptions("to", leg ? leg.to_lead_id : "", isNew, leg ? leg.lead_id : null)}</select>
           <div class="muted small">It will show on that event as Going — no double entry.</div>
         </div>`; })()}
         <div class="row-2">
@@ -7590,7 +7593,6 @@ async function openTravelPlanModal(leadId) {
             ${assignments.length === 0 ? `<div style="margin-top:10px;"><p class="muted small">No one's assigned to this event yet — add the team first.</p><button class="btn-primary" id="tpAssignBtn">👥 Assign team</button></div>` : (!addingNew && !linkingExisting ? `
               <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:${legs.length > 0 ? "6px" : "0"};">
                 <button class="btn-ghost" id="addLegBtn">+ Add travel</button>
-                <button class="btn-ghost" id="linkLegBtn">🔗 Link existing travel</button>
                 ${legs.some((l) => !l.linked_from_other) ? `<button class="btn-primary" id="sendPlanBtn">📲 Send plan to artists</button>` : ""}
               </div>
             ` : "")}
