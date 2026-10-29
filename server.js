@@ -5084,7 +5084,6 @@ async function buildTravelDesk(user) {
     else if (missing.length) { next = `Add travel for ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ` +${missing.length - 3}` : ""}`; kind = "plan"; }
     else if (unbooked.length) { next = `Book ${unbooked.length} item${unbooked.length > 1 ? "s" : ""}`; kind = "book"; }
     else if (noTicket.length) { next = `Attach ${noTicket.length} ticket${noTicket.length > 1 ? "s" : ""}`; kind = "tickets"; }
-    else if (people.length && sent < people.length) { next = `Send plan to ${people.length - sent}`; kind = "send"; }
     else if (!people.length && crew.length === 0) { next = "Assign the team"; kind = "plan"; }
     else if (!people.length && !needsTravel.length) { next = "Everyone is local — no travel needed"; kind = "done"; }
     events.push({ leadId: l.id, name: l.name, noTravel: noTravel && !myLegs.length, date: l.date, dates: grp.map((x) => x.date), combo: grp.length > 1, city: l.city, daysLeft: days, crew: crew.length,
