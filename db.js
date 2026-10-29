@@ -1188,7 +1188,7 @@ Warmly,
   // deliberate later edit in Settings is never overwritten.
   const confirmedTplFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'confirmed_template_v2_applied'")).rows[0];
   if (!confirmedTplFlag) {
-    const newConfirmedDefault = "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe are pleased to confirm our booking for: {clientName}\nLocation: {location}\nDate: {date}\nOccasion: {occasion}\nSet: {pieces} Pieces\nDuration: {duration}\nPerformance Fee: ₹{performanceFee}/-\nAdvance: ₹{advance}/-\nOutstanding: ₹{outstanding}\n\nAs discussed, we request your support in arranging the travel, accommodation, meals, local transfers, and venue technical requirements.\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud";
+    const newConfirmedDefault = "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe are pleased to confirm our booking for: {clientName}\nLocation: {location}\nDate: {date}\nOccasion: {occasion}\nSet: {pieces} Pieces\nDuration: {duration}\nPerformance Fee: ₹{performanceFee}/-\nAdvance: ₹{advance}/-\nOutstanding: ₹{outstanding}\n\nAs discussed, we request your support in arranging {clientArrangements}.\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud";
     await pool.query(`
       INSERT INTO message_templates (key, template, updated_at) VALUES ('confirmed', $1, $2)
       ON CONFLICT (key) DO UPDATE SET template = $1, updated_at = $2
@@ -1198,6 +1198,13 @@ Warmly,
       [new Date().toISOString()]
     );
   }
+
+  // One-time fix: confirmation messages hard-coded "arranging the travel, accommodation, meals…" even when the fee
+  // already includes travel/stay/food. Swap that sentence in saved templates for the auto-filled {clientArrangements}.
+  await pool.query(
+    `UPDATE message_templates SET template = REPLACE(template, 'arranging the travel, accommodation, meals, local transfers, and venue technical requirements', 'arranging {clientArrangements}')
+     WHERE key = 'confirmed' AND template LIKE '%arranging the travel, accommodation, meals, local transfers, and venue technical requirements%'`
+  );
 
   // One-time migration: bring any existing single "advance" amount into the new
   // payments ledger as its first entry, so nothing is lost when moving from a
