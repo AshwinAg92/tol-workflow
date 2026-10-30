@@ -126,7 +126,7 @@ function openReleaseDateModal(lead) {
   if (!others.length) return;
   const root = document.getElementById("modalRoot");
   const msgFor = (o) => fillTemplate(MESSAGE_TEMPLATES.date_released || TEMPLATE_META.date_released.default, {
-    firstName: (o.name || "").split(" ")[0] || "there", experience: packageName(o.event_type), date: fmtDate(o.date),
+    firstName: leadFirstName(o) || "there", experience: packageName(o.event_type), date: fmtDate(o.date),
   });
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
@@ -140,7 +140,7 @@ function openReleaseDateModal(lead) {
                 <input type="checkbox" class="rel-cb" data-id="${o.id}" checked style="width:18px; height:18px;" />
                 <span><b>${o.name}</b><br><span class="muted small">${o.stage}${o.city ? " \u00B7 " + o.city : ""}</span></span>
               </label>
-              ${(o.whatsapp_number || o.phone) ? `<button class="btn-ghost rel-wa" data-id="${o.id}" style="font-size:12px; padding:4px 10px;">\uD83D\uDCAC Tell ${(o.name || "").split(" ")[0]}</button>` : ""}
+              ${(o.whatsapp_number || o.phone) ? `<button class="btn-ghost rel-wa" data-id="${o.id}" style="font-size:12px; padding:4px 10px;">\uD83D\uDCAC Tell ${leadFirstName(o)}</button>` : ""}
             </div>`).join("")}
         </div>
         <div class="modal-foot">
@@ -340,6 +340,31 @@ function rateInclusionsSummaryText(lead) {
 // the inverse of what we've included in the quoted rate. Venue technical
 // requirements (power, stage, mic points) are always the client's to sort,
 // regardless of the travel/stay/food inclusions.
+// Leads store First name (may be several words — this is what greetings use) and Last name; `name` is the full display name.
+function leadFirstName(l) {
+  const f = String((l && l.first_name) || "").trim();
+  if (f) return f;
+  return String((l && l.name) || "").trim().split(/\s+/)[0] || "";
+}
+// Best-guess split of an existing full name for pre-filling the edit form: the last word is the surname.
+function splitFullName(name) {
+  const w = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return w.length < 2 ? [w[0] || "", ""] : [w.slice(0, -1).join(" "), w[w.length - 1]];
+}
+function nameFieldsHtml(prefix, lead) {
+  let f = "", l = "";
+  if (lead) { if (lead.first_name || lead.last_name) { f = lead.first_name || ""; l = lead.last_name || ""; } else { [f, l] = splitFullName(lead.name); } }
+  const e = (v) => String(v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return `<div class="row-2">
+    <div><label>First name *</label><input id="${prefix}FirstName" value="${e(f)}" placeholder="e.g. Priya & Raj" /></div>
+    <div><label>Last name</label><input id="${prefix}LastName" value="${e(l)}" placeholder="e.g. Sharma" /></div>
+  </div>`;
+}
+function readNameFields(root, prefix) {
+  const firstName = root.querySelector(`#${prefix}FirstName`).value.trim().replace(/\s+/g, " ");
+  const lastName = root.querySelector(`#${prefix}LastName`).value.trim().replace(/\s+/g, " ");
+  return { firstName, lastName, name: [firstName, lastName].filter(Boolean).join(" ") };
+}
 function clientArrangementsPhrase(lead) {
   const included = parseRateInclusions(lead.rate_inclusions);
   const mapping = [["travel", "travel"], ["hotel", "accommodation"], ["food", "meals"], ["local_transfers", "local transfers"]];
@@ -955,7 +980,7 @@ async function makeEventCard(lead, kind) {
   const c = document.createElement("canvas");
   c.width = W; c.height = H;
   const g = c.getContext("2d");
-  const first = (lead.name || "").trim().split(/\s+/)[0] || "there";
+  const first = leadFirstName(lead) || "there";
   const experience = packageName(lead.event_type);
   const exp = experience.toLowerCase();
   const dateLong = lead.date ? new Date(lead.date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "";
@@ -1046,7 +1071,7 @@ async function makeEventCardWide(lead, kind) {
   const W = 1200, H = 630;
   const c = document.createElement("canvas"); c.width = W; c.height = H;
   const g = c.getContext("2d");
-  const first = (lead.name || "").trim().split(/\s+/)[0] || "there";
+  const first = leadFirstName(lead) || "there";
   const experience = packageName(lead.event_type);
   const dateLong = lead.date ? new Date(lead.date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "";
   const SERIF = "Georgia, 'Times New Roman', serif", SANS = "'Helvetica Neue', Helvetica, Arial, sans-serif";
@@ -1089,7 +1114,7 @@ async function makeEventCardWide(lead, kind) {
 // preview WhatsApp shows inside the chat.
 async function publishEventCard(lead, kind, portraitBlob) {
   const wide = await makeEventCardWide(lead, kind);
-  const first = (lead.name || "").trim().split(/\s+/)[0] || "";
+  const first = leadFirstName(lead) || "";
   const fd = new FormData();
   fd.append("portrait", portraitBlob, "card.png");
   fd.append("wide", wide, "wide.png");
@@ -1124,7 +1149,7 @@ async function makeQuoteCard(lead, f, wide) {
   const W = wide ? 1200 : 1080, H = wide ? 630 : 1350;
   const c = document.createElement("canvas"); c.width = W; c.height = H;
   const g = c.getContext("2d");
-  const first = (lead.name || "").trim().split(/\s+/)[0] || "there";
+  const first = leadFirstName(lead) || "there";
   const experience = f.format || packageName(lead.event_type);
   const { rows, amount, b2b } = quoteCardFields(f);
   const SERIF = "Georgia, 'Times New Roman', serif", SANS = "'Helvetica Neue', Helvetica, Arial, sans-serif";
@@ -1216,7 +1241,7 @@ async function makeQuoteCard(lead, f, wide) {
 }
 async function publishQuoteCard(lead, f) {
   const [portrait, wide] = await Promise.all([makeQuoteCard(lead, f, false), makeQuoteCard(lead, f, true)]);
-  const first = (lead.name || "").trim().split(/\s+/)[0] || "";
+  const first = leadFirstName(lead) || "";
   const { amount } = quoteCardFields(f);
   const fd = new FormData();
   fd.append("portrait", portrait, "card.png");
@@ -1959,7 +1984,7 @@ function openBulkWhatsappFollowupModal(leadIds, main) {
       return;
     }
     const lead = queue[index];
-    const firstName = (lead.name || "").split(" ")[0] || "there";
+    const firstName = leadFirstName(lead) || "there";
     const key = lead.stage === "Tentative" ? "tentative_followup" : "followup";
     const tpl = MESSAGE_TEMPLATES[key] || TEMPLATE_META[key].default;
     const msg = fillTemplate(tpl, {
@@ -2494,7 +2519,7 @@ async function renderLeadsLog(main, skipRefresh) {
             if (lines.length) {
               const askable = clashes.filter((o) => ["Interested", "Tentative"].includes(o.stage) && (o.whatsapp_number || o.phone)).slice(0, 3);
               out += `<div class="date-clash-warning" style="background:#FFF4E5; color:#8A5A1F; padding:6px 10px; border-radius:6px; font-size:12.5px; margin-top:6px;">${lines.map((x) => "\u26A0\uFE0F " + x).join("<br>")}
-                ${askable.length && ["New", "Follow-up"].includes(l.stage) ? `<div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">${askable.map((o) => `<button class="btn-ghost ask-date-confirm-btn" data-conflict-id="${o.id}" style="font-size:12px; padding:4px 10px;">\uD83D\uDCAC Ask ${(o.name || "").split(" ")[0]} to confirm</button>`).join("")}</div>` : ""}
+                ${askable.length && ["New", "Follow-up"].includes(l.stage) ? `<div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">${askable.map((o) => `<button class="btn-ghost ask-date-confirm-btn" data-conflict-id="${o.id}" style="font-size:12px; padding:4px 10px;">\uD83D\uDCAC Ask ${leadFirstName(o)} to confirm</button>`).join("")}</div>` : ""}
               </div>`;
             }
             if (releasable.length) {
@@ -2652,7 +2677,7 @@ async function renderLeadsLog(main, skipRefresh) {
       const other = LEADS.find((l) => l.id === btn.dataset.conflictId);
       if (!other) return;
       const msg = fillTemplate(MESSAGE_TEMPLATES.date_hold_check || TEMPLATE_META.date_hold_check.default, {
-        firstName: (other.name || "").split(" ")[0] || "there",
+        firstName: leadFirstName(other) || "there",
         experience: packageName(other.event_type),
         date: fmtDate(other.date),
       });
@@ -2677,7 +2702,7 @@ async function renderLeadsLog(main, skipRefresh) {
       doFollowup(lead);
     });
     async function doFollowup(lead) {
-      const firstName = (lead.name || "").split(" ")[0] || "there";
+      const firstName = leadFirstName(lead) || "there";
       const key = lead.stage === "Tentative" ? "tentative_followup" : "followup";
       const tpl = MESSAGE_TEMPLATES[key] || TEMPLATE_META[key].default;
       const msg = fillTemplate(tpl, {
@@ -3345,7 +3370,7 @@ async function renderQuotation(main) {
       formatType: isPheras ? "" : main.querySelector("#qFormatType").value,
       charges: main.querySelector("#qCharges").value,
       remarks: main.querySelector("#qRemarks").value,
-      firstName: lead ? (lead.name || "").trim().split(" ")[0] : "",
+      firstName: lead ? leadFirstName(lead) : "",
       isB2b: !!(lead && lead.is_b2b),
       b2bCharges: main.querySelector("#qB2bCharges").value,
     });
@@ -5760,7 +5785,7 @@ async function openLeadPaymentsModal(leadId) {
         shareLedgerBtn.textContent = "Preparing PDF…";
         try {
           const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
-          const msg = `Hi ${(lead.name || "").split(" ")[0] || "there"}, sharing your payment ledger with Together, Out Loud. Please find the PDF attached.`;
+          const msg = `Hi ${leadFirstName(lead) || "there"}, sharing your payment ledger with Together, Out Loud. Please find the PDF attached.`;
           const result = await downloadLedgerPDF(lead, feePayments, reimbursements, { text: msg, digitsOnly });
           if (result.method === "share") {
             // Native share sheet already handled attaching the file — nothing more to do.
@@ -6842,7 +6867,7 @@ async function openTravelShareModal(leadId) {
 
   const legsFor = () => data.legs.map((l) => ({ ...l, who: data.team.filter((t) => selected.has(t.teamId) && l.memberIds.includes(t.teamId)).map((t) => t.name) }));
   const buildMessage = () => {
-    const first = (lead.name || "").split(" ")[0];
+    const first = leadFirstName(lead);
     const people = data.team.filter((t) => selected.has(t.teamId));
     const legs = legsFor().filter((l) => l.who.length > 0);
     return [
@@ -9876,7 +9901,7 @@ function openConfirmEventModal(lead, rateHint) {
 // confirmed (tech rider, etc.), without promising those documents early.
 async function openTentativeConfirmInfoModal(lead) {
   const root = document.getElementById("modalRoot");
-  const firstName = (lead.name || "").split(" ")[0] || "there";
+  const firstName = leadFirstName(lead) || "there";
   const tpl = MESSAGE_TEMPLATES.tentative_confirm_info || TEMPLATE_META.tentative_confirm_info.default;
   let message = fillTemplate(tpl, {
     firstName,
@@ -10102,7 +10127,7 @@ async function openConfirmationMessageModal(lead) {
   // The customised rider built for this event (Tech rider button), if one has been saved.
   let riderToken = null;
   try { riderToken = (await api(`/api/leads/${lead.id}/tech-rider`)).token || null; } catch (e) { riderToken = null; }
-  const firstName = (lead.name || "").split(" ")[0] || "there";
+  const firstName = leadFirstName(lead) || "there";
   const finalAmount = lead.final_amount || lead.quote_amount || 0;
   const received = lead.received || 0;
   const outstanding = finalAmount - received;
@@ -10288,7 +10313,7 @@ async function openConfirmationMessageModal(lead) {
 // Shared by the single-lead modal and the bulk "thank several at once" queue
 // below, so the review/feedback-link logic only lives in one place.
 async function buildThankYouMessage(lead) {
-  const firstName = (lead.name || "").split(" ")[0] || "there";
+  const firstName = leadFirstName(lead) || "there";
   const reviewLink = MESSAGE_TEMPLATES.google_review_link && MESSAGE_TEMPLATES.google_review_link !== "none" ? MESSAGE_TEMPLATES.google_review_link : "";
   // No Google Business Profile yet, so until a review link is saved in
   // Settings, this falls back to our own feedback form — same idea, just
@@ -10533,7 +10558,7 @@ async function openTechRiderModal(lead) {
     if (!(await save())) return;
     const digits = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
     const tpl = MESSAGE_TEMPLATES.tech_rider_message || TEMPLATE_META.tech_rider_message.default;
-    const msg = fillTemplate(tpl, { firstName: (lead.name || "").split(" ")[0] || "there", experience: packageName(lead.event_type), date: fmtDate(lead.date), link: link() });
+    const msg = fillTemplate(tpl, { firstName: leadFirstName(lead) || "there", experience: packageName(lead.event_type), date: fmtDate(lead.date), link: link() });
     goWhatsApp(digits ? `https://wa.me/${digits}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`);
   });
   q("#trRemove")?.addEventListener("click", async () => {
@@ -10557,7 +10582,7 @@ function buildCancellationMessage(lead) {
   }
   const tpl = MESSAGE_TEMPLATES.cancellation_confirmation || TEMPLATE_META.cancellation_confirmation.default;
   return fillTemplate(tpl, {
-    firstName: (lead.name || "").split(" ")[0] || "there",
+    firstName: leadFirstName(lead) || "there",
     experience: packageName(lead.event_type),
     date: fmtDate(lead.date),
     moneyClause,
@@ -10743,8 +10768,7 @@ function openNewLeadModal(opts = {}) {
       <div class="modal-card">
         <div class="modal-head"><h3>${quickDate ? `Add event — ${fmtDate(quickDate)}` : "New lead"}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
-          <label>Name / organisation</label>
-          <input id="mName" placeholder="e.g. Priya & Raj Sharma" />
+          ${nameFieldsHtml("m", null)}
           <label>Booking type</label>
           <select id="mIsB2b">
             <option value="0" selected>Direct client (B2C)</option>
@@ -10863,8 +10887,8 @@ function openNewLeadModal(opts = {}) {
   });
 
   root.querySelector("#submitModal").addEventListener("click", async () => {
-    const name = root.querySelector("#mName").value;
-    if (!name) return alert("Name is required.");
+    const { firstName, lastName, name } = readNameFields(root, "m");
+    if (!firstName) return alert("First name is required.");
     const alreadyConfirmed = root.querySelector("#mAlreadyConfirmed").checked;
     const isCombo = root.querySelector("#mIsCombo").checked;
     const isB2b = root.querySelector("#mIsB2b").value === "1";
@@ -10882,7 +10906,7 @@ function openNewLeadModal(opts = {}) {
       const created = await api("/api/leads/combo", {
         method: "POST",
         body: JSON.stringify({
-          name,
+          name, firstName, lastName,
           phone: root.querySelector("#mPhone").value,
           email: root.querySelector("#mEmail").value,
           city: root.querySelector("#mComboCity").value,
@@ -10910,7 +10934,7 @@ function openNewLeadModal(opts = {}) {
     const created = await api("/api/leads", {
       method: "POST",
       body: JSON.stringify({
-        name,
+        name, firstName, lastName,
         phone: root.querySelector("#mPhone").value,
         email: root.querySelector("#mEmail").value,
         eventType: root.querySelector("#mType").value,
@@ -11099,8 +11123,7 @@ function openEditLeadModal(leadId) {
       <div class="modal-card">
         <div class="modal-head"><h3>Edit lead</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
-          <label>Name / organisation</label>
-          <input id="mName" value="${lead.name || ""}" />
+          ${nameFieldsHtml("m", lead)}
           <label>Booking type</label>
           <select id="mIsB2b">
             <option value="0" ${!lead.is_b2b ? "selected" : ""}>Direct client (B2C)</option>
@@ -11158,15 +11181,15 @@ function openEditLeadModal(leadId) {
   });
   wireDateWarn(root, lead.id, lead.combo_group_id);
   root.querySelector("#submitModal").addEventListener("click", async () => {
-    const name = root.querySelector("#mName").value.trim();
-    if (!name) return alert("Name is required.");
+    const { firstName, lastName, name } = readNameFields(root, "m");
+    if (!firstName) return alert("First name is required.");
     const btn = root.querySelector("#submitModal");
     btn.disabled = true;
     try {
       await api(`/api/leads/${leadId}`, {
         method: "PATCH",
         body: JSON.stringify({
-          name,
+          name, firstName, lastName,
           isB2b: root.querySelector("#mIsB2b").value === "1",
           phone: root.querySelector("#mPhone").value.trim() || null,
           email: root.querySelector("#mEmail").value.trim() || null,

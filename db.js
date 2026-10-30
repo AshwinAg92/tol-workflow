@@ -198,6 +198,9 @@ async function setup() {
   // so any new column must be added explicitly here or it silently never
   // exists in the live database (this bit us with final_amount and alt_date).
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS final_amount INTEGER`);
+  // Name is entered as First name (may be several words, used in greetings) + Last name; `name` stays the full display name.
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS first_name TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_name TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS alt_date TEXT`);
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS team_id TEXT REFERENCES team(id)`);
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payment_date TEXT`);

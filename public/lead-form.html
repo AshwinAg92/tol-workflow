@@ -128,8 +128,12 @@
     <div class="card">
       <form id="leadForm">
         <div class="q">
-          <label class="qlabel">Full Name</label>
-          <input id="name" required placeholder="e.g. Priya Sharma" />
+          <label class="qlabel">First Name</label>
+          <input id="firstName" required autocomplete="given-name" placeholder="e.g. Priya" />
+        </div>
+        <div class="q">
+          <label class="qlabel">Last Name</label>
+          <input id="lastName" autocomplete="family-name" placeholder="e.g. Sharma" />
         </div>
 
         <div class="q">
@@ -425,7 +429,8 @@
       const isEventManager = document.querySelector('input[name="bookingType"]:checked').value === "event_manager";
 
       const payload = {
-        name: document.getElementById("name").value,
+        firstName: document.getElementById("firstName").value.trim(),
+        lastName: document.getElementById("lastName").value.trim(),
         phone: fullPhone,
         email: document.getElementById("email").value,
         eventType: experienceSelect.value,

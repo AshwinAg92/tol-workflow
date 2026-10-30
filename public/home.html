@@ -977,7 +977,8 @@
     <form class="quick-enq" id="quickEnq" novalidate>
       <div id="qeFields">
         <div class="qe-grid">
-          <div><label for="qeName">Your name</label><input id="qeName" autocomplete="name" required /></div>
+          <div><label for="qeFirst">First name</label><input id="qeFirst" autocomplete="given-name" required /></div>
+          <div><label for="qeLast">Last name</label><input id="qeLast" autocomplete="family-name" /></div>
           <div><label for="qePhone">WhatsApp number</label><input id="qePhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="98765 43210" required /></div>
           <div><label for="qeCity">Event city</label><input id="qeCity" autocomplete="address-level2" required /></div>
           <div><label for="qeDate">Event date</label><input id="qeDate" type="date" required /></div>
@@ -1548,11 +1549,11 @@
   function phoneOf(v){var t=String(v||'').trim(); if(!t) return ''; if(t[0]==='+') return t; var digits=t.replace(/\D/g,''); if(digits.length===10) return '+91 '+digits; if(digits.length===12&&digits.indexOf('91')===0) return '+91 '+digits.slice(2); return t;}
   f.addEventListener('submit',function(ev){
     ev.preventDefault(); err.style.display='none';
-    var name=document.getElementById('qeName').value.trim(), phone=phoneOf(document.getElementById('qePhone').value), city=document.getElementById('qeCity').value.trim(), date=d.value, fmt=sel.value;
-    if(!name||!phone||!city||!date||!fmt){err.textContent='Please fill in all the fields.'; err.style.display='block'; return;}
+    var first=document.getElementById('qeFirst').value.trim(), last=document.getElementById('qeLast').value.trim(), phone=phoneOf(document.getElementById('qePhone').value), city=document.getElementById('qeCity').value.trim(), date=d.value, fmt=sel.value;
+    if(!first||!phone||!city||!date||!fmt){err.textContent='Please fill in all the fields.'; err.style.display='block'; return;}
     if(phone.replace(/\D/g,'').length<10){err.textContent='Please enter a valid WhatsApp number.'; err.style.display='block'; return;}
     go.disabled=true; go.textContent='Sending…';
-    fetch('/api/leads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,phone:phone,whatsappNumber:phone,whatsappOptin:true,city:city,date:date,eventType:fmt,details:'Quick enquiry from the website home page'})})
+    fetch('/api/leads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({firstName:first,lastName:last,phone:phone,whatsappNumber:phone,whatsappOptin:true,city:city,date:date,eventType:fmt,details:'Quick enquiry from the website home page'})})
     .then(function(r){return r.json().then(function(j){if(!r.ok) throw new Error(j.error||'Something went wrong'); return j;});})
     .then(function(){document.getElementById('qeFields').style.display='none'; document.getElementById('qeOk').style.display='block'; if(typeof gtag==='function') gtag('event','generate_lead',{event_category:'quick_enquiry'});})
     .catch(function(e){err.textContent=e.message; err.style.display='block'; go.disabled=false; go.textContent='Send enquiry →';});

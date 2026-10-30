@@ -1352,12 +1352,20 @@ app.post("/api/musicians/:id/promote", requireAuth, requireAdmin, async (req, re
   res.status(201).json({ teamId });
 });
 
+// First name (may be several words) + last name -> full display name. Returns null when neither is given.
+function splitNameBody(b) {
+  const f = String(b.firstName || "").trim().replace(/\s+/g, " "), l = String(b.lastName || "").trim().replace(/\s+/g, " ");
+  if (!f && !l) return null;
+  return { first: f, last: l, full: [f, l].filter(Boolean).join(" ") };
+}
 app.post("/api/leads", async (req, res) => {
-  const {
+  let {
     name, phone, email, eventType, city, state, date, budget, notes,
     venue, occasion, guestRange, details, howHeard, whatsappOptin, altDate, whatsappNumber, pcs,
     isEventManager, managerCompany, managerCity, managerInstagram, occasionOther, howHeardOther,
   } = req.body;
+  const nameParts = splitNameBody(req.body);
+  if (nameParts) name = nameParts.full;
   // "Other" always comes with a free-text detail.
   const occasionOtherClean = occasion === "Other" ? (String(occasionOther || "").trim().slice(0, 200) || null) : null;
   const howHeardClean = howHeard === "Other" && String(howHeardOther || "").trim() ? `Other \u2014 ${String(howHeardOther).trim().slice(0, 200)}` : (howHeard || null);
@@ -1411,6 +1419,7 @@ app.post("/api/leads", async (req, res) => {
     venue || null, occasion || null, guestRange || null,
     details || null, howHeardClean, whatsappOptin ? 1 : 0, altDate || null, whatsappNumber || null, pcs || null, isEventManager ? 1 : 0, occasionOtherClean,
   ]);
+  if (nameParts) await pool.query("UPDATE leads SET first_name = $2, last_name = $3 WHERE id = $1", [id, nameParts.first || null, nameParts.last || null]);
   const created = (await pool.query("SELECT * FROM leads WHERE id = $1", [id])).rows[0];
   res.status(201).json(created);
   // Date already held by another open lead? Say so in the alert + log (the lead card also shows it live).
@@ -2310,7 +2319,9 @@ app.delete("/api/gallery/:id", requireAuth, requireAdmin, async (req, res) => {
 // amount, so Accounts/profit totals aren't double-counted across the group —
 // the others just point back to it for display.
 app.post("/api/leads/combo", requireAuth, requireSection("leads"), async (req, res) => {
-  const { name, phone, email, city, occasion, guestRange, events, budget, finalAmount, alreadyConfirmed, advanceAmount, advanceDate, advanceMode, isB2b, occasionOther } = req.body;
+  let { name, phone, email, city, occasion, guestRange, events, budget, finalAmount, alreadyConfirmed, advanceAmount, advanceDate, advanceMode, isB2b, occasionOther } = req.body;
+  const nameParts = splitNameBody(req.body);
+  if (nameParts) name = nameParts.full;
   const occasionOtherClean = occasion === "Other" ? (String(occasionOther || "").trim().slice(0, 200) || null) : null;
   if (!canSeeMoney(req.user) && (alreadyConfirmed || finalAmount || advanceAmount)) return res.status(403).json({ error: "Confirming with amounts needs Accounts access" });
   if (!name) return res.status(400).json({ error: "Name is required" });
@@ -2338,6 +2349,7 @@ app.post("/api/leads/combo", requireAuth, requireSection("leads"), async (req, r
       isPrimary && alreadyConfirmed ? (finalAmount || null) : null,
       occasion || null, guestRange || null, comboGroupId, isPrimary ? 1 : 0, now, isB2b ? 1 : 0, occasionOtherClean,
     ]);
+    if (nameParts) await pool.query("UPDATE leads SET first_name = $2, last_name = $3 WHERE id = $1", [id, nameParts.first || null, nameParts.last || null]);
     createdIds.push(id);
   }
   if (alreadyConfirmed && advanceAmount && Number(advanceAmount) > 0 && advanceDate) {
@@ -2429,6 +2441,14 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
       updates.push(`${f} = $${values.length}`);
     }
   });
+  if (hasLeads) {
+    const np = splitNameBody(req.body);
+    if (np) {
+      values.push(np.first || null); updates.push(`first_name = $${values.length}`);
+      values.push(np.last || null); updates.push(`last_name = $${values.length}`);
+      if (req.body.name === undefined) { values.push(np.full); updates.push(`name = $${values.length}`); }
+    }
+  }
   // logFollowup is a trigger, not a raw field — the timestamp is always set
   // server-side (never trust a client-supplied clock) so "last followed up"
   // stays accurate regardless of who's clicking it or from where.
