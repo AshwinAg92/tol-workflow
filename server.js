@@ -1697,7 +1697,10 @@ app.post("/api/google-analytics/disconnect", requireAuth, requireAdmin, async (r
 app.patch("/api/google-analytics/property", requireAuth, requireAdmin, async (req, res) => {
   const { propertyId } = req.body;
   if (!propertyId || !/^\d+$/.test(String(propertyId).trim())) {
-    return res.status(400).json({ error: "propertyId must be a numeric GA4 property ID" });
+    const looksLikeMeasurementId = /^G-[A-Z0-9]+$/i.test(String(propertyId || "").trim());
+    return res.status(400).json({ error: looksLikeMeasurementId
+      ? "That G-… code is the Measurement ID. We need the numeric Property ID instead: in Google Analytics go to Admin (gear, bottom left) → Property settings → Property ID (a 9–10 digit number at the top right)."
+      : "Enter the numeric GA4 Property ID (digits only) — find it in Google Analytics under Admin → Property settings." });
   }
   const result = await pool.query(
     "UPDATE google_analytics_auth SET property_id = $1 WHERE id = $2",
