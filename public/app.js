@@ -1724,6 +1724,7 @@ function renderNav() {
     `);
     row.querySelector(".nav-item").addEventListener("click", () => {
       // Opening Leads from the menu starts with a clean name/city search (not whatever was typed or jumped to last time).
+      if (id === "traveldesk") window.__deskSearch = ""; // opening the Desk from the menu starts with an empty search
       if (id === "leads") {
         leadsSearch = ""; leadsOnlyId = ""; leadsCityFilter = "";
         leadsStageFilter = "all"; leadsDateFilter = ""; leadsQuoteDateFilter = "";
@@ -8085,10 +8086,23 @@ async function renderTravelDesk(main) {
         ${chip(e.unbooked ? `${e.unbooked} to book` : e.legs ? "All booked" : "—", !e.unbooked && e.legs > 0)}
         ${chip(e.noTicket ? `${e.noTicket} ticket${e.noTicket > 1 ? "s" : ""} to attach` : e.legs ? "Tickets in" : "—", !e.noTicket && e.legs > 0)}
       </div></div>`;
-  const todo = d.events.filter((e) => !e.done), done = d.events.filter((e) => e.done);
+  // Search by client name, city, date (e.g. "nov", "27") or the next action. The query survives a refresh of the Desk.
+  const deskHaystack = (e) => [e.name, e.city, e.next, ...(e.dates || [e.date]).map((d) => `${d} ${fmtDate(d)}`)].join(" ").toLowerCase();
   main.innerHTML = `<div class="view-head"><div><h2>Travel Desk</h2><p class="muted">Confirmed events in the next 120 days, soonest first, with the one thing to do next.</p></div></div>
-    ${todo.length ? `<div class="section-label" style="margin:8px 0;">Needs action (${todo.length})</div>${todo.map(row).join("")}` : `<div class="card"><div style="font-weight:600;">Nothing needs travel action right now.</div></div>`}
-    ${done.length ? `<details style="margin-top:14px;"><summary class="muted" style="cursor:pointer;">All set (${done.length})</summary><div style="margin-top:8px;">${done.map(row).join("")}</div></details>` : ""}`;
+    <input type="search" id="deskSearch" placeholder="🔍 Search by client, city or date…" value="${escH(window.__deskSearch || "")}" autocomplete="off" style="width:100%; max-width:420px; margin:4px 0 12px;" />
+    <div id="deskList"></div>`;
+  const paintDesk = () => {
+    const q = String(window.__deskSearch || "").trim().toLowerCase();
+    const words = q.split(/\s+/).filter(Boolean);
+    const hit = (e) => !words.length || words.every((w) => deskHaystack(e).includes(w));
+    const todo = d.events.filter((e) => !e.done && hit(e)), done = d.events.filter((e) => e.done && hit(e));
+    main.querySelector("#deskList").innerHTML = `
+      ${todo.length ? `<div class="section-label" style="margin:8px 0;">Needs action (${todo.length})</div>${todo.map(row).join("")}` : (q ? "" : `<div class="card"><div style="font-weight:600;">Nothing needs travel action right now.</div></div>`)}
+      ${done.length ? `<details style="margin-top:14px;" ${q ? "open" : ""}><summary class="muted" style="cursor:pointer;">All set (${done.length})</summary><div style="margin-top:8px;">${done.map(row).join("")}</div></details>` : ""}
+      ${q && !todo.length && !done.length ? `<div class="card"><div class="muted">No events match “${escH(q)}”.</div></div>` : ""}`;
+    wireDeskButtons();
+  };
+  const wireDeskButtons = () => {
   main.querySelectorAll("[data-desk-notravel]").forEach((b) => b.addEventListener("click", async () => {
     b.disabled = true;
     try { await api(`/api/leads/${b.dataset.deskNotravel}/no-travel`, { method: "POST", body: JSON.stringify({ value: b.dataset.val === "1" }) }); await renderTravelDesk(main); } catch (err) { alert(err.message); b.disabled = false; }
@@ -8103,6 +8117,9 @@ async function renderTravelDesk(main) {
   main.querySelectorAll("[data-desk-open]").forEach((b) => b.addEventListener("click", async () => {
     await openTravelPlanModal(b.dataset.deskOpen);
   }));
+  };
+  main.querySelector("#deskSearch").addEventListener("input", (ev) => { window.__deskSearch = ev.target.value; paintDesk(); });
+  paintDesk();
 }
 
 // ---------- Accounts ----------
