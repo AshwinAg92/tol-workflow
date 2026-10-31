@@ -1521,7 +1521,8 @@ async function fetchLatestReels() {
   if (isWindsorPlanLimitError(json)) throw new Error("Windsor.ai account/plan limit reached");
   const rows = Array.isArray(json) ? json : (json.data || []);
   return rows
-    .filter((r) => r.media_type === "REEL" && r.media_permalink)
+    // Instagram now reports reels as media_type "VIDEO" (older data says "REEL"); a /reel/ link is the reliable marker.
+    .filter((r) => r.media_permalink && (r.media_type === "REEL" || (r.media_type === "VIDEO" && /\/reel\//.test(r.media_permalink))))
     .sort((a, b) => new Date(b.media_timestamp) - new Date(a.media_timestamp))
     .slice(0, 12)
     .map((r) => ({
