@@ -650,7 +650,7 @@
 <div class="lightbox" id="lightbox">
   <button class="lightbox-close" id="lightboxClose" aria-label="Close">✕</button>
   <button class="lightbox-nav prev" id="lightboxPrev" aria-label="Previous image">←</button>
-  <img id="lightboxImg" src="" alt="" />
+  <img id="lightboxImg" alt="" />
   <button class="lightbox-nav next" id="lightboxNext" aria-label="Next image">→</button>
 </div>
 
@@ -1084,7 +1084,7 @@
   }
   function closeLightbox() {
     lightbox.classList.remove('open');
-    lightboxImg.src = '';
+    lightboxImg.removeAttribute('src');
     lightboxGroup = [];
   }
   document.addEventListener('click', (e) => {
@@ -1384,8 +1384,8 @@
             ${t.rating ? `<span class="stars">${'★'.repeat(t.rating)}${'☆'.repeat(5 - t.rating)}</span>` : ''}
           </div>
         ` : ''}
-        <div class="quote">${t.videoUrl ? `"${escapeHtml(t.quote)}"` : escapeHtml(t.quote)}</div>
-        <div class="name">— ${escapeHtml(t.name)}</div>
+        ${(t.quote || '').trim() ? `<div class="quote">${t.videoUrl ? `"${escapeHtml(t.quote.trim())}"` : escapeHtml(t.quote.trim())}</div>` : ''}
+        ${(t.name || '').trim() ? `<div class="name">— ${escapeHtml(t.name.trim())}</div>` : ''}
       </div>
     `).join('');
     // Instagram's embed.js only auto-processes blockquotes present at page
