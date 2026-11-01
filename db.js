@@ -343,7 +343,7 @@ async function setup() {
   )`);
   // Lookup indexes — as the data grew, un-indexed lookups by lead/team/date were scanning whole tables on every screen.
   // Each is created independently so a problem with one can never block startup. Purely additive: no data is touched.
-  for (const ddl of [
+  const INDEX_DDL = [
     "CREATE INDEX IF NOT EXISTS idx_ea_lead ON event_assignments(lead_id)",
     "CREATE INDEX IF NOT EXISTS idx_ea_team ON event_assignments(team_id)",
     "CREATE INDEX IF NOT EXISTS idx_ea_token ON event_assignments(confirm_token)",
@@ -363,7 +363,9 @@ async function setup() {
     "CREATE INDEX IF NOT EXISTS idx_legs_from ON travel_legs(from_lead_id)",
     "CREATE INDEX IF NOT EXISTS idx_temp_lead ON temp_artists(lead_id)",
     "CREATE INDEX IF NOT EXISTS idx_feedback_lead ON feedback(lead_id)",
-  ]) { try { await pool.query(ddl); } catch (e) { console.error("Index skipped:", ddl, e.message); } }
+  ];
+  // First pass is quiet: on a brand-new database some indexes need columns that later migrations add. They are retried at the end of setup().
+  for (const ddl of INDEX_DDL) { try { await pool.query(ddl); } catch (e) { /* retried below */ } }
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions TEXT`);
   await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS lead_id TEXT REFERENCES leads(id)`);
   await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS from_team_id TEXT REFERENCES team(id)`);
@@ -1321,6 +1323,8 @@ Warmly,
   } catch (err) {
     console.error("Testimonial name cleanup failed:", err.message);
   }
+  // Second pass, after every migration has run: now a failure is a real problem worth logging.
+  for (const ddl of INDEX_DDL) { try { await pool.query(ddl); } catch (e) { console.error("Index skipped:", ddl, e.message); } }
 }
 
 const ready = setup().catch((err) => {
