@@ -2063,9 +2063,11 @@ app.get("/api/public/upcoming-events", async (req, res) => {
 });
 
 // ---------- Website content management (CMS for the public marketing site) ----------
-const SITE_CONTENT_KEYS = ["faqs", "testimonials", "press", "team", "cities", "countries", "services", "hero_banners", "stats_override"];
+const SITE_CONTENT_KEYS = ["faqs", "testimonials", "press", "team", "cities", "countries", "services", "hero_banners", "stats_override", "contact"];
 const SITE_CONTENT_DEFAULTS = {
   faqs: [], testimonials: [], press: [], team: [], cities: [], countries: [], services: [], hero_banners: [], stats_override: {},
+  // Public contact numbers shown on the website; WhatsApp defaults to the number the site always used.
+  contact: { phone: "", whatsapp: "919832302001" },
 };
 
 // Public — powers the marketing site. Anonymous visitors read this.
@@ -2253,7 +2255,16 @@ app.get("/api/public/event-locations", async (req, res) => {
 app.put("/api/site-content/:key", requireAuth, requireAdmin, async (req, res) => {
   const { key } = req.params;
   if (!SITE_CONTENT_KEYS.includes(key)) return res.status(404).json({ error: "Unknown content key" });
-  const { value } = req.body;
+  let { value } = req.body;
+  if (key === "contact") {
+    // Keep digits only (a leading + is dropped); a bare 10-digit Indian number gets the 91 prefix.
+    const clean = (v) => { const d = String(v || "").replace(/\D/g, ""); return d.length === 10 ? "91" + d : d; };
+    const phone = clean(value && value.phone), whatsapp = clean(value && value.whatsapp);
+    for (const [label, n] of [["Phone", phone], ["WhatsApp", whatsapp]]) {
+      if (n && (n.length < 10 || n.length > 15)) return res.status(400).json({ error: `${label} number doesn't look right — enter 10 digits, or the full number with country code.` });
+    }
+    value = { phone, whatsapp };
+  }
   await pool.query(`
     INSERT INTO site_content (key, value, updated_at) VALUES ($1, $2, $3)
     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = $3

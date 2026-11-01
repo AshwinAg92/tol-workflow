@@ -1,0 +1,25 @@
+const { chromium } = require('playwright');
+(async () => {
+  const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1200, height: 900 } });
+  p.setDefaultTimeout(30000);
+  await p.route(/^https?:\/\/(?!localhost)/, r => r.abort());
+  const U='http://localhost:3113';
+  const site = async (label) => { await p.goto(U+'/'); await p.waitForTimeout(1500);
+    const o = await p.evaluate(() => ({ sticky: document.querySelector('.sticky-whatsapp').href, nums: document.getElementById('contactNumbers').style.display==='none' ? '(hidden)' : document.getElementById('contactNumbers').innerText, callVisible: getComputedStyle(document.getElementById('callBtn')).display, callHref: document.getElementById('callBtn').href, footWa: document.querySelector('footer [data-wa]').href }));
+    console.log(label, JSON.stringify(o)); };
+  await site('DEFAULT:');
+  await p.goto(U+'/login');
+  await p.evaluate(async () => fetch('/api/auth/login', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({username:'admin', password:'testpass123'})}));
+  await p.goto(U+'/login'); await p.waitForSelector('.nav-item');
+  await p.locator('.nav-item', { hasText: 'Website' }).first().click(); await p.waitForSelector('#ctPhone');
+  console.log('prefill:', await p.inputValue('#ctPhone') || '(blank)', '|', await p.inputValue('#ctWhatsapp'));
+  p.once('dialog', d => { console.log('alert:', d.message()); d.accept(); });
+  await p.fill('#ctPhone', '98765 43210'); await p.fill('#ctWhatsapp', '+91 90000 11111');
+  await p.click('#saveContactBtn'); await p.waitForTimeout(1200);
+  await site('AFTER SAVE:');
+  p.once('dialog', d => { console.log('bad number alert:', d.message()); d.accept(); });
+  await p.goto(U+'/login'); await p.waitForSelector('.nav-item');
+  await p.locator('.nav-item', { hasText: 'Website' }).first().click(); await p.waitForSelector('#ctPhone');
+  await p.fill('#ctPhone', '123'); await p.click('#saveContactBtn'); await p.waitForTimeout(1000);
+  await b.close();
+})().catch(e => { console.error('FAIL', e.message); process.exit(1); });

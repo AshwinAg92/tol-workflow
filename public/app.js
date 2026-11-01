@@ -11309,6 +11309,12 @@ const TEMPLATE_META = {
 const QUOTE_TEMPLATE_PLACEHOLDERS = ["firstName", "formatUpper", "location", "date", "occasion", "guests", "duration", "setPieces", "formatType", "amountLine", "sessionConditions", "remarks"];
 
 // ---------- Website content management (CMS for the marketing site) ----------
+// 919832302001 -> "+91 98323 02001" for the Website > Contact numbers boxes.
+function contactPretty(n) {
+  const d = String(n || "").replace(/\D/g, "");
+  if (!d) return "";
+  return d.length === 12 && d.startsWith("91") ? `+91 ${d.slice(2, 7)} ${d.slice(7)}` : `+${d}`;
+}
 async function renderWebsiteContent(main) {
   const [content, gallery, pressImages] = await Promise.all([
     api("/api/site-content"),
@@ -11319,6 +11325,16 @@ async function renderWebsiteContent(main) {
   main.innerHTML = `
     <div class="view-head">
       <div><h2>Website</h2><p class="muted">Edit what shows on togetheroutloud.in — no code needed. Changes save per section below.</p></div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="section-label">Contact numbers</div>
+      <p class="muted small" style="margin-top:-4px;">Shown in the website's Contact section and footer. The WhatsApp number also powers the green chat button on every page. Enter 10 digits (91 is added) or the full number with country code. Leave Phone blank to hide the Call button.</p>
+      <div class="row-2" style="margin-top:10px;">
+        <div><label>Phone (calls)</label><input id="ctPhone" inputmode="tel" placeholder="e.g. 98323 02001" value="${escH(contactPretty(content.contact && content.contact.phone))}" /></div>
+        <div><label>WhatsApp number</label><input id="ctWhatsapp" inputmode="tel" placeholder="e.g. 98323 02001" value="${escH(contactPretty(content.contact && content.contact.whatsapp))}" /></div>
+      </div>
+      <button class="btn-primary" id="saveContactBtn" style="margin-top:12px;">Save contact numbers</button>
     </div>
 
     <div class="card" style="margin-bottom:20px;">
@@ -11417,6 +11433,17 @@ async function renderWebsiteContent(main) {
       <button class="btn-primary" id="uploadGalleryBtn" style="margin-top:10px;">Upload image</button>
     </div>
   `;
+
+  // ---- Contact numbers ----
+  main.querySelector("#saveContactBtn").addEventListener("click", async () => {
+    const value = { phone: main.querySelector("#ctPhone").value.trim(), whatsapp: main.querySelector("#ctWhatsapp").value.trim() };
+    try {
+      await api("/api/site-content/contact", { method: "PUT", body: JSON.stringify({ value }) });
+      alert("Saved. The website picks it up right away.");
+    } catch (err) {
+      alert(`Couldn't save: ${err.message}`);
+    }
+  });
 
   // ---- Stats override ----
   main.querySelector("#saveStatsBtn").addEventListener("click", async () => {

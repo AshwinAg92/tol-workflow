@@ -645,7 +645,7 @@
 
 <div class="mobile-menu-overlay" id="mobileMenuOverlay"></div>
 
-<a class="sticky-whatsapp" href="https://wa.me/919832302001?text=Hi!%20I%27d%20like%20to%20know%20more%20about%20Together%2C%20Out%20Loud." target="_blank" rel="noopener noreferrer" aria-label="Chat with us on WhatsApp">💬</a>
+<a class="sticky-whatsapp" data-wa data-wa-text href="https://wa.me/919832302001?text=Hi!%20I%27d%20like%20to%20know%20more%20about%20Together%2C%20Out%20Loud." target="_blank" rel="noopener noreferrer" aria-label="Chat with us on WhatsApp">💬</a>
 
 <div class="lightbox" id="lightbox">
   <button class="lightbox-close" id="lightboxClose" aria-label="Close">✕</button>
@@ -990,8 +990,10 @@
       </div>
       <div class="qe-ok" id="qeOk"><div style="font-size:34px;">🎶</div><h3 style="margin-top:6px;">Thank you — we've got it.</h3><p style="margin-top:6px;">We'll reach out on WhatsApp shortly.</p></div>
     </form>
+    <p class="contact-numbers" id="contactNumbers" style="display:none; margin-top:18px; font-weight:600;"></p>
     <div class="contact-actions">
-      <a class="contact-btn" href="https://wa.me/919832302001" target="_blank" rel="noopener noreferrer">💬 WhatsApp</a>
+      <a class="contact-btn" data-wa href="https://wa.me/919832302001" target="_blank" rel="noopener noreferrer">💬 WhatsApp</a>
+      <a class="contact-btn" id="callBtn" data-tel href="tel:" style="display:none;">📞 Call</a>
       <a class="contact-btn" href="https://www.instagram.com/togetheroutloudclub" target="_blank" rel="noopener noreferrer">📷 Instagram</a>
       <a class="contact-btn" href="https://www.youtube.com/@togetheroutloud" target="_blank" rel="noopener noreferrer">▶️ YouTube</a>
       <a class="contact-btn" href="mailto:togetheroutloudclub@gmail.com">✉️ Email</a>
@@ -1013,7 +1015,8 @@
   <div class="foot-name">TOGETHER, OUT LOUD</div>
   <div class="foot-tag">BHAJAN JAMMING · MUSICAL PHERAS · DEVOTIONAL SATSANG · BOLLYWOOD JAMMING</div>
   <div class="foot-email">
-    <a href="https://wa.me/919832302001" target="_blank" rel="noopener noreferrer">WhatsApp</a> ·
+    <a data-wa href="https://wa.me/919832302001" target="_blank" rel="noopener noreferrer">WhatsApp</a> ·
+    <a data-tel id="footCall" href="tel:" style="display:none;">Call</a><span id="footCallDot" style="display:none;"> · </span>
     <a href="https://www.instagram.com/togetheroutloudclub" target="_blank" rel="noopener noreferrer">Instagram</a> ·
     <a href="https://www.youtube.com/@togetheroutloud" target="_blank" rel="noopener noreferrer">YouTube</a> ·
     <a href="mailto:togetheroutloudclub@gmail.com">togetheroutloudclub@gmail.com</a> ·
@@ -1558,6 +1561,21 @@
     .then(function(){document.getElementById('qeFields').style.display='none'; document.getElementById('qeOk').style.display='block'; if(typeof gtag==='function') gtag('event','generate_lead',{event_category:'quick_enquiry'});})
     .catch(function(e){err.textContent=e.message; err.style.display='block'; go.disabled=false; go.textContent='Send enquiry →';});
   });
+})();
+</script>
+<script>
+// Contact numbers come from the CRM (Website > Contact numbers), so they can be changed without touching code.
+(function(){
+  function pretty(n){ var d=String(n||'').replace(/\D/g,''); return d.length===12&&d.indexOf('91')===0 ? '+91 '+d.slice(2,7)+' '+d.slice(7) : (d?'+'+d:''); }
+  fetch('/api/public/site-content/contact').then(function(r){return r.json();}).then(function(c){
+    c=c||{}; var wa=String(c.whatsapp||'').replace(/\D/g,''), ph=String(c.phone||'').replace(/\D/g,'');
+    if(wa){ document.querySelectorAll('[data-wa]').forEach(function(a){ a.href='https://wa.me/'+wa+(a.hasAttribute('data-wa-text')?'?text='+encodeURIComponent("Hi! I'd like to know more about Together, Out Loud."):''); }); }
+    else { document.querySelectorAll('[data-wa]').forEach(function(a){ a.style.display='none'; }); }
+    if(ph){ document.querySelectorAll('[data-tel]').forEach(function(a){ a.href='tel:+'+ph; a.style.display=''; }); var dot=document.getElementById('footCallDot'); if(dot) dot.style.display=''; }
+    var parts=[]; if(ph) parts.push('📞 <a href="tel:+'+ph+'">'+pretty(ph)+'</a>');
+    if(wa) parts.push('💬 WhatsApp <a href="https://wa.me/'+wa+'" target="_blank" rel="noopener noreferrer">'+pretty(wa)+'</a>');
+    var box=document.getElementById('contactNumbers'); if(box&&parts.length){ box.innerHTML=parts.join(' &nbsp;·&nbsp; '); box.style.display=''; }
+  }).catch(function(){});
 })();
 </script>
 </body>
