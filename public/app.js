@@ -6,7 +6,7 @@ let LEADS = [];
 let BLOCKED_DATES = [];
 let TEAM = [];
 let TASKS = [];
-let currentTab = "dashboard";
+let currentTab = "today";
 let leadsFilter = "all";
 let leadsStageFilter = "all";
 let leadsSearch = "";
@@ -425,6 +425,7 @@ function tentativeTermsBlock(lead) {
 }
 
 const NAV = [
+  { id: "today", label: "Today" },
   { id: "dashboard", label: "Dashboard" },
   { id: "leads", label: "Leads" },
   { id: "quotation", label: "Quotation" },
@@ -444,6 +445,7 @@ const NAV = [
 // clusters (Overview / Pipeline / Operations / Admin) instead of one flat
 // list of ten equally-weighted items.
 const NAV_GROUPS = {
+  today: "Overview",
   dashboard: "Overview",
   leads: "Pipeline",
   quotation: "Pipeline",
@@ -464,7 +466,7 @@ const NAV_GROUPS = {
 // "settings", "website", and "travelcal" are admin/permission-gated directly
 // in renderNav and aren't something a manager can be granted piecemeal, so
 // they're excluded from the staff permission checklist.
-const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "dashboard" && n.id !== "settings" && n.id !== "website" && n.id !== "travelcal" && n.id !== "traveldesk");
+const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "today" && n.id !== "dashboard" && n.id !== "settings" && n.id !== "website" && n.id !== "travelcal" && n.id !== "traveldesk");
 
 // Fills a {placeholder} template with values — any placeholder with no matching value
 // is left as an empty string rather than showing the raw {token} in the sent message.
@@ -1694,6 +1696,7 @@ function renderNav() {
   nav.innerHTML = "";
   const perms = CURRENT_USER?.accessLevel === "staff" ? CURRENT_USER.permissions : null;
   let visibleNav = NAV.filter((n) => {
+    if (n.id === "today") return hasLeadsAccess() || canAssignTeam();
     if (n.id === "settings" || n.id === "website") return CURRENT_USER?.accessLevel === "admin";
     if (n.id === "travelcal" || n.id === "traveldesk") return canAssignTeam();
     if (n.id === "quotation") return hasAccountsAccess() && (!Array.isArray(perms) || perms.includes("quotation"));
@@ -1702,15 +1705,16 @@ function renderNav() {
     if (n.id === "team") return CURRENT_USER?.accessLevel === "admin";
     return n.id === "dashboard" || !Array.isArray(perms) || perms.includes(n.id);
   });
+  const overviewEnd = visibleNav.filter((n) => NAV_GROUPS[n.id] === "Overview").length;
   if (CURRENT_USER?.isPerformer && CURRENT_USER.accessLevel !== "performer") {
-    visibleNav = [visibleNav[0], { id: "myevents", label: "My Events" }, ...visibleNav.slice(1)];
+    visibleNav = [...visibleNav.slice(0, overviewEnd), { id: "myevents", label: "My Events" }, ...visibleNav.slice(overviewEnd)];
   }
   // Personal tools for any non-admin login that's tied to a team member: their own
   // revenue (fees) and a private cash tracker. Neither shows company money.
   if (CURRENT_USER && CURRENT_USER.accessLevel !== "admin" && CURRENT_USER.teamId) {
     const at = visibleNav.findIndex((n) => n.id === "myevents");
     const extra = [{ id: "myrevenue", label: "My Revenue" }, { id: "mycash", label: "My Cash" }];
-    visibleNav = at >= 0 ? [...visibleNav.slice(0, at + 1), ...extra, ...visibleNav.slice(at + 1)] : [visibleNav[0], ...extra, ...visibleNav.slice(1)];
+    visibleNav = at >= 0 ? [...visibleNav.slice(0, at + 1), ...extra, ...visibleNav.slice(at + 1)] : [...visibleNav.slice(0, overviewEnd), ...extra, ...visibleNav.slice(overviewEnd)];
   }
   if (!visibleNav.some((n) => n.id === currentTab)) currentTab = "dashboard";
 
@@ -1887,6 +1891,16 @@ function initLogoNav() {
 function goToLeads(stage) {
   leadsFilter = "all";
   leadsStageFilter = stage;
+  currentTab = "leads";
+  renderNav();
+  renderMain();
+}
+
+// Jump to one specific lead's card, which carries its WhatsApp / follow-up / snooze actions.
+function jumpToLead(lead) {
+  leadsSearch = lead.name; leadsOnlyId = lead.id;
+  leadsCityFilter = ""; leadsStageFilter = "all"; leadsDateFilter = ""; leadsQuoteDateFilter = "";
+  leadsB2bOnly = false; leadsClashOnly = false; leadsDueOnly = false; leadsNoAdvanceOnly = false;
   currentTab = "leads";
   renderNav();
   renderMain();
@@ -8577,6 +8591,147 @@ function renderTodaysActivityCard(main, activity, flashIds = new Set()) {
   }
 }
 
+// ---------- Today ----------
+// One to-do list built entirely from LEADS. The server has already scoped that list and
+// stripped its money fields for this login, so a manager simply gets no payments section.
+const TODAY_ROWS_SHOWN = 5;
+let todayExpanded = {};
+
+function leadContactCount(lead) {
+  let list;
+  try { list = JSON.parse(lead.contacts || "null"); } catch { list = null; }
+  const extra = Array.isArray(list) ? list.length : 0;
+  return extra + (lead.sound_manager_phone ? 1 : 0) + (lead.coordinator_phone ? 1 : 0);
+}
+
+function todayFollowUps() {
+  return LEADS.filter(isDueToday)
+    .sort((a, b) => (a.last_followup_at || "").localeCompare(b.last_followup_at || "") || (a.created_at || "").localeCompare(b.created_at || ""))
+    .map((l) => ({ lead: l, detail: quoteExpiry(l)?.text || (l.last_followup_at ? `Last followed up ${timeAgo(l.last_followup_at)}` : "Never followed up"), tone: l.last_followup_at ? "warn" : "danger" }));
+}
+
+// Combos carry their money on the primary event, so each group counts as one booking.
+function todayPayments(todayStr, soon) {
+  const groups = {};
+  LEADS.filter((l) => (l.stage === "Confirmed" || l.stage === "Completed") && "final_amount" in l)
+    .forEach((l) => { (groups[l.combo_group_id || l.id] ||= []).push(l); });
+  const rows = [];
+  Object.values(groups).forEach((group) => {
+    const lead = group.find((l) => l.is_combo_primary) || group[0];
+    const quoted = group.reduce((s, l) => s + (l.final_amount || l.quote_amount || 0), 0);
+    const received = group.reduce((s, l) => s + (l.received || 0), 0);
+    const balance = quoted - received + group.reduce((s, l) => s + (l.reimbursement_due || 0), 0);
+    if (balance <= 0) return;
+    const amount = `₹${balance.toLocaleString("en-IN")}`;
+    if (group.every((l) => l.stage === "Completed")) rows.push({ lead, rank: 0, tone: "danger", detail: `${amount} balance after event` });
+    else if (received === 0) rows.push({ lead, rank: 1, tone: "danger", detail: `No advance recorded · ${amount}` });
+    else if (lead.date >= todayStr && lead.date <= soon) rows.push({ lead, rank: 2, tone: "warn", detail: `${amount} due before event` });
+  });
+  return rows.sort((a, b) => a.rank - b.rank || (a.lead.date || "").localeCompare(b.lead.date || ""));
+}
+
+function todayTeam(upcoming) {
+  return upcoming.flatMap((l) => {
+    const open = (l.team_total || 0) - (l.team_declined || 0);
+    const pending = open - (l.team_accepted || 0);
+    if (open <= 0) return [{ lead: l, detail: "No team allotted", tone: "danger" }];
+    return pending > 0 ? [{ lead: l, detail: `${pending} of ${open} yet to confirm`, tone: "warn" }] : [];
+  });
+}
+
+function todayDetails(upcoming) {
+  return upcoming.flatMap((l) => {
+    const missing = [!l.event_time && "time", !l.venue && "venue", !leadContactCount(l) && "on-ground contact"].filter(Boolean);
+    return missing.length ? [{ lead: l, detail: `Missing ${missing.join(", ")}`, tone: "warn" }] : [];
+  });
+}
+
+function todaySections() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+  const upcomingWithin = (n) => LEADS
+    .filter((l) => l.stage === "Confirmed" && l.date && l.date >= todayStr && l.date <= inDays(n))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const planner = canAssignTeam();
+  const sections = [];
+  if (hasLeadsAccess()) sections.push({ id: "followups", icon: "💬", title: "Follow-ups due", clear: "Every lead has been followed up.", rows: todayFollowUps() });
+  if (LEADS.some((l) => "final_amount" in l)) sections.push({ id: "payments", icon: "₹", title: "Payments to chase", clear: "No payments to chase.", rows: todayPayments(todayStr, inDays(14)) });
+  if (planner) sections.push({ id: "team", icon: "🎵", title: "Team not confirmed", hint: "next 60 days", clear: "Every upcoming event has its team.", rows: todayTeam(upcomingWithin(60)) });
+  if (planner || hasLeadsAccess()) sections.push({ id: "details", icon: "📍", title: "Event details missing", hint: "next 30 days", clear: "Upcoming events have their details.", rows: todayDetails(upcomingWithin(30)) });
+  return sections;
+}
+
+function todayRowHtml(sectionId, row) {
+  const l = row.lead;
+  const meta = [packageName(l.event_type), (l.city || "").trim(), l.date ? fmtDate(l.date) : ""].filter(Boolean).join(" · ");
+  return `<button class="today-row" data-today-section="${sectionId}" data-lead-id="${escH(l.id)}">
+    <span class="today-row-main"><b>${escH(l.name)}</b><span class="muted small">${escH(meta)}</span></span>
+    <span class="today-row-tag today-tone-${row.tone}">${escH(row.detail)}</span>
+  </button>`;
+}
+
+function todaySectionHtml(s) {
+  const expanded = todayExpanded[s.id];
+  const shown = expanded ? s.rows : s.rows.slice(0, TODAY_ROWS_SHOWN);
+  return `<div class="card today-section" id="today-${s.id}">
+    <div class="today-section-head"><b><span aria-hidden="true">${s.icon}</span> ${s.title}</b>${s.hint ? `<span class="muted small">${s.hint}</span>` : ""}<span class="today-count${s.rows.length ? "" : " today-count-clear"}">${s.rows.length || "✓"}</span></div>
+    ${s.rows.length ? shown.map((r) => todayRowHtml(s.id, r)).join("") : `<p class="muted small" style="margin:8px 0 0;">${s.clear}</p>`}
+    ${s.rows.length > TODAY_ROWS_SHOWN ? `<button class="btn-ghost today-more" data-today-more="${s.id}">${expanded ? "Show fewer" : `Show all ${s.rows.length}`}</button>` : ""}
+  </div>`;
+}
+
+// Saving inside a modal can clear a to-do, so redraw the list once the modal has closed.
+function refreshTodayAfterModal() {
+  const root = document.getElementById("modalRoot");
+  new MutationObserver((_, watcher) => {
+    if (root.children.length) return;
+    watcher.disconnect();
+    if (currentTab === "today") renderMain();
+  }).observe(root, { childList: true });
+}
+
+function openTodayRow(sectionId, leadId) {
+  const lead = LEADS.find((l) => l.id === leadId);
+  if (!lead) return;
+  if (sectionId === "followups" || !canAssignTeam() && sectionId !== "payments") return jumpToLead(lead);
+  refreshTodayAfterModal();
+  if (sectionId === "payments") openLeadPaymentsModal(lead.id);
+  else openAssignTeamModal(lead.id);
+}
+
+async function renderToday(main) {
+  await refreshLeads();
+  if (currentTab !== "today") return;
+  const sections = todaySections();
+  const total = sections.reduce((s, x) => s + x.rows.length, 0);
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  const firstName = String(CURRENT_USER?.name || CURRENT_USER?.username || "").split(" ")[0];
+  const dateText = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" });
+  const paint = () => {
+    main.innerHTML = `
+      <div class="view-head">
+        <div><h2>Today</h2><p class="muted">${escH(greeting)}, ${escH(firstName)}. ${dateText}.</p></div>
+        <div class="dash-head-actions"><button class="btn-ghost dash-head-btn" id="todayRefreshBtn" title="Refresh">🔄 <span class="btn-label">Refresh</span></button></div>
+      </div>
+      ${total === 0 ? `<div class="card today-clear"><div class="today-clear-icon" aria-hidden="true">🎉</div><b>All clear</b><p class="muted small">Nothing needs you right now.</p></div>` : `
+      <div class="today-stats">
+        ${sections.map((s) => `<button class="card dash-stat dash-stat-click" data-today-jump="${s.id}"><div class="muted">${s.title}</div><div class="mono big">${s.rows.length}</div></button>`).join("")}
+      </div>
+      <div class="today-grid">${sections.map(todaySectionHtml).join("")}</div>`}`;
+    main.querySelector("#todayRefreshBtn").addEventListener("click", () => renderMain());
+    main.querySelectorAll("[data-today-jump]").forEach((b) => b.addEventListener("click", () => {
+      main.querySelector(`#today-${b.dataset.todayJump}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }));
+    main.querySelectorAll("[data-today-more]").forEach((b) => b.addEventListener("click", () => {
+      todayExpanded[b.dataset.todayMore] = !todayExpanded[b.dataset.todayMore];
+      paint();
+    }));
+    main.querySelectorAll(".today-row").forEach((b) => b.addEventListener("click", () => openTodayRow(b.dataset.todaySection, b.dataset.leadId)));
+  };
+  paint();
+}
+
 async function renderDashboard(main) {
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
   const canCoordinate = isAdmin || canAssignTeam();
@@ -12638,7 +12793,8 @@ function renderMain() {
     window.scrollTo(0, 0);
   }
   window._lastRenderedTab = currentTab;
-  if (currentTab === "dashboard") renderDashboard(main);
+  if (currentTab === "today") renderToday(main);
+  else if (currentTab === "dashboard") renderDashboard(main);
   else if (currentTab === "leads") renderLeadsLog(main);
   else if (currentTab === "quotation") renderQuotation(main);
   else if (currentTab === "tasks") renderTasks(main);
