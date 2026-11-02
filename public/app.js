@@ -440,6 +440,7 @@ const NAV = [
   { id: "accounts", label: "Accounts" },
   { id: "tasks", label: "Tasks & Chats" },
   { id: "calendar", label: "Calendar" },
+  { id: "panchang", label: "Wedding Dates" },
   { id: "traveldesk", label: "Travel Desk" },
   { id: "travelcal", label: "Travel Calendar" },
   { id: "documents", label: "Documents" },
@@ -463,6 +464,7 @@ const NAV_GROUPS = {
   mycash: "Pipeline",
   tasks: "Operations",
   calendar: "Operations",
+  panchang: "Operations",
   traveldesk: "Operations",
   travelcal: "Operations",
   documents: "Operations",
@@ -474,7 +476,7 @@ const NAV_GROUPS = {
 // "settings", "website", and "travelcal" are admin/permission-gated directly
 // in renderNav and aren't something a manager can be granted piecemeal, so
 // they're excluded from the staff permission checklist.
-const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "today" && n.id !== "dashboard" && n.id !== "settings" && n.id !== "website" && n.id !== "travelcal" && n.id !== "traveldesk");
+const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "today" && n.id !== "dashboard" && n.id !== "settings" && n.id !== "website" && n.id !== "travelcal" && n.id !== "traveldesk" && n.id !== "panchang");
 
 // Fills a {placeholder} template with values — any placeholder with no matching value
 // is left as an empty string rather than showing the raw {token} in the sent message.
@@ -1707,6 +1709,7 @@ function renderNav() {
     if (n.id === "today") return hasLeadsAccess() || canAssignTeam();
     if (n.id === "settings" || n.id === "website") return CURRENT_USER?.accessLevel === "admin";
     if (n.id === "travelcal" || n.id === "traveldesk") return canAssignTeam();
+    if (n.id === "panchang") return hasLeadsAccess();
     if (n.id === "quotation") return hasAccountsAccess() && (!Array.isArray(perms) || perms.includes("quotation"));
     // Team tab (and the Musicians pool inside it) is admin-only for now — a manager
     // shouldn't be able to browse the wider musician pool. Re-open later by relaxing this.
@@ -8169,6 +8172,119 @@ async function renderTravelDesk(main) {
   paintDesk();
 }
 
+// ---------- Wedding Dates (Panchang): Hindu vivah muhurat calendar, for planning the calendar and rates ----------
+let panchangMonth = null; // "YYYY-MM"
+let panchangSel = null;   // selected "YYYY-MM-DD"
+let panchangOnlyFree = false;
+let panchangShowAll = false;
+async function renderPanchang(main) {
+  main.innerHTML = `<div class="view-head"><div><h2>Wedding Dates</h2></div></div><p class="muted">Loading…</p>`;
+  let data;
+  try { data = await api("/api/panchang"); } catch (e) { main.innerHTML = `<div class="view-head"><div><h2>Wedding Dates</h2></div></div><p class="muted">Couldn't load: ${escH(e.message)}</p>`; return; }
+  await refreshLeads();
+  const today = new Date().toISOString().slice(0, 10);
+  const dmap = new Map(data.dates.map((d) => [d.date, d]));
+  const blockOf = (iso) => data.blocks.find((b) => iso >= b.from && iso <= b.to);
+  const BOOKED = ["Confirmed", "Completed"], OPEN = ["New", "Follow-up", "Interested"];
+  const byDate = {};
+  for (const l of LEADS) {
+    if (!l.date) continue;
+    const k = BOOKED.includes(l.stage) ? "booked" : l.stage === "Tentative" ? "tentative" : OPEN.includes(l.stage) ? "open" : null;
+    if (!k) continue;
+    (byDate[l.date] = byDate[l.date] || { booked: [], tentative: [], open: [] })[k].push(l);
+  }
+  const statusOf = (iso) => byDate[iso] || { booked: [], tentative: [], open: [] };
+  const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  if (!panchangMonth) panchangMonth = (today < data.range.from ? data.range.from : today).slice(0, 7);
+  const canEdit = !!data.canEdit;
+
+  function draw() {
+    const [Y, M] = panchangMonth.split("-").map(Number);
+    const first = new Date(Date.UTC(Y, M - 1, 1)), dim = new Date(Date.UTC(Y, M, 0)).getUTCDate();
+    const iso = (d) => `${Y}-${String(M).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const outside = iso(dim) < data.range.from || iso(1) > data.range.to;
+    let muhCount = 0, freeCount = 0, bookedOnMuh = 0, openOnMuh = 0;
+    let cells = "";
+    for (let i = 0; i < first.getUTCDay(); i++) cells += `<div class="cal-cell cal-cell-empty"></div>`;
+    for (let d = 1; d <= dim; d++) {
+      const k = iso(d), m = dmap.get(k), b = blockOf(k), st = statusOf(k);
+      if (m) { muhCount++; if (st.booked.length || st.tentative.length) bookedOnMuh++; else freeCount++; if (st.open.length) openOnMuh += st.open.length; }
+      const cls = ["cal-cell", "pc-cell", m ? "pc-muhurat" : b ? "pc-block" : "", k === today ? "pc-today" : "", k === panchangSel ? "pc-sel" : ""].join(" ");
+      const chips = [st.booked.length ? `<span class="pc-chip pc-booked">●${st.booked.length}</span>` : "", st.tentative.length ? `<span class="pc-chip pc-tent">◐${st.tentative.length}</span>` : "", st.open.length ? `<span class="pc-chip pc-open">○${st.open.length}</span>` : ""].join("");
+      cells += `<div class="${cls}" data-pday="${k}" style="cursor:pointer;"><div class="cal-day">${d}${m ? ` <span class="pc-star" title="Muhurat">✦</span>` : ""}</div>${chips}</div>`;
+    }
+    const upcoming = data.dates.filter((x) => x.date >= today && (!panchangOnlyFree || (!statusOf(x.date).booked.length && !statusOf(x.date).tentative.length)));
+    const rowHtml = (x) => {
+      const st = statusOf(x.date); const wd = WD[new Date(x.date + "T00:00:00Z").getUTCDay()];
+      const status = st.booked.length ? `<span class="pc-chip pc-booked">${st.booked.length} booked</span>` : st.tentative.length ? `<span class="pc-chip pc-tent">${st.tentative.length} tentative</span>` : `<span class="pc-chip pc-free">free</span>`;
+      return `<div class="pc-row" data-pday="${x.date}" style="cursor:pointer;"><div><b>${fmtDate(x.date)}</b> <span class="muted small">${wd}</span></div><div>${status}${st.open.length ? ` <span class="pc-chip pc-open">${st.open.length} enquir${st.open.length > 1 ? "ies" : "y"}</span>` : ""}</div><div class="muted small pc-note">${escH(x.note || "")}</div></div>`;
+    };
+    main.querySelector("#pcBody").innerHTML = `
+      <div class="card">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:8px;"><button class="btn-ghost" id="pcPrev">‹</button><b style="min-width:150px; text-align:center;">${MONTHS[M - 1]} ${Y}</b><button class="btn-ghost" id="pcNext">›</button><button class="btn-ghost" id="pcToday" style="font-size:12px;">Today</button></div>
+          <div class="muted small">${outside ? "No panchang data loaded for this month." : `<b>${muhCount}</b> muhurat date${muhCount === 1 ? "" : "s"} · <b>${freeCount}</b> still free · <b>${bookedOnMuh}</b> booked/tentative · <b>${openOnMuh}</b> open enquiries on them`}</div>
+        </div>
+        <div class="cal-grid" style="margin-bottom:4px;">${WD.map((w) => `<div class="muted small" style="text-align:center;">${w}</div>`).join("")}</div>
+        <div class="cal-grid">${cells}</div>
+        <div class="muted small" style="margin-top:10px; display:flex; gap:14px; flex-wrap:wrap;">
+          <span><span class="pc-swatch pc-muhurat"></span> ✦ Muhurat date</span><span><span class="pc-swatch pc-block"></span> No weddings (Chaturmas / Kharmas)</span>
+          <span><span class="pc-chip pc-booked">●</span> booked</span><span><span class="pc-chip pc-tent">◐</span> tentative</span><span><span class="pc-chip pc-open">○</span> open enquiries</span>
+        </div>
+      </div>
+      <div id="pcDetail" style="margin-top:14px;"></div>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin:20px 0 8px; gap:8px; flex-wrap:wrap;">
+        <div class="section-label" style="margin:0;">Upcoming muhurat dates (${upcoming.length})</div>
+        <label class="check-row" style="margin:0;"><input type="checkbox" id="pcOnlyFree" ${panchangOnlyFree ? "checked" : ""} /> Only dates with nothing booked</label>
+      </div>
+      <div class="card" style="padding:6px 12px;">${upcoming.length ? upcoming.slice(0, panchangShowAll ? upcoming.length : 30).map(rowHtml).join("") + (upcoming.length > 30 ? `<div style="padding:10px 0; text-align:center;"><button class="btn-ghost" id="pcShowAll" style="font-size:13px;">${panchangShowAll ? "Show fewer" : `Show all ${upcoming.length} dates`}</button></div>` : "") : `<p class="muted small" style="padding:8px 0;">No upcoming muhurat dates${panchangOnlyFree ? " without a booking" : ""}.</p>`}</div>`;
+    drawDetail();
+    const go = (delta) => { const d = new Date(Date.UTC(Y, M - 1 + delta, 1)); panchangMonth = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; panchangSel = null; draw(); };
+    main.querySelector("#pcPrev").addEventListener("click", () => go(-1));
+    main.querySelector("#pcNext").addEventListener("click", () => go(1));
+    main.querySelector("#pcToday").addEventListener("click", () => { panchangMonth = today.slice(0, 7); panchangSel = today; draw(); });
+    main.querySelector("#pcShowAll")?.addEventListener("click", () => { panchangShowAll = !panchangShowAll; draw(); });
+    main.querySelector("#pcOnlyFree").addEventListener("change", (e) => { panchangOnlyFree = e.target.checked; draw(); });
+    main.querySelectorAll("[data-pday]").forEach((el) => el.addEventListener("click", () => { panchangSel = el.dataset.pday; panchangMonth = panchangSel.slice(0, 7); draw(); main.querySelector("#pcDetail")?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }));
+  }
+
+  function drawDetail() {
+    const box = main.querySelector("#pcDetail"); if (!box) return;
+    if (!panchangSel) { box.innerHTML = `<p class="muted small">Tap a date to see its details${canEdit ? " and to mark or unmark it as a muhurat date" : ""}.</p>`; return; }
+    const k = panchangSel, m = dmap.get(k), b = blockOf(k), st = statusOf(k);
+    const wd = WD[new Date(k + "T00:00:00Z").getUTCDay()];
+    const list = (arr, label) => arr.length ? `<div style="margin-top:8px;"><div class="muted small">${label}</div>${arr.map((l) => `<div class="small" style="padding:3px 0;">• <b>${escH(l.name)}</b> — ${escH(packageName(l.event_type))}${l.city ? " · " + escH(l.city) : ""} <span class="muted">(${escH(l.stage)})</span></div>`).join("")}</div>` : "";
+    box.innerHTML = `<div class="card">
+      <div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:flex-start;">
+        <div><div style="font-weight:700;">${fmtDate(k)} <span class="muted small">${wd}</span></div>
+          <div class="small" style="margin-top:4px;">${m ? `<span class="pc-star">✦</span> <b>Muhurat date</b>${m.note ? " — " + escH(m.note) : ""}` : b ? `🚫 ${escH(b.label)}` : `<span class="muted">Not a listed muhurat date.</span>`}</div>
+          ${m && m.source ? `<div class="muted small" style="margin-top:2px;">Source: ${escH(m.source)}</div>` : ""}
+        </div>
+        ${canEdit ? `<div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+          <input id="pcNote" placeholder="Note (optional)" value="${escH(m ? m.note || "" : "")}" style="min-width:180px;" />
+          <button class="btn-primary" id="pcSave" style="font-size:13px;">${m ? "Save note" : "✦ Mark as muhurat"}</button>
+          ${m ? `<button class="btn-ghost" id="pcRemove" style="font-size:13px; color:#A6432B;">Remove</button>` : ""}</div>` : ""}
+      </div>
+      ${list(st.booked, "Booked")}${list(st.tentative, "Tentative")}${list(st.open, "Open enquiries")}
+      ${!st.booked.length && !st.tentative.length && !st.open.length ? `<p class="muted small" style="margin-top:8px;">Nothing booked or enquired for this date.</p>` : ""}
+    </div>`;
+    box.querySelector("#pcSave")?.addEventListener("click", async () => {
+      try { await api(`/api/panchang/dates/${k}`, { method: "PUT", body: JSON.stringify({ note: box.querySelector("#pcNote").value }) }); await renderPanchang(main); } catch (e) { alert(e.message); }
+    });
+    box.querySelector("#pcRemove")?.addEventListener("click", async () => {
+      if (!confirm(`Remove ${fmtDate(k)} from the muhurat dates?`)) return;
+      try { await api(`/api/panchang/dates/${k}`, { method: "DELETE" }); await renderPanchang(main); } catch (e) { alert(e.message); }
+    });
+  }
+
+  main.innerHTML = `
+    <div class="view-head"><div><h2>Wedding Dates</h2><p class="muted">Hindu wedding (vivah muhurat) dates — see which auspicious dates are free or already booked, to plan your calendar and rates.</p></div></div>
+    <div class="small" style="margin-bottom:12px; padding:8px 12px; background:#FBEFD9; border-radius:8px;">These are published North-India (New Delhi) panchang dates, loaded for ${fmtDate(data.range.from)} – ${fmtDate(data.range.to)}. Dates differ between panchangs, regions and pandits (for example Bengali panchang), so confirm for a specific client.${canEdit ? " You can add, edit or remove any date below." : ""}</div>
+    <div id="pcBody"></div>`;
+  draw();
+}
+
 // ---------- Accounts ----------
 const ACCT_PHONE_BATCH = 15;
 const ACCT_PHONE_TXNS = 10;
@@ -12876,6 +12992,7 @@ function renderMain() {
   else if (currentTab === "settings") renderSettings(main);
   else if (currentTab === "travelcal") renderTravelCalendar(main);
   else if (currentTab === "traveldesk") renderTravelDesk(main);
+  else if (currentTab === "panchang") renderPanchang(main);
   else if (currentTab === "website") renderWebsiteContent(main);
 }
 

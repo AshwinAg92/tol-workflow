@@ -40,3 +40,4 @@ Live at https://www.togetheroutloud.in · repo `AshwinAg92/tol-workflow` (branch
 - Confirmation message template uses `{clientArrangements}` so it only asks the client to arrange what the fee doesn't include.
 - Website contact numbers are editable in CRM → Website → Contact numbers (stored in `site_content`); the website's WhatsApp buttons use them.
 - Reels on the website come from Windsor.ai (cached 6 h). Instagram reports reels as `VIDEO` with a `/reel/` link.
+- Wedding Dates (nav: panchang): Hindu vivah muhurat calendar. Seed data + no-wedding periods live in `panchang-data.js` (loaded once into table `panchang_dates`, then admin-editable in the CRM). Covers Nov 2026 – 14 Dec 2027; extend by adding rows in the CRM or updating the seed for new years (sources noted in the file).

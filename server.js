@@ -2071,6 +2071,43 @@ const SITE_CONTENT_DEFAULTS = {
 };
 
 // Public — powers the marketing site. Anonymous visitors read this.
+// ---------- Wedding Dates (Panchang): Hindu vivah muhurat dates, for planning the calendar and rates ----------
+const { PANCHANG_SEED, PANCHANG_BLOCKS, PANCHANG_DATA_RANGE } = require("./panchang-data");
+let panchangSeedPromise = null;
+function ensurePanchangSeeded() {
+  if (!panchangSeedPromise) {
+    panchangSeedPromise = (async () => {
+      const flag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'panchang_seed_v1'")).rows[0];
+      if (flag) return;
+      const now = new Date().toISOString();
+      for (const d of PANCHANG_SEED) {
+        await pool.query("INSERT INTO panchang_dates (date, note, source, created_at) VALUES ($1,$2,$3,$4) ON CONFLICT (date) DO NOTHING", [d.date, d.note || null, d.source || null, now]);
+      }
+      await pool.query("INSERT INTO message_templates (key, template, updated_at) VALUES ('panchang_seed_v1', '1', $1) ON CONFLICT (key) DO NOTHING", [now]);
+    })().catch((e) => { panchangSeedPromise = null; throw e; });
+  }
+  return panchangSeedPromise;
+}
+app.get("/api/panchang", requireAuth, requireSection("leads"), async (req, res) => {
+  await ensurePanchangSeeded();
+  const dates = (await pool.query("SELECT date, note, source FROM panchang_dates ORDER BY date")).rows;
+  res.json({ dates, blocks: PANCHANG_BLOCKS, range: PANCHANG_DATA_RANGE, canEdit: req.user.access_level === "admin" });
+});
+app.put("/api/panchang/dates/:date", requireAuth, requireAdmin, async (req, res) => {
+  const date = String(req.params.date);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date + "T00:00:00Z"))) return res.status(400).json({ error: "Invalid date" });
+  const note = String((req.body || {}).note || "").trim().slice(0, 300) || null;
+  await pool.query(`INSERT INTO panchang_dates (date, note, source, created_at) VALUES ($1,$2,'Added in CRM',$3)
+    ON CONFLICT (date) DO UPDATE SET note = EXCLUDED.note`, [date, note, new Date().toISOString()]);
+  logActivity(req, `Marked ${date} as a wedding muhurat date`, null);
+  res.json({ ok: true });
+});
+app.delete("/api/panchang/dates/:date", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM panchang_dates WHERE date = $1", [String(req.params.date)]);
+  logActivity(req, `Removed ${req.params.date} from wedding muhurat dates`, null);
+  res.json({ ok: true });
+});
+
 app.get("/api/public/site-content/:key", async (req, res) => {
   const { key } = req.params;
   if (!SITE_CONTENT_KEYS.includes(key)) return res.status(404).json({ error: "Unknown content key" });

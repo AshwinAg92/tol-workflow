@@ -198,6 +198,8 @@ async function setup() {
   // so any new column must be added explicitly here or it silently never
   // exists in the live database (this bit us with final_amount and alt_date).
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS final_amount INTEGER`);
+  // Hindu wedding (vivah muhurat) dates for the CRM's Wedding Dates calendar; seeded once from panchang-data.js, then editable.
+  await pool.query(`CREATE TABLE IF NOT EXISTS panchang_dates (date TEXT PRIMARY KEY, note TEXT, source TEXT, created_at TEXT NOT NULL)`);
   // Name is entered as First name (may be several words, used in greetings) + Last name; `name` stays the full display name.
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS first_name TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_name TEXT`);
