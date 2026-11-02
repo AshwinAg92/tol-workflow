@@ -196,6 +196,14 @@ function confirmDateClash(lead, onProceed) {
   root.querySelector("#clashGoBtn").addEventListener("click", () => { close(); onProceed(); });
 }
 let leadsSelected = new Set();
+// Phones draw lead cards in batches and show them short until "More" is tapped.
+// The width must match the 860px breakpoint in styles.css.
+const LEADS_PHONE_BATCH = 25;
+let leadsShown = LEADS_PHONE_BATCH;
+let leadsShownKey = "";
+let leadsFiltersOpen = false;
+const leadsExpanded = new Set();
+const isPhoneWidth = () => window.matchMedia("(max-width: 860px)").matches;
 let dashActivityPage = 1;
 let dashActivityActorFilter = "all";
 let dashActivityPollInterval = null;
@@ -2296,6 +2304,10 @@ async function renderLeadsLog(main, skipRefresh) {
   const filtered = leadsFilter === "all" ? baseFiltered : baseFiltered.filter((l) => l.event_type === leadsFilter);
   const countFor = (id) => baseFiltered.filter((l) => l.event_type === id).length;
   const shareLink = `${window.location.origin}/lead-form.html`;
+  // A changed filter or sort starts the phone list again from the first batch.
+  const filterKey = [leadsFilter, leadsStageFilter, leadsSearch, leadsCityFilter, leadsDateFilter, leadsQuoteDateFilter, leadsB2bOnly, leadsClashOnly, leadsDueOnly, leadsNoAdvanceOnly, leadsOnlyId, leadsSortBy].join("|");
+  if (filterKey !== leadsShownKey) { leadsShownKey = filterKey; leadsShown = LEADS_PHONE_BATCH; }
+  const activeFilterCount = [leadsCityFilter, leadsDateFilter, leadsQuoteDateFilter, leadsStageFilter !== "all", leadsB2bOnly, leadsClashOnly, leadsDueOnly, leadsNoAdvanceOnly].filter(Boolean).length;
 
   main.innerHTML = `
     <div class="view-head">
@@ -2306,7 +2318,7 @@ async function renderLeadsLog(main, skipRefresh) {
       <div style="display:flex; gap:8px; flex-wrap:wrap;">${hasAccountsAccess() ? `<button class="btn-ghost" id="quickConfirmBtn">⚡ Quick confirm</button>` : ""}<button class="btn-primary" id="newLeadBtn">+ New lead</button></div>
     </div>
 
-    <div class="card" style="margin-bottom:18px;">
+    <div class="card leads-share-card${leadsFiltersOpen ? " leads-filters-open" : ""}" style="margin-bottom:18px;">
       <div class="section-label">Share this form with a new query</div>
       <div class="share-box">
         <input readonly value="${shareLink}" id="shareLinkInput" />
@@ -2316,8 +2328,9 @@ async function renderLeadsLog(main, skipRefresh) {
     </div>
 
     <div class="card" style="margin-bottom:14px;">
-      <div class="upload-form" style="margin-bottom:0;">
+      <div class="upload-form leads-filters${leadsFiltersOpen ? " leads-filters-open" : ""}" style="margin-bottom:0;">
         <input id="leadsSearchInput" placeholder="Search by name…" value="${leadsSearch}" style="flex:1; min-width:160px;" />
+        <button class="btn-ghost filters-toggle" id="leadsFiltersToggle">⚙ Filters${activeFilterCount ? ` (${activeFilterCount})` : ""}</button>
         <input id="leadsCityInput" placeholder="Search by city…" value="${leadsCityFilter}" style="flex:1; min-width:160px;" />
         <div style="display:flex; flex-direction:column; gap:3px;">
           <label class="muted small" for="leadsDateInput">Event date</label>
@@ -2356,6 +2369,7 @@ async function renderLeadsLog(main, skipRefresh) {
     <div id="leadsRows"></div>
   `;
 
+  main.querySelector("#leadsFiltersToggle").addEventListener("click", () => { leadsFiltersOpen = !leadsFiltersOpen; renderLeadsLog(main, true); });
   main.querySelector("#leadsSearchInput").addEventListener("input", (e) => {
     const cursorPos = e.target.selectionStart;
     leadsSearch = e.target.value;
@@ -2425,13 +2439,14 @@ async function renderLeadsLog(main, skipRefresh) {
     if (leadsStageFilter === "Follow-up") return new Date(b.created_at) - new Date(a.created_at);
     return new Date(a.date) - new Date(b.date);
   });
+  const shownLeads = isPhoneWidth() ? sorted.slice(0, leadsShown) : sorted;
 
   // "Select all" only ever applies to leads that are actually bulk-selectable
   // (same New/Follow-up/Interested/Tentative/Completed rule as each card's
   // own checkbox) — and only within whatever filters are currently applied,
   // so it never silently pulls in leads the user can't see right now.
   const selectAllRow = main.querySelector("#leadsSelectAllRow");
-  const bulkSelectableIds = sorted.filter((l) => hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative", "Completed"].includes(l.stage)).map((l) => l.id);
+  const bulkSelectableIds = shownLeads.filter((l) => hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative", "Completed"].includes(l.stage)).map((l) => l.id);
   if (bulkSelectableIds.length > 0) {
     const allSelected = bulkSelectableIds.every((id) => leadsSelected.has(id));
     selectAllRow.innerHTML = `
@@ -2460,7 +2475,7 @@ async function renderLeadsLog(main, skipRefresh) {
   if (sorted.length === 0) {
     rows.innerHTML = `<div class="board-empty">No queries match these filters</div>`;
   } else {
-    sorted.forEach((l) => {
+    shownLeads.forEach((l) => {
       const comboSiblings = l.combo_group_id ? LEADS.filter((s) => s.combo_group_id === l.combo_group_id && s.id !== l.id) : [];
       const comboPrimary = l.combo_group_id ? (l.is_combo_primary ? l : comboSiblings.find((s) => s.is_combo_primary)) : null;
       const displayQuote = comboPrimary ? comboPrimary.quote_amount : l.quote_amount;
@@ -2471,8 +2486,9 @@ async function renderLeadsLog(main, skipRefresh) {
       const displayReimbursementDue = comboPrimary ? comboPrimary.reimbursement_due : l.reimbursement_due;
       const balance = (displayFinal || displayQuote || 0) - (displayReceived || 0) + (displayReimbursementDue || 0);
       const canBulkSelect = hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative", "Completed"].includes(l.stage);
+      const expanded = leadsExpanded.has(l.id) || !!leadsOnlyId;
       const card = el(`
-        <div class="card lead-card" style="margin-bottom:12px;">
+        <div class="card lead-card${expanded ? " lead-expanded" : ""}" style="margin-bottom:12px;">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
             <div style="display:flex; gap:10px; align-items:flex-start;">
               ${canBulkSelect ? `<input type="checkbox" class="lead-bulk-checkbox" data-lead-id="${l.id}" ${leadsSelected.has(l.id) ? "checked" : ""} style="margin-top:4px; width:18px; height:18px; flex-shrink:0;" />` : ""}
@@ -2481,7 +2497,7 @@ async function renderLeadsLog(main, skipRefresh) {
                 <div class="muted small">${l.phone ? `<a href="tel:${l.phone.replace(/\s+/g, "")}" style="color:inherit; text-decoration:underline;">${l.phone}</a>` : ""}</div>
                 ${hasAccountsAccess() && noAdvance(l) ? `<div class="small" style="color:#B6752C; font-weight:600;">💰 No advance received yet</div>` : ""}
                 ${l.combo_group_id ? `<div class="muted small" style="color:#8A5FA8;" title="Linked bookings share one client — pricing and payments live on the primary event.">🔗 Combo with ${comboSiblings.map((s) => `${packageName(s.event_type)} (${fmtDate(s.date)})`).join(", ")}</div>` : ""}
-                ${planningBlockHtml(l)}
+                <div class="lead-extra">${planningBlockHtml(l)}</div>
                 ${l.alt_date ? `<div class="muted small" style="color:#B6752C;">Alt date: ${fmtDate(l.alt_date)}</div>` : ""}
               </div>
             </div>
@@ -2545,8 +2561,8 @@ async function renderLeadsLog(main, skipRefresh) {
             }
             return out;
           })()}
-          <div class="muted small">Submitted ${fmtDateTime(l.created_at)}</div>
-          ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}${l.last_quoted_at ? ` <span class="muted">— sent ${fmtDate(l.last_quoted_at.slice(0, 10))}</span>` : ""}${l.quote_count > 1 ? ` <span class="muted">(${l.quote_count} quotes sent — see history in Quotation)</span>` : ""}</div>` : ""}
+          <div class="muted small lead-extra">Submitted ${fmtDateTime(l.created_at)}</div>
+          ${l.quote_amount && !isConfirmedOrDone ? `<div class="muted small mono lead-extra" style="margin-top:6px;">Quoted: ${inr(l.quote_amount)}${l.last_quoted_at ? ` <span class="muted">— sent ${fmtDate(l.last_quoted_at.slice(0, 10))}</span>` : ""}${l.quote_count > 1 ? ` <span class="muted">(${l.quote_count} quotes sent — see history in Quotation)</span>` : ""}</div>` : ""}
           ${(() => {
             const qe = quoteExpiry(l);
             if (!qe) return "";
@@ -2579,10 +2595,10 @@ async function renderLeadsLog(main, skipRefresh) {
               : "";
             return `<div class="small" style="margin-top:6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
               <span style="color:${color};">${icon} ${label}</span>${counterText}
-              <a href="#" class="mark-followup-link" data-lead-id="${l.id}" style="font-size:12px; color:#8A5FA8; text-decoration:underline;" title="Use this if you contacted them by phone or in person instead of the WhatsApp button.">mark followed up now</a>
+              <a href="#" class="mark-followup-link lead-extra" data-lead-id="${l.id}" style="font-size:12px; color:#8A5FA8; text-decoration:underline;" title="Use this if you contacted them by phone or in person instead of the WhatsApp button.">mark followed up now</a>
               ${isSnoozed
-                ? `<a href="#" class="clear-snooze-link" data-lead-id="${l.id}" style="font-size:12px; color:#A6432B; text-decoration:underline;">clear snooze</a>`
-                : `<a href="#" class="snooze-toggle-link" data-lead-id="${l.id}" style="font-size:12px; color:#8A5FA8; text-decoration:underline;" title="Hide this lead from overdue/follow-up reminders until a date you pick — useful when they've said 'we'll let you know'.">⏰ snooze</a>`
+                ? `<a href="#" class="clear-snooze-link lead-extra" data-lead-id="${l.id}" style="font-size:12px; color:#A6432B; text-decoration:underline;">clear snooze</a>`
+                : `<a href="#" class="snooze-toggle-link lead-extra" data-lead-id="${l.id}" style="font-size:12px; color:#8A5FA8; text-decoration:underline;" title="Hide this lead from overdue/follow-up reminders until a date you pick — useful when they've said 'we'll let you know'.">⏰ snooze</a>`
               }
             </div>
             ${!isSnoozed ? `
@@ -2592,7 +2608,7 @@ async function renderLeadsLog(main, skipRefresh) {
               </div>` : ""}`;
           })() : ""}
           ${hasLeadsAccess() && l.stage !== "Completed" ? `
-            <div class="lead-sticky-note" style="margin-top:8px; background:#FBF3D9; border:1px solid #E8D488; border-radius:6px; padding:6px 8px;">
+            <div class="lead-sticky-note${l.notes ? "" : " lead-extra"}" style="margin-top:8px; background:#FBF3D9; border:1px solid #E8D488; border-radius:6px; padding:6px 8px;">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
                 <span class="muted small" title="Only visible to your team, never to the client.">📌 Sticky note</span>
                 <span class="muted small lead-note-status" data-lead-id="${l.id}" style="font-weight:400;"></span>
@@ -2636,11 +2652,28 @@ async function renderLeadsLog(main, skipRefresh) {
             ${hasLeadsAccess() && l.stage !== "Completed" ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}">✎ Edit</button>` : ""}
             ${CURRENT_USER?.accessLevel === "admin" && l.stage !== "Completed" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="color:#A6432B;">🗑 Delete</button>` : ""}
             ${l.stage === "Completed" ? `<span class="muted small">🔒 Completed — locked</span>` : ""}
+            <button class="btn-ghost lead-more-btn">${expanded ? "Less" : "More"}</button>
           </div>
         </div>
       `);
+      card.querySelector(".lead-more-btn").addEventListener("click", (e) => {
+        const open = card.classList.toggle("lead-expanded");
+        if (open) leadsExpanded.add(l.id); else leadsExpanded.delete(l.id);
+        e.target.textContent = open ? "Less" : "More";
+      });
       rows.appendChild(card);
     });
+    if (shownLeads.length < sorted.length) {
+      const left = sorted.length - shownLeads.length;
+      const more = el(`<button class="btn-ghost list-show-more">Show ${Math.min(left, LEADS_PHONE_BATCH)} more (${left} left)</button>`);
+      more.addEventListener("click", () => {
+        const y = window.scrollY;
+        leadsShown += LEADS_PHONE_BATCH;
+        renderLeadsLog(main, true);
+        window.scrollTo(0, y);
+      });
+      rows.appendChild(more);
+    }
   }
 
   renderLeadsBulkBar(main);
@@ -8137,6 +8170,9 @@ async function renderTravelDesk(main) {
 }
 
 // ---------- Accounts ----------
+const ACCT_PHONE_BATCH = 15;
+const ACCT_PHONE_TXNS = 10;
+
 async function renderAccounts(main) {
   const [{ bookings, totals }, expenses, pendingReimbursements] = await Promise.all([
     api("/api/accounts"),
@@ -8151,10 +8187,19 @@ async function renderAccounts(main) {
       <button class="btn-ghost" id="exportExcelBtn">⬇ Export to Excel</button>
     </div>
 
+    <div class="accounts-summary">
+      <div class="card summary-card"><div class="muted">Confirmed</div><div class="mono big" id="acctSumConfirmed">${inr(totals.quoted)}</div></div>
+      <div class="card summary-card"><div class="muted">Amount received</div><div class="mono big" id="acctSumReceived" style="color:${STAGE_COLOR.Confirmed}">${inr(totals.received)}</div></div>
+      <div class="card summary-card"><div class="muted">Outstanding</div><div class="mono big" id="acctSumOutstanding" style="color:${STAGE_COLOR["Follow-up"]}">${inr(totals.outstanding)}</div></div>
+      <div class="card summary-card"><div class="muted">Total profit</div><div class="mono big" id="acctSumProfit" style="color:${totals.profit >= 0 ? "#1C7A80" : "#A6432B"}">${inr(totals.profit)}</div></div>
+    </div>
+    <p class="muted small" id="acctSumFilterNote" style="margin:-8px 0 16px;"></p>
+
     <div class="card" style="margin-bottom:18px;">
-      <div class="section-label" style="margin-bottom:10px;">Filter — updates the totals and event list below</div>
-      <div class="acct-filter-grid">
-        <input type="text" id="acctSearch" class="acct-filter-search" placeholder="🔍 Search by client / party name or phone…" />
+      <div class="section-label acct-filter-label" style="margin-bottom:10px;">Filter — updates the totals above and the event list below</div>
+      <div class="acct-filter-grid" id="acctFilterGrid">
+        <input type="text" id="acctSearch" class="acct-filter-search" placeholder="🔍 Name or phone…" />
+        <button class="btn-ghost filters-toggle" id="acctFiltersToggle">⚙ Filters</button>
         <input type="text" id="acctCityFilter" placeholder="City…" />
         <div class="acct-filter-daterange">
           <div class="acct-filter-date-group">
@@ -8175,19 +8220,11 @@ async function renderAccounts(main) {
       </div>
     </div>
 
-    <div class="accounts-summary">
-      <div class="card summary-card"><div class="muted">Confirmed</div><div class="mono big" id="acctSumConfirmed">${inr(totals.quoted)}</div></div>
-      <div class="card summary-card"><div class="muted">Amount received</div><div class="mono big" id="acctSumReceived" style="color:${STAGE_COLOR.Confirmed}">${inr(totals.received)}</div></div>
-      <div class="card summary-card"><div class="muted">Outstanding</div><div class="mono big" id="acctSumOutstanding" style="color:${STAGE_COLOR["Follow-up"]}">${inr(totals.outstanding)}</div></div>
-      <div class="card summary-card"><div class="muted">Total profit</div><div class="mono big" id="acctSumProfit" style="color:${totals.profit >= 0 ? "#1C7A80" : "#A6432B"}">${inr(totals.profit)}</div></div>
-    </div>
-    <p class="muted small" id="acctSumFilterNote" style="margin:-8px 0 16px;"></p>
-
     <div class="section-label">Events — tap one to add a payment or view its ledger</div>
     <div id="acctCards" style="margin-bottom:24px;"></div>
 
-    <div class="section-label">Add an expense or artist fee</div>
-    <div class="card" style="margin-bottom:20px;">
+    <div class="section-label" style="justify-content:space-between;">Add an expense or artist fee <button class="btn-ghost filters-toggle" id="acctExpenseToggle">Open</button></div>
+    <div class="card acct-expense-card" id="acctExpenseCard" style="margin-bottom:20px;">
       <div class="upload-form" style="margin-bottom:0;">
         <select id="expLead">
           <option value="">Not tied to a specific event</option>
@@ -8233,23 +8270,33 @@ async function renderAccounts(main) {
     const txnRows = main.querySelector("#txnRows");
     if (!txnRows) return;
     if (txns.length === 0) { txnRows.innerHTML = `<p class="muted small">No transactions recorded yet</p>`; return; }
-    txnRows.innerHTML = "";
-    txns.forEach((t) => {
-      txnRows.appendChild(el(`
-        <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-          <div>
-            <div>${t.party_name} <span class="muted small">— ${t.description}</span></div>
-            <div class="muted small mono">${fmtDate(t.date)}${t.mode ? ` · ${t.mode}` : ""}</div>
+    const drawTxns = (list) => {
+      txnRows.innerHTML = "";
+      list.forEach((t) => {
+        txnRows.appendChild(el(`
+          <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+            <div>
+              <div>${t.party_name} <span class="muted small">— ${t.description}</span></div>
+              <div class="muted small mono">${fmtDate(t.date)}${t.mode ? ` · ${t.mode}` : ""}</div>
+            </div>
+            <span class="mono" style="color:${t.direction === "in" ? "#1C7A80" : "#A6432B"}; flex-shrink:0;">${t.direction === "in" ? "+" : "−"}${inr(t.amount)}</span>
           </div>
-          <span class="mono" style="color:${t.direction === "in" ? "#1C7A80" : "#A6432B"}; flex-shrink:0;">${t.direction === "in" ? "+" : "−"}${inr(t.amount)}</span>
-        </div>
-      `));
-    });
+        `));
+      });
+      if (list.length < txns.length) {
+        const all = el(`<button class="btn-ghost list-show-more">Show all ${txns.length}</button>`);
+        all.addEventListener("click", () => drawTxns(txns));
+        txnRows.appendChild(all);
+      }
+    };
+    drawTxns(isPhoneWidth() ? txns.slice(0, ACCT_PHONE_TXNS) : txns);
   });
 
   // ---- Events: searchable, tap-to-manage cards ----
   const acctCards = main.querySelector("#acctCards");
   const acctFilters = { search: "", city: "", dateFrom: "", dateTo: "", stage: "all" };
+  let acctShown = ACCT_PHONE_BATCH;
+  let acctShownKey = "";
   function computeFilteredTotals(filtered) {
     return filtered.reduce(
       (acc, l) => {
@@ -8280,13 +8327,18 @@ async function renderAccounts(main) {
     main.querySelector("#acctSumOutstanding").textContent = inr(filteredTotals.quoted - filteredTotals.received + filteredTotals.reimbursementDue);
     main.querySelector("#acctSumProfit").textContent = inr(filteredTotals.profit);
     main.querySelector("#acctSumFilterNote").textContent = anyFilterActive ? `Showing totals for ${filtered.length} matching event${filtered.length === 1 ? "" : "s"} — clear filters for the full picture.` : "";
+    const panelFilters = [cityQ, acctFilters.dateFrom, acctFilters.dateTo, acctFilters.stage !== "all"].filter(Boolean).length;
+    main.querySelector("#acctFiltersToggle").textContent = `⚙ Filters${panelFilters ? ` (${panelFilters})` : ""}`;
+    const filterKey = JSON.stringify(acctFilters);
+    if (filterKey !== acctShownKey) { acctShownKey = filterKey; acctShown = ACCT_PHONE_BATCH; }
 
     if (filtered.length === 0) {
       acctCards.innerHTML = `<div class="board-empty">${sortedBookings.length === 0 ? "No confirmed or completed bookings yet" : "No events match those filters"}</div>`;
       return;
     }
     acctCards.innerHTML = "";
-    filtered.forEach((l) => {
+    const shownBookings = isPhoneWidth() ? filtered.slice(0, acctShown) : filtered;
+    shownBookings.forEach((l) => {
       const total = l.final_amount || l.quote_amount || 0;
       const balance = total - l.received + (l.reimbursement_due || 0);
       const card = el(`
@@ -8311,8 +8363,19 @@ async function renderAccounts(main) {
       card.addEventListener("click", () => openLeadPaymentsModal(l.id));
       acctCards.appendChild(card);
     });
+    if (shownBookings.length < filtered.length) {
+      const left = filtered.length - shownBookings.length;
+      const more = el(`<button class="btn-ghost list-show-more">Show ${Math.min(left, ACCT_PHONE_BATCH)} more (${left} left)</button>`);
+      more.addEventListener("click", () => { acctShown += ACCT_PHONE_BATCH; renderAcctCards(); });
+      acctCards.appendChild(more);
+    }
   }
   renderAcctCards();
+  main.querySelector("#acctFiltersToggle").addEventListener("click", () => main.querySelector("#acctFilterGrid").classList.toggle("acct-filters-open"));
+  main.querySelector("#acctExpenseToggle").addEventListener("click", (e) => {
+    const open = main.querySelector("#acctExpenseCard").classList.toggle("acct-expense-open");
+    e.target.textContent = open ? "Close" : "Open";
+  });
   main.querySelector("#acctSearch").addEventListener("input", (e) => { acctFilters.search = e.target.value; renderAcctCards(); });
   main.querySelector("#acctCityFilter").addEventListener("input", (e) => { acctFilters.city = e.target.value; renderAcctCards(); });
   // Use "blur" not "change" — iOS Safari fires "change" on an empty date

@@ -124,6 +124,8 @@ nav { display:flex; flex-direction:column; gap:2px; }
 .lead-card-financials .mono { font-size:13px; margin-top:2px; }
 .lead-card-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
 .lead-card-actions .btn-ghost { font-size:12.5px; padding:6px 10px; }
+.lead-more-btn, .filters-toggle { display:none; }
+.list-show-more { display:block; width:100%; margin-top:4px; }
 .lead-details-panel { margin-top:10px; padding:10px 12px; background:var(--cream); border-radius:8px; font-size:12.5px; line-height:1.5; }
 
 .mala { display:flex; gap:4px; margin-top:8px; }
@@ -290,10 +292,11 @@ select.stage-select { width:auto; padding:4px 6px; font-size:12px; border-radius
 .rate-inclusion-pill:has(input:checked) { background:#F3E3CB; border-color:var(--terracotta); font-weight:600; }
 .rate-inclusion-pill input { margin:0; width:15px; height:15px; accent-color:var(--terracotta); }
 
-.acct-filter-grid { display:grid; grid-template-columns:1fr; gap:10px; }
+.acct-filter-grid { display:grid; grid-template-columns:minmax(0, 1fr); gap:10px; }
+.acct-filter-grid > * { min-width:0; }
 .acct-filter-grid input[type="text"],
 .acct-filter-grid input[type="date"],
-.acct-filter-grid select { width:100%; }
+.acct-filter-grid select { width:100%; min-width:0; box-sizing:border-box; }
 .acct-filter-daterange { display:flex; gap:10px; }
 .acct-filter-date-group { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
 @media (min-width: 720px) {
@@ -347,9 +350,33 @@ select.stage-select { width:auto; padding:4px 6px; font-size:12px; border-radius
   .quote-grid { grid-template-columns:1fr; }
   .leads-table-row { grid-template-columns:1.6fr 1fr 0.9fr 1fr 0.7fr; }
   .leads-table-row span:nth-child(3), .leads-table-row span:nth-child(5) { display:none; }
-  .accounts-summary { grid-template-columns:1fr; }
-  .acct-financials { grid-template-columns:repeat(2,1fr); }
+  .accounts-summary { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+  .accounts-summary .card { padding:12px; }
+  .accounts-summary .big { font-size:17px; }
+  .acct-financials { grid-template-columns:repeat(3,1fr); }
   .row-2 { grid-template-columns:1fr; }
+
+  /* Leads and Accounts: search stays up front, everything else sits behind one button,
+     and cards stay short until "More". The full layout stays on wider screens. */
+  .filters-toggle { display:inline-block; white-space:nowrap; flex-shrink:0; }
+  .leads-filters { flex-wrap:wrap; }
+  .leads-filters #leadsSearchInput { flex:1 1 0 !important; min-width:0 !important; }
+  .leads-filters:not(.leads-filters-open) > :not(#leadsSearchInput):not(#leadsFiltersToggle):not(#clearAllFilters) { display:none !important; }
+  .leads-share-card:not(.leads-filters-open) { display:none; }
+  #filterRow { flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:4px; margin-bottom:10px; }
+  #filterRow .filter-chip { flex-shrink:0; white-space:nowrap; }
+  .lead-card:not(.lead-expanded) .lead-extra { display:none; }
+  .lead-card:not(.lead-expanded) .lead-card-actions .btn-ghost:not(.lead-more-btn):nth-child(n+4) { display:none; }
+  .lead-more-btn { display:inline-block; }
+  .lead-card-actions .btn-ghost, .lead-card .quote-lead-btn { min-height:38px; }
+  select.stage-select { min-height:38px; font-size:13px; }
+  .list-show-more { min-height:42px; }
+  .acct-filter-label { display:none; }
+  .acct-filter-grid { grid-template-columns:minmax(0, 1fr) auto; }
+  .acct-filter-grid:not(.acct-filters-open) > :not(.acct-filter-search):not(.filters-toggle) { display:none; }
+  .acct-filter-grid > :not(.acct-filter-search):not(.filters-toggle) { grid-column:1 / -1; }
+  .acct-expense-card:not(.acct-expense-open) { display:none; }
+  #acctCards .lead-card-financials .muted { font-size:12px; }
   .cal-cell { min-height:44px; font-size:10px; }
 
   /* Dense multi-column tables (Accounts, Expenses, Logins, Quote history) scroll
