@@ -5812,6 +5812,7 @@ async function openLeadPaymentsModal(leadId) {
           <option value="Cash">Cash</option>
           <option value="UPI">UPI</option>
           <option value="NEFT">NEFT</option>
+          <option value="TDS">TDS deducted by client</option>
         </select>
       </div>
       <input id="lpNotes" placeholder="Bank account it was received from (e.g. HDFC - Gopi Gogoi)" style="margin-top:8px;" />
@@ -5823,10 +5824,13 @@ async function openLeadPaymentsModal(leadId) {
     const modeSelect = body.querySelector("#lpMode");
     function refreshPaymentFormFields() {
       const isReimbursement = typeSelect.value === "client_reimbursement";
-      notesInput.placeholder = isReimbursement ? "What's this reimbursement for? (e.g. Train and Cab)" : "Bank account it was received from (e.g. HDFC - Gopi Gogoi)";
+      notesInput.placeholder = isReimbursement ? "What's this reimbursement for? (e.g. Train and Cab)"
+        : modeSelect.value === "TDS" ? "TDS details (e.g. 194J, Form 16A awaited)"
+        : "Bank account it was received from (e.g. HDFC - Gopi Gogoi)";
       modeSelect.style.display = isReimbursement ? "none" : "";
     }
     typeSelect.addEventListener("change", refreshPaymentFormFields);
+    modeSelect.addEventListener("change", refreshPaymentFormFields);
     refreshPaymentFormFields();
 
     const shareLedgerBtn = body.querySelector("#lpShareLedgerBtn");
@@ -10207,6 +10211,7 @@ function openConfirmEventModal(lead, rateHint) {
             <option value="">Mode —</option>
             <option value="Cash">Cash</option>
             <option value="UPI">UPI</option>
+            <option value="TDS">TDS deducted by client</option>
           </select>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Confirm event</button></div>
@@ -11186,6 +11191,7 @@ function openNewLeadModal(opts = {}) {
               <option value="">Mode —</option>
               <option value="Cash">Cash</option>
               <option value="UPI">UPI</option>
+              <option value="TDS">TDS deducted by client</option>
             </select>
           </div>
         </div>
