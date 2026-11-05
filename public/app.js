@@ -439,7 +439,7 @@ const NAV = [
   { id: "quotation", label: "Quotation" },
   { id: "accounts", label: "Accounts" },
   { id: "teampay", label: "Team Pay" },
-  { id: "tasks", label: "Tasks & Chats" },
+  { id: "tasks", label: "Chats" },
   { id: "calendar", label: "Calendar" },
   { id: "panchang", label: "Wedding Dates" },
   { id: "traveldesk", label: "Travel Desk" },
@@ -1839,6 +1839,7 @@ function initGlobalSearch() {
     results.querySelectorAll("[data-goto-lead]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const lead = LEADS.find((l) => l.id === btn.dataset.gotoLead);
+        if (lead && isBookedEvent(lead) && canAssignTeam()) { input.value = ""; close(); closeMobileSidebar(); return openEvent(lead.id); }
         if (!lead || !hasLeadsAccess()) { close(); return; }
         leadsSearch = lead.name; leadsOnlyId = lead.id;
         leadsCityFilter = "";
@@ -2489,6 +2490,8 @@ async function renderLeadsLog(main, skipRefresh) {
       const displayQuote = comboPrimary ? comboPrimary.quote_amount : l.quote_amount;
       const displayFinal = comboPrimary ? comboPrimary.final_amount : l.final_amount;
       const isConfirmedOrDone = l.stage === "Confirmed" || l.stage === "Completed";
+      // A booked event's tools all live in its Event window, so its card just opens that.
+      const hub = isConfirmedOrDone && canAssignTeam();
       const hasRateInfo = ["Tentative", "Confirmed", "Completed"].includes(l.stage);
       const displayReceived = comboPrimary ? comboPrimary.received : l.received;
       const displayReimbursementDue = comboPrimary ? comboPrimary.reimbursement_due : l.reimbursement_due;
@@ -2526,7 +2529,7 @@ async function renderLeadsLog(main, skipRefresh) {
             else if (dec > 0) { bg = "#FBE9E5"; fg = "#A6432B"; bd = "#EFC4BA"; icon = "\u26a0\ufe0f"; text = `Team ${acc}/${total} confirmed \u00b7 ${dec} declined`; }
             else { bg = "#FFF3DC"; fg = "#8A5A1F"; bd = "#F0D9A8"; icon = "\u23f3"; text = `Team ${acc}/${total} confirmed \u00b7 ${pending} awaiting`; }
             const pct = total ? Math.round((acc / Math.max(total, needed)) * 100) : 0;
-            return `<div class="assign-team-btn team-status-pill" data-lead-id="${l.id}" title="Open Team & Expenses" style="cursor:pointer; display:inline-block; min-width:210px; background:${bg}; color:${fg}; border:1px solid ${bd}; border-radius:999px; padding:6px 14px 7px; font-size:13px; font-weight:600;">
+            return `<div class="assign-team-btn team-status-pill" data-lead-id="${l.id}" title="Open this event's Team tab" style="cursor:pointer; display:inline-block; min-width:210px; background:${bg}; color:${fg}; border:1px solid ${bd}; border-radius:999px; padding:6px 14px 7px; font-size:13px; font-weight:600;">
               <div>${icon} ${text}</div>
               ${total ? `<div style="height:4px; background:rgba(0,0,0,0.08); border-radius:4px; margin-top:5px; overflow:hidden;"><div style="width:${pct}%; height:100%; background:${fg};"></div></div>` : ""}
             </div>`;
@@ -2644,20 +2647,20 @@ async function renderLeadsLog(main, skipRefresh) {
             ${l.venue ? `<div class="muted small">📍 ${l.venue}</div>` : ""}
           ` : ""}
           <div class="lead-card-actions">
-            <button class="btn-ghost lead-detail-btn" data-lead-id="${l.id}">📋 Details</button>
+            ${hub ? `<button class="btn-primary open-event-btn" data-lead-id="${l.id}">📂 Open event</button>` : `<button class="btn-ghost lead-detail-btn" data-lead-id="${l.id}">📋 Details</button>`}
             ${hasAccountsAccess() && (l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative") ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}">Quote</button>` : ""}
             ${(l.stage === "New" || l.stage === "Follow-up" || l.stage === "Interested" || l.stage === "Tentative" || l.stage === "Not Interested") && l.phone ? `<button class="btn-ghost followup-btn" data-lead-id="${l.id}">💬 Follow up</button>` : ""}
             ${l.stage === "Tentative" && hasLeadsAccess() && hasAccountsAccess() ? `<button class="btn-ghost tentative-confirm-info-btn" data-lead-id="${l.id}">📨 Send confirm details</button>` : ""}
             ${l.phone ? `<button class="btn-ghost contact-lead-btn" data-phone="${l.phone}">📞 Contact</button>` : ""}
-            ${isConfirmedOrDone && hasAccountsAccess() ? `<button class="btn-ghost payments-btn" data-lead-id="${l.id}">💰 Payments</button>` : ""}
-            ${isConfirmedOrDone && hasLeadsAccess() && hasAccountsAccess() ? `<button class="btn-ghost confirmation-msg-btn" data-lead-id="${l.id}">✅ Confirmation msg</button>` : ""}
-            ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team & Expenses</button>` : ""}
-            ${isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost travel-plan-btn" data-lead-id="${l.id}">🧳 Travel</button>` : ""}
-            ${(isConfirmedOrDone || l.stage === "Tentative") && hasLeadsAccess() ? `<button class="btn-ghost tech-rider-btn" data-lead-id="${l.id}">🎛 Tech rider</button>` : ""}
-            ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost lead-documents-btn" data-lead-id="${l.id}">📄 Documents</button>` : ""}
+            ${!hub && isConfirmedOrDone && hasAccountsAccess() ? `<button class="btn-ghost payments-btn" data-lead-id="${l.id}">💰 Payments</button>` : ""}
+            ${!hub && isConfirmedOrDone && hasLeadsAccess() && hasAccountsAccess() ? `<button class="btn-ghost confirmation-msg-btn" data-lead-id="${l.id}">✅ Confirmation msg</button>` : ""}
+            ${!hub && isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost assign-team-btn" data-lead-id="${l.id}">Team & Expenses</button>` : ""}
+            ${!hub && isConfirmedOrDone && canAssignTeam() ? `<button class="btn-ghost travel-plan-btn" data-lead-id="${l.id}">🧳 Travel</button>` : ""}
+            ${!hub && (isConfirmedOrDone || l.stage === "Tentative") && hasLeadsAccess() ? `<button class="btn-ghost tech-rider-btn" data-lead-id="${l.id}">🎛 Tech rider</button>` : ""}
+            ${!hub && isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost lead-documents-btn" data-lead-id="${l.id}">📄 Documents</button>` : ""}
             ${l.stage === "Cancelled" && hasLeadsAccess() && (l.phone || l.email) ? `<button class="btn-ghost cancel-msg-btn" data-lead-id="${l.id}">${l.cancel_msg_sent_at ? "📩 Cancellation sent ✓" : "📩 Cancellation msg"}</button>` : ""}
-            ${l.stage === "Completed" && CURRENT_USER?.accessLevel === "admin" && hasAccountsAccess() ? `<button class="btn-ghost wrapup-btn" data-lead-id="${l.id}">${l.closed_at ? "✅ Closed" : "✅ Wrap-up"}</button>` : ""}
-            ${l.stage === "Completed" && hasLeadsAccess() && l.phone ? `<button class="btn-ghost thank-you-btn" data-lead-id="${l.id}">${l.thanked_at ? "🙏 Thanked ✓" : "🙏 Thank client"}</button>` : ""}
+            ${!hub && l.stage === "Completed" && CURRENT_USER?.accessLevel === "admin" && hasAccountsAccess() ? `<button class="btn-ghost wrapup-btn" data-lead-id="${l.id}">${l.closed_at ? "✅ Closed" : "✅ Wrap-up"}</button>` : ""}
+            ${!hub && l.stage === "Completed" && hasLeadsAccess() && l.phone ? `<button class="btn-ghost thank-you-btn" data-lead-id="${l.id}">${l.thanked_at ? "🙏 Thanked ✓" : "🙏 Thank client"}</button>` : ""}
             ${hasLeadsAccess() && l.stage !== "Completed" ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}">✎ Edit</button>` : ""}
             ${CURRENT_USER?.accessLevel === "admin" && l.stage !== "Completed" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="color:#A6432B;">🗑 Delete</button>` : ""}
             ${l.stage === "Completed" ? `<span class="muted small">🔒 Completed — locked</span>` : ""}
@@ -2870,12 +2873,14 @@ async function renderLeadsLog(main, skipRefresh) {
     textarea.addEventListener("click", (e) => e.stopPropagation());
   });
 
+  main.querySelectorAll(".open-event-btn").forEach((btn) => btn.addEventListener("click", () => openEvent(btn.dataset.leadId)));
+  // The team and travel progress pills open the Event window on that tab.
   main.querySelectorAll(".assign-team-btn").forEach((btn) => {
-    btn.addEventListener("click", () => openAssignTeamModal(btn.dataset.leadId));
+    btn.addEventListener("click", () => openEvent(btn.dataset.leadId, "team"));
   });
 
   main.querySelectorAll(".travel-plan-btn").forEach((btn) => {
-    btn.addEventListener("click", () => openTravelPlanModal(btn.dataset.leadId));
+    btn.addEventListener("click", () => (canAssignTeam() ? openEvent(btn.dataset.leadId, "travel") : openTravelPlanModal(btn.dataset.leadId)));
   });
 
   main.querySelectorAll(".lead-documents-btn").forEach((btn) => {
@@ -3667,6 +3672,7 @@ function wireCalendarGrid(container) {
       pill.addEventListener("click", () => {
         const lead = LEADS.find((l) => l.id === pill.dataset.leadId);
         if (!lead) return;
+        if (isBookedEvent(lead) && canAssignTeam()) return openEvent(lead.id);
         if (hasLeadsAccess()) {
           leadsSearch = lead.name; leadsOnlyId = lead.id;
           leadsStageFilter = "all";
@@ -3832,6 +3838,7 @@ async function renderCalendar(main) {
       const allot = row.querySelector(".allot-btn");
       if (allot) allot.addEventListener("click", (e) => { e.stopPropagation(); openAssignTeamModal(l.id); });
       row.addEventListener("click", () => {
+        if (isBookedEvent(l) && canAssignTeam()) return openEvent(l.id);
         if (hasLeadsAccess()) {
           leadsSearch = l.name; leadsOnlyId = l.id;
           leadsStageFilter = "all";
@@ -5868,12 +5875,7 @@ async function openLeadPaymentsModal(leadId) {
       } catch (err) { alert(err.message); }
       e.currentTarget.disabled = false;
     });
-    body.querySelector("#lpRemind")?.addEventListener("click", () => {
-      const due = lead.balance_due_date || lead.date;
-      const overdue = due && due < new Date().toISOString().slice(0, 10);
-      const text = `Hi ${leadFirstName(lead) || "there"}, hope you're doing well! 🙏 A gentle reminder that the balance of ${inr(balance)} for your ${occasionPhrase(lead)} on ${fmtDate(lead.date)} ${overdue ? `was due on ${fmtDate(due)}` : `is due by ${fmtDate(due)}`}. Please let us know once it's done. Thank you!\n\nTogether, Out Loud`;
-      goWhatsApp(`https://wa.me/${(lead.whatsapp_number || lead.phone).replace(/\D/g, "")}?text=${encodeURIComponent(text)}`);
-    });
+    body.querySelector("#lpRemind")?.addEventListener("click", () => sendBalanceReminder(lead, balance));
     const shareLedgerBtn = body.querySelector("#lpShareLedgerBtn");
     if (shareLedgerBtn) {
       shareLedgerBtn.addEventListener("click", async () => {
@@ -6000,11 +6002,116 @@ function openTempArtistDirectoryModal(directory, onBack) {
   render();
 }
 
-// The Team & Expenses window holds a lot, so it's split into tabs. Its sections are tagged in
+// The Event window (once "Team & Expenses") holds a lot, so it's split into tabs. Its sections are tagged in
 // order: a section heading switches the tab for what follows, and a few one-off blocks are
 // placed directly. The open tab is remembered while the window reopens itself after each save.
 let teamWindowState = { leadId: null, tab: "team" };
-const TEAM_WINDOW_TABS = [["team", "Team"], ["details", "Event details"], ["travel", "Travel"], ["money", "Expenses"]];
+const TEAM_WINDOW_TABS = [["details", "Overview"], ["team", "Team"], ["travel", "Travel"], ["money", "Money"], ["files", "Messages"]];
+
+const isBookedEvent = (l) => l.stage === "Confirmed" || l.stage === "Completed";
+
+// The one way into a booked event: everything about it in one window, in tabs. A lead that isn't
+// booked yet — or a login that can't plan teams — gets the lead's Details window instead.
+function openEvent(leadId, tab = "details") {
+  const lead = LEADS.find((l) => l.id === leadId);
+  if (!lead) return;
+  if ((lead.stage === "Confirmed" || lead.stage === "Completed") && canAssignTeam()) {
+    teamWindowState = { leadId, tab };
+    return openAssignTeamModal(leadId);
+  }
+  if (hasLeadsAccess()) return openLeadDetailModal(lead);
+  if (canAssignTeam()) return openAssignTeamModal(leadId);
+}
+
+// Combos carry their money on the primary event.
+function eventMoney(lead) {
+  const primary = lead.combo_group_id && !lead.is_combo_primary ? (LEADS.find((l) => l.combo_group_id === lead.combo_group_id && l.is_combo_primary) || lead) : lead;
+  const total = (primary.final_amount || primary.quote_amount || 0) + (primary.reimbursement_due || 0);
+  const received = primary.received || 0;
+  return { primary, total, received, balance: total - received };
+}
+
+function sendBalanceReminder(lead, balance) {
+  const due = lead.balance_due_date || lead.date;
+  const overdue = due && due < new Date().toISOString().slice(0, 10);
+  const text = `Hi ${leadFirstName(lead) || "there"}, hope you're doing well! 🙏 A gentle reminder that the balance of ${inr(balance)} for your ${occasionPhrase(lead)} on ${fmtDate(lead.date)} ${overdue ? `was due on ${fmtDate(due)}` : `is due by ${fmtDate(due)}`}. Please let us know once it's done. Thank you!\n\nTogether, Out Loud`;
+  goWhatsApp(`https://wa.me/${(lead.whatsapp_number || lead.phone).replace(/\D/g, "")}?text=${encodeURIComponent(text)}`);
+}
+
+// The Overview, Money and Messages & files tabs of the Event window. What a login can't use is
+// left out; money only appears when the server sent money fields for this login.
+function eventHubHtml(lead) {
+  const phone = lead.whatsapp_number || lead.phone || "";
+  const facts = [packageName(lead.event_type), occasionLabel(lead), lead.guest_range ? `${lead.guest_range} guests` : "", lead.pcs ? `${lead.pcs} pcs` : ""].filter(Boolean).join(" · ");
+  const overview = `
+    <div class="card ev-card" data-tab="details">
+      <div class="ev-head"><b>${escH(lead.name)}</b><span class="tag" style="color:${STAGE_COLOR[lead.stage]};">${lead.stage}</span></div>
+      <div class="muted small">${escH(facts)}</div>
+      ${lead.phone || lead.email ? `<div class="ev-actions">
+        ${lead.phone ? `<a class="btn-ghost" href="tel:${lead.phone.replace(/\s+/g, "")}">📞 ${escH(lead.phone)}</a>` : ""}
+        ${phone ? `<button class="btn-ghost" type="button" data-ev="wa">💬 WhatsApp</button>` : ""}
+        ${lead.email ? `<a class="btn-ghost" href="mailto:${escH(lead.email)}">✉️ Email</a>` : ""}
+      </div>` : ""}
+      ${lead.notes ? `<div class="ev-note">📌 ${escH(lead.notes)}</div>` : ""}
+      ${hasLeadsAccess() ? `<div class="ev-actions">
+        <button class="btn-ghost" type="button" data-ev="detail">🕘 Full details &amp; history</button>
+        ${lead.stage !== "Completed" ? `<button class="btn-ghost" type="button" data-ev="edit">✎ Edit event</button>` : ""}
+      </div>` : ""}
+    </div>`;
+  let money = "";
+  if (hasAccountsAccess() && "final_amount" in lead) {
+    const m = eventMoney(lead);
+    const due = lead.balance_due_date || lead.date;
+    money = `
+      <div class="card ev-card" data-tab="money">
+        <div class="section-label" style="margin-top:0;">Client payments</div>
+        <div class="ev-money">
+          <div><span class="muted small">Total</span><b class="mono">${inr(m.total)}</b></div>
+          <div><span class="muted small">Received</span><b class="mono" style="color:var(--success);">${inr(m.received)}</b></div>
+          <div><span class="muted small">Balance</span><b class="mono" style="color:${m.balance > 0 ? "var(--danger)" : "var(--success)"};">${inr(m.balance)}</b></div>
+        </div>
+        ${m.balance > 0 && lead.stage === "Confirmed" && due ? `<div class="muted small">Balance due by ${fmtDate(due)}</div>` : ""}
+        <div class="ev-actions">
+          <button class="btn-primary" type="button" data-ev="payments">💰 Payments &amp; receipts</button>
+          ${m.balance > 0 && phone ? `<button class="btn-ghost" type="button" data-ev="remind">💬 Remind client</button>` : ""}
+        </div>
+      </div>`;
+  }
+  const booked = lead.stage === "Confirmed" || lead.stage === "Completed";
+  const fileButtons = [
+    booked && hasLeadsAccess() && hasAccountsAccess() ? `<button class="btn-ghost" type="button" data-ev="confirmation">✅ Confirmation message</button>` : "",
+    hasLeadsAccess() ? `<button class="btn-ghost" type="button" data-ev="rider">🎛 Tech rider</button>` : "",
+    hasLeadsAccess() ? `<button class="btn-ghost" type="button" data-ev="documents">📄 Documents</button>` : "",
+    `<button class="btn-ghost" type="button" data-ev="chat">💬 Event chat</button>`,
+    lead.stage === "Completed" && hasLeadsAccess() && phone ? `<button class="btn-ghost" type="button" data-ev="thanks">${lead.thanked_at ? "🙏 Thanked ✓ — send again" : "🙏 Thank client"}</button>` : "",
+    lead.stage === "Completed" && CURRENT_USER?.accessLevel === "admin" && hasAccountsAccess() ? `<button class="btn-ghost" type="button" data-ev="wrapup">${lead.closed_at ? "✅ Closed" : "✅ Wrap-up"}</button>` : "",
+  ].filter(Boolean);
+  const files = `
+    <div class="card ev-card" data-tab="files">
+      <div class="section-label" style="margin-top:0;">Messages &amp; files</div>
+      <div class="ev-grid">${fileButtons.join("")}</div>
+    </div>`;
+  return overview + money + files;
+}
+
+// Each button opens its own window; closing it comes back here on the same tab.
+function wireEventHub(root, lead) {
+  const back = () => whenModalCloses(() => { if (document.getElementById("modalRoot").children.length === 0) openAssignTeamModal(lead.id); });
+  const open = (fn) => () => { root.innerHTML = ""; back(); fn(); };
+  const on = (key, fn) => root.querySelector(`[data-ev="${key}"]`)?.addEventListener("click", fn);
+  const phone = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
+  on("wa", () => goWhatsApp(`https://wa.me/${phone}?text=`));
+  on("detail", open(() => openLeadDetailModal(lead)));
+  on("edit", open(() => openEditLeadModal(lead.id)));
+  on("payments", open(() => openLeadPaymentsModal(lead.id)));
+  on("remind", () => sendBalanceReminder(lead, eventMoney(lead).balance));
+  on("confirmation", open(() => openConfirmationMessageModal(lead)));
+  on("rider", open(() => openTechRiderModal(lead)));
+  on("documents", open(() => openLeadDocumentsModal(lead)));
+  on("chat", open(() => openEventChat(lead.id, lead.name)));
+  on("thanks", open(() => openThankYouMessageModal(lead)));
+  on("wrapup", () => { root.innerHTML = ""; openWrapUpModal(lead.id); });
+}
 
 function tabTeamWindow(root, leadId, justAdded) {
   const body = root.querySelector(".modal-body");
@@ -6013,7 +6120,8 @@ function tabTeamWindow(root, leadId, justAdded) {
   [...body.children].forEach((el) => {
     const text = el.textContent || "";
     let tab;
-    if (el.querySelector("#openTravelPlanFromTeamBtn, #assignOpenTravelBtn")) tab = "travel";
+    if (el.dataset.tab) tab = el.dataset.tab;
+    else if (el.querySelector("#openTravelPlanFromTeamBtn, #assignOpenTravelBtn")) tab = "travel";
     else if (el.classList.contains("dash-stats")) tab = "money";
     else if (el.id === "venueInput" || (el.tagName === "LABEL" && /^\s*Venue\s*$/.test(text))) tab = "details";
     else {
@@ -6027,7 +6135,7 @@ function tabTeamWindow(root, leadId, justAdded) {
   if (justAdded) teamWindowState.tab = "team";
   const present = TEAM_WINDOW_TABS.filter(([id]) => body.querySelector(`[data-tab="${id}"]`));
   if (!present.some(([id]) => id === teamWindowState.tab)) teamWindowState.tab = present[0][0];
-  const bar = el(`<div class="tw-tabs" role="tablist">${present.map(([id, label]) => `<button type="button" role="tab" class="tw-tab" data-tw="${id}">${label}</button>`).join("")}</div>`);
+  const bar = el(`<div class="tw-tabs" role="tablist">${present.map(([id, label]) => `<button type="button" role="tab" class="tw-tab" data-tw="${id}">${id === "money" && !hasAccountsAccess() ? "Expenses" : label}</button>`).join("")}</div>`);
   body.prepend(bar);
   const show = (id) => {
     teamWindowState.tab = id;
@@ -6158,8 +6266,9 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card" style="width:680px; max-width:96vw;">
-        <div class="modal-head"><h3>Team & Expenses — ${lead.name}${lead.occasion ? ` <span class="muted" style="font-weight:400; font-size:14px;">— ${occasionLabel(lead)}</span>` : ""}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-head"><h3>${escH(lead.name)}${lead.occasion ? ` <span class="muted" style="font-weight:400; font-size:14px;">— ${occasionLabel(lead)}</span>` : ""}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
+          ${eventHubHtml(lead)}
           <div class="card" style="margin-bottom:12px; padding:10px 14px;">
             <div style="font-weight:700; margin-bottom:6px;">Event details</div>
             ${[
@@ -6392,6 +6501,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   root.querySelector("#cancelModal").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
   tabTeamWindow(root, leadId, !!autoCheckTeamId);
+  wireEventHub(root, lead);
   root.querySelector("#openChatBtn").addEventListener("click", () => openEventChat(leadId, lead.name));
   // --- On-site contacts: call / WhatsApp / send rider ---
   const waNumber = (raw) => {
@@ -9840,6 +9950,8 @@ async function renderDashboard(main) {
     XLSX.writeFile(wb, `TOL-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
   });
   const openEventForCurrentUser = (leadId, fallbackStage) => {
+    const booked = LEADS.find((l) => l.id === leadId);
+    if (booked && isBookedEvent(booked) && canAssignTeam()) return openEvent(leadId);
     if (hasLeadsAccess()) {
       const lead = LEADS.find((l) => l.id === leadId);
       goToLeads(lead ? lead.stage : (fallbackStage || "all"));
@@ -9897,93 +10009,26 @@ async function renderDashboard(main) {
 
 // ---------- Tasks ----------
 async function renderTasks(main) {
-  main.innerHTML = `<div class="view-head"><div><h2>Tasks &amp; Chats</h2></div></div><p class="muted">Loading…</p>`;
+  main.innerHTML = `<div class="view-head"><div><h2>Chats</h2></div></div><p class="muted">Loading…</p>`;
   await refreshLeads();
   const chatEvents = LEADS.filter((l) => l.stage === "Confirmed").sort((a, b) => new Date(a.date) - new Date(b.date));
   main.innerHTML = `
-    <div class="view-head"><div><h2>Tasks &amp; Chats</h2><p class="muted">The checklist behind each booking, and the team chat for each event.</p></div></div>
-
-    <div class="section-label">Team chats</div>
+    <div class="view-head"><div><h2>Chats</h2><p class="muted">The team chat for each confirmed event. Each event's chat also opens from its Event window.</p></div></div>
     <div class="card" style="margin-bottom:20px;">
       ${chatEvents.length === 0 ? `<p class="muted small">No confirmed events yet — chats appear here once an event is Confirmed.</p>` : chatEvents.map((l) => `
-        <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center;">
+        <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
           <div>
-            <div>${l.name}</div>
-            <div class="muted small">${packageName(l.event_type)} · ${fmtDate(l.date)} · ${l.city || ""}</div>
+            <div>${escH(l.name)}</div>
+            <div class="muted small">${packageName(l.event_type)} · ${fmtDate(l.date)} · ${escH(l.city || "")}</div>
           </div>
-          <button class="btn-ghost open-event-chat-btn" data-lead-id="${l.id}" data-lead-name="${l.name}">💬 Open chat</button>
+          <button class="btn-ghost open-event-chat-btn" data-lead-id="${l.id}">💬 Open chat</button>
         </div>
       `).join("")}
     </div>
-
-    <div class="section-label">Tasks</div>
-    <div class="card" style="margin-bottom:16px;">
-      <div class="section-label">New task</div>
-      <div class="task-form">
-        <input type="text" id="taskTitle" placeholder="e.g. Confirm venue booking" />
-        <select id="taskLead"><option value="">No specific lead</option>${LEADS.slice().sort((a, b) => new Date(a.date) - new Date(b.date)).map((l) => `<option value="${l.id}">${l.name} — ${fmtDate(l.date)}${l.city ? `, ${l.city}` : ""}</option>`).join("")}</select>
-        <select id="taskAssignee"><option value="">Unassigned</option>${TEAM.map((m) => `<option value="${m.id}">${m.name}</option>`).join("")}</select>
-        <input type="date" id="taskDue" />
-        <button class="btn-primary" id="addTaskBtn">Add</button>
-      </div>
-    </div>
-    <div class="table">
-      <div id="taskRows"></div>
-    </div>
   `;
-
   main.querySelectorAll(".open-event-chat-btn").forEach((btn) => {
-    btn.addEventListener("click", () => openEventChat(btn.dataset.leadId, btn.dataset.leadName));
-  });
-
-  const rows = main.querySelector("#taskRows");
-  const today = new Date().toISOString().slice(0, 10);
-  if (TASKS.length === 0) rows.innerHTML = `<div class="board-empty">No tasks yet — add one above</div>`;
-
-  TASKS.forEach((t) => {
-    const lead = LEADS.find((l) => l.id === t.lead_id);
-    const assignee = TEAM.find((m) => m.id === t.assigned_to);
-    const overdue = !t.done && t.due_date && t.due_date < today;
-    rows.appendChild(el(`
-      <div class="task-row${t.done ? " done" : ""}">
-        <input type="checkbox" data-task-id="${t.id}" ${t.done ? "checked" : ""} />
-        <div class="task-title">${t.title}${lead ? ` <span class="muted">— ${lead.name}</span>` : ""}</div>
-        <div class="task-meta${overdue ? " task-overdue" : ""}">${t.due_date ? fmtDate(t.due_date) : "No due date"}</div>
-        <div class="task-meta">${assignee ? assignee.name : "Unassigned"}</div>
-        <button class="icon-btn" data-delete-task="${t.id}">${ICON_X}</button>
-      </div>
-    `));
-  });
-
-  rows.querySelectorAll("[data-task-id]").forEach((cb) => {
-    cb.addEventListener("change", async () => {
-      await api(`/api/tasks/${cb.dataset.taskId}`, { method: "PATCH", body: JSON.stringify({ done: cb.checked }) });
-      await refreshTasks();
-      renderMain();
-    });
-  });
-  rows.querySelectorAll("[data-delete-task]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      await api(`/api/tasks/${btn.dataset.deleteTask}`, { method: "DELETE" });
-      await refreshTasks();
-      renderMain();
-    });
-  });
-
-  main.querySelector("#addTaskBtn").addEventListener("click", async () => {
-    const title = main.querySelector("#taskTitle").value;
-    if (!title) return;
-    await api("/api/tasks", {
-      method: "POST",
-      body: JSON.stringify({
-        title,
-        leadId: main.querySelector("#taskLead").value || null,
-        assignedTo: main.querySelector("#taskAssignee").value || null,
-        dueDate: main.querySelector("#taskDue").value || null,
-      }),
-    });
-    await refreshTasks();
-    renderMain();
+    const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
+    btn.addEventListener("click", () => openEventChat(lead.id, lead.name));
   });
 }
 
