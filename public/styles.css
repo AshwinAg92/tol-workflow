@@ -150,7 +150,7 @@ nav { display:flex; flex-direction:column; gap:2px; }
 .email-status.unsent { background:var(--warning-bg); color:#8A5A20; }
 
 .modal-overlay { position:fixed; inset:0; background:rgba(30,22,15,0.5); display:flex; align-items:center; justify-content:center; z-index:60; }
-.modal-overlay, .modal-card { font-family:'Inter',sans-serif; }
+.modal-overlay, .modal-card, .float-cal, .float-cal-launcher, .update-banner { font-family:'Inter',sans-serif; }
 .modal-card button, .modal-card input, .modal-card select, .modal-card textarea { font-family:inherit; }
 .modal-card { background:#fff; border-radius:14px; width:440px; max-width:92vw; max-height:88vh; overflow-y:auto; box-sizing:border-box; box-shadow:var(--shadow-md); }
 .modal-head { display:flex; justify-content:space-between; align-items:center; padding:16px 18px; border-bottom:1px solid var(--hairline); }
@@ -279,6 +279,23 @@ select.stage-select { width:auto; padding:4px 6px; font-size:12px; border-radius
 .wu-mark { width:24px; height:24px; border-radius:50%; border:2px solid var(--hairline); display:inline-flex; align-items:center; justify-content:center; font-weight:700; color:#fff; flex-shrink:0; }
 .wu-done .wu-mark { background:var(--success); border-color:var(--success); }
 .wu-check .btn-ghost, .wu-check .btn-primary { padding:8px 12px; font-size:13px; }
+.float-cal-launcher { position:fixed; left:16px; bottom:max(16px, env(safe-area-inset-bottom)); z-index:65; width:48px; height:48px; border-radius:50%; border:1px solid var(--hairline); background:#fff; box-shadow:var(--shadow-md); font-size:22px; cursor:pointer; }
+.float-cal-launcher.on { background:var(--terracotta); border-color:var(--terracotta); }
+.float-cal { position:fixed; z-index:70; display:flex; flex-direction:column; background:#fff; border:1px solid var(--hairline); border-radius:14px; box-shadow:0 12px 40px rgba(43,36,32,0.28); overflow:hidden; }
+.float-cal[hidden] { display:none; }
+.float-cal-bar { display:flex; align-items:center; gap:6px; padding:6px 6px 6px 10px; background:var(--paper); border-bottom:1px solid var(--hairline); cursor:move; touch-action:none; user-select:none; -webkit-user-select:none; }
+.float-cal-grip { color:var(--muted); font-size:16px; }
+.float-cal-views { display:flex; gap:4px; flex:1; min-width:0; }
+.float-cal-views button { border:1px solid var(--hairline); background:#fff; border-radius:16px; padding:5px 12px; font:inherit; font-size:12.5px; cursor:pointer; color:var(--muted); }
+.float-cal-views button.on { background:var(--terracotta); border-color:var(--terracotta); color:#fff; }
+.float-cal-btn { border:none; background:none; width:34px; height:34px; border-radius:8px; font-size:16px; cursor:pointer; color:var(--muted); }
+.float-cal-btn:hover { background:#F5EEE1; color:var(--ink); }
+.float-cal-frame { flex:1; width:100%; border:0; background:var(--cream); }
+.float-cal.dragging .float-cal-frame { pointer-events:none; }
+.float-cal-resize { position:absolute; right:0; bottom:0; width:26px; height:26px; cursor:nwse-resize; touch-action:none; background:linear-gradient(135deg, transparent 55%, var(--muted) 55%, var(--muted) 62%, transparent 62%, transparent 72%, var(--muted) 72%, var(--muted) 79%, transparent 79%); }
+.embed-mode .sidebar, .embed-mode .mobile-topbar, .embed-mode .sidebar-overlay { display:none !important; }
+.embed-mode .tol-app { display:block; }
+.embed-mode .main { padding:10px !important; margin:0 !important; height:100vh; box-sizing:border-box; }
 .update-banner { position:fixed; left:50%; bottom:max(16px, env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:100000; display:flex; align-items:center; gap:12px; background:#2B2420; color:#fff; padding:10px 12px 10px 16px; border-radius:14px; box-shadow:0 8px 28px rgba(0,0,0,0.25); font-size:14px; width:max-content; max-width:calc(100vw - 32px); }
 .update-banner button { background:var(--marigold); color:#2B2420; border:none; border-radius:10px; padding:8px 14px; font:inherit; font-weight:700; cursor:pointer; flex-shrink:0; }
 .ev-card { margin-bottom:12px; padding:12px 14px; }

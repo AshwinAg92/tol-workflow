@@ -6,7 +6,15 @@ let LEADS = [];
 let BLOCKED_DATES = [];
 let TEAM = [];
 let TASKS = [];
-let currentTab = "today";
+// Set when this copy of the CRM is running inside the floating calendar window (?embed=calendar
+// or ?embed=travelcal): it shows only that calendar, and opening an event hands it to the main window.
+const EMBED_VIEW = (() => {
+  try {
+    const v = new URLSearchParams(window.location.search).get("embed");
+    return window.parent !== window && (v === "calendar" || v === "travelcal") ? v : null;
+  } catch { return null; }
+})();
+let currentTab = EMBED_VIEW || "today";
 let leadsFilter = "all";
 let leadsStageFilter = "all";
 let leadsSearch = "";
@@ -3672,7 +3680,7 @@ function wireCalendarGrid(container) {
       pill.addEventListener("click", () => {
         const lead = LEADS.find((l) => l.id === pill.dataset.leadId);
         if (!lead) return;
-        if (isBookedEvent(lead) && canAssignTeam()) return openEvent(lead.id);
+        if (EMBED_VIEW || (isBookedEvent(lead) && canAssignTeam())) return openEvent(lead.id);
         if (hasLeadsAccess()) {
           leadsSearch = lead.name; leadsOnlyId = lead.id;
           leadsStageFilter = "all";
@@ -3838,7 +3846,7 @@ async function renderCalendar(main) {
       const allot = row.querySelector(".allot-btn");
       if (allot) allot.addEventListener("click", (e) => { e.stopPropagation(); openAssignTeamModal(l.id); });
       row.addEventListener("click", () => {
-        if (isBookedEvent(l) && canAssignTeam()) return openEvent(l.id);
+        if (EMBED_VIEW || (isBookedEvent(l) && canAssignTeam())) return openEvent(l.id);
         if (hasLeadsAccess()) {
           leadsSearch = l.name; leadsOnlyId = l.id;
           leadsStageFilter = "all";
@@ -6013,6 +6021,7 @@ const isBookedEvent = (l) => l.stage === "Confirmed" || l.stage === "Completed";
 // The one way into a booked event: everything about it in one window, in tabs. A lead that isn't
 // booked yet — or a login that can't plan teams — gets the lead's Details window instead.
 function openEvent(leadId, tab = "details") {
+  if (EMBED_VIEW) return window.parent.openEventFromPanel(leadId, tab);
   const lead = LEADS.find((l) => l.id === leadId);
   if (!lead) return;
   if ((lead.stage === "Confirmed" || lead.stage === "Completed") && canAssignTeam()) {
@@ -14505,14 +14514,127 @@ if ("serviceWorker" in navigator) {
     return;
   }
   clearTimeout(slowLoadTimer);
+  if (EMBED_VIEW) {
+    document.body.classList.add("embed-mode");
+    if (currentTab === "travelcal" && !canAssignTeam()) currentTab = "calendar";
+    renderMain();
+    return;
+  }
   renderNav();
   renderMain();
   initMobileNav();
   initLogoNav();
   initGlobalSearch();
   initBackNavigation();
+  initFloatingCalendar();
   if (CURRENT_USER.accessLevel === "admin") startClientAlerts();
 })();
+
+// ---------- Floating calendar ----------
+// A small window with the Calendar or Travel Calendar that stays on top of any screen for
+// reference. Drag it by its title bar, resize it from the corner; where it was, how big, and
+// which calendar are remembered on this device. Inside, it's the real calendar page, so an
+// event tapped there opens in the main window.
+const FLOAT_CAL_KEY = "tol.floatingCalendar";
+
+function initFloatingCalendar() {
+  const perms = CURRENT_USER?.accessLevel === "staff" ? CURRENT_USER.permissions : null;
+  const views = [];
+  if (CURRENT_USER?.accessLevel === "admin" || !Array.isArray(perms) || perms.includes("calendar")) views.push(["calendar", "Calendar"]);
+  if (canAssignTeam()) views.push(["travelcal", "Travel"]);
+  if (!views.length) return;
+
+  const phone = () => window.innerWidth < 600;
+  let state;
+  try { state = JSON.parse(localStorage.getItem(FLOAT_CAL_KEY) || "null"); } catch { state = null; }
+  if (!state || typeof state !== "object") {
+    const w = phone() ? window.innerWidth - 24 : 440, h = phone() ? Math.round(window.innerHeight * 0.6) : 520;
+    state = { open: false, view: views[0][0], w, h, x: window.innerWidth - w - 12, y: phone() ? 70 : 80 };
+  }
+  if (!views.some(([id]) => id === state.view)) state.view = views[0][0];
+  const save = () => { try { localStorage.setItem(FLOAT_CAL_KEY, JSON.stringify(state)); } catch {} };
+
+  const launcher = el(`<button type="button" class="float-cal-launcher" title="Floating calendar" aria-label="Open the floating calendar">📅</button>`);
+  const panel = el(`
+    <div class="float-cal" role="dialog" aria-label="Floating calendar" hidden>
+      <div class="float-cal-bar">
+        <span class="float-cal-grip" aria-hidden="true">⠿</span>
+        <div class="float-cal-views">${views.map(([id, label]) => `<button type="button" data-view="${id}">${label}</button>`).join("")}</div>
+        <button type="button" class="float-cal-btn" data-act="reload" title="Refresh">↻</button>
+        <button type="button" class="float-cal-btn" data-act="close" title="Close">✕</button>
+      </div>
+      <iframe class="float-cal-frame" title="Calendar"></iframe>
+      <div class="float-cal-resize" title="Drag to resize" aria-hidden="true"></div>
+    </div>`);
+  document.body.append(launcher, panel);
+  const frame = panel.querySelector("iframe");
+
+  // Keep the window on screen whatever the screen size does.
+  const clamp = () => {
+    const minW = 260, minH = 220;
+    state.w = Math.max(minW, Math.min(state.w, window.innerWidth - 8));
+    state.h = Math.max(minH, Math.min(state.h, window.innerHeight - 8));
+    state.x = Math.max(4, Math.min(state.x, window.innerWidth - state.w - 4));
+    state.y = Math.max(4, Math.min(state.y, window.innerHeight - state.h - 4));
+  };
+  const place = () => {
+    clamp();
+    Object.assign(panel.style, { left: `${state.x}px`, top: `${state.y}px`, width: `${state.w}px`, height: `${state.h}px` });
+  };
+  const loadView = () => {
+    panel.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("on", b.dataset.view === state.view));
+    frame.src = `/login?embed=${state.view}`;
+  };
+  const show = (open) => {
+    state.open = open;
+    panel.hidden = !open;
+    launcher.classList.toggle("on", open);
+    if (open) { place(); if (!frame.getAttribute("src")) loadView(); }
+    save();
+  };
+
+  launcher.addEventListener("click", () => show(panel.hidden));
+  panel.querySelector('[data-act="close"]').addEventListener("click", () => show(false));
+  panel.querySelector('[data-act="reload"]').addEventListener("click", () => loadView());
+  panel.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => {
+    if (state.view === b.dataset.view) return;
+    state.view = b.dataset.view;
+    save();
+    loadView();
+  }));
+
+  // One pointer handler for both moving (title bar) and resizing (corner). The calendar inside is
+  // a separate page, so it's made deaf to the pointer while dragging or it would swallow the moves.
+  const drag = (handle, onMove) => handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || e.target.closest("button")) return;
+    e.preventDefault();
+    const start = { px: e.clientX, py: e.clientY, x: state.x, y: state.y, w: state.w, h: state.h };
+    handle.setPointerCapture(e.pointerId);
+    panel.classList.add("dragging");
+    const move = (ev) => { onMove(ev.clientX - start.px, ev.clientY - start.py, start); place(); };
+    const up = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("pointercancel", up);
+      panel.classList.remove("dragging");
+      save();
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("pointercancel", up);
+  });
+  drag(panel.querySelector(".float-cal-bar"), (dx, dy, s) => { state.x = s.x + dx; state.y = s.y + dy; });
+  drag(panel.querySelector(".float-cal-resize"), (dx, dy, s) => { state.w = s.w + dx; state.h = s.h + dy; });
+  window.addEventListener("resize", () => { if (!panel.hidden) place(); });
+
+  if (state.open) show(true);
+}
+
+// Called from inside the floating calendar: open the tapped event here, in the main window.
+window.openEventFromPanel = async (leadId, tab) => {
+  if (!LEADS.some((l) => l.id === leadId)) await refreshLeads();
+  openEvent(leadId, tab);
+};
 
 // ---- Client activity alerts: toast + browser-tab badge anywhere in the CRM, dashboard refresh when it is open ----
 function startClientAlerts() {
@@ -14584,6 +14706,7 @@ function startClientAlerts() {
 // After an upgrade, an already-open CRM offers a one-tap reload instead of relying on people to
 // refresh. Checked every few minutes and whenever the app comes back to the foreground.
 (function watchForNewVersion() {
+  if (EMBED_VIEW) return;
   let current = null;
   let shown = false;
   const showBanner = () => {
