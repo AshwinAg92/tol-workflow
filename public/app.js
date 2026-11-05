@@ -2296,6 +2296,8 @@ async function renderLeadsLog(main, skipRefresh) {
       if (leadsOnlyId) return l.id === leadsOnlyId;
       if (leadsStageFilter !== "all") return l.stage === leadsStageFilter;
       if (l.stage === "Completed") return false;
+      // Leads that went nowhere bury the open ones; a name search still finds them.
+      if (!leadsSearch && (l.stage === "Not Interested" || l.stage === "Cancelled")) return false;
       if (l.date && l.date < todayStr && l.stage !== "Tentative") return false;
       return true;
     })
@@ -2353,7 +2355,7 @@ async function renderLeadsLog(main, skipRefresh) {
           </div>
         </div>
         <select id="leadsStageSelect">
-          <option value="all">All stages</option>
+          <option value="all">All open leads</option>
           ${CONFIG.stages.map((s) => `<option value="${s}" ${leadsStageFilter === s ? "selected" : ""}>${s}</option>`).join("")}
         </select>
         <select id="leadsSortSelect">
@@ -2654,6 +2656,7 @@ async function renderLeadsLog(main, skipRefresh) {
             ${(isConfirmedOrDone || l.stage === "Tentative") && hasLeadsAccess() ? `<button class="btn-ghost tech-rider-btn" data-lead-id="${l.id}">🎛 Tech rider</button>` : ""}
             ${isConfirmedOrDone && hasLeadsAccess() ? `<button class="btn-ghost lead-documents-btn" data-lead-id="${l.id}">📄 Documents</button>` : ""}
             ${l.stage === "Cancelled" && hasLeadsAccess() && (l.phone || l.email) ? `<button class="btn-ghost cancel-msg-btn" data-lead-id="${l.id}">${l.cancel_msg_sent_at ? "📩 Cancellation sent ✓" : "📩 Cancellation msg"}</button>` : ""}
+            ${l.stage === "Completed" && CURRENT_USER?.accessLevel === "admin" && hasAccountsAccess() ? `<button class="btn-ghost wrapup-btn" data-lead-id="${l.id}">${l.closed_at ? "✅ Closed" : "✅ Wrap-up"}</button>` : ""}
             ${l.stage === "Completed" && hasLeadsAccess() && l.phone ? `<button class="btn-ghost thank-you-btn" data-lead-id="${l.id}">${l.thanked_at ? "🙏 Thanked ✓" : "🙏 Thank client"}</button>` : ""}
             ${hasLeadsAccess() && l.stage !== "Completed" ? `<button class="btn-ghost edit-lead-btn" data-lead-id="${l.id}">✎ Edit</button>` : ""}
             ${CURRENT_USER?.accessLevel === "admin" && l.stage !== "Completed" ? `<button class="btn-ghost delete-lead-btn" data-lead-id="${l.id}" data-lead-name="${l.name}" style="color:#A6432B;">🗑 Delete</button>` : ""}
@@ -2907,6 +2910,7 @@ async function renderLeadsLog(main, skipRefresh) {
     });
   });
 
+  main.querySelectorAll(".wrapup-btn").forEach((btn) => btn.addEventListener("click", () => openWrapUpModal(btn.dataset.leadId)));
   main.querySelectorAll(".thank-you-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const lead = LEADS.find((l) => l.id === btn.dataset.leadId);
@@ -8862,7 +8866,25 @@ function todayArtistsToPay(teamPay) {
   });
 }
 
-function todaySections(teamPay) {
+// The four close-out checks for a played event. Feedback is the client's choice, so an event can
+// be closed without it; the rest are ours to finish.
+function wrapUpChecks(w) {
+  return [
+    { key: "client", done: w.balance <= 0, label: "Client paid in full", todo: `${inr(w.balance)} still due from the client` },
+    { key: "artists", done: w.artistUnpaid <= 0, label: "Artists paid", todo: `${inr(w.artistUnpaid)} unpaid to ${w.artistsUnpaid} artist${w.artistsUnpaid === 1 ? "" : "s"}` },
+    { key: "thanks", done: !!w.thanked, label: "Client thanked", todo: "Thank-you not sent yet" },
+    { key: "feedback", done: !!w.rating, label: w.rating ? `Feedback received (${w.rating}/5)` : "Feedback received", todo: "No feedback yet" },
+  ];
+}
+
+function wrapUpRow(w) {
+  const checks = wrapUpChecks(w);
+  const done = checks.filter((c) => c.done).length;
+  const next = checks.find((c) => !c.done);
+  return { wrapup: w, title: w.name, meta: `${fmtDate(w.date)} · ${w.place}`, detail: next ? `${done}/4 · ${next.todo}` : "Ready to close", tone: next && next.key !== "feedback" ? "warn" : "ok" };
+}
+
+function todaySections(teamPay, wrapups) {
   const todayStr = new Date().toISOString().slice(0, 10);
   const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
   const upcomingWithin = (n) => LEADS
@@ -8873,6 +8895,7 @@ function todaySections(teamPay) {
   if (hasLeadsAccess()) sections.push({ id: "followups", icon: "💬", title: "Follow-ups due", clear: "Every lead has been followed up.", rows: todayFollowUps() });
   if (LEADS.some((l) => "final_amount" in l)) sections.push({ id: "payments", icon: "₹", title: "Payments to chase", clear: "No payments to chase.", rows: todayPayments(todayStr, inDays(14)) });
   if (teamPay) sections.push({ id: "artistpay", icon: "💸", title: "Artists to pay", clear: "Every artist is paid up.", rows: todayArtistsToPay(teamPay) });
+  if (wrapups) sections.push({ id: "wrapup", icon: "✅", title: "Wrap-up", hint: "played events to close", clear: "Every played event is closed.", rows: wrapups.map(wrapUpRow) });
   if (planner) sections.push({ id: "team", icon: "🎵", title: "Team not confirmed", hint: "next 60 days", clear: "Every upcoming event has its team.", rows: todayTeam(upcomingWithin(60)) });
   if (planner || hasLeadsAccess()) sections.push({ id: "details", icon: "📍", title: "Event details missing", hint: "next 30 days", clear: "Upcoming events have their details.", rows: todayDetails(upcomingWithin(30)) });
   return sections;
@@ -8880,7 +8903,7 @@ function todaySections(teamPay) {
 
 function todayRowHtml(sectionId, row) {
   if (!row.lead) {
-    return `<button class="today-row" data-today-section="${sectionId}" data-artist-id="${escH(row.artistId)}">
+    return `<button class="today-row" data-today-section="${sectionId}" ${row.wrapup ? `data-lead-id="${escH(row.wrapup.leadId)}"` : `data-artist-id="${escH(row.artistId)}"`}>
       <span class="today-row-main"><b>${escH(row.title)}</b><span class="muted small">${escH(row.meta)}</span></span>
       <span class="today-row-tag today-tone-${row.tone}">${escH(row.detail)}</span>
     </button>`;
@@ -8915,6 +8938,7 @@ function refreshTodayAfterModal() {
 
 function openTodayRow(sectionId, leadId, artistId) {
   if (sectionId === "artistpay") return openTeamPayFor(artistId);
+  if (sectionId === "wrapup") return openWrapUpModal(leadId);
   const lead = LEADS.find((l) => l.id === leadId);
   if (!lead) return;
   if (sectionId === "followups" || !canAssignTeam() && sectionId !== "payments") return jumpToLead(lead);
@@ -8925,9 +8949,13 @@ function openTodayRow(sectionId, leadId, artistId) {
 
 async function renderToday(main) {
   const canPayTeam = CURRENT_USER?.accessLevel === "admin" && hasAccountsAccess();
-  const [, teamPay] = await Promise.all([refreshLeads(), canPayTeam ? api("/api/team-pay").catch(() => null) : null]);
+  const [, teamPay, wrapups] = await Promise.all([
+    refreshLeads(),
+    canPayTeam ? api("/api/team-pay").catch(() => null) : null,
+    canPayTeam ? api("/api/wrapup").catch(() => null) : null,
+  ]);
   if (currentTab !== "today") return;
-  const sections = todaySections(teamPay);
+  const sections = todaySections(teamPay, wrapups);
   const total = sections.reduce((s, x) => s + x.rows.length, 0);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
@@ -8955,6 +8983,104 @@ async function renderToday(main) {
     main.querySelectorAll(".today-row").forEach((b) => b.addEventListener("click", () => openTodayRow(b.dataset.todaySection, b.dataset.leadId, b.dataset.artistId)));
   };
   paint();
+}
+
+// ---------- Wrap-up ----------
+// Closing out a played event: the client has paid, artists are paid, the client's been thanked,
+// and feedback is in (or at least asked for). Each step opens the screen that does it, then
+// comes back here.
+function whenModalCloses(callback) {
+  const root = document.getElementById("modalRoot");
+  new MutationObserver((_, watcher) => {
+    if (root.children.length) return;
+    watcher.disconnect();
+    callback();
+  }).observe(root, { childList: true });
+}
+
+async function openWrapUpModal(leadId) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `<div class="modal-overlay"><div class="modal-card"><div class="modal-body"><p class="muted">Loading…</p></div></div></div>`;
+  const [items] = await Promise.all([api("/api/wrapup"), refreshLeads()]);
+  const lead = LEADS.find((l) => l.id === leadId);
+  const w = items.find((x) => x.leadIds.includes(leadId));
+  const close = () => { root.innerHTML = ""; renderMain(); };
+  if (!w) {
+    const closedAt = lead && lead.closed_at;
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay"><div class="modal-card">
+        <div class="modal-head"><h3>Wrap-up — ${escH(lead ? lead.name : "")}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body"><p>${closedAt ? `✅ Closed on ${fmtDate(closedAt.slice(0, 10))}.` : "This event was played more than six months ago, so it isn't on the wrap-up list."}</p></div>
+        <div class="modal-foot">${closedAt ? `<button class="btn-ghost" id="wuReopen">Reopen wrap-up</button>` : `<button class="btn-ghost" id="wuCloseOld">Close it</button>`}<button class="btn-primary" id="wuDone">Done</button></div>
+      </div></div>`;
+    root.querySelector("#closeModal").addEventListener("click", close);
+    root.querySelector("#wuDone").addEventListener("click", close);
+    root.querySelector("#wuReopen")?.addEventListener("click", async () => {
+      try { await api(`/api/leads/${leadId}/close`, { method: "DELETE" }); openWrapUpModal(leadId); } catch (err) { alert(err.message); }
+    });
+    root.querySelector("#wuCloseOld")?.addEventListener("click", async () => {
+      try { await api(`/api/leads/${leadId}/close`, { method: "POST" }); close(); } catch (err) { alert(err.message); }
+    });
+    return;
+  }
+  const checks = wrapUpChecks(w);
+  const required = checks.filter((c) => c.key !== "feedback");
+  const ready = required.every((c) => c.done);
+  const actionFor = (c) => {
+    if (c.done) return "";
+    if (c.key === "client") return `<button class="btn-ghost" data-wu="client">Record payment</button>`;
+    if (c.key === "artists") return `<button class="btn-ghost" data-wu="artists">Pay artists</button>`;
+    if (c.key === "thanks") return w.phone ? `<button class="btn-primary" data-wu="thanks">Send thank-you</button>` : `<span class="muted small">No phone on file</span>`;
+    if (c.key === "feedback") return w.thanked && w.phone ? `<button class="btn-ghost" data-wu="nudge">Send a gentle reminder</button>` : `<span class="muted small">Asked for in the thank-you</span>`;
+    return "";
+  };
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay"><div class="modal-card" style="width:540px; max-width:96vw;">
+      <div class="modal-head"><h3>Wrap-up — ${escH(w.name)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+      <div class="modal-body">
+        <p class="muted small" style="margin-top:0;">${escH(`${fmtDate(w.date)} · ${w.place} · ${w.occasion}`)}</p>
+        ${checks.map((c) => `
+          <div class="wu-check${c.done ? " wu-done" : ""}">
+            <span class="wu-mark" aria-hidden="true">${c.done ? "✓" : ""}</span>
+            <span class="today-row-main"><b>${escH(c.label)}</b>${c.done ? (c.key === "thanks" && w.thankedAt ? `<span class="muted small">Sent ${fmtDate(w.thankedAt.slice(0, 10))}</span>` : "") : `<span class="muted small">${escH(c.todo)}</span>`}</span>
+            ${actionFor(c)}
+          </div>`).join("")}
+        <p class="muted small" style="margin:12px 0 0;">${ready ? "Everything that's ours to do is done. Feedback is up to the client, so you can close the event now." : "Close it once the client and artists are paid and the client has been thanked."}</p>
+      </div>
+      <div class="modal-foot">
+        <button class="btn-ghost" id="wuLater">Later</button>
+        <button class="${ready ? "btn-primary" : "btn-ghost"}" id="wuClose">${ready ? "Close event" : "Close anyway"}</button>
+      </div>
+    </div></div>`;
+  const reopenAfter = () => whenModalCloses(() => openWrapUpModal(leadId));
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#wuLater").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector('[data-wu="client"]')?.addEventListener("click", () => { root.innerHTML = ""; openLeadPaymentsModal(w.leadId); reopenAfter(); });
+  root.querySelector('[data-wu="artists"]')?.addEventListener("click", () => { root.innerHTML = ""; openTeamPayFor(null); });
+  root.querySelector('[data-wu="thanks"]')?.addEventListener("click", () => {
+    root.innerHTML = "";
+    const l = LEADS.find((x) => x.id === w.leadId);
+    if (!l) return;
+    openThankYouMessageModal(l).then(reopenAfter);
+  });
+  root.querySelector('[data-wu="nudge"]')?.addEventListener("click", async (e) => {
+    e.currentTarget.disabled = true;
+    try {
+      const link = await feedbackLinkFor({ id: w.leadId });
+      const text = `Hi ${w.firstName || "there"}, hope you're doing well! 🙏 If you have 30 seconds, we'd love to hear how your ${w.occasion} felt for you — just tap a face here: ${link}\n\nPrakriti, Ashwin & the Together, Out Loud band`;
+      goWhatsApp(`https://wa.me/${w.phone.replace(/\D/g, "")}?text=${encodeURIComponent(text)}`);
+    } catch (err) { alert(err.message); }
+    e.currentTarget.disabled = false;
+  });
+  root.querySelector("#wuClose").addEventListener("click", async (e) => {
+    if (!ready && !confirm(`Close ${w.name} with ${required.filter((c) => !c.done).map((c) => c.todo.toLowerCase()).join(" and ")}?`)) return;
+    e.currentTarget.disabled = true;
+    try {
+      await api(`/api/leads/${w.leadId}/close`, { method: "POST" });
+      close();
+    } catch (err) { e.currentTarget.disabled = false; alert(err.message); }
+  });
 }
 
 // ---------- Team Pay ----------
@@ -10974,28 +11100,35 @@ async function openConfirmationMessageModal(lead) {
 // actually used to send it, so the button flips to "🙏 Thanked ✓".
 // Shared by the single-lead modal and the bulk "thank several at once" queue
 // below, so the review/feedback-link logic only lives in one place.
+// "your wedding", "your satsang" — the occasion as it reads in a sentence to the client.
+function occasionPhrase(lead) {
+  if (lead.occasion === "Other") return String(lead.occasion_other || "").trim() || packageName(lead.event_type);
+  if (lead.occasion === "Spiritual Gathering / Satsang") return "satsang";
+  return lead.occasion ? lead.occasion.toLowerCase() : packageName(lead.event_type);
+}
+
+async function feedbackLinkFor(lead) {
+  const { token } = await api(`/api/leads/${lead.id}/feedback-link`, { method: "POST" });
+  return `${window.location.origin}/feedback.html?token=${token}`;
+}
+
+// Every thank-you carries our own one-tap feedback link (that's what fills the feedback list and
+// the website's testimonials). The Google review link is offered on the feedback page itself.
 async function buildThankYouMessage(lead) {
   const firstName = leadFirstName(lead) || "there";
-  const reviewLink = MESSAGE_TEMPLATES.google_review_link && MESSAGE_TEMPLATES.google_review_link !== "none" ? MESSAGE_TEMPLATES.google_review_link : "";
-  // No Google Business Profile yet, so until a review link is saved in
-  // Settings, this falls back to our own feedback form — same idea, just
-  // collected into the CRM so good ones can be featured on the website.
-  let reviewAsk = "";
-  if (reviewLink) {
-    reviewAsk = `\n\nIf you enjoyed the experience, a quick Google review would mean the world to us: ${reviewLink}`;
-  } else {
-    try {
-      const { token } = await api(`/api/leads/${lead.id}/feedback-link`, { method: "POST" });
-      const feedbackLink = `${window.location.origin}/feedback.html?token=${token}`;
-      reviewAsk = `\n\nWe'd love to hear how it went — share a quick note here: ${feedbackLink}`;
-    } catch (err) {
-      // Non-fatal — the thank-you message still goes out without the feedback ask.
-    }
+  let feedbackLink = "", reviewAsk = "";
+  try {
+    feedbackLink = await feedbackLinkFor(lead);
+    reviewAsk = `\n\nWe'd love to know how it felt for you. It takes 30 seconds — just tap a face here: ${feedbackLink}`;
+  } catch (err) {
+    // Non-fatal — the thank-you message still goes out without the feedback ask.
   }
   const tpl = MESSAGE_TEMPLATES.thank_you || TEMPLATE_META.thank_you.default;
   return { message: fillTemplate(tpl, {
     firstName,
     clientName: lead.name || "",
+    occasion: occasionPhrase(lead),
+    feedbackLink,
     experience: packageName(lead.event_type),
     date: fmtDate(lead.date),
     cityClause: lead.city ? ` in ${lead.city}` : "",
@@ -11006,7 +11139,7 @@ async function buildThankYouMessage(lead) {
     // contact instead of the share sheet's "pick a contact" dialog.
     imageLink: `${window.location.origin}/thank-you.html`,
     reviewAsk,
-  }), hasReviewLink: !!reviewLink };
+  }), hasFeedbackLink: !!feedbackLink };
 }
 
 // ---------- Tech rider builder: pick the instruments, the whole rider follows ----------
@@ -11285,7 +11418,7 @@ async function openCancellationMessageModal(lead, onDone) {
 
 async function openThankYouMessageModal(lead) {
   const root = document.getElementById("modalRoot");
-  const { message, hasReviewLink: reviewLink } = await buildThankYouMessage(lead);
+  const { message, hasFeedbackLink } = await buildThankYouMessage(lead);
   const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
   const waLink = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}` : null;
   const mailLink = lead.email ? `mailto:${lead.email}?subject=${encodeURIComponent("Thank you — Together, Out Loud")}&body=${encodeURIComponent(message)}` : null;
@@ -11295,7 +11428,7 @@ async function openThankYouMessageModal(lead) {
       <div class="modal-card">
         <div class="modal-head"><h3>Thank ${lead.name}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body">
-          ${!reviewLink ? `<p class="muted small" style="margin-top:0; color:#B6752C;">No Google review link on file yet — add one in Settings and it'll be added to this message automatically.</p>` : ""}
+          ${!hasFeedbackLink ? `<p class="muted small" style="margin-top:0; color:#B6752C;">Couldn't create the feedback link just now, so this message goes without it.</p>` : ""}
           <img src="/thank-you-image.png" alt="Thank you" style="width:100%; max-width:220px; display:block; margin:0 auto 14px; border-radius:10px; border:1px solid #EAD9BE;" />
           <textarea id="tyMessage" rows="8" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${message}</textarea>
           <p class="muted small" style="margin-top:6px; margin-bottom:0;">Opens WhatsApp straight to ${lead.name}'s number. The link in the message unfurls into the thank-you image as a preview card — WhatsApp can't attach a file to a specific chat from here directly.</p>
@@ -11946,9 +12079,10 @@ const TEMPLATE_META = {
   },
   thank_you: {
     label: "Thank-you message",
-    description: "Sent from a Completed lead's \"🙏 Thank client\" button (or the bulk \"Thank clients\" queue) straight to the client's WhatsApp number. {imageLink} is a link to the branded thank-you image — WhatsApp shows it as a photo preview card when the link unfurls, since a plain wa.me link can't attach a file directly. {reviewAsk} is filled in automatically: a Google review ask once a review link is saved in Settings, or — until then — a link to your own feedback form instead. Neither needs editing here.",
-    placeholders: ["firstName", "clientName", "experience", "date", "cityClause", "imageLink", "reviewAsk"],
-    default: "Hi {firstName}, thank you so much for having Together, Out Loud be part of your {experience} on {date}{cityClause}! It truly meant a lot to sing and play for you and your guests. 🎶\n\n{imageLink}{reviewAsk}\n\nWarm regards,\nTogether, Out Loud\n📷 instagram.com/togetheroutloudclub | 🌐 togetheroutloud.in",
+    description: "Sent from a Completed event's Wrap-up (or the lead's \"🙏 Thank client\" button) straight to the client's WhatsApp. {reviewAsk} adds the one-tap feedback link — the feedback page then offers the Google review link from Settings to everyone who answers. {occasion} reads like \"wedding\" or \"satsang\". {imageLink} is optional: a link that unfurls into the thank-you image.",
+    placeholders: ["firstName", "clientName", "occasion", "experience", "date", "cityClause", "reviewAsk", "feedbackLink", "imageLink"],
+    // Must match THANK_YOU_DEFAULT_V2 in config.js.
+    default: "Hi {firstName}! 🎶\n\nThank you for letting us be part of your {occasion} on {date}{cityClause}. Singing with you, your family and your guests was truly special for all of us.{reviewAsk}\n\nWith love,\nPrakriti, Ashwin & the Together, Out Loud band",
   },
 };
 
@@ -12578,6 +12712,7 @@ function wireFeedbackSettings(main) {
         </div>
         ${f.message ? `<p style="margin:6px 0 0; font-size:14px;">${f.message.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))}</p>` : `<p class="muted small" style="margin:6px 0 0;">No written note — rating only.</p>`}
         <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+          <span class="small" style="color:${f.shareOk ? "var(--success)" : "var(--muted)"};">${f.shareOk ? "✓ OK to share on the website" : "Not cleared for the website"}</span>
           ${f.addedToTestimonials
             ? `<span class="muted small">✓ Added to testimonials</span>`
             : `<button class="btn-ghost" data-add-testimonial="${f.id}" style="font-size:12px; padding:4px 10px;">➕ Add to testimonials</button>`}

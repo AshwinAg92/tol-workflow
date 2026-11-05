@@ -56,4 +56,7 @@ const HOW_HEARD = [
   "Instagram", "Facebook", "YouTube", "Google", "Linktree", "Friend/Family", "Previous Event", "Wedding Planner", "Other",
 ];
 
-module.exports = { STAGES, PACKAGES, ADDONS, PRICING, TEAM, EXPERIENCES, OCCASIONS, GUEST_RANGES, HOW_HEARD };
+// The thank-you sent after an event. Must match TEMPLATE_META.thank_you.default in public/app.js.
+const THANK_YOU_DEFAULT_V2 = "Hi {firstName}! 🎶\n\nThank you for letting us be part of your {occasion} on {date}{cityClause}. Singing with you, your family and your guests was truly special for all of us.{reviewAsk}\n\nWith love,\nPrakriti, Ashwin & the Together, Out Loud band";
+
+module.exports = { STAGES, PACKAGES, ADDONS, PRICING, TEAM, EXPERIENCES, OCCASIONS, GUEST_RANGES, HOW_HEARD, THANK_YOU_DEFAULT_V2 };

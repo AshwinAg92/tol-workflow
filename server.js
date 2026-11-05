@@ -2963,42 +2963,114 @@ app.post("/api/leads/:id/feedback-link", requireAuth, async (req, res) => {
   res.json({ token });
 });
 
+// "your wedding", "your satsang" — the occasion as it reads in a sentence to the client.
+function occasionPhrase(l) {
+  if (l.occasion === "Other") return String(l.occasion_other || "").trim() || packageName(l.event_type);
+  if (l.occasion === "Spiritual Gathering / Satsang") return "satsang";
+  return l.occasion ? l.occasion.toLowerCase() : packageName(l.event_type);
+}
+
 app.get("/api/public/feedback/:token", async (req, res) => {
   const lead = (await pool.query(
-    "SELECT id, name, event_type, date, city FROM leads WHERE feedback_token = $1",
+    "SELECT id, name, first_name, event_type, date, city, occasion, occasion_other FROM leads WHERE feedback_token = $1",
     [req.params.token]
   )).rows[0];
   if (!lead) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
-  const existing = (await pool.query("SELECT rating, message FROM feedback WHERE lead_id = $1", [lead.id])).rows[0];
+  const existing = (await pool.query("SELECT rating, message, share_ok FROM feedback WHERE lead_id = $1", [lead.id])).rows[0];
+  const review = (await pool.query("SELECT template FROM message_templates WHERE key = 'google_review_link'")).rows[0];
   res.json({
-    clientName: lead.name,
-    experience: packageName(lead.event_type),
+    firstName: String(lead.first_name || lead.name || "").trim().split(/\s+/)[0] || "there",
+    occasion: occasionPhrase(lead),
     date: lead.date,
     city: lead.city,
     rating: existing ? existing.rating : null,
     message: existing ? existing.message : null,
+    shareOk: existing ? !!existing.share_ok : false,
+    // Offered to everyone after they answer, whatever their rating.
+    googleReviewLink: review && review.template && review.template !== "none" ? review.template : null,
   });
 });
 
+// The rating is saved the moment it's tapped (so a one-tap answer still counts); the note and
+// "OK to share" are added by a second call. Leaving out `message` keeps what's already saved.
 app.post("/api/public/feedback/:token", async (req, res) => {
-  const { rating, message } = req.body;
+  const { rating, message, shareOk } = req.body;
   const parsedRating = parseInt(rating, 10);
   if (!Number.isInteger(parsedRating) || parsedRating < 1 || parsedRating > 5) {
-    return res.status(400).json({ error: "Please pick a star rating from 1 to 5." });
+    return res.status(400).json({ error: "Please tap one of the faces first." });
   }
   const lead = (await pool.query("SELECT id, name FROM leads WHERE feedback_token = $1", [req.params.token])).rows[0];
   if (!lead) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
-  const existing = (await pool.query("SELECT id FROM feedback WHERE lead_id = $1", [lead.id])).rows[0];
+  const note = message === undefined ? undefined : String(message || "").trim().slice(0, 2000) || null;
+  const share = shareOk === undefined ? undefined : (shareOk ? 1 : 0);
+  const existing = (await pool.query("SELECT id, rating FROM feedback WHERE lead_id = $1", [lead.id])).rows[0];
   if (existing) {
-    await pool.query("UPDATE feedback SET rating = $1, message = $2 WHERE id = $3", [parsedRating, (message || "").trim() || null, existing.id]);
+    await pool.query("UPDATE feedback SET rating = $1, message = COALESCE($2, CASE WHEN $4 THEN NULL ELSE message END), share_ok = COALESCE($3, share_ok) WHERE id = $5",
+      [parsedRating, note ?? null, share ?? null, note === null, existing.id]);
   } else {
-    await pool.query(
-      "INSERT INTO feedback (id, lead_id, rating, message, created_at) VALUES ($1, $2, $3, $4, $5)",
-      [uuid(), lead.id, parsedRating, (message || "").trim() || null, new Date().toISOString()]
-    );
+    await pool.query("INSERT INTO feedback (id, lead_id, rating, message, created_at, share_ok) VALUES ($1, $2, $3, $4, $5, $6)",
+      [uuid(), lead.id, parsedRating, note ?? null, new Date().toISOString(), share ?? 0]);
   }
-  logActivity({ user: null }, `${lead.name} left feedback (${parsedRating}★)`, lead.id);
+  if (!existing || existing.rating !== parsedRating) logActivity({ user: null }, `${lead.name} left feedback (${parsedRating}★)`, lead.id);
   res.json({ ok: true });
+});
+
+// ---------- Wrap-up: closing out an event once it's been played ----------
+// A played event is done when the client has paid in full, every artist is paid, the client has
+// been thanked, and (ideally) they've left feedback. Combos are one booking, so one row.
+app.get("/api/wrapup", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const since = new Date(Date.now() - 180 * 86400e3).toISOString().slice(0, 10);
+  const leads = (await pool.query(`SELECT id, name, first_name, date, city, venue, event_type, occasion, occasion_other, phone, whatsapp_number,
+      final_amount, quote_amount, combo_group_id, is_combo_primary, thanked_at, feedback_token
+    FROM leads WHERE stage = 'Completed' AND closed_at IS NULL AND date >= $1 ORDER BY date ASC`, [since])).rows;
+  if (!leads.length) return res.json([]);
+  const ids = leads.map((l) => l.id);
+  const [money, artists, feedback] = await Promise.all([
+    pool.query(`SELECT lead_id,
+        COALESCE(SUM(amount) FILTER (WHERE type = 'payment' AND status = 'received'), 0) AS received,
+        COALESCE(SUM(amount) FILTER (WHERE type = 'client_reimbursement' AND status = 'due'), 0) AS reimb_due
+      FROM payments WHERE lead_id = ANY($1::text[]) GROUP BY lead_id`, [ids]).then((r) => r.rows),
+    pool.query(`SELECT lead_id, COUNT(DISTINCT team_id) FILTER (WHERE paid = 0) AS unpaid_artists, COALESCE(SUM(amount) FILTER (WHERE paid = 0), 0) AS unpaid
+      FROM expenses WHERE lead_id = ANY($1::text[]) AND team_id IS NOT NULL AND approved = 1 AND category IN ('artist_fee', 'reimbursement') GROUP BY lead_id`, [ids]).then((r) => r.rows),
+    pool.query("SELECT lead_id, rating FROM feedback WHERE lead_id = ANY($1::text[])", [ids]).then((r) => r.rows),
+  ]);
+  const by = (rows) => Object.fromEntries(rows.map((r) => [r.lead_id, r]));
+  const m = by(money), a = by(artists), f = by(feedback);
+  const groups = {};
+  leads.forEach((l) => (groups[l.combo_group_id || l.id] ||= []).push(l));
+  const items = Object.values(groups).map((g) => {
+    const lead = g.find((l) => l.is_combo_primary) || g[0];
+    const balance = g.reduce((s, l) => s + (l.final_amount || l.quote_amount || 0) - Number(m[l.id]?.received || 0) + Number(m[l.id]?.reimb_due || 0), 0);
+    const artistUnpaid = g.reduce((s, l) => s + Number(a[l.id]?.unpaid || 0), 0);
+    const rating = g.map((l) => f[l.id]?.rating).find((x) => x) || null;
+    return {
+      leadId: lead.id, leadIds: g.map((l) => l.id), name: lead.name, firstName: String(lead.first_name || lead.name || "").trim().split(/\s+/)[0],
+      date: g.map((l) => l.date).sort().pop(), city: lead.city, place: placeOf(lead), eventType: lead.event_type, occasion: occasionPhrase(lead),
+      phone: lead.whatsapp_number || lead.phone || "", feedbackToken: lead.feedback_token,
+      balance, artistUnpaid, artistsUnpaid: g.reduce((s, l) => s + Number(a[l.id]?.unpaid_artists || 0), 0),
+      thanked: g.some((l) => l.thanked_at), thankedAt: g.map((l) => l.thanked_at).filter(Boolean).sort()[0] || null, rating,
+    };
+  });
+  res.json(items);
+});
+
+app.post("/api/leads/:id/close", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const lead = (await pool.query("SELECT id, name, combo_group_id FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  if (!lead) return res.status(404).json({ error: "Event not found" });
+  const now = new Date().toISOString();
+  if (lead.combo_group_id) await pool.query("UPDATE leads SET closed_at = $1 WHERE combo_group_id = $2 AND closed_at IS NULL", [now, lead.combo_group_id]);
+  else await pool.query("UPDATE leads SET closed_at = $1 WHERE id = $2", [now, lead.id]);
+  logActivity(req, `Closed ${lead.name} — wrap-up done`, lead.id);
+  res.json({ closedAt: now });
+});
+
+app.delete("/api/leads/:id/close", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const lead = (await pool.query("SELECT id, name, combo_group_id FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  if (!lead) return res.status(404).json({ error: "Event not found" });
+  if (lead.combo_group_id) await pool.query("UPDATE leads SET closed_at = NULL WHERE combo_group_id = $1", [lead.combo_group_id]);
+  else await pool.query("UPDATE leads SET closed_at = NULL WHERE id = $1", [lead.id]);
+  logActivity(req, `Reopened ${lead.name} for wrap-up`, lead.id);
+  res.status(204).end();
 });
 
 // Admin — review submissions and pick which ones to feature as testimonials.
@@ -3019,6 +3091,7 @@ app.get("/api/feedback", requireAuth, requireAdmin, async (req, res) => {
     rating: r.rating,
     message: r.message,
     createdAt: r.created_at,
+    shareOk: !!r.share_ok,
     addedToTestimonials: !!r.added_to_testimonials,
   })));
 });
@@ -6026,8 +6099,8 @@ app.get("/api/dashboard", requireAuth, async (req, res) => {
 // runs at boot and every hour after. No cron infra needed for this volume of data.
 async function autoCompletePastEvents() {
   try {
-    const today = new Date().toISOString().slice(0, 10);
-    await pool.query(`UPDATE leads SET stage = 'Completed' WHERE stage = 'Confirmed' AND date < $1`, [today]);
+    // India's date, not UTC's, so an event moves to Completed at midnight IST rather than 5:30 AM.
+    await pool.query(`UPDATE leads SET stage = 'Completed' WHERE stage = 'Confirmed' AND date < $1`, [todayIST()]);
   } catch (err) {
     console.error("autoCompletePastEvents failed:", err.message);
   }

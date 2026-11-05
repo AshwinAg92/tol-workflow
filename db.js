@@ -4,7 +4,7 @@ const bcrypt = require("bcryptjs");
 const { v4: uuid } = require("uuid");
 const fs = require("fs");
 const path = require("path");
-const { TEAM, PACKAGES, PRICING } = require("./config");
+const { TEAM, PACKAGES, PRICING, THANK_YOU_DEFAULT_V2 } = require("./config");
 
 // Real managed Postgres (Railway's own database service) instead of a SQLite
 // file on disk — this survives redeploys reliably, unlike an app-local file
@@ -444,6 +444,12 @@ async function setup() {
   // own category so Team Pay doesn't depend on text matching. Idempotent — runs every boot.
   await pool.query(`UPDATE expenses SET category = 'artist_fee' WHERE category = 'expense' AND team_id IS NOT NULL AND head LIKE 'Artist fee%'`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_exp_payout ON expenses(payout_id)`);
+  // Wrap-up: a played event is "closed" once its money, thank-you and feedback are sorted.
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS closed_at TEXT`);
+  // Whether the client said their feedback can be quoted on the website.
+  await pool.query(`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS share_ok INTEGER NOT NULL DEFAULT 0`);
+  // Stray and doubled spaces in city names split one city into several in reports ("Siliguri " vs "Siliguri").
+  await pool.query(`UPDATE leads SET city = btrim(regexp_replace(city, '\\s+', ' ', 'g')) WHERE city IS NOT NULL AND city <> btrim(regexp_replace(city, '\\s+', ' ', 'g'))`);
   // Documents used to live as files on the container's local disk, which Railway
   // wipes on every redeploy — silently losing every upload. They now live as
   // bytes directly in Postgres instead, which is what the app already relies on
@@ -1213,6 +1219,18 @@ Warmly,
   // outstanding). Push the new default into place once for anyone still on
   // the original seed text — but never touch it again after this, so a
   // deliberate later edit in Settings is never overwritten.
+  // One-time upgrade: a warmer thank-you that asks for one-tap feedback. Only replaces the
+  // original seed text — a thank-you someone has rewritten in Settings is left alone.
+  const thankTplFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'thank_you_v2_applied'")).rows[0];
+  if (!thankTplFlag) {
+    const current = (await pool.query("SELECT template FROM message_templates WHERE key = 'thank_you'")).rows[0];
+    if (!current || current.template.startsWith("Hi {firstName}, thank you so much for having Together, Out Loud be part of your")) {
+      await pool.query(`INSERT INTO message_templates (key, template, updated_at) VALUES ('thank_you', $1, $2)
+        ON CONFLICT (key) DO UPDATE SET template = $1, updated_at = $2`, [THANK_YOU_DEFAULT_V2, new Date().toISOString()]);
+    }
+    await pool.query(`INSERT INTO message_templates (key, template, updated_at) VALUES ('thank_you_v2_applied', '1', $1) ON CONFLICT (key) DO NOTHING`, [new Date().toISOString()]);
+  }
+
   const confirmedTplFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'confirmed_template_v2_applied'")).rows[0];
   if (!confirmedTplFlag) {
     const newConfirmedDefault = "Hi {firstName}, wonderful news — your event with Together, Out Loud ({experience}) on {date}{cityClause} is now confirmed!{amountLine}\n\nWe are pleased to confirm our booking for: {clientName}\nLocation: {location}\nDate: {date}\nOccasion: {occasion}\nSet: {pieces} Pieces\nDuration: {duration}\nPerformance Fee: ₹{performanceFee}/-\nAdvance: ₹{advance}/-\nOutstanding: ₹{outstanding}\n\nAs discussed, we request your support in arranging {clientArrangements}.\nWe look forward to creating a soulful and memorable musical experience with you and your guests.\n\nWarm regards,\nTogether, Out Loud";
