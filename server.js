@@ -3926,21 +3926,24 @@ app.get("/api/team/:id/assignments", requireAuth, async (req, res) => {
   if (!userHasSection(req.user, "leads") && !userHasSection(req.user, "assign_team")) {
     return res.status(403).json({ error: "You don't have permission to view this" });
   }
-  const today = new Date().toISOString().slice(0, 10);
+  // Past events too, so their fee and whether it was paid can be checked from the Team tab.
   let { rows } = await pool.query(`
     SELECT event_assignments.id, event_assignments.status,
       leads.id AS lead_id, leads.name AS lead_name, leads.date, leads.city, leads.event_type, leads.stage,
       leads.event_time, leads.soundcheck_time, leads.occasion, leads.venue,
-      ex.paid AS paid, ex.amount AS fee_amount
+      ex.paid AS paid, ex.amount AS fee_amount, ex.payment_date, ex.payment_mode
     FROM event_assignments
     JOIN leads ON leads.id = event_assignments.lead_id
-    LEFT JOIN expenses ex ON ex.team_id = event_assignments.team_id AND ex.lead_id = event_assignments.lead_id
-    WHERE event_assignments.team_id = $1 AND leads.date >= $2
+    LEFT JOIN LATERAL (
+      SELECT * FROM expenses e WHERE e.team_id = event_assignments.team_id AND e.lead_id = event_assignments.lead_id
+        AND e.category = 'artist_fee' AND e.approved = 1
+      ORDER BY e.created_at ASC LIMIT 1) ex ON TRUE
+    WHERE event_assignments.team_id = $1
     ORDER BY leads.date ASC
-  `, [req.params.id, today]);
+  `, [req.params.id]);
   if (isScopedManager(req.user)) { const ids = await assignedLeadIdSet(req.user); rows = rows.filter((r) => ids && ids.has(r.lead_id)); }
   const canSeeMoney = userHasSection(req.user, "accounts");
-  res.json(canSeeMoney ? rows : rows.map(({ fee_amount, paid, ...rest }) => rest));
+  res.json(canSeeMoney ? rows : rows.map(({ fee_amount, paid, payment_date, payment_mode, ...rest }) => rest));
 });
 
 // ---------- Calendar ----------
@@ -4319,10 +4322,10 @@ app.patch("/api/expenses/:id", requireAuth, requireSection("accounts"), requireA
   const exp = (await pool.query("SELECT * FROM expenses WHERE id = $1", [req.params.id])).rows[0];
   if (!exp) return res.status(404).json({ error: "Expense not found" });
   const { head, amount, paid, notes, paymentDate, paymentMode } = req.body;
-  // A fee that's been paid is fixed; one paid through Team Pay is changed by undoing that payout.
-  if (exp.paid && amount !== undefined && Number(amount) !== Number(exp.amount)) {
-    return res.status(400).json({ error: "This has already been paid, so its amount can't change. Undo the payment in Team Pay first." });
-  }
+  // A paid amount can be corrected (the record only — no money moves); a Team Pay payment's
+  // total follows its items. Unpaying one, though, means undoing that payout as a whole.
+  const correctingPaid = exp.paid && amount !== undefined && Number(amount) !== Number(exp.amount);
+  if (correctingPaid && !(Number(amount) > 0)) return res.status(400).json({ error: "Enter the amount that was actually paid." });
   if (exp.payout_id && paid !== undefined && !paid) {
     return res.status(400).json({ error: "This was paid through Team Pay. Undo that payment there instead." });
   }
@@ -4340,6 +4343,10 @@ app.patch("/api/expenses/:id", requireAuth, requireSection("accounts"), requireA
     paymentMode !== undefined ? paymentMode : exp.payment_mode,
     exp.id,
   ]);
+  if (correctingPaid) {
+    if (exp.payout_id) await pool.query("UPDATE team_payouts SET amount = (SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE payout_id = $1) WHERE id = $1", [exp.payout_id]);
+    logActivity(req, `Corrected a paid amount: ${exp.head} ₹${Number(exp.amount).toLocaleString("en-IN")} → ₹${Number(amount).toLocaleString("en-IN")}`, exp.lead_id);
+  }
   // Tell the artist when their own fee is marked paid.
   if (!exp.paid && nowPaid && exp.team_id && exp.lead_id && /^Artist fee/i.test(exp.head || "")) {
     try {

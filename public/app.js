@@ -4947,6 +4947,7 @@ async function openTeamMemberEventsModal(member) {
   if (!body) return; // modal was closed while loading
   const today = new Date().toISOString().slice(0, 10);
   const upcoming = events.filter((e) => e.date >= today);
+  const past = events.filter((e) => e.date < today && e.status !== "declined").reverse();
 
   // A quick track record — total booked, completed, and cancelled — helps
   // whoever's assigning artists judge reliability at a glance instead of
@@ -4971,13 +4972,19 @@ async function openTeamMemberEventsModal(member) {
   // what was forcing the row wider than the screen on mobile. Font sizes
   // here are kept at 16px+ on the select specifically, since iOS Safari
   // auto-zooms the whole page on focus for any form control under 16px.
-  const rowHtml = (e) => `
+  const feeLine = (e) => {
+    if (e.fee_amount === undefined) return "";
+    if (!e.fee_amount) return `<div class="muted small mono">Fee: not set</div>`;
+    const paidBits = e.paid ? `Paid${e.payment_date ? ` ${fmtDate(e.payment_date)}` : ""}${e.payment_mode ? ` · ${e.payment_mode}` : ""}` : "Not paid yet";
+    return `<div class="small mono" style="margin-top:2px;">Fee ${inr(e.fee_amount)} · <span style="color:${e.paid ? "var(--success)" : "var(--danger)"};">${paidBits}</span></div>`;
+  };
+  const rowHtml = (e, editable = true) => `
     <div class="dash-list-item" style="padding-bottom:14px; margin-bottom:14px; border-bottom:1px solid #EAE3D4;">
       <div style="font-size:14.5px;">${e.lead_name} <span class="muted small">— ${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""}</span></div>
       <div class="muted small" style="margin-top:2px;">${fmtDate(e.date)}${e.city ? ` · ${e.city}` : ""}${e.event_time ? ` · Event ${fmtTimeHM(e.event_time)}` : ""}${e.soundcheck_time ? ` · SC ${fmtTimeHM(e.soundcheck_time)}` : ""}</div>
       ${e.venue ? `<div class="muted small">📍 ${e.venue}</div>` : ""}
-      ${e.fee_amount !== undefined ? `<div class="muted small mono">Fee: ${e.fee_amount ? inr(e.fee_amount) : "—"}${e.fee_amount ? (e.paid ? " · Paid" : " · Pending") : ""}</div>` : ""}
-      ${canEdit && e.status !== "cancel_requested" ? `
+      ${feeLine(e)}
+      ${!editable ? "" : canEdit && e.status !== "cancel_requested" ? `
         <select class="assignment-response-select" data-assignment-id="${e.id}" style="width:auto; display:inline-block; margin-top:8px; font-size:16px; padding:7px 30px 7px 10px;">
           <option value="pending" ${e.status === "pending" ? "selected" : ""}>Awaiting response</option>
           <option value="accepted" ${e.status === "accepted" ? "selected" : ""}>Accepted</option>
@@ -4987,9 +4994,13 @@ async function openTeamMemberEventsModal(member) {
     </div>
   `;
 
-  body.innerHTML = statsHtml + (upcoming.length === 0
-    ? `<p class="muted small">No upcoming events for ${member.name}.</p>`
-    : upcoming.map(rowHtml).join(""));
+  const canPay = CURRENT_USER?.accessLevel === "admin" && hasAccountsAccess();
+  body.innerHTML = statsHtml
+    + `<div class="section-label">Upcoming (${upcoming.length})</div>`
+    + (upcoming.length === 0 ? `<p class="muted small">No upcoming events for ${member.name}.</p>` : upcoming.map((e) => rowHtml(e)).join(""))
+    + `<div class="section-label" style="justify-content:space-between;">Past events (${past.length})${canPay && past.length ? `<button class="btn-ghost" id="memberOpenTeamPay" style="font-size:12px; padding:4px 10px;">Pay or correct in Team Pay</button>` : ""}</div>`
+    + (past.length === 0 ? `<p class="muted small">No past events yet.</p>` : past.map((e) => rowHtml(e, false)).join(""));
+  body.querySelector("#memberOpenTeamPay")?.addEventListener("click", () => { close(); openTeamPayFor(member.id); });
 
   // WhatsApp button is available whenever there's a phone number and at
   // least one upcoming event — for both admin and manager, not just
@@ -6194,7 +6205,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                       </label>
                       ${isAdmin
                         ? `<div style="flex-shrink:0; text-align:right;">
-                            <input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : (suggestedFee || "")}" style="width:88px; font-size:12.5px; padding:4px 6px;" ${existingFee && existingFee.paid ? `disabled title="Already paid — undo the payment in Team Pay to change it"` : ""} />
+                            <input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : (suggestedFee || "")}" style="width:88px; font-size:12.5px; padding:4px 6px;" ${existingFee && existingFee.paid ? `disabled title="Already paid — correct it in Team Pay"` : ""} />
                             ${existingFee ? `
                               <div class="muted small" style="margin-top:3px;">${existingFee.paid ? `Paid${existingFee.payment_mode ? ` · ${existingFee.payment_mode}` : ""}` : "Not paid yet"}</div>
                               ${existingFee.paid ? "" : `<button class="btn-ghost open-team-pay-btn" data-team-id="${m.id}" style="margin-top:2px; font-size:11px; padding:2px 7px;">Pay in Team Pay</button>`}
@@ -9041,7 +9052,23 @@ function openArtistPayModal(artist, data) {
   const root = document.getElementById("modalRoot");
   const dueItems = artist.items.filter((i) => !i.paid && i.due);
   const laterItems = artist.items.filter((i) => !i.paid && !i.due);
-  const paidEarlier = artist.items.filter((i) => i.paid && !i.payoutId).sort((x, y) => (y.paymentDate || "").localeCompare(x.paymentDate || ""));
+  const paidItems = artist.items.filter((i) => i.paid).sort((x, y) => (y.date || y.paymentDate || "").localeCompare(x.date || x.paymentDate || ""));
+  const paidRow = (i) => {
+    const { title, sub } = teamPayItemLabel(i);
+    const how = `Paid${i.paymentDate ? ` ${fmtDate(i.paymentDate)}` : ""}${i.mode ? ` · ${i.mode}` : ""}`;
+    return `<div class="tp-paid">
+      <div class="tp-paid-line">
+        <span class="today-row-main"><b>${escH(title)}</b><span class="muted small">${escH([sub, how].filter(Boolean).join(" · "))}</span></span>
+        <span class="tp-paid-amt"><b class="mono">${inr(i.amount)}</b><button class="btn-ghost tp-edit" data-id="${escH(i.id)}">Edit</button></span>
+      </div>
+      <div class="tp-edit-box" data-box="${escH(i.id)}" hidden>
+        <input type="number" min="1" inputmode="numeric" class="tp-edit-input" value="${i.amount}" aria-label="Amount actually paid" />
+        <button class="btn-primary tp-edit-save" data-id="${escH(i.id)}">Save</button>
+        <button class="btn-ghost tp-edit-cancel" data-id="${escH(i.id)}">Cancel</button>
+        <p class="muted small" style="flex-basis:100%; margin:4px 0 0;">This corrects the record only — no money is sent or taken back.</p>
+      </div>
+    </div>`;
+  };
   const selected = new Set(dueItems.map((i) => i.id));
   const byId = Object.fromEntries(artist.items.map((i) => [i.id, i]));
   const firstName = artist.name.split(" ")[0];
@@ -9076,7 +9103,8 @@ function openArtistPayModal(artist, data) {
               <input id="tpNote" maxlength="300" placeholder="e.g. paid from HDFC" />
               <button class="btn-primary full" id="tpPayBtn"></button>
             </div>` : ""}
-          ${artist.payouts.length || paidEarlier.length ? `<div class="section-label">Payment history</div>` : ""}
+          ${paidItems.length ? `<div class="section-label">Paid (${paidItems.length}) — every event and reimbursement</div>${paidItems.map(paidRow).join("")}` : ""}
+          ${artist.payouts.length ? `<div class="section-label">Payments made</div>` : ""}
           ${artist.payouts.map((p) => {
             const covered = artist.items.filter((i) => i.payoutId === p.id);
             return `<div class="tp-history">
@@ -9088,7 +9116,6 @@ function openArtistPayModal(artist, data) {
               </div>
             </div>`;
           }).join("")}
-          ${paidEarlier.length ? `<details class="tp-earlier"><summary class="muted small">Paid before Team Pay (${paidEarlier.length})</summary>${paidEarlier.map((i) => `<div class="tp-history"><div style="display:flex; justify-content:space-between; gap:8px;"><span>${escH(teamPayItemLabel(i).title)}</span><b class="mono">${inr(i.amount)}</b></div><div class="muted small">${i.paymentDate ? `Paid ${fmtDate(i.paymentDate)}` : "Paid"}${i.mode ? ` · ${escH(i.mode)}` : ""}</div></div>`).join("")}</details>` : ""}
         </div>
       </div>
     </div>`;
@@ -9156,6 +9183,29 @@ function openArtistPayModal(artist, data) {
       alert(err.message);
     }
   });
+  // Correcting a paid amount reloads Team Pay with this artist open, so every total is redrawn.
+  const reopen = () => { teamPayOpenArtist = artist.id; root.innerHTML = ""; renderMain(); };
+  root.querySelectorAll(".tp-edit").forEach((b) => b.addEventListener("click", () => {
+    root.querySelector(`.tp-edit-box[data-box="${b.dataset.id}"]`).hidden = false;
+    b.hidden = true;
+  }));
+  root.querySelectorAll(".tp-edit-cancel").forEach((b) => b.addEventListener("click", () => {
+    const box = root.querySelector(`.tp-edit-box[data-box="${b.dataset.id}"]`);
+    box.hidden = true;
+    box.querySelector(".tp-edit-input").value = byId[b.dataset.id].amount;
+    root.querySelector(`.tp-edit[data-id="${b.dataset.id}"]`).hidden = false;
+  }));
+  root.querySelectorAll(".tp-edit-save").forEach((b) => b.addEventListener("click", async () => {
+    const item = byId[b.dataset.id];
+    const amount = Math.round(Number(root.querySelector(`.tp-edit-box[data-box="${b.dataset.id}"] .tp-edit-input`).value));
+    if (!(amount > 0)) return alert("Enter the amount that was actually paid.");
+    if (amount === item.amount) return root.querySelector(`.tp-edit-cancel[data-id="${b.dataset.id}"]`).click();
+    b.disabled = true;
+    try {
+      await api(`/api/expenses/${item.id}`, { method: "PATCH", body: JSON.stringify({ amount }) });
+      reopen();
+    } catch (err) { b.disabled = false; alert(err.message); }
+  }));
   root.querySelectorAll(".tp-wa").forEach((b) => b.addEventListener("click", () => {
     const p = artist.payouts.find((x) => x.id === b.dataset.payout);
     sendSummary(artist.items.filter((i) => i.payoutId === p.id), p);

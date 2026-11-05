@@ -274,7 +274,13 @@ select.stage-select { width:auto; padding:4px 6px; font-size:12px; border-radius
 .tp-total { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px; }
 .tp-total b { font-size:20px; }
 .tp-history { padding:10px 0; border-bottom:1px solid var(--hairline); }
-.tp-earlier summary { cursor:pointer; padding:8px 0; }
+.tp-paid { padding:10px 4px; border-bottom:1px solid var(--hairline); }
+.tp-paid-line { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.tp-paid-amt { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.tp-paid-amt .btn-ghost { font-size:12px; padding:5px 10px; }
+.tp-edit-box:not([hidden]) { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
+.modal-body .tp-edit-box input.tp-edit-input { width:120px; margin:0; padding:8px; font-size:16px; }
+.tp-edit-box .btn-primary, .tp-edit-box .btn-ghost { padding:7px 12px; font-size:13px; }
 .tp-done { text-align:center; padding:18px 6px; display:flex; flex-direction:column; align-items:center; gap:6px; }
 .today-more { margin-top:8px; font-size:12px; padding:4px 10px; }
 .today-clear { padding:48px 18px; text-align:center; }
