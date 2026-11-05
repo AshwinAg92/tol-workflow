@@ -7547,7 +7547,7 @@ const sortLegsForDisplay = (legs) => [...legs].sort((x, y) => legOrderRank(x) - 
 
 // ---------- Travel plan (per-artist, per-event) ----------
 // Who shares a journey's fare: the events it links (its own, and the one it comes from or goes on
-// to). One event on its own shares with us. Two dates of one combo are one client (money on the primary).
+// to), plus us. Two dates of one combo are one client (money on the primary).
 function fareParties(leg) {
   const seen = new Set(), out = [];
   for (const id of [leg.from_lead_id, leg.lead_id, leg.to_lead_id]) {
@@ -7557,7 +7557,7 @@ function fareParties(leg) {
     const payer = l.combo_group_id ? (LEADS.find((x) => x.combo_group_id === l.combo_group_id && x.is_combo_primary) || l) : l;
     out.push({ leadId: payer.id, name: l.name, place: (l.city || "").trim() });
   }
-  if (out.length === 1) out.push({ us: true, name: "Us (Together, Out Loud)" });
+  out.push({ us: true, name: "Us (Together, Out Loud)" });
   return out;
 }
 
@@ -7634,13 +7634,13 @@ async function openTravelPlanModal(leadId) {
     return `<label class="fare-check"><input type="checkbox" data-fare-toggle="${leg.id}" /> 💰 Fare shared between events</label>
       <div class="fare-box" data-fare-box="${leg.id}" hidden>
         <label>Total fare (₹)<input type="number" min="1" inputmode="numeric" data-fare-total /></label>
-        ${parties.map((p, i) => `<label>${escH(p.name)}${p.place ? ` <span class="muted small">· ${escH(p.place)}</span>` : ""}<input type="number" min="0" inputmode="numeric" data-fare-part="${i}" /></label>`).join("")}
+        ${parties.map((p, i) => `<label>${escH(p.name)}${p.place ? ` <span class="muted small">· ${escH(p.place)}</span>` : ""}<input type="number" min="0" inputmode="numeric" data-fare-part="${i}"${p.us ? " data-fare-us" : ""} /></label>`).join("")}
         <label>Who paid the fare?<select data-fare-payer>
           <option value="">Choose who paid…</option>
           <option value="us">Us (Together, Out Loud)</option>
           ${parties.filter((p) => !p.us).map((p) => `<option value="${p.leadId}">${escH(p.name)}</option>`).join("")}
         </select></label>
-        <p class="muted small fare-hint" style="margin:6px 0 8px;">Split 50:50 — change one share and the other adjusts.</p>
+        <p class="small fare-left" style="margin:6px 0 0;"></p><p class="muted small fare-hint" style="margin:6px 0 8px;">Split 50:50 between the events — set a share to 0 to leave that party out; whatever the clients don't cover is ours.</p>
         <button class="btn-primary" data-fare-save="${leg.id}">Save split</button>
       </div>`;
   };
@@ -8171,24 +8171,39 @@ async function openTravelPlanModal(leadId) {
     }));
     root.querySelectorAll(".fare-box").forEach((box) => {
       const total = box.querySelector("[data-fare-total]"), parts = [...box.querySelectorAll("[data-fare-part]")];
+      const us = box.querySelector("[data-fare-us]"), clients = parts.filter((p) => p !== us), left = box.querySelector(".fare-left");
+      const num = (el) => Math.round(Number(el.value) || 0);
+      const showLeft = () => {
+        const diff = num(total) - parts.reduce((sum, p) => sum + num(p), 0);
+        left.textContent = !num(total) || diff === 0 ? "" : diff > 0 ? `₹${diff.toLocaleString("en-IN")} still to assign` : `Shares are ₹${(-diff).toLocaleString("en-IN")} more than the total`;
+        left.style.color = diff ? "var(--danger)" : "";
+      };
       total.addEventListener("input", () => {
-        const t = Math.round(Number(total.value) || 0), each = Math.floor(t / parts.length);
-        parts.forEach((p, i) => (p.value = t ? (i === 0 ? t - each * (parts.length - 1) : each) : ""));
+        const t = num(total), sharers = clients.length > 1 ? clients : parts, each = Math.floor(t / sharers.length);
+        parts.forEach((p) => (p.value = t ? 0 : ""));
+        sharers.forEach((p, i) => (p.value = t ? (i === 0 ? t - each * (sharers.length - 1) : each) : ""));
+        showLeft();
       });
-      parts.forEach((p, i) => p.addEventListener("input", () => {
-        if (parts.length !== 2) return;
-        parts[1 - i].value = Math.max(0, Math.round(Number(total.value) || 0) - (Math.round(Number(p.value)) || 0));
+      parts.forEach((p) => p.addEventListener("input", () => {
+        if (p !== us) us.value = Math.max(0, num(total) - clients.reduce((sum, c) => sum + num(c), 0));
+        else if (clients.length === 1) clients[0].value = Math.max(0, num(total) - num(us));
+        showLeft();
       }));
       // Say in words what will happen to the money for whoever paid.
       const payer = box.querySelector("[data-fare-payer]"), hint = box.querySelector(".fare-hint");
-      payer.addEventListener("change", () => {
+      // Only parties with a share are mentioned — a client set to 0 isn't billed.
+      const updateHint = () => {
         const leg = legs.find((x) => x.id === box.dataset.fareBox);
-        const parties = fareParties(leg), others = parties.filter((p) => !p.us && p.leadId !== payer.value).map((p) => p.name);
+        const parties = fareParties(leg);
+        const billed = parties.filter((p, i) => !p.us && p.leadId !== payer.value && num(parts[i]) > 0).map((p) => p.name);
         const payerName = (parties.find((p) => p.leadId === payer.value) || {}).name;
-        hint.textContent = !payer.value ? "Split 50:50 — change one share and the other adjusts."
-          : payer.value === "us" ? `We paid: each client's share is added to their balance to collect, and the fare is our expense.`
-          : `${payerName} paid: their own share stays with them, the rest is adjusted from our fee for them${others.length ? `, and ${others.join(" and ")}'s share is added to their balance to collect` : ""}.`;
-      });
+        hint.textContent = !payer.value ? "Split 50:50 between the events — set a share to 0 to leave that party out; whatever the clients don't cover is ours."
+          : payer.value === "us" ? `We paid: ${billed.length ? `${billed.join(" and ")}'s share is added to their balance to collect, and ` : ""}the fare is our expense.`
+          : `${payerName} paid: their own share stays with them, the rest is adjusted from our fee for them${billed.length ? `, and ${billed.join(" and ")}'s share is added to their balance to collect` : ""}.`;
+      };
+      payer.addEventListener("change", updateHint);
+      parts.forEach((p) => p.addEventListener("input", updateHint));
+      total.addEventListener("input", updateHint);
     });
     root.querySelectorAll("[data-fare-save]").forEach((btn) => btn.addEventListener("click", async () => {
       const leg = legs.find((x) => x.id === btn.dataset.fareSave);
