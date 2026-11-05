@@ -4235,7 +4235,7 @@ async function renderTravelCalendar(main) {
       const tcDateStr = d ? `${travelCalYear}-${String(travelCalMonth).padStart(2, "0")}-${String(d).padStart(2, "0")}` : null;
       const tcBlocked = tcDateStr ? blockedOn(tcDateStr) : null;
       calCells.appendChild(el(`
-        <div class="cal-cell${d ? "" : " cal-cell-empty"}"${d ? ` data-day="${d}" style="cursor:pointer;${tcBlocked ? " background:repeating-linear-gradient(45deg, #E5DFD1, #E5DFD1 6px, #DCD4C0 6px, #DCD4C0 12px);" : ""}" title="Click an empty spot to add travel on this date"` : ""}>
+        <div class="cal-cell${d ? "" : " cal-cell-empty"}"${d ? ` data-day="${d}" style="cursor:pointer;${tcBlocked ? " background:repeating-linear-gradient(45deg, #E5DFD1, #E5DFD1 6px, #DCD4C0 6px, #DCD4C0 12px);" : ""}" title="${tcBlocked ? `Blocked${tcBlocked.reason ? `: ${String(tcBlocked.reason).replace(/"/g, "")}` : ""}` : "Click an empty spot to add travel on this date"}"` : ""}>
           ${d ? `<div class="cal-day">${d}</div>` : ""}
           ${tcBlocked ? `<div class="cal-event cal-event-blocked" data-blocked-date="${tcDateStr}" style="cursor:pointer; background:#8A6A54;" title="Blocked${tcBlocked.reason ? `: ${tcBlocked.reason}` : ""}">🚫 Blocked</div>` : ""}
           ${dayEvents.map((l) => { const gap = eventTravelGaps(l, legs, tcCtx.assignments).length > 0; return `
@@ -4251,11 +4251,18 @@ async function renderTravelCalendar(main) {
       cell.addEventListener("click", (e) => {
         if (e.target.closest(".cal-event")) return;
         const iso = `${travelCalYear}-${String(travelCalMonth).padStart(2, "0")}-${String(cell.dataset.day).padStart(2, "0")}`;
+        // A blocked day opens the block, the same as its "Blocked" tag; travel can still be logged with "Log travel".
+        if (blockedOn(iso)) return openBlockedDay(iso);
         openStandaloneTravelLegModal(null, () => renderTravelCalendar(main), iso);
       });
     });
+    function openBlockedDay(iso) {
+      if (CURRENT_USER?.accessLevel === "admin") return openBlockedDatesModal(() => renderTravelCalendar(main));
+      const b = blockedOn(iso);
+      alert(`${fmtDate(iso)} is blocked${b && b.reason ? `: ${b.reason}` : ""}.`);
+    }
     calCells.querySelectorAll("[data-blocked-date]").forEach((pill) => {
-      pill.addEventListener("click", () => { if (CURRENT_USER?.accessLevel === "admin") openBlockedDatesModal(() => renderTravelCalendar(main)); });
+      pill.addEventListener("click", () => openBlockedDay(pill.dataset.blockedDate));
     });
     calCells.querySelectorAll(".tc-event").forEach((pill) => {
       pill.addEventListener("click", () => {
