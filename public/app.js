@@ -4189,7 +4189,12 @@ async function renderTravelCalendar(main) {
   }
   const firstNames = (leg) => (leg.members || []).map((m) => String(m.name || "").split(" ")[0]).filter(Boolean).join(", ");
   const pillText = (leg) => `${firstNames(leg) ? firstNames(leg) + " · " : ""}${legLabel(leg)}`;
-  function legLabel(leg) { return leg.lead_id ? `${leg.lead_name}${leg.lead_city ? ` (${leg.lead_city})` : ""}` : (leg.label || "Travel"); }
+  function legLabel(leg) {
+    if (!leg.lead_id) return leg.label || "Travel";
+    const linked = legEvents(leg);
+    if (linked.length > 1) return linked.map((l) => l.name).join(" → ");
+    return `${leg.lead_name}${leg.lead_city ? ` (${leg.lead_city})` : ""}`;
+  }
 
   function redraw() {
     const visible = visibleLegs();
@@ -4262,7 +4267,7 @@ async function renderTravelCalendar(main) {
       pill.addEventListener("click", () => {
         const leg = legs.find((l) => l.id === pill.dataset.legId);
         if (!leg) return;
-        if (leg.lead_id) openTravelPlanModal(leg.lead_id);
+        if (leg.lead_id) openLegTravelPlan(leg, pill);
         else openStandaloneTravelLegModal(leg.id, () => renderTravelCalendar(main));
       });
     });
@@ -4336,7 +4341,7 @@ async function renderTravelCalendar(main) {
         </div>
       `);
       card.addEventListener("click", () => {
-        if (leg.lead_id) openTravelPlanModal(leg.lead_id);
+        if (leg.lead_id) openLegTravelPlan(leg, card);
         else openStandaloneTravelLegModal(leg.id, () => renderTravelCalendar(main));
       });
       listEl.appendChild(card);
@@ -7548,6 +7553,35 @@ const sortLegsForDisplay = (legs) => [...legs].sort((x, y) => legOrderRank(x) - 
 // ---------- Travel plan (per-artist, per-event) ----------
 // Who shares a journey's fare: the events it links (its own, and the one it comes from or goes on
 // to), plus us. Two dates of one combo are one client (money on the primary).
+// Every event a journey connects, in travel order (an onward journey links the event it leaves and the one it goes to).
+function legEvents(leg) {
+  return fareParties(leg).filter((p) => !p.us).map((p) => LEADS.find((l) => l.id === p.leadId)).filter(Boolean);
+}
+
+// A journey that links two events belongs to both: ask which event's travel plan to open.
+function openLegTravelPlan(leg, anchor) {
+  const linked = legEvents(leg);
+  if (linked.length < 2) return openTravelPlanModal(leg.lead_id);
+  document.querySelector(".leg-pick")?.remove();
+  const fmt = (d) => d ? new Date(String(d).slice(0, 10) + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "";
+  const menu = el(`<div class="leg-pick" role="menu">
+    <div class="leg-pick-title">This journey links ${linked.length} events. Open the travel plan for:</div>
+    ${linked.map((l, i) => `<button type="button" data-pick="${l.id}">${i === 0 ? "Leaving" : "Going to"} · <b>${escH(l.name)}</b>${(l.city || "").trim() ? ` · ${escH(l.city.trim())}` : ""}${l.date ? ` · ${fmt(l.date)}` : ""}</button>`).join("")}
+  </div>`);
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  const w = Math.min(300, window.innerWidth - 16);
+  menu.style.width = w + "px";
+  menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + "px";
+  const below = r.bottom + 4, h = menu.offsetHeight;
+  menu.style.top = (below + h > window.innerHeight - 8 ? Math.max(8, r.top - h - 4) : below) + "px";
+  const close = () => { menu.remove(); document.removeEventListener("mousedown", outside, true); document.removeEventListener("keydown", onKey); };
+  const outside = (e) => { if (!menu.contains(e.target)) close(); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  setTimeout(() => { document.addEventListener("mousedown", outside, true); document.addEventListener("keydown", onKey); }, 0);
+  menu.querySelectorAll("[data-pick]").forEach((b) => b.addEventListener("click", () => { close(); openTravelPlanModal(b.dataset.pick); }));
+}
+
 function fareParties(leg) {
   const seen = new Set(), out = [];
   for (const id of [leg.from_lead_id, leg.lead_id, leg.to_lead_id]) {
