@@ -438,6 +438,7 @@ const NAV = [
   { id: "leads", label: "Leads" },
   { id: "quotation", label: "Quotation" },
   { id: "accounts", label: "Accounts" },
+  { id: "teampay", label: "Team Pay" },
   { id: "tasks", label: "Tasks & Chats" },
   { id: "calendar", label: "Calendar" },
   { id: "panchang", label: "Wedding Dates" },
@@ -459,6 +460,7 @@ const NAV_GROUPS = {
   leads: "Pipeline",
   quotation: "Pipeline",
   accounts: "Pipeline",
+  teampay: "Pipeline",
   myevents: "Pipeline",
   myrevenue: "Pipeline",
   mycash: "Pipeline",
@@ -476,7 +478,7 @@ const NAV_GROUPS = {
 // "settings", "website", and "travelcal" are admin/permission-gated directly
 // in renderNav and aren't something a manager can be granted piecemeal, so
 // they're excluded from the staff permission checklist.
-const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "today" && n.id !== "dashboard" && n.id !== "settings" && n.id !== "website" && n.id !== "travelcal" && n.id !== "traveldesk" && n.id !== "panchang");
+const PERMISSION_SECTIONS = NAV.filter((n) => n.id !== "today" && n.id !== "teampay" && n.id !== "dashboard" && n.id !== "settings" && n.id !== "website" && n.id !== "travelcal" && n.id !== "traveldesk" && n.id !== "panchang");
 
 // Fills a {placeholder} template with values — any placeholder with no matching value
 // is left as an empty string rather than showing the raw {token} in the sent message.
@@ -1714,6 +1716,7 @@ function renderNav() {
     // Team tab (and the Musicians pool inside it) is admin-only for now — a manager
     // shouldn't be able to browse the wider musician pool. Re-open later by relaxing this.
     if (n.id === "team") return CURRENT_USER?.accessLevel === "admin";
+    if (n.id === "teampay") return CURRENT_USER?.accessLevel === "admin" && hasAccountsAccess();
     return n.id === "dashboard" || !Array.isArray(perms) || perms.includes(n.id);
   });
   const overviewEnd = visibleNav.filter((n) => NAV_GROUPS[n.id] === "Overview").length;
@@ -6191,15 +6194,14 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                       </label>
                       ${isAdmin
                         ? `<div style="flex-shrink:0; text-align:right;">
-                            <input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : (suggestedFee || "")}" style="width:88px; font-size:12.5px; padding:4px 6px;" />
+                            <input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : (suggestedFee || "")}" style="width:88px; font-size:12.5px; padding:4px 6px;" ${existingFee && existingFee.paid ? `disabled title="Already paid — undo the payment in Team Pay to change it"` : ""} />
                             ${existingFee ? `
-                              <div class="muted small" style="margin-top:3px;">${existingFee.paid ? `Paid${existingFee.payment_mode ? ` · ${existingFee.payment_mode}` : ""}` : "Pending"}</div>
-                              <button class="btn-ghost edit-expense-payment-btn" data-expense-id="${existingFee.id}" style="margin-top:2px; font-size:11px; padding:2px 7px;">✎ Payment details</button>
+                              <div class="muted small" style="margin-top:3px;">${existingFee.paid ? `Paid${existingFee.payment_mode ? ` · ${existingFee.payment_mode}` : ""}` : "Not paid yet"}</div>
+                              ${existingFee.paid ? "" : `<button class="btn-ghost open-team-pay-btn" data-team-id="${m.id}" style="margin-top:2px; font-size:11px; padding:2px 7px;">Pay in Team Pay</button>`}
                             ` : ""}
                           </div>`
                         : (CURRENT_USER?.teamId === m.id && existingFee ? `<span class="muted small" style="flex-shrink:0; white-space:nowrap;">Your fee: ${inr(existingFee.amount)}${existingFee.paid ? " · Paid" : " · Pending"}</span>` : "")}
                     </div>
-                    ${isAdmin && existingFee ? expensePaymentForm(existingFee) : ""}
                     ${a ? `
                       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px; padding-top:6px; border-top:1px solid #EFE9DC;">
                         <select class="mark-response-select" data-assignment-id="${a.id}" style="font-size:12px; padding:3px 6px; color:${statusColor[a.status]};">
@@ -6586,6 +6588,10 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   }
 
   root.querySelector("#assignOpenTravelBtn")?.addEventListener("click", () => openTravelPlanModal(leadId));
+  root.querySelectorAll(".open-team-pay-btn").forEach((b) => b.addEventListener("click", () => {
+    root.innerHTML = "";
+    openTeamPayFor(b.dataset.teamId);
+  }));
 
   // Ticking someone assigns them right away, so their WhatsApp / Copy link buttons
   // (which need the assignment's confirm link) appear immediately instead of only
@@ -8290,6 +8296,8 @@ async function renderPanchang(main) {
 }
 
 // ---------- Accounts ----------
+// Artist fees and artist reimbursements are paid in Team Pay, not from the Accounts expense list.
+const isTeamPayRow = (e) => !!e.team_id && (e.category === "artist_fee" || e.category === "reimbursement");
 const ACCT_PHONE_BATCH = 15;
 const ACCT_PHONE_TXNS = 10;
 
@@ -8376,7 +8384,11 @@ async function renderAccounts(main) {
       </div>
     </div>
 
-    <div class="section-label">Pending expenses (not yet paid)${expenses.filter((e) => !e.paid).length ? ` — ${expenses.filter((e) => !e.paid).length}` : ""}</div>
+    ${(() => {
+      const owedToArtists = expenses.filter((e) => !e.paid && isTeamPayRow(e));
+      return owedToArtists.length ? `<div class="card" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;"><span>🎵 Artist fees and reimbursements are paid in <b>Team Pay</b> — ${owedToArtists.length} unpaid, ${inr(owedToArtists.reduce((s, e) => s + e.amount, 0))}.</span><button class="btn-ghost" id="acctOpenTeamPay">Open Team Pay</button></div>` : "";
+    })()}
+    <div class="section-label">Pending expenses (not yet paid)${expenses.filter((e) => !e.paid && !isTeamPayRow(e)).length ? ` — ${expenses.filter((e) => !e.paid && !isTeamPayRow(e)).length}` : ""}</div>
     <div class="card" style="margin-bottom:20px;"><div id="expenseRows"></div></div>
 
     <div class="section-label">Reimbursement requests${pendingReimbursements.length ? ` — ${pendingReimbursements.length} pending` : ""}</div>
@@ -8491,6 +8503,7 @@ async function renderAccounts(main) {
     }
   }
   renderAcctCards();
+  main.querySelector("#acctOpenTeamPay")?.addEventListener("click", () => openTeamPayFor(null));
   main.querySelector("#acctFiltersToggle").addEventListener("click", () => main.querySelector("#acctFilterGrid").classList.toggle("acct-filters-open"));
   main.querySelector("#acctExpenseToggle").addEventListener("click", (e) => {
     const open = main.querySelector("#acctExpenseCard").classList.toggle("acct-expense-open");
@@ -8517,7 +8530,7 @@ async function renderAccounts(main) {
   // ---- Pending expenses: compact tap-friendly rows ----
   function renderExpenseRows() {
     const expRows = main.querySelector("#expenseRows");
-    const pending = expenses.filter((e) => !e.paid);
+    const pending = expenses.filter((e) => !e.paid && !isTeamPayRow(e));
     if (pending.length === 0) { expRows.innerHTML = `<p class="muted small">Nothing pending — all expenses are paid</p>`; return; }
     expRows.innerHTML = "";
     pending.forEach((e) => {
@@ -8829,7 +8842,16 @@ function todayDetails(upcoming) {
   });
 }
 
-function todaySections() {
+// One row per artist we owe for events already done (or approved reimbursements).
+function todayArtistsToPay(teamPay) {
+  return teamPay.artists.filter((a) => a.owedNow > 0).map((a) => {
+    const due = a.items.filter((i) => !i.paid && i.due);
+    const oldest = due.map((i) => i.date).filter(Boolean).sort()[0];
+    return { artistId: a.id, title: a.name, meta: `${due.length} item${due.length > 1 ? "s" : ""}${oldest ? ` · since ${fmtDate(oldest)}` : ""}`, detail: `${inr(a.owedNow)} due`, tone: "danger" };
+  });
+}
+
+function todaySections(teamPay) {
   const todayStr = new Date().toISOString().slice(0, 10);
   const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
   const upcomingWithin = (n) => LEADS
@@ -8839,12 +8861,19 @@ function todaySections() {
   const sections = [];
   if (hasLeadsAccess()) sections.push({ id: "followups", icon: "💬", title: "Follow-ups due", clear: "Every lead has been followed up.", rows: todayFollowUps() });
   if (LEADS.some((l) => "final_amount" in l)) sections.push({ id: "payments", icon: "₹", title: "Payments to chase", clear: "No payments to chase.", rows: todayPayments(todayStr, inDays(14)) });
+  if (teamPay) sections.push({ id: "artistpay", icon: "💸", title: "Artists to pay", clear: "Every artist is paid up.", rows: todayArtistsToPay(teamPay) });
   if (planner) sections.push({ id: "team", icon: "🎵", title: "Team not confirmed", hint: "next 60 days", clear: "Every upcoming event has its team.", rows: todayTeam(upcomingWithin(60)) });
   if (planner || hasLeadsAccess()) sections.push({ id: "details", icon: "📍", title: "Event details missing", hint: "next 30 days", clear: "Upcoming events have their details.", rows: todayDetails(upcomingWithin(30)) });
   return sections;
 }
 
 function todayRowHtml(sectionId, row) {
+  if (!row.lead) {
+    return `<button class="today-row" data-today-section="${sectionId}" data-artist-id="${escH(row.artistId)}">
+      <span class="today-row-main"><b>${escH(row.title)}</b><span class="muted small">${escH(row.meta)}</span></span>
+      <span class="today-row-tag today-tone-${row.tone}">${escH(row.detail)}</span>
+    </button>`;
+  }
   const l = row.lead;
   const meta = [packageName(l.event_type), (l.city || "").trim(), l.date ? fmtDate(l.date) : ""].filter(Boolean).join(" · ");
   return `<button class="today-row" data-today-section="${sectionId}" data-lead-id="${escH(l.id)}">
@@ -8873,7 +8902,8 @@ function refreshTodayAfterModal() {
   }).observe(root, { childList: true });
 }
 
-function openTodayRow(sectionId, leadId) {
+function openTodayRow(sectionId, leadId, artistId) {
+  if (sectionId === "artistpay") return openTeamPayFor(artistId);
   const lead = LEADS.find((l) => l.id === leadId);
   if (!lead) return;
   if (sectionId === "followups" || !canAssignTeam() && sectionId !== "payments") return jumpToLead(lead);
@@ -8883,9 +8913,10 @@ function openTodayRow(sectionId, leadId) {
 }
 
 async function renderToday(main) {
-  await refreshLeads();
+  const canPayTeam = CURRENT_USER?.accessLevel === "admin" && hasAccountsAccess();
+  const [, teamPay] = await Promise.all([refreshLeads(), canPayTeam ? api("/api/team-pay").catch(() => null) : null]);
   if (currentTab !== "today") return;
-  const sections = todaySections();
+  const sections = todaySections(teamPay);
   const total = sections.reduce((s, x) => s + x.rows.length, 0);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
@@ -8910,9 +8941,234 @@ async function renderToday(main) {
       todayExpanded[b.dataset.todayMore] = !todayExpanded[b.dataset.todayMore];
       paint();
     }));
-    main.querySelectorAll(".today-row").forEach((b) => b.addEventListener("click", () => openTodayRow(b.dataset.todaySection, b.dataset.leadId)));
+    main.querySelectorAll(".today-row").forEach((b) => b.addEventListener("click", () => openTodayRow(b.dataset.todaySection, b.dataset.leadId, b.dataset.artistId)));
   };
   paint();
+}
+
+// ---------- Team Pay ----------
+// What each artist is owed (events already done), what's coming up, and paying any mix of it in
+// one go. Fees on events still to come can be ticked too, to pay an advance.
+let teamPayOpenArtist = null;
+
+function openTeamPayFor(artistId) {
+  teamPayOpenArtist = artistId || null;
+  currentTab = "teampay";
+  renderNav();
+  renderMain();
+  closeMobileSidebar();
+}
+
+function teamPayItemLabel(i) {
+  if (i.kind === "reimbursement") return { title: `Reimbursement${i.date ? ` · ${fmtDate(i.date)}` : ""}`, sub: [i.place !== "General" ? i.place : "", i.notes || ""].filter(Boolean).join(" · ") };
+  return { title: `${fmtDate(i.date)} · ${i.place}`, sub: [packageName(i.eventType), i.stage === "Cancelled" ? "cancelled event" : ""].filter(Boolean).join(" · ") };
+}
+
+async function renderTeamPay(main) {
+  main.innerHTML = `<div class="view-head"><div><h2>Team Pay</h2><p class="muted">What each artist is owed, and paying them in one go.</p></div></div><p class="muted">Loading…</p>`;
+  const data = await api("/api/team-pay");
+  if (currentTab !== "teampay") return;
+  const month = data.today.slice(0, 7);
+  const owing = data.artists.filter((a) => a.owedNow > 0);
+  const rest = data.artists.filter((a) => !a.owedNow && (a.upcoming > 0 || a.items.length));
+  const owedTotal = owing.reduce((s, a) => s + a.owedNow, 0);
+  const upcomingTotal = data.artists.reduce((s, a) => s + a.upcoming, 0);
+  const paidThisMonth = data.artists.reduce((s, a) => s + a.items.filter((i) => i.paid && (i.paymentDate || "").startsWith(month)).reduce((t, i) => t + i.amount, 0), 0);
+  const artistRow = (a) => {
+    const due = a.items.filter((i) => !i.paid && i.due);
+    const oldest = due.map((i) => i.date).filter(Boolean).sort()[0];
+    const meta = a.owedNow
+      ? `${due.length} item${due.length > 1 ? "s" : ""} to pay${oldest ? ` · since ${fmtDate(oldest)}` : ""}${a.upcoming ? ` · ${inr(a.upcoming)} coming up` : ""}`
+      : a.upcoming ? `${a.items.filter((i) => !i.paid && !i.due).length} upcoming event${a.items.filter((i) => !i.paid && !i.due).length > 1 ? "s" : ""}` : `${inr(a.paidTotal)} paid so far`;
+    const tag = a.owedNow ? `<span class="today-row-tag today-tone-danger">${inr(a.owedNow)} due</span>`
+      : a.upcoming ? `<span class="today-row-tag today-tone-warn">${inr(a.upcoming)} later</span>`
+      : `<span class="today-row-tag today-tone-ok">Paid up</span>`;
+    return `<button class="today-row" data-artist-id="${escH(a.id)}"><span class="today-row-main"><b>${escH(a.name)}</b><span class="muted small">${escH(meta)}</span></span>${tag}</button>`;
+  };
+  main.innerHTML = `
+    <div class="view-head">
+      <div><h2>Team Pay</h2><p class="muted">What each artist is owed, and paying them in one go.</p></div>
+      <div class="dash-head-actions"><button class="btn-ghost dash-head-btn" id="tpRefresh" title="Refresh">🔄 <span class="btn-label">Refresh</span></button></div>
+    </div>
+    <div class="today-stats">
+      <div class="card dash-stat"><div class="muted">Owed now</div><div class="mono big" style="color:${owedTotal ? "var(--danger)" : "var(--success)"};">${inr(owedTotal)}</div><div class="muted small">${owing.length} artist${owing.length === 1 ? "" : "s"}</div></div>
+      <div class="card dash-stat"><div class="muted">Coming up</div><div class="mono big">${inr(upcomingTotal)}</div><div class="muted small">events not yet played</div></div>
+      <div class="card dash-stat"><div class="muted">Paid this month</div><div class="mono big" style="color:var(--success);">${inr(paidThisMonth)}</div></div>
+    </div>
+    ${data.pendingApprovals ? `<div class="card" style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;"><span>🧾 ${data.pendingApprovals} reimbursement request${data.pendingApprovals > 1 ? "s" : ""} waiting for your approval. Once approved, they show up here to pay.</span><button class="btn-ghost" id="tpOpenAccounts">Review in Accounts</button></div>` : ""}
+    ${data.needsFee.length ? `
+      <div class="card today-section" style="margin-bottom:16px;">
+        <div class="today-section-head"><b>✏️ Fee not set</b><span class="muted small">artists on a booked event with no fee</span><span class="today-count">${data.needsFee.length}</span></div>
+        ${data.needsFee.map((n, k) => `
+          <div class="tp-fee-row">
+            <span class="today-row-main"><b>${escH(n.artist)}</b><span class="muted small">${escH(`${fmtDate(n.date)} · ${n.place} · ${packageName(n.eventType)}`)}</span></span>
+            <span class="tp-fee-set"><input type="number" min="1" inputmode="numeric" class="tp-fee-input" data-k="${k}" placeholder="Fee ₹" value="${n.suggested || ""}" /><button class="btn-ghost tp-fee-save" data-k="${k}">Save</button></span>
+          </div>`).join("")}
+      </div>` : ""}
+    <div class="today-grid">
+      <div class="card today-section">
+        <div class="today-section-head"><b>💸 Owed now</b><span class="muted small">events already played</span><span class="today-count${owing.length ? "" : " today-count-clear"}">${owing.length || "✓"}</span></div>
+        ${owing.length ? owing.map(artistRow).join("") : `<p class="muted small" style="margin:8px 0 0;">Every artist is paid up for events already played.</p>`}
+      </div>
+      <div class="card today-section">
+        <div class="today-section-head"><b>🎵 Everyone else</b><span class="muted small">upcoming or paid up</span></div>
+        ${rest.length ? rest.map(artistRow).join("") : `<p class="muted small" style="margin:8px 0 0;">No other artists with fees yet.</p>`}
+      </div>
+    </div>`;
+  main.querySelector("#tpRefresh").addEventListener("click", () => renderMain());
+  main.querySelector("#tpOpenAccounts")?.addEventListener("click", () => { currentTab = "accounts"; renderNav(); renderMain(); });
+  main.querySelectorAll(".tp-fee-save").forEach((b) => b.addEventListener("click", async () => {
+    const n = data.needsFee[Number(b.dataset.k)];
+    const amount = Number(main.querySelector(`.tp-fee-input[data-k="${b.dataset.k}"]`).value);
+    if (!(amount > 0)) return alert("Enter the fee in rupees.");
+    b.disabled = true;
+    try {
+      await api("/api/team-pay/fees", { method: "POST", body: JSON.stringify({ leadId: n.leadId, teamId: n.teamId, amount }) });
+      renderMain();
+    } catch (err) { b.disabled = false; alert(err.message); }
+  }));
+  main.querySelectorAll(".today-row[data-artist-id]").forEach((b) => b.addEventListener("click", () => {
+    openArtistPayModal(data.artists.find((a) => a.id === b.dataset.artistId), data);
+  }));
+  if (teamPayOpenArtist) {
+    const a = data.artists.find((x) => x.id === teamPayOpenArtist);
+    teamPayOpenArtist = null;
+    if (a) openArtistPayModal(a, data);
+  }
+}
+
+function openArtistPayModal(artist, data) {
+  const root = document.getElementById("modalRoot");
+  const dueItems = artist.items.filter((i) => !i.paid && i.due);
+  const laterItems = artist.items.filter((i) => !i.paid && !i.due);
+  const paidEarlier = artist.items.filter((i) => i.paid && !i.payoutId).sort((x, y) => (y.paymentDate || "").localeCompare(x.paymentDate || ""));
+  const selected = new Set(dueItems.map((i) => i.id));
+  const byId = Object.fromEntries(artist.items.map((i) => [i.id, i]));
+  const firstName = artist.name.split(" ")[0];
+  const digits = (artist.phone || "").replace(/\D/g, "");
+  const itemRow = (i) => {
+    const { title, sub } = teamPayItemLabel(i);
+    return `<label class="tp-item">
+      <input type="checkbox" class="tp-pick" data-id="${escH(i.id)}" ${selected.has(i.id) ? "checked" : ""} />
+      <span class="today-row-main"><b>${escH(title)}</b>${sub ? `<span class="muted small">${escH(sub)}</span>` : ""}</span>
+      ${i.kind === "fee" ? `<input type="number" min="1" inputmode="numeric" class="tp-amount" data-id="${escH(i.id)}" value="${i.amount}" aria-label="Fee for ${escH(title)}" />` : `<span class="mono tp-amount-fixed">${inr(i.amount)}</span>`}
+    </label>`;
+  };
+  const close = () => { root.innerHTML = ""; renderMain(); };
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card" style="width:560px; max-width:96vw;">
+        <div class="modal-head"><h3>Pay ${escH(artist.name)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body" id="tpBody">
+          <div class="section-label" style="margin-top:0;">Ready to pay — events already played</div>
+          ${dueItems.length ? dueItems.map(itemRow).join("") : `<p class="muted small">Nothing owed for events already played.</p>`}
+          ${laterItems.length ? `<div class="section-label">Coming up — tick to pay in advance</div>${laterItems.map(itemRow).join("")}` : ""}
+          ${dueItems.length || laterItems.length ? `
+            <div class="card tp-pay-card">
+              <div class="tp-total"><span id="tpCount"></span><b class="mono" id="tpTotal"></b></div>
+              <div class="row-2">
+                <div><label class="muted small" for="tpDate">Paid on</label><input type="date" id="tpDate" value="${data.today}" max="${data.today}" data-no-clear /></div>
+                <div><label class="muted small" for="tpMode">Paid by</label><select id="tpMode">${data.modes.map((m) => `<option value="${m}">${m}</option>`).join("")}</select></div>
+              </div>
+              <label class="muted small" for="tpRef" style="display:block; margin-top:8px;">Reference (UPI or bank ref, optional)</label>
+              <input id="tpRef" maxlength="80" placeholder="e.g. UPI ref 4123 5678 9012" />
+              <label class="muted small" for="tpNote" style="display:block; margin-top:8px;">Note (optional)</label>
+              <input id="tpNote" maxlength="300" placeholder="e.g. paid from HDFC" />
+              <button class="btn-primary full" id="tpPayBtn"></button>
+            </div>` : ""}
+          ${artist.payouts.length || paidEarlier.length ? `<div class="section-label">Payment history</div>` : ""}
+          ${artist.payouts.map((p) => {
+            const covered = artist.items.filter((i) => i.payoutId === p.id);
+            return `<div class="tp-history">
+              <div style="display:flex; justify-content:space-between; gap:8px; align-items:baseline;"><b class="mono">${inr(p.amount)}</b><span class="muted small">${fmtDate(p.paidOn)} · ${escH(p.mode || "")}${p.reference ? ` · ref ${escH(p.reference)}` : ""}</span></div>
+              <div class="muted small">${covered.map((i) => escH(teamPayItemLabel(i).title)).join("; ")}${p.note ? ` · ${escH(p.note)}` : ""}</div>
+              <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
+                ${digits ? `<button class="btn-ghost tp-wa" data-payout="${escH(p.id)}" style="font-size:12px; padding:4px 10px;">💬 Send summary</button>` : ""}
+                <button class="btn-ghost tp-undo" data-payout="${escH(p.id)}" style="font-size:12px; padding:4px 10px; color:var(--danger);">Undo</button>
+              </div>
+            </div>`;
+          }).join("")}
+          ${paidEarlier.length ? `<details class="tp-earlier"><summary class="muted small">Paid before Team Pay (${paidEarlier.length})</summary>${paidEarlier.map((i) => `<div class="tp-history"><div style="display:flex; justify-content:space-between; gap:8px;"><span>${escH(teamPayItemLabel(i).title)}</span><b class="mono">${inr(i.amount)}</b></div><div class="muted small">${i.paymentDate ? `Paid ${fmtDate(i.paymentDate)}` : "Paid"}${i.mode ? ` · ${escH(i.mode)}` : ""}</div></div>`).join("")}</details>` : ""}
+        </div>
+      </div>
+    </div>`;
+  const q = (s) => root.querySelector(s);
+  q("#closeModal").addEventListener("click", close);
+  q("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+
+  const summaryText = (items, p) => {
+    const lines = items.map((i) => `• ${teamPayItemLabel(i).title}: ${inr(i.amount)}`);
+    return `Hi ${firstName}, we've sent you ${inr(p.amount)} by ${p.mode} on ${fmtDate(p.paidOn)}${p.reference ? ` (ref ${p.reference})` : ""}.\n\nThis covers:\n${lines.join("\n")}\n\nThank you for playing with Together, Out Loud 🎶`;
+  };
+  const sendSummary = (items, p) => goWhatsApp(`https://wa.me/${digits}?text=${encodeURIComponent(summaryText(items, p))}`);
+
+  const refreshTotal = () => {
+    const btn = q("#tpPayBtn");
+    if (!btn) return;
+    const items = [...selected].map((id) => byId[id]);
+    const total = items.reduce((s, i) => s + i.amount, 0);
+    q("#tpCount").textContent = items.length ? `${items.length} item${items.length > 1 ? "s" : ""} selected` : "Tick what you're paying for";
+    q("#tpTotal").textContent = inr(total);
+    btn.textContent = items.length ? `Pay ${inr(total)}` : "Pay";
+    btn.disabled = !items.length;
+  };
+  refreshTotal();
+  root.querySelectorAll(".tp-pick").forEach((cb) => cb.addEventListener("change", () => {
+    if (cb.checked) selected.add(cb.dataset.id); else selected.delete(cb.dataset.id);
+    refreshTotal();
+  }));
+  // Changing an unpaid fee saves it straight away, so the total always matches what's stored.
+  root.querySelectorAll(".tp-amount").forEach((inp) => inp.addEventListener("change", async () => {
+    const item = byId[inp.dataset.id];
+    const amount = Math.round(Number(inp.value));
+    if (!(amount > 0)) { inp.value = item.amount; return alert("Enter the fee in rupees."); }
+    inp.disabled = true;
+    try {
+      await api(`/api/expenses/${item.id}`, { method: "PATCH", body: JSON.stringify({ amount }) });
+      item.amount = amount;
+      refreshTotal();
+    } catch (err) { inp.value = item.amount; alert(err.message); }
+    inp.disabled = false;
+  }));
+  q("#tpPayBtn")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const items = [...selected].map((id) => byId[id]);
+    if (!items.length) return;
+    const body = { teamId: artist.id, expenseIds: items.map((i) => i.id), paidOn: q("#tpDate").value, mode: q("#tpMode").value, reference: q("#tpRef").value, note: q("#tpNote").value };
+    btn.disabled = true;
+    btn.textContent = "Saving…";
+    try {
+      const res = await api("/api/team-pay/payouts", { method: "POST", body: JSON.stringify(body) });
+      const p = { amount: res.amount, mode: body.mode, paidOn: body.paidOn, reference: body.reference.trim() };
+      q("#tpBody").innerHTML = `
+        <div class="tp-done">
+          <div class="today-clear-icon" aria-hidden="true">✅</div>
+          <b>Paid ${inr(res.amount)} to ${escH(artist.name)}</b>
+          <p class="muted small">${res.count} item${res.count > 1 ? "s" : ""} marked paid · ${escH(body.mode)} · ${fmtDate(body.paidOn)}. ${escH(firstName)} can see it in their app.</p>
+          ${digits ? `<button class="btn-primary" id="tpSendWa">💬 Send ${escH(firstName)} a summary</button>` : `<p class="muted small">No phone number on file to send a summary.</p>`}
+          <button class="btn-ghost" id="tpDone" style="margin-top:8px;">Done</button>
+        </div>`;
+      q("#tpSendWa")?.addEventListener("click", () => sendSummary(items, p));
+      q("#tpDone").addEventListener("click", close);
+    } catch (err) {
+      btn.disabled = false;
+      refreshTotal();
+      alert(err.message);
+    }
+  });
+  root.querySelectorAll(".tp-wa").forEach((b) => b.addEventListener("click", () => {
+    const p = artist.payouts.find((x) => x.id === b.dataset.payout);
+    sendSummary(artist.items.filter((i) => i.payoutId === p.id), p);
+  }));
+  root.querySelectorAll(".tp-undo").forEach((b) => b.addEventListener("click", async () => {
+    const p = artist.payouts.find((x) => x.id === b.dataset.payout);
+    if (!confirm(`Undo the ${inr(p.amount)} payment to ${artist.name} on ${fmtDate(p.paidOn)}? Everything it covered goes back to unpaid.`)) return;
+    b.disabled = true;
+    try {
+      await api(`/api/team-pay/payouts/${p.id}`, { method: "DELETE" });
+      close();
+    } catch (err) { b.disabled = false; alert(err.message); }
+  }));
 }
 
 async function renderDashboard(main) {
@@ -12979,6 +13235,7 @@ function renderMain() {
   }
   window._lastRenderedTab = currentTab;
   if (currentTab === "today") renderToday(main);
+  else if (currentTab === "teampay") renderTeamPay(main);
   else if (currentTab === "dashboard") renderDashboard(main);
   else if (currentTab === "leads") renderLeadsLog(main);
   else if (currentTab === "quotation") renderQuotation(main);

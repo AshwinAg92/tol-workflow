@@ -424,6 +424,26 @@ async function setup() {
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'expense'`);
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approved INTEGER NOT NULL DEFAULT 1`);
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS requested_by TEXT`);
+  // Team Pay: one payout settles any number of an artist's fees/reimbursements at once.
+  // Each row it covers carries its payout_id, so a payout can be undone as a unit.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS team_payouts (
+      id TEXT PRIMARY KEY,
+      team_id TEXT NOT NULL REFERENCES team(id),
+      amount INTEGER NOT NULL,
+      paid_on TEXT NOT NULL,
+      mode TEXT,
+      reference TEXT,
+      note TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL
+    )
+  `);
+  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payout_id TEXT REFERENCES team_payouts(id) ON DELETE SET NULL`);
+  // Artist fees used to be recognised only by their "Artist fee — Name" wording; give them their
+  // own category so Team Pay doesn't depend on text matching. Idempotent — runs every boot.
+  await pool.query(`UPDATE expenses SET category = 'artist_fee' WHERE category = 'expense' AND team_id IS NOT NULL AND head LIKE 'Artist fee%'`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_exp_payout ON expenses(payout_id)`);
   // Documents used to live as files on the container's local disk, which Railway
   // wipes on every redeploy — silently losing every upload. They now live as
   // bytes directly in Postgres instead, which is what the app already relies on
