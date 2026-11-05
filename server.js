@@ -4228,17 +4228,36 @@ app.post("/api/leads/:id/payments", requireAuth, requireSection("accounts"), req
 });
 
 // ---------- Shared travel costs ----------
-// A trip that serves two events (or a client and us) is booked and paid by us, then split:
-// each client's share becomes a reimbursement due on their own event — so it's in their balance,
-// on Today and in reminders — and the ticket cost is recorded as an expense split the same way.
+// A journey that serves two events (or a client and us) has its fare split between the parties.
+// Who bought the tickets decides the money:
+//  - we paid: each client's share becomes a reimbursement due on their own event, and the fare is
+//    our expense;
+//  - a client paid: their own share is theirs; everything else they paid is adjusted from our fee
+//    for them (a credit on their balance), and each other client's share is a reimbursement due
+//    from that client. What we carry (that credit) is our expense.
+// Every row created points back here, so a split can be undone as a whole.
 async function describeSharedCosts(costs) {
   if (!costs.length) return [];
-  const parts = (await pool.query(`SELECT p.id, p.shared_cost_id, p.lead_id, p.amount, p.status, l.name, l.date, l.city, l.venue
+  const rows = (await pool.query(`SELECT p.id, p.shared_cost_id, p.lead_id, p.amount, p.status, p.type, l.name, l.date, l.city, l.venue
     FROM payments p JOIN leads l ON l.id = p.lead_id WHERE p.shared_cost_id = ANY($1::text[])`, [costs.map((c) => c.id)])).rows;
-  return costs.map((c) => ({
-    id: c.id, legId: c.leg_id, description: c.description, travelDate: c.travel_date, total: Number(c.total), ourShare: Number(c.our_share), createdBy: c.created_by,
-    parts: parts.filter((p) => p.shared_cost_id === c.id).map((p) => ({ paymentId: p.id, leadId: p.lead_id, name: p.name, date: p.date, place: placeOf(p), amount: Number(p.amount), status: p.status })),
-  }));
+  return costs.map((c) => {
+    const mine = rows.filter((p) => p.shared_cost_id === c.id);
+    const dues = mine.filter((p) => p.type === "client_reimbursement");
+    const credit = mine.find((p) => p.type === "payment");
+    let shares = [];
+    try { shares = JSON.parse(c.shares || "[]"); } catch { shares = []; }
+    if (!shares.length) shares = dues.map((p) => ({ leadId: p.lead_id, name: p.name, amount: Number(p.amount) }));
+    return {
+      id: c.id, legId: c.leg_id, description: c.description, travelDate: c.travel_date, total: Number(c.total), ourShare: Number(c.our_share), createdBy: c.created_by,
+      paidBy: c.paid_by || "us",
+      payerName: c.paid_by && c.paid_by !== "us" ? (shares.find((s) => s.leadId === c.paid_by) || {}).name || "" : "",
+      credit: credit ? Number(credit.amount) : 0,
+      shares: shares.map((s) => {
+        const due = dues.find((p) => p.lead_id === s.leadId);
+        return { leadId: s.leadId, name: s.name, amount: Number(s.amount), isPayer: s.leadId === c.paid_by, status: due ? due.status : null };
+      }),
+    };
+  });
 }
 
 // The fare splits for a set of journeys (the travel plan asks for the journeys it shows).
@@ -4255,16 +4274,17 @@ app.post("/api/shared-travel", requireAuth, requireSection("accounts"), requireA
   const travelDate = req.body.travelDate && isDayString(req.body.travelDate) ? req.body.travelDate : null;
   const ourShare = Math.round(Number(req.body.ourShare || 0));
   const parts = (Array.isArray(req.body.parts) ? req.body.parts : []).map((p) => ({ leadId: String(p.leadId || ""), amount: Math.round(Number(p.amount)) }));
+  const paidBy = String(req.body.paidBy || "");
   if (!description) return res.status(400).json({ error: "Describe the trip, e.g. \"Band travel Puri → Kolkata\"." });
-  if (!(total > 0)) return res.status(400).json({ error: "Enter the total cost of the trip." });
-  if (!parts.length || parts.some((p) => !p.leadId || !(p.amount > 0))) return res.status(400).json({ error: "Each event sharing the cost needs an amount." });
+  if (!(total > 0)) return res.status(400).json({ error: "Enter the total fare." });
+  if (!parts.length || parts.some((p) => !p.leadId || !(p.amount > 0))) return res.status(400).json({ error: "Each event sharing the fare needs an amount." });
   if (new Set(parts.map((p) => p.leadId)).size !== parts.length) return res.status(400).json({ error: "Pick two different events." });
-  if (!(ourShare >= 0) || parts.reduce((s, p) => s + p.amount, 0) + ourShare !== total) return res.status(400).json({ error: "The shares must add up to the total." });
+  if (!(ourShare >= 0) || parts.reduce((s, p) => s + p.amount, 0) + ourShare !== total) return res.status(400).json({ error: "The shares must add up to the total fare." });
+  if (paidBy !== "us" && !parts.some((p) => p.leadId === paidBy)) return res.status(400).json({ error: "Choose who paid the fare." });
   const leads = (await pool.query("SELECT id, name, combo_group_id FROM leads WHERE id = ANY($1::text[])", [parts.map((p) => p.leadId)])).rows;
   if (leads.length !== parts.length) return res.status(404).json({ error: "Event not found" });
   const combos = leads.map((l) => l.combo_group_id).filter(Boolean);
   if (new Set(combos).size !== combos.length) return res.status(400).json({ error: "Those two events are one combo booking — there's nothing to split between them." });
-  const recordExpense = req.body.recordExpense !== false;
   const legId = req.body.legId ? String(req.body.legId) : null;
   if (legId) {
     const leg = (await pool.query("SELECT id FROM travel_legs WHERE id = $1", [legId])).rows[0];
@@ -4272,48 +4292,58 @@ app.post("/api/shared-travel", requireAuth, requireSection("accounts"), requireA
     const taken = (await pool.query("SELECT 1 FROM shared_travel_costs WHERE leg_id = $1", [legId])).rows[0];
     if (taken) return res.status(409).json({ error: "This journey's fare is already split. Remove that split first to change it." });
   }
+  const nameOf = (id) => leads.find((l) => l.id === id).name;
+  const shares = parts.map((p) => ({ leadId: p.leadId, name: nameOf(p.leadId), amount: p.amount }));
   const now = new Date().toISOString(), today = todayIST();
   const id = uuid();
+  const pctOf = (n) => Math.round((n / total) * 100);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query("INSERT INTO shared_travel_costs (id, description, travel_date, total, our_share, created_by, created_at, leg_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-      [id, description, travelDate, total, ourShare, await actorName(req.user), now, legId]);
-    for (const p of parts) {
-      const pct = Math.round((p.amount / total) * 100);
-      await client.query(`INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, type, status, created_at, shared_cost_id)
-        VALUES ($1,$2,$3,$4,NULL,$5,'client_reimbursement','due',$6,$7)`, [uuid(), p.leadId, p.amount, today, `Shared travel: ${description} (${pct}%)`, now, id]);
-    }
-    // Our ticket cost, split across the events the same way (our own share sits on the first event).
-    if (recordExpense) {
-      for (const [i, p] of parts.entries()) {
-        const amount = p.amount + (i === 0 ? ourShare : 0);
-        await client.query(`INSERT INTO expenses (id, lead_id, head, amount, paid, notes, created_at, payment_date, category, shared_cost_id)
-          VALUES ($1,$2,$3,$4,1,$5,$6,$7,'expense',$8)`, [uuid(), p.leadId, `Travel — ${description}`, amount, "Shared travel cost", now, today, id]);
+    await client.query(`INSERT INTO shared_travel_costs (id, description, travel_date, total, our_share, created_by, created_at, leg_id, paid_by, shares)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [id, description, travelDate, total, ourShare, await actorName(req.user), now, legId, paidBy, JSON.stringify(shares)]);
+    const due = (leadId, amount, note) => client.query(`INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, type, status, created_at, shared_cost_id)
+      VALUES ($1,$2,$3,$4,NULL,$5,'client_reimbursement','due',$6,$7)`, [uuid(), leadId, amount, today, note, now, id]);
+    const expense = (leadId, amount, head) => client.query(`INSERT INTO expenses (id, lead_id, head, amount, paid, notes, created_at, payment_date, category, shared_cost_id)
+      VALUES ($1,$2,$3,$4,1,'Shared travel fare',$5,$6,'expense',$7)`, [uuid(), leadId, head, amount, now, today, id]);
+    if (paidBy === "us") {
+      for (const p of parts) await due(p.leadId, p.amount, `Shared travel: ${description} (${pctOf(p.amount)}%)`);
+      for (const [i, p] of parts.entries()) await expense(p.leadId, p.amount + (i === 0 ? ourShare : 0), `Travel — ${description}`);
+    } else {
+      const payerShare = parts.find((p) => p.leadId === paidBy).amount;
+      const credit = total - payerShare;
+      for (const p of parts.filter((x) => x.leadId !== paidBy)) {
+        await due(p.leadId, p.amount, `Shared travel: ${description} (${pctOf(p.amount)}%) — fare paid by ${nameOf(paidBy)}`);
+      }
+      if (credit > 0) {
+        await client.query(`INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, type, status, created_at, shared_cost_id)
+          VALUES ($1,$2,$3,$4,'Travel fare adjustment',$5,'payment','received',$6,$7)`,
+          [uuid(), paidBy, credit, today, `${description}: they paid the full fare; the other ${pctOf(credit)}% is adjusted from our fee`, now, id]);
+        await expense(paidBy, credit, `Travel — ${description} (adjusted from fee)`);
       }
     }
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("Shared travel save failed:", err.message);
-    return res.status(500).json({ error: "Couldn't save the shared cost. Nothing was changed — please try again." });
+    return res.status(500).json({ error: "Couldn't save the split. Nothing was changed — please try again." });
   } finally { client.release(); }
-  const names = parts.map((p) => `${leads.find((l) => l.id === p.leadId).name} ₹${p.amount.toLocaleString("en-IN")}`).concat(ourShare ? [`us ₹${ourShare.toLocaleString("en-IN")}`] : []);
-  for (const p of parts) logActivity(req, `Shared travel ₹${total.toLocaleString("en-IN")} (${description}) split: ${names.join(", ")}`, p.leadId);
+  const summary = shares.map((s) => `${s.name} ₹${s.amount.toLocaleString("en-IN")}`).concat(ourShare ? [`us ₹${ourShare.toLocaleString("en-IN")}`] : []).join(", ");
+  for (const p of parts) logActivity(req, `Shared fare ₹${total.toLocaleString("en-IN")} (${description}), paid by ${paidBy === "us" ? "us" : nameOf(paidBy)}: ${summary}`, p.leadId);
   res.status(201).json({ id });
 });
 
-// Removing a split takes back the dues and expenses it created — only while nothing's been collected.
+// Removing a split takes back everything it created — only while no share has been collected.
 app.delete("/api/shared-travel/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   const c = (await pool.query("SELECT * FROM shared_travel_costs WHERE id = $1", [req.params.id])).rows[0];
   if (!c) return res.status(404).json({ error: "Shared cost not found" });
-  const got = (await pool.query("SELECT 1 FROM payments WHERE shared_cost_id = $1 AND status <> 'due' LIMIT 1", [c.id])).rows[0];
+  const got = (await pool.query("SELECT 1 FROM payments WHERE shared_cost_id = $1 AND type = 'client_reimbursement' AND status <> 'due' LIMIT 1", [c.id])).rows[0];
   if (got) return res.status(400).json({ error: "A share of this has already been marked received. Mark it due again in the client's payments first." });
   const leadIds = (await pool.query("SELECT DISTINCT lead_id FROM payments WHERE shared_cost_id = $1", [c.id])).rows.map((r) => r.lead_id);
   await pool.query("DELETE FROM payments WHERE shared_cost_id = $1", [c.id]);
   await pool.query("DELETE FROM expenses WHERE shared_cost_id = $1", [c.id]);
   await pool.query("DELETE FROM shared_travel_costs WHERE id = $1", [c.id]);
-  for (const l of leadIds) logActivity(req, `Removed shared travel cost: ${c.description} (₹${Number(c.total).toLocaleString("en-IN")})`, l);
+  for (const l of leadIds) logActivity(req, `Removed shared fare: ${c.description} (₹${Number(c.total).toLocaleString("en-IN")})`, l);
   res.status(204).end();
 });
 

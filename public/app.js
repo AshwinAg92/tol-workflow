@@ -7615,20 +7615,32 @@ async function openTravelPlanModal(leadId) {
     if (!canSplitFare || leg.mode === "stay") return "";
     const split = fareSplits[leg.id];
     if (split) {
-      const rows = split.parts.map((p) => {
+      const rows = split.shares.map((p) => {
+        if (p.isPayer) return `<span>${escH(p.name)} ${inr(p.amount)} <b class="fare-ok">Own share, paid</b></span>`;
         const l = LEADS.find((x) => x.id === p.leadId);
         const collected = p.status === "received" || (l && eventMoney(l).balance <= 0);
-        return `<span>${escH(p.name)} ${inr(p.amount)} <b class="${collected ? "fare-ok" : "fare-due"}">${collected ? "Collected" : "Due"}</b></span>`;
+        return `<span>${escH(p.name)} ${inr(p.amount)} <b class="${collected ? "fare-ok" : "fare-due"}">${collected ? "Collected" : "To collect"}</b></span>`;
       });
       if (split.ourShare) rows.push(`<span>Us ${inr(split.ourShare)}</span>`);
-      return `<div class="fare-split"><div>💰 <b>Fare ${inr(split.total)}</b> shared</div><div class="fare-parties">${rows.join("")}</div>${split.parts.every((p) => p.status === "due") ? `<button class="btn-ghost" data-fare-remove="${split.id}">Remove split</button>` : ""}</div>`;
+      const collectable = split.shares.filter((p) => !p.isPayer);
+      return `<div class="fare-split">
+        <div>💰 <b>Fare ${inr(split.total)}</b> · paid by <b>${escH(split.paidBy === "us" ? "us" : split.payerName)}</b></div>
+        <div class="fare-parties">${rows.join("")}</div>
+        ${split.credit ? `<div class="muted small" style="margin-top:4px;">${inr(split.credit)} adjusted from our fee for ${escH(split.payerName)}</div>` : ""}
+        ${collectable.every((p) => p.status === "due") ? `<button class="btn-ghost" data-fare-remove="${split.id}">Remove split</button>` : ""}
+      </div>`;
     }
     const parties = fareParties(leg);
     return `<label class="fare-check"><input type="checkbox" data-fare-toggle="${leg.id}" /> 💰 Fare shared between events</label>
       <div class="fare-box" data-fare-box="${leg.id}" hidden>
         <label>Total fare (₹)<input type="number" min="1" inputmode="numeric" data-fare-total /></label>
         ${parties.map((p, i) => `<label>${escH(p.name)}${p.place ? ` <span class="muted small">· ${escH(p.place)}</span>` : ""}<input type="number" min="0" inputmode="numeric" data-fare-part="${i}" /></label>`).join("")}
-        <p class="muted small" style="margin:6px 0 8px;">Split 50:50 — change one share and the other adjusts. Each client's share is added to their balance, and the fare is recorded as our expense.</p>
+        <label>Who paid the fare?<select data-fare-payer>
+          <option value="">Choose who paid…</option>
+          <option value="us">Us (Together, Out Loud)</option>
+          ${parties.filter((p) => !p.us).map((p) => `<option value="${p.leadId}">${escH(p.name)}</option>`).join("")}
+        </select></label>
+        <p class="muted small fare-hint" style="margin:6px 0 8px;">Split 50:50 — change one share and the other adjusts.</p>
         <button class="btn-primary" data-fare-save="${leg.id}">Save split</button>
       </div>`;
   };
@@ -8167,6 +8179,16 @@ async function openTravelPlanModal(leadId) {
         if (parts.length !== 2) return;
         parts[1 - i].value = Math.max(0, Math.round(Number(total.value) || 0) - (Math.round(Number(p.value)) || 0));
       }));
+      // Say in words what will happen to the money for whoever paid.
+      const payer = box.querySelector("[data-fare-payer]"), hint = box.querySelector(".fare-hint");
+      payer.addEventListener("change", () => {
+        const leg = legs.find((x) => x.id === box.dataset.fareBox);
+        const parties = fareParties(leg), others = parties.filter((p) => !p.us && p.leadId !== payer.value).map((p) => p.name);
+        const payerName = (parties.find((p) => p.leadId === payer.value) || {}).name;
+        hint.textContent = !payer.value ? "Split 50:50 — change one share and the other adjusts."
+          : payer.value === "us" ? `We paid: each client's share is added to their balance to collect, and the fare is our expense.`
+          : `${payerName} paid: their own share stays with them, the rest is adjusted from our fee for them${others.length ? `, and ${others.join(" and ")}'s share is added to their balance to collect` : ""}.`;
+      });
     });
     root.querySelectorAll("[data-fare-save]").forEach((btn) => btn.addEventListener("click", async () => {
       const leg = legs.find((x) => x.id === btn.dataset.fareSave);
@@ -8179,9 +8201,11 @@ async function openTravelPlanModal(leadId) {
       const parts = parties.map((p, i) => ({ ...p, amount: amounts[i] })).filter((p) => !p.us && p.amount > 0).map((p) => ({ leadId: p.leadId, amount: p.amount }));
       const ourShare = parties.reduce((sum, p, i) => sum + (p.us ? amounts[i] : 0), 0);
       if (!parts.length) return alert("At least one event needs a share.");
+      const paidBy = box.querySelector("[data-fare-payer]").value;
+      if (!paidBy) return alert("Choose who paid the fare.");
       btn.disabled = true;
       try {
-        await api("/api/shared-travel", { method: "POST", body: JSON.stringify({ legId: leg.id, description: `${TRAVEL_MODE_LABELS[leg.mode] || "Travel"} ${joinRoute(leg.from_city, leg.to_city) || ""}`.trim(), travelDate: String(leg.departure_at || "").slice(0, 10) || null, total: t, parts, ourShare }) });
+        await api("/api/shared-travel", { method: "POST", body: JSON.stringify({ legId: leg.id, description: `${TRAVEL_MODE_LABELS[leg.mode] || "Travel"} ${joinRoute(leg.from_city, leg.to_city) || ""}`.trim(), travelDate: String(leg.departure_at || "").slice(0, 10) || null, total: t, parts, ourShare, paidBy }) });
         await refreshLeads(); await loadFareSplits(); renderModal();
       } catch (err) { btn.disabled = false; alert(err.message); }
     }));

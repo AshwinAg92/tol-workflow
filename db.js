@@ -467,6 +467,11 @@ async function setup() {
   // A shared fare belongs to the journey it paid for (one split per journey).
   await pool.query(`ALTER TABLE shared_travel_costs ADD COLUMN IF NOT EXISTS leg_id TEXT REFERENCES travel_legs(id) ON DELETE SET NULL`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_travel_leg ON shared_travel_costs(leg_id) WHERE leg_id IS NOT NULL`);
+  // Who actually paid the fare: 'us', or the event (client) who bought the tickets. When a client
+  // paid, the rest of the fare is adjusted from our fee for them and billed to the other party.
+  await pool.query(`ALTER TABLE shared_travel_costs ADD COLUMN IF NOT EXISTS paid_by TEXT NOT NULL DEFAULT 'us'`);
+  // Every party's share as it was agreed, including the payer's own: [{ leadId, name, amount }].
+  await pool.query(`ALTER TABLE shared_travel_costs ADD COLUMN IF NOT EXISTS shares TEXT`);
   // Whether the client said their feedback can be quoted on the website.
   await pool.query(`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS share_ok INTEGER NOT NULL DEFAULT 0`);
   // Stray and doubled spaces in city names split one city into several in reports ("Siliguri " vs "Siliguri").
