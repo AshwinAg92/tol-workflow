@@ -464,6 +464,9 @@ async function setup() {
   `);
   await pool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS shared_cost_id TEXT REFERENCES shared_travel_costs(id) ON DELETE SET NULL`);
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS shared_cost_id TEXT REFERENCES shared_travel_costs(id) ON DELETE SET NULL`);
+  // A shared fare belongs to the journey it paid for (one split per journey).
+  await pool.query(`ALTER TABLE shared_travel_costs ADD COLUMN IF NOT EXISTS leg_id TEXT REFERENCES travel_legs(id) ON DELETE SET NULL`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_travel_leg ON shared_travel_costs(leg_id) WHERE leg_id IS NOT NULL`);
   // Whether the client said their feedback can be quoted on the website.
   await pool.query(`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS share_ok INTEGER NOT NULL DEFAULT 0`);
   // Stray and doubled spaces in city names split one city into several in reports ("Siliguri " vs "Siliguri").

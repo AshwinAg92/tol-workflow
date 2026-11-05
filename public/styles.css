@@ -307,10 +307,15 @@ select.stage-select { width:auto; padding:4px 6px; font-size:12px; border-radius
 .ev-money { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; padding:10px; background:var(--cream); border-radius:8px; margin-bottom:6px; }
 .ev-money div { display:flex; flex-direction:column; gap:2px; min-width:0; }
 .ev-money b { font-size:15px; }
-.ev-share { padding:10px 0; border-bottom:1px solid var(--hairline); }
-.ev-share-head { display:flex; justify-content:space-between; gap:8px; }
-.ev-share-row { display:grid; grid-template-columns:1fr auto auto; gap:8px; align-items:center; padding:6px 0 0; font-size:13px; }
-.ev-share-remove { margin-top:8px; font-size:12px; padding:5px 10px; color:var(--danger); }
+.modal-body label.fare-check { display:flex; align-items:center; gap:8px; margin:10px 0 0; font-size:13px; color:var(--ink); cursor:pointer; }
+.fare-box:not([hidden]) { margin-top:8px; padding:10px 12px; background:var(--cream); border-radius:10px; }
+.fare-box label { margin-top:6px; }
+.fare-box input { margin-top:3px; }
+.fare-split { margin-top:10px; padding:8px 12px; background:var(--cream); border-radius:10px; font-size:13px; }
+.fare-parties { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:4px; }
+.fare-ok { color:var(--success); font-weight:600; }
+.fare-due { color:var(--warning); font-weight:600; }
+.fare-split .btn-ghost { margin-top:6px; font-size:12px; padding:4px 10px; color:var(--danger); }
 .ev-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 190px), 1fr)); gap:8px; }
 .ev-grid .btn-ghost { text-align:left; }
 .tw-tabs { display:flex; gap:4px; position:sticky; top:0; z-index:2; background:#fff; margin:-6px -18px 12px; padding:8px 18px; border-bottom:1px solid var(--hairline); overflow-x:auto; }

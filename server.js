@@ -4231,22 +4231,22 @@ app.post("/api/leads/:id/payments", requireAuth, requireSection("accounts"), req
 // A trip that serves two events (or a client and us) is booked and paid by us, then split:
 // each client's share becomes a reimbursement due on their own event — so it's in their balance,
 // on Today and in reminders — and the ticket cost is recorded as an expense split the same way.
-async function sharedTravelFor(leadId) {
-  const ids = (await pool.query("SELECT DISTINCT shared_cost_id FROM payments WHERE lead_id = $1 AND shared_cost_id IS NOT NULL", [leadId])).rows.map((r) => r.shared_cost_id);
-  if (!ids.length) return [];
-  const [costs, parts] = await Promise.all([
-    pool.query("SELECT * FROM shared_travel_costs WHERE id = ANY($1::text[]) ORDER BY travel_date ASC, created_at ASC", [ids]).then((r) => r.rows),
-    pool.query(`SELECT p.id, p.shared_cost_id, p.lead_id, p.amount, p.status, l.name, l.date, l.city, l.venue
-      FROM payments p JOIN leads l ON l.id = p.lead_id WHERE p.shared_cost_id = ANY($1::text[])`, [ids]).then((r) => r.rows),
-  ]);
+async function describeSharedCosts(costs) {
+  if (!costs.length) return [];
+  const parts = (await pool.query(`SELECT p.id, p.shared_cost_id, p.lead_id, p.amount, p.status, l.name, l.date, l.city, l.venue
+    FROM payments p JOIN leads l ON l.id = p.lead_id WHERE p.shared_cost_id = ANY($1::text[])`, [costs.map((c) => c.id)])).rows;
   return costs.map((c) => ({
-    id: c.id, description: c.description, travelDate: c.travel_date, total: Number(c.total), ourShare: Number(c.our_share), createdBy: c.created_by,
+    id: c.id, legId: c.leg_id, description: c.description, travelDate: c.travel_date, total: Number(c.total), ourShare: Number(c.our_share), createdBy: c.created_by,
     parts: parts.filter((p) => p.shared_cost_id === c.id).map((p) => ({ paymentId: p.id, leadId: p.lead_id, name: p.name, date: p.date, place: placeOf(p), amount: Number(p.amount), status: p.status })),
   }));
 }
 
-app.get("/api/leads/:id/shared-travel", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
-  res.json(await sharedTravelFor(req.params.id));
+// The fare splits for a set of journeys (the travel plan asks for the journeys it shows).
+app.get("/api/shared-travel/legs", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const ids = String(req.query.ids || "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 200);
+  if (!ids.length) return res.json([]);
+  const costs = (await pool.query("SELECT * FROM shared_travel_costs WHERE leg_id = ANY($1::text[])", [ids])).rows;
+  res.json(await describeSharedCosts(costs));
 });
 
 app.post("/api/shared-travel", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
@@ -4265,13 +4265,20 @@ app.post("/api/shared-travel", requireAuth, requireSection("accounts"), requireA
   const combos = leads.map((l) => l.combo_group_id).filter(Boolean);
   if (new Set(combos).size !== combos.length) return res.status(400).json({ error: "Those two events are one combo booking — there's nothing to split between them." });
   const recordExpense = req.body.recordExpense !== false;
+  const legId = req.body.legId ? String(req.body.legId) : null;
+  if (legId) {
+    const leg = (await pool.query("SELECT id FROM travel_legs WHERE id = $1", [legId])).rows[0];
+    if (!leg) return res.status(404).json({ error: "Journey not found" });
+    const taken = (await pool.query("SELECT 1 FROM shared_travel_costs WHERE leg_id = $1", [legId])).rows[0];
+    if (taken) return res.status(409).json({ error: "This journey's fare is already split. Remove that split first to change it." });
+  }
   const now = new Date().toISOString(), today = todayIST();
   const id = uuid();
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query("INSERT INTO shared_travel_costs (id, description, travel_date, total, our_share, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-      [id, description, travelDate, total, ourShare, await actorName(req.user), now]);
+    await client.query("INSERT INTO shared_travel_costs (id, description, travel_date, total, our_share, created_by, created_at, leg_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+      [id, description, travelDate, total, ourShare, await actorName(req.user), now, legId]);
     for (const p of parts) {
       const pct = Math.round((p.amount / total) * 100);
       await client.query(`INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, type, status, created_at, shared_cost_id)
