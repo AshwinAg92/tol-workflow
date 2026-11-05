@@ -531,6 +531,10 @@ app.post("/api/auth/login", async (req, res) => {
   res.json({ id: user.id, username: user.username, accessLevel: user.access_level });
 });
 
+// Which release is running, so an open CRM can offer to reload after an upgrade.
+const APP_VERSION = process.env.RAILWAY_GIT_COMMIT_SHA || `boot-${Date.now()}`;
+app.get("/api/version", (req, res) => res.json({ version: APP_VERSION }));
+
 app.post("/api/auth/logout", (req, res) => {
   clearSessionCookie(res);
   res.status(204).end();
@@ -2460,7 +2464,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const leadsOnlyFields = [
     "stage", "assigned_to", "advance", "advance_date", "quote_amount", "final_amount", "notes", "date",
     "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration", "whatsapp_number",
-    "cancellation_reason", "cancelled_by", "snooze_until", "state", "rate_type", "rate_note", "rate_inclusions", "occasion_other", "not_interested_reason", "is_b2b", "thanked_at",
+    "cancellation_reason", "cancelled_by", "snooze_until", "state", "rate_type", "rate_note", "rate_inclusions", "occasion_other", "not_interested_reason", "is_b2b", "thanked_at", "balance_due_date",
   ];
   const sharedFields = ["event_time", "soundcheck_time", "venue", "sound_manager_name", "sound_manager_phone", "coordinator_name", "coordinator_phone", "contacts"];
   if (!hasLeads) {
@@ -2477,6 +2481,9 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
     if (req.body.advanceDate > today) return res.status(400).json({ error: "Advance received date can't be in the future" });
   }
+
+  if (req.body.balanceDueDate && !isDayString(req.body.balanceDueDate)) return res.status(400).json({ error: "Pick a valid date for when the balance is due." });
+  if (req.body.balanceDueDate !== undefined && !canSeeMoney(req.user)) return res.status(403).json({ error: "Payment dates can only be changed with Accounts access" });
 
   if (req.body.snoozeUntil) {
     const today = new Date().toISOString().slice(0, 10);
@@ -2495,7 +2502,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const updates = [];
   const values = [];
   fields.forEach((f) => {
-    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f === "not_interested_reason" ? "notInterestedReason" : f === "is_b2b" ? "isB2b" : f === "thanked_at" ? "thankedAt" : f;
+    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f === "not_interested_reason" ? "notInterestedReason" : f === "is_b2b" ? "isB2b" : f === "thanked_at" ? "thankedAt" : f === "balance_due_date" ? "balanceDueDate" : f;
     if (req.body[key] !== undefined) {
       values.push(f === "is_b2b" ? (req.body[key] ? 1 : 0) : req.body[key]);
       updates.push(`${f} = $${values.length}`);

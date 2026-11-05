@@ -446,6 +446,8 @@ async function setup() {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_exp_payout ON expenses(payout_id)`);
   // Wrap-up: a played event is "closed" once its money, thank-you and feedback are sorted.
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS closed_at TEXT`);
+  // When the client's balance should be in (set on Confirm; Today chases it from then).
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS balance_due_date TEXT`);
   // Whether the client said their feedback can be quoted on the website.
   await pool.query(`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS share_ok INTEGER NOT NULL DEFAULT 0`);
   // Stray and doubled spaces in city names split one city into several in reports ("Siliguri " vs "Siliguri").

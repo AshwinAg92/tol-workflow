@@ -5787,6 +5787,13 @@ async function openLeadPaymentsModal(leadId) {
         <div class="card summary-card summary-card-compact"><div class="muted">Balance due</div><div class="mono big" style="color:${balance > 0 ? "#A6432B" : "#1C7A80"};">${inr(balance)}</div></div>
       </div>
       <p class="muted small" style="margin:0 0 14px;">Professional fee ${inr(total)}${totalReimbursements > 0 ? ` + Reimbursements ${inr(totalReimbursements)}` : ""}</p>
+      ${balance > 0 && hasAccountsAccess() ? `
+        <div class="lp-due">
+          ${lead.stage === "Confirmed" ? `<label for="lpDueDate" style="margin:0;">Balance due by</label>
+          <input id="lpDueDate" type="date" value="${lead.balance_due_date || lead.date || ""}" data-no-clear />
+          <button class="btn-ghost" id="lpDueSave">Save</button>` : ""}
+          ${(lead.whatsapp_number || lead.phone) ? `<button class="btn-ghost" id="lpRemind">💬 Remind client</button>` : ""}
+        </div>` : ""}
       ${hasAccountsAccess() ? `<button class="btn-ghost full" id="lpShareLedgerBtn" style="margin-bottom:14px;">📄 Share ledger PDF on WhatsApp</button>` : ""}
 
       <div class="section-label">Payments received</div>
@@ -5851,6 +5858,22 @@ async function openLeadPaymentsModal(leadId) {
     modeSelect.addEventListener("change", refreshPaymentFormFields);
     refreshPaymentFormFields();
 
+    body.querySelector("#lpDueSave")?.addEventListener("click", async (e) => {
+      const v = body.querySelector("#lpDueDate").value;
+      e.currentTarget.disabled = true;
+      try {
+        await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ balanceDueDate: v || null }) });
+        lead.balance_due_date = v || null;
+        e.currentTarget.textContent = "Saved ✓";
+      } catch (err) { alert(err.message); }
+      e.currentTarget.disabled = false;
+    });
+    body.querySelector("#lpRemind")?.addEventListener("click", () => {
+      const due = lead.balance_due_date || lead.date;
+      const overdue = due && due < new Date().toISOString().slice(0, 10);
+      const text = `Hi ${leadFirstName(lead) || "there"}, hope you're doing well! 🙏 A gentle reminder that the balance of ${inr(balance)} for your ${occasionPhrase(lead)} on ${fmtDate(lead.date)} ${overdue ? `was due on ${fmtDate(due)}` : `is due by ${fmtDate(due)}`}. Please let us know once it's done. Thank you!\n\nTogether, Out Loud`;
+      goWhatsApp(`https://wa.me/${(lead.whatsapp_number || lead.phone).replace(/\D/g, "")}?text=${encodeURIComponent(text)}`);
+    });
     const shareLedgerBtn = body.querySelector("#lpShareLedgerBtn");
     if (shareLedgerBtn) {
       shareLedgerBtn.addEventListener("click", async () => {
@@ -5975,6 +5998,44 @@ function openTempArtistDirectoryModal(directory, onBack) {
     root.querySelector("#taDirSearch").selectionStart = root.querySelector("#taDirSearch").value.length;
   }
   render();
+}
+
+// The Team & Expenses window holds a lot, so it's split into tabs. Its sections are tagged in
+// order: a section heading switches the tab for what follows, and a few one-off blocks are
+// placed directly. The open tab is remembered while the window reopens itself after each save.
+let teamWindowState = { leadId: null, tab: "team" };
+const TEAM_WINDOW_TABS = [["team", "Team"], ["details", "Event details"], ["travel", "Travel"], ["money", "Expenses"]];
+
+function tabTeamWindow(root, leadId, justAdded) {
+  const body = root.querySelector(".modal-body");
+  if (!body) return;
+  let current = "details";
+  [...body.children].forEach((el) => {
+    const text = el.textContent || "";
+    let tab;
+    if (el.querySelector("#openTravelPlanFromTeamBtn, #assignOpenTravelBtn")) tab = "travel";
+    else if (el.classList.contains("dash-stats")) tab = "money";
+    else if (el.id === "venueInput" || (el.tagName === "LABEL" && /^\s*Venue\s*$/.test(text))) tab = "details";
+    else {
+      if (el.classList.contains("card") && /Lineup for this event/.test(text)) current = "team";
+      if (el.classList.contains("section-label") && /Other event expenses|Artist reimbursements/.test(text)) current = "money";
+      tab = current;
+    }
+    el.dataset.tab = tab;
+  });
+  if (teamWindowState.leadId !== leadId) teamWindowState = { leadId, tab: "team" };
+  if (justAdded) teamWindowState.tab = "team";
+  const present = TEAM_WINDOW_TABS.filter(([id]) => body.querySelector(`[data-tab="${id}"]`));
+  if (!present.some(([id]) => id === teamWindowState.tab)) teamWindowState.tab = present[0][0];
+  const bar = el(`<div class="tw-tabs" role="tablist">${present.map(([id, label]) => `<button type="button" role="tab" class="tw-tab" data-tw="${id}">${label}</button>`).join("")}</div>`);
+  body.prepend(bar);
+  const show = (id) => {
+    teamWindowState.tab = id;
+    bar.querySelectorAll(".tw-tab").forEach((b) => { const on = b.dataset.tw === id; b.classList.toggle("tw-tab-on", on); b.setAttribute("aria-selected", on ? "true" : "false"); });
+    body.querySelectorAll("[data-tab]").forEach((x) => x.classList.toggle("tw-hidden", x.dataset.tab !== id));
+  };
+  bar.querySelectorAll(".tw-tab").forEach((b) => b.addEventListener("click", () => show(b.dataset.tw)));
+  show(teamWindowState.tab);
 }
 
 async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
@@ -6330,6 +6391,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   root.querySelector("#closeModal").addEventListener("click", close);
   root.querySelector("#cancelModal").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  tabTeamWindow(root, leadId, !!autoCheckTeamId);
   root.querySelector("#openChatBtn").addEventListener("click", () => openEventChat(leadId, lead.name));
   // --- On-site contacts: call / WhatsApp / send rider ---
   const waNumber = (raw) => {
@@ -8836,7 +8898,12 @@ function todayPayments(todayStr, soon) {
     const amount = `₹${balance.toLocaleString("en-IN")}`;
     if (group.every((l) => l.stage === "Completed")) rows.push({ lead, rank: 0, tone: "danger", detail: `${amount} balance after event` });
     else if (received === 0) rows.push({ lead, rank: 1, tone: "danger", detail: `No advance recorded · ${amount}` });
-    else if (lead.date >= todayStr && lead.date <= soon) rows.push({ lead, rank: 2, tone: "warn", detail: `${amount} due before event` });
+    else {
+      // Chase from the balance-due date set on Confirm; older bookings fall back to the event date.
+      const due = lead.balance_due_date || lead.date;
+      if (due && due < todayStr) rows.push({ lead, rank: 0, tone: "danger", detail: `${amount} overdue since ${fmtDate(due)}` });
+      else if (due && due <= soon) rows.push({ lead, rank: 2, tone: "warn", detail: `${amount} due by ${fmtDate(due)}` });
+    }
   });
   return rows.sort((a, b) => a.rank - b.rank || (a.lead.date || "").localeCompare(b.lead.date || ""));
 }
@@ -8943,8 +9010,9 @@ function openTodayRow(sectionId, leadId, artistId) {
   if (!lead) return;
   if (sectionId === "followups" || !canAssignTeam() && sectionId !== "payments") return jumpToLead(lead);
   refreshTodayAfterModal();
-  if (sectionId === "payments") openLeadPaymentsModal(lead.id);
-  else openAssignTeamModal(lead.id);
+  if (sectionId === "payments") return openLeadPaymentsModal(lead.id);
+  teamWindowState = { leadId: lead.id, tab: sectionId === "details" ? "details" : "team" };
+  openAssignTeamModal(lead.id);
 }
 
 async function renderToday(main) {
@@ -10652,6 +10720,14 @@ function openConfirmEventModal(lead, rateHint) {
             <option value="UPI">UPI</option>
             <option value="TDS">TDS deducted by client</option>
           </select>
+          <label style="margin-top:10px;" for="ceBalanceDue">Balance due by</label>
+          <input id="ceBalanceDue" type="date" value="${lead.balance_due_date || lead.date || ""}" data-no-clear />
+          <div class="muted small" style="margin-top:2px;">Today reminds you to chase it from this date. Usually the event day.</div>
+          <div class="section-label" style="margin-top:16px;">Event day (optional — fill now or later)</div>
+          <div class="row-2">
+            <div><label for="ceEventTime" style="margin-top:0;">Event time</label><input id="ceEventTime" type="time" value="${lead.event_time || ""}" /></div>
+            <div><label for="ceVenue" style="margin-top:0;">Venue</label><input id="ceVenue" value="${escH(lead.venue || "")}" placeholder="e.g. Mayfair, Siliguri" /></div>
+          </div>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Confirm event</button></div>
       </div>
@@ -10670,7 +10746,11 @@ function openConfirmEventModal(lead, rateHint) {
       return;
     }
     try {
-      await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ stage: "Confirmed", finalAmount: finalAmount || null, date: chosenDate, rateInclusions: JSON.stringify(readRateInclusions(root, "ce")), rateNote: root.querySelector("#ceRateNote").value.trim() || null }) });
+      const eventDay = {};
+      const eventTime = root.querySelector("#ceEventTime").value, venue = root.querySelector("#ceVenue").value.trim();
+      if (eventTime) eventDay.eventTime = eventTime;
+      if (venue) eventDay.venue = venue;
+      await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ stage: "Confirmed", finalAmount: finalAmount || null, date: chosenDate, rateInclusions: JSON.stringify(readRateInclusions(root, "ce")), rateNote: root.querySelector("#ceRateNote").value.trim() || null, balanceDueDate: root.querySelector("#ceBalanceDue").value || null, ...eventDay }) });
       const advanceAmount = root.querySelector("#ceAdvanceAmount").value;
       if (advanceAmount && Number(advanceAmount) > 0) {
         try {
@@ -14454,4 +14534,33 @@ function startClientAlerts() {
   const scan = () => { queued = false; document.querySelectorAll('input[type="date"]:not([data-clear-wired])').forEach(wire); };
   new MutationObserver(() => { if (!queued) { queued = true; requestAnimationFrame(scan); } }).observe(document.documentElement, { childList: true, subtree: true });
   scan();
+})();
+
+// After an upgrade, an already-open CRM offers a one-tap reload instead of relying on people to
+// refresh. Checked every few minutes and whenever the app comes back to the foreground.
+(function watchForNewVersion() {
+  let current = null;
+  let shown = false;
+  const showBanner = () => {
+    shown = true;
+    const bar = document.createElement("div");
+    bar.className = "update-banner";
+    bar.setAttribute("role", "status");
+    bar.innerHTML = `<span>✨ A new version of the CRM is ready.</span><button type="button">Update</button>`;
+    bar.querySelector("button").addEventListener("click", () => window.location.reload());
+    document.body.appendChild(bar);
+  };
+  const check = async () => {
+    if (shown) return;
+    try {
+      const { version } = await fetch("/api/version", { cache: "no-store" }).then((r) => r.json());
+      if (!current) current = version;
+      else if (version && version !== current) showBanner();
+    } catch {
+      // Offline or mid-deploy — try again next time.
+    }
+  };
+  check();
+  setInterval(check, 5 * 60 * 1000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
 })();
