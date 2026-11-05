@@ -4227,6 +4227,89 @@ app.post("/api/leads/:id/payments", requireAuth, requireSection("accounts"), req
   logActivity(req, `${finalType === "client_reimbursement" ? `Reimbursement ${finalStatus === "due" ? "logged as due" : "recorded"}` : "Payment recorded"} for ${lead.name}: ₹${Number(amount).toLocaleString("en-IN")}${finalStatus === "received" && mode ? ` via ${mode}` : ""}`, lead.id);
 });
 
+// ---------- Shared travel costs ----------
+// A trip that serves two events (or a client and us) is booked and paid by us, then split:
+// each client's share becomes a reimbursement due on their own event — so it's in their balance,
+// on Today and in reminders — and the ticket cost is recorded as an expense split the same way.
+async function sharedTravelFor(leadId) {
+  const ids = (await pool.query("SELECT DISTINCT shared_cost_id FROM payments WHERE lead_id = $1 AND shared_cost_id IS NOT NULL", [leadId])).rows.map((r) => r.shared_cost_id);
+  if (!ids.length) return [];
+  const [costs, parts] = await Promise.all([
+    pool.query("SELECT * FROM shared_travel_costs WHERE id = ANY($1::text[]) ORDER BY travel_date ASC, created_at ASC", [ids]).then((r) => r.rows),
+    pool.query(`SELECT p.id, p.shared_cost_id, p.lead_id, p.amount, p.status, l.name, l.date, l.city, l.venue
+      FROM payments p JOIN leads l ON l.id = p.lead_id WHERE p.shared_cost_id = ANY($1::text[])`, [ids]).then((r) => r.rows),
+  ]);
+  return costs.map((c) => ({
+    id: c.id, description: c.description, travelDate: c.travel_date, total: Number(c.total), ourShare: Number(c.our_share), createdBy: c.created_by,
+    parts: parts.filter((p) => p.shared_cost_id === c.id).map((p) => ({ paymentId: p.id, leadId: p.lead_id, name: p.name, date: p.date, place: placeOf(p), amount: Number(p.amount), status: p.status })),
+  }));
+}
+
+app.get("/api/leads/:id/shared-travel", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  res.json(await sharedTravelFor(req.params.id));
+});
+
+app.post("/api/shared-travel", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const description = cleanText(req.body.description, 160);
+  const total = Math.round(Number(req.body.total));
+  const travelDate = req.body.travelDate && isDayString(req.body.travelDate) ? req.body.travelDate : null;
+  const ourShare = Math.round(Number(req.body.ourShare || 0));
+  const parts = (Array.isArray(req.body.parts) ? req.body.parts : []).map((p) => ({ leadId: String(p.leadId || ""), amount: Math.round(Number(p.amount)) }));
+  if (!description) return res.status(400).json({ error: "Describe the trip, e.g. \"Band travel Puri → Kolkata\"." });
+  if (!(total > 0)) return res.status(400).json({ error: "Enter the total cost of the trip." });
+  if (!parts.length || parts.some((p) => !p.leadId || !(p.amount > 0))) return res.status(400).json({ error: "Each event sharing the cost needs an amount." });
+  if (new Set(parts.map((p) => p.leadId)).size !== parts.length) return res.status(400).json({ error: "Pick two different events." });
+  if (!(ourShare >= 0) || parts.reduce((s, p) => s + p.amount, 0) + ourShare !== total) return res.status(400).json({ error: "The shares must add up to the total." });
+  const leads = (await pool.query("SELECT id, name, combo_group_id FROM leads WHERE id = ANY($1::text[])", [parts.map((p) => p.leadId)])).rows;
+  if (leads.length !== parts.length) return res.status(404).json({ error: "Event not found" });
+  const combos = leads.map((l) => l.combo_group_id).filter(Boolean);
+  if (new Set(combos).size !== combos.length) return res.status(400).json({ error: "Those two events are one combo booking — there's nothing to split between them." });
+  const recordExpense = req.body.recordExpense !== false;
+  const now = new Date().toISOString(), today = todayIST();
+  const id = uuid();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("INSERT INTO shared_travel_costs (id, description, travel_date, total, our_share, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      [id, description, travelDate, total, ourShare, await actorName(req.user), now]);
+    for (const p of parts) {
+      const pct = Math.round((p.amount / total) * 100);
+      await client.query(`INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, type, status, created_at, shared_cost_id)
+        VALUES ($1,$2,$3,$4,NULL,$5,'client_reimbursement','due',$6,$7)`, [uuid(), p.leadId, p.amount, today, `Shared travel: ${description} (${pct}%)`, now, id]);
+    }
+    // Our ticket cost, split across the events the same way (our own share sits on the first event).
+    if (recordExpense) {
+      for (const [i, p] of parts.entries()) {
+        const amount = p.amount + (i === 0 ? ourShare : 0);
+        await client.query(`INSERT INTO expenses (id, lead_id, head, amount, paid, notes, created_at, payment_date, category, shared_cost_id)
+          VALUES ($1,$2,$3,$4,1,$5,$6,$7,'expense',$8)`, [uuid(), p.leadId, `Travel — ${description}`, amount, "Shared travel cost", now, today, id]);
+      }
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("Shared travel save failed:", err.message);
+    return res.status(500).json({ error: "Couldn't save the shared cost. Nothing was changed — please try again." });
+  } finally { client.release(); }
+  const names = parts.map((p) => `${leads.find((l) => l.id === p.leadId).name} ₹${p.amount.toLocaleString("en-IN")}`).concat(ourShare ? [`us ₹${ourShare.toLocaleString("en-IN")}`] : []);
+  for (const p of parts) logActivity(req, `Shared travel ₹${total.toLocaleString("en-IN")} (${description}) split: ${names.join(", ")}`, p.leadId);
+  res.status(201).json({ id });
+});
+
+// Removing a split takes back the dues and expenses it created — only while nothing's been collected.
+app.delete("/api/shared-travel/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const c = (await pool.query("SELECT * FROM shared_travel_costs WHERE id = $1", [req.params.id])).rows[0];
+  if (!c) return res.status(404).json({ error: "Shared cost not found" });
+  const got = (await pool.query("SELECT 1 FROM payments WHERE shared_cost_id = $1 AND status <> 'due' LIMIT 1", [c.id])).rows[0];
+  if (got) return res.status(400).json({ error: "A share of this has already been marked received. Mark it due again in the client's payments first." });
+  const leadIds = (await pool.query("SELECT DISTINCT lead_id FROM payments WHERE shared_cost_id = $1", [c.id])).rows.map((r) => r.lead_id);
+  await pool.query("DELETE FROM payments WHERE shared_cost_id = $1", [c.id]);
+  await pool.query("DELETE FROM expenses WHERE shared_cost_id = $1", [c.id]);
+  await pool.query("DELETE FROM shared_travel_costs WHERE id = $1", [c.id]);
+  for (const l of leadIds) logActivity(req, `Removed shared travel cost: ${c.description} (₹${Number(c.total).toLocaleString("en-IN")})`, l);
+  res.status(204).end();
+});
+
 // ---------- Cancellation settlement ----------
 // A cancelled event that already took money needs a decision: refund all, keep part as a cancellation
 // fee, or keep it all. Re-running it replaces an unpaid refund; a refund already paid out is never touched.

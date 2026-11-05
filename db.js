@@ -448,6 +448,22 @@ async function setup() {
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS closed_at TEXT`);
   // When the client's balance should be in (set on Confirm; Today chases it from then).
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS balance_due_date TEXT`);
+  // Shared travel: one trip cost (e.g. Puri → Kolkata between two events) split between the events
+  // it serves, or between a client and us. Each client's share is a 'client_reimbursement' due on
+  // their own event, and our ticket cost is an expense; all of them point back here.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shared_travel_costs (
+      id TEXT PRIMARY KEY,
+      description TEXT NOT NULL,
+      travel_date TEXT,
+      total INTEGER NOT NULL,
+      our_share INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT,
+      created_at TEXT NOT NULL
+    )
+  `);
+  await pool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS shared_cost_id TEXT REFERENCES shared_travel_costs(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS shared_cost_id TEXT REFERENCES shared_travel_costs(id) ON DELETE SET NULL`);
   // Whether the client said their feedback can be quoted on the website.
   await pool.query(`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS share_ok INTEGER NOT NULL DEFAULT 0`);
   // Stray and doubled spaces in city names split one city into several in reports ("Siliguri " vs "Siliguri").

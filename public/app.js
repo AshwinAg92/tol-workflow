@@ -6095,12 +6095,103 @@ function eventHubHtml(lead) {
     lead.stage === "Completed" && hasLeadsAccess() && phone ? `<button class="btn-ghost" type="button" data-ev="thanks">${lead.thanked_at ? "🙏 Thanked ✓ — send again" : "🙏 Thank client"}</button>` : "",
     lead.stage === "Completed" && CURRENT_USER?.accessLevel === "admin" && hasAccountsAccess() ? `<button class="btn-ghost" type="button" data-ev="wrapup">${lead.closed_at ? "✅ Closed" : "✅ Wrap-up"}</button>` : "",
   ].filter(Boolean);
+  const shared = CURRENT_USER?.accessLevel === "admin" && hasAccountsAccess() && booked ? `
+    <div class="card ev-card" data-tab="travel">
+      <div class="section-label" style="margin-top:0;">Shared travel costs</div>
+      <p class="muted small" style="margin:0 0 8px;">A trip that also serves another event (or that the client pays half of): we book it, and each client's share is added to their balance.</p>
+      <div class="ev-shared-list"><p class="muted small">Loading…</p></div>
+      <button class="btn-ghost" type="button" data-ev="split">➗ Split a travel cost</button>
+    </div>` : "";
   const files = `
     <div class="card ev-card" data-tab="files">
       <div class="section-label" style="margin-top:0;">Messages &amp; files</div>
       <div class="ev-grid">${fileButtons.join("")}</div>
     </div>`;
-  return overview + money + files;
+  return overview + money + shared + files;
+}
+
+// Each share is "collected" once that client's whole balance is clear (they pay one total), or
+// when the reimbursement itself has been marked received.
+function sharedTravelHtml(list) {
+  if (!list.length) return `<p class="muted small" style="margin:0 0 8px;">None yet.</p>`;
+  return list.map((c) => {
+    const rows = c.parts.map((p) => {
+      const l = LEADS.find((x) => x.id === p.leadId);
+      const collected = p.status === "received" || (l && eventMoney(l).balance <= 0);
+      return `<div class="ev-share-row"><span>${escH(p.name)} <span class="muted small">· ${escH(p.place)}</span></span><span class="mono">${inr(p.amount)}</span><span class="today-row-tag ${collected ? "today-tone-ok" : "today-tone-warn"}">${collected ? "Collected" : "Due"}</span></div>`;
+    }).join("");
+    const ours = c.ourShare ? `<div class="ev-share-row"><span>Us</span><span class="mono">${inr(c.ourShare)}</span><span class="today-row-tag today-tone-ok">Ours</span></div>` : "";
+    const removable = c.parts.every((p) => p.status === "due");
+    return `<div class="ev-share">
+      <div class="ev-share-head"><b>${escH(c.description)}</b><span class="mono">${inr(c.total)}</span></div>
+      <div class="muted small">${c.travelDate ? `${fmtDate(c.travelDate)} · ` : ""}booked and paid by us</div>
+      ${rows}${ours}
+      ${removable ? `<button class="btn-ghost ev-share-remove" type="button" data-id="${escH(c.id)}">Remove this split</button>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function openSharedTravelModal(lead) {
+  const root = document.getElementById("modalRoot");
+  const others = LEADS
+    .filter((l) => l.id !== lead.id && ["Confirmed", "Completed", "Tentative"].includes(l.stage) && l.date && !(lead.combo_group_id && l.combo_group_id === lead.combo_group_id))
+    .map((l) => ({ l, gap: Math.abs(new Date(l.date) - new Date(lead.date || l.date)) / 86400000 }))
+    .sort((a, b) => a.gap - b.gap)
+    .slice(0, 40);
+  const nearest = others[0];
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay"><div class="modal-card">
+      <div class="modal-head"><h3>Split a travel cost</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+      <div class="modal-body">
+        <label for="stDesc">What's the trip?</label>
+        <input id="stDesc" maxlength="160" placeholder="e.g. Band travel Puri → Kolkata" />
+        <div class="row-2">
+          <div><label for="stDate">Travel date</label><input id="stDate" type="date" value="${lead.date || ""}" data-no-clear /></div>
+          <div><label for="stTotal">Total cost (₹)</label><input id="stTotal" type="number" min="1" inputmode="numeric" placeholder="e.g. 24000" /></div>
+        </div>
+        <label for="stWith">Shared with</label>
+        <select id="stWith">
+          ${others.map(({ l }) => `<option value="${l.id}" ${nearest && l.id === nearest.l.id ? "selected" : ""}>${escH(l.name)} — ${fmtDate(l.date)}${l.city ? `, ${escH(l.city)}` : ""}</option>`).join("")}
+          <option value="us" ${nearest ? "" : "selected"}>Us (Together, Out Loud)</option>
+        </select>
+        <div class="row-2">
+          <div><label for="stMine">${escH(lead.name)}'s share (₹)</label><input id="stMine" type="number" min="0" inputmode="numeric" /></div>
+          <div><label for="stTheirs" id="stTheirsLabel">Other share (₹)</label><input id="stTheirs" type="number" min="0" inputmode="numeric" /></div>
+        </div>
+        <p class="muted small" id="stHint" style="margin:6px 0 0;">Split 50:50 — change either share and the other adjusts.</p>
+        <label class="check-row" style="gap:8px; align-items:center; margin-top:10px;"><input type="checkbox" id="stExpense" checked /> Also record the ticket cost as our expense</label>
+        <p class="muted small" style="margin:8px 0 0;">Each client's share is added to their balance as an amount due, so Today, the balance reminder and Wrap-up all chase it.</p>
+      </div>
+      <div class="modal-foot"><button class="btn-ghost" id="stCancel">Cancel</button><button class="btn-primary" id="stSave">Save split</button></div>
+    </div></div>`;
+  const q = (s) => root.querySelector(s);
+  const close = () => { root.innerHTML = ""; };
+  q("#closeModal").addEventListener("click", close);
+  q("#stCancel").addEventListener("click", close);
+  const total = () => Math.round(Number(q("#stTotal").value) || 0);
+  const label = () => {
+    const v = q("#stWith").value;
+    q("#stTheirsLabel").textContent = v === "us" ? "Our share (₹)" : `${(LEADS.find((l) => l.id === v) || {}).name || "Other"}'s share (₹)`;
+  };
+  const halve = () => { const t = total(); q("#stMine").value = t ? Math.ceil(t / 2) : ""; q("#stTheirs").value = t ? t - Math.ceil(t / 2) : ""; };
+  label();
+  q("#stWith").addEventListener("change", label);
+  q("#stTotal").addEventListener("input", halve);
+  q("#stMine").addEventListener("input", () => { q("#stTheirs").value = Math.max(0, total() - (Math.round(Number(q("#stMine").value)) || 0)); });
+  q("#stTheirs").addEventListener("input", () => { q("#stMine").value = Math.max(0, total() - (Math.round(Number(q("#stTheirs").value)) || 0)); });
+  q("#stSave").addEventListener("click", async (e) => {
+    const t = total(), mine = Math.round(Number(q("#stMine").value) || 0), theirs = Math.round(Number(q("#stTheirs").value) || 0), withId = q("#stWith").value;
+    if (!q("#stDesc").value.trim()) return alert("Describe the trip, e.g. \"Band travel Puri → Kolkata\".");
+    if (!(t > 0)) return alert("Enter the total cost of the trip.");
+    if (mine + theirs !== t) return alert("The two shares must add up to the total.");
+    const parts = [{ leadId: lead.id, amount: mine }];
+    if (withId !== "us" && theirs > 0) parts.push({ leadId: withId, amount: theirs });
+    e.currentTarget.disabled = true;
+    try {
+      await api("/api/shared-travel", { method: "POST", body: JSON.stringify({ description: q("#stDesc").value.trim(), travelDate: q("#stDate").value || null, total: t, parts: parts.filter((p) => p.amount > 0), ourShare: withId === "us" ? theirs : 0, recordExpense: q("#stExpense").checked }) });
+      close();
+    } catch (err) { e.currentTarget.disabled = false; alert(err.message); }
+  });
 }
 
 // Each button opens its own window; closing it comes back here on the same tab.
@@ -6120,6 +6211,23 @@ function wireEventHub(root, lead) {
   on("chat", open(() => openEventChat(lead.id, lead.name)));
   on("thanks", open(() => openThankYouMessageModal(lead)));
   on("wrapup", () => { root.innerHTML = ""; openWrapUpModal(lead.id); });
+  on("split", () => { root.innerHTML = ""; whenModalCloses(async () => { await refreshLeads(); openAssignTeamModal(lead.id); }); openSharedTravelModal(lead); });
+  const sharedList = root.querySelector(".ev-shared-list");
+  if (sharedList) {
+    // Show the travel plan first; the shared costs sit under it.
+    const card = sharedList.closest(".ev-card");
+    const lastTravel = [...root.querySelectorAll('.modal-body > [data-tab="travel"]')].pop();
+    if (lastTravel && lastTravel !== card) lastTravel.after(card);
+    api(`/api/leads/${lead.id}/shared-travel`).then((list) => {
+      sharedList.innerHTML = sharedTravelHtml(list);
+      sharedList.querySelectorAll(".ev-share-remove").forEach((b) => b.addEventListener("click", async () => {
+        if (!confirm("Remove this split? The amounts it added to each client's balance, and its expense, are taken off.")) return;
+        b.disabled = true;
+        try { await api(`/api/shared-travel/${b.dataset.id}`, { method: "DELETE" }); await refreshLeads(); openAssignTeamModal(lead.id); }
+        catch (err) { b.disabled = false; alert(err.message); }
+      }));
+    }).catch(() => { sharedList.innerHTML = `<p class="muted small">Couldn't load shared costs.</p>`; });
+  }
 }
 
 function tabTeamWindow(root, leadId, justAdded) {
