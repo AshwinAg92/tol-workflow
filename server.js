@@ -2440,6 +2440,14 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   // correcting, after which normal editing rules apply again.
   if (lead.stage === "Completed") {
     const onlyReopening = Object.keys(req.body).length === 1 && req.body.stage !== undefined && req.body.stage !== "Completed";
+    // Recording that the client was thanked is part of closing out a played event, not an edit.
+    const onlyThanked = Object.keys(req.body).length === 1 && req.body.thankedAt !== undefined;
+    if (onlyThanked && hasLeads) {
+      const at = req.body.thankedAt ? new Date().toISOString() : null;
+      await pool.query("UPDATE leads SET thanked_at = $1 WHERE id = $2", [at, lead.id]);
+      if (at) logActivity(req, `Thank-you sent to ${lead.name}`, lead.id);
+      return res.json((await pool.query("SELECT * FROM leads WHERE id = $1", [lead.id])).rows[0]);
+    }
     if (!onlyReopening) {
       return res.status(403).json({ error: "Completed events can't be edited — they're a closed record. Change the stage away from Completed first if something needs correcting." });
     }
@@ -3003,7 +3011,7 @@ app.post("/api/public/feedback/:token", async (req, res) => {
   if (!lead) return res.status(404).json({ error: "This link isn't valid — check it was copied in full, or ask for a fresh one." });
   const note = message === undefined ? undefined : String(message || "").trim().slice(0, 2000) || null;
   const share = shareOk === undefined ? undefined : (shareOk ? 1 : 0);
-  const existing = (await pool.query("SELECT id, rating FROM feedback WHERE lead_id = $1", [lead.id])).rows[0];
+  const existing = (await pool.query("SELECT id, rating, message FROM feedback WHERE lead_id = $1", [lead.id])).rows[0];
   if (existing) {
     await pool.query("UPDATE feedback SET rating = $1, message = COALESCE($2, CASE WHEN $4 THEN NULL ELSE message END), share_ok = COALESCE($3, share_ok) WHERE id = $5",
       [parsedRating, note ?? null, share ?? null, note === null, existing.id]);
@@ -3013,6 +3021,14 @@ app.post("/api/public/feedback/:token", async (req, res) => {
   }
   if (!existing || existing.rating !== parsedRating) logActivity({ user: null }, `${lead.name} left feedback (${parsedRating}★)`, lead.id);
   res.json({ ok: true });
+  // Tell the admins when feedback first arrives, and again if a note is added to it.
+  const newNote = note && note !== (existing && existing.message);
+  if (!existing || newNote) {
+    const faces = ["", "😞", "😐", "🙂", "😊", "😍"];
+    const text = `${faces[parsedRating]} ${lead.name} left feedback: ${parsedRating}/5${note ? ` — "${note.slice(0, 140)}${note.length > 140 ? "…" : ""}"` : ""}`;
+    await pool.query("INSERT INTO admin_notifications (id, message, assignment_id, audience, created_at) VALUES ($1,$2,NULL,'admin',$3)", [uuid(), escHtml(text), new Date().toISOString()]).catch(() => {});
+    sendPushToAll("New feedback", text, "/login", { adminOnly: true }).catch(() => {});
+  }
 });
 
 // ---------- Wrap-up: closing out an event once it's been played ----------

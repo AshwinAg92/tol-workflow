@@ -279,6 +279,7 @@ select.stage-select { width:auto; padding:4px 6px; font-size:12px; border-radius
 .wu-mark { width:24px; height:24px; border-radius:50%; border:2px solid var(--hairline); display:inline-flex; align-items:center; justify-content:center; font-weight:700; color:#fff; flex-shrink:0; }
 .wu-done .wu-mark { background:var(--success); border-color:var(--success); }
 .wu-check .btn-ghost, .wu-check .btn-primary { padding:8px 12px; font-size:13px; }
+.wu-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
 .tp-paid { padding:10px 4px; border-bottom:1px solid var(--hairline); }
 .tp-paid-line { display:flex; justify-content:space-between; align-items:center; gap:10px; }
 .tp-paid-amt { display:flex; align-items:center; gap:8px; flex-shrink:0; }

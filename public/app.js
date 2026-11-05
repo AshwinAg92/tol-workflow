@@ -9030,7 +9030,7 @@ async function openWrapUpModal(leadId) {
     if (c.done) return "";
     if (c.key === "client") return `<button class="btn-ghost" data-wu="client">Record payment</button>`;
     if (c.key === "artists") return `<button class="btn-ghost" data-wu="artists">Pay artists</button>`;
-    if (c.key === "thanks") return w.phone ? `<button class="btn-primary" data-wu="thanks">Send thank-you</button>` : `<span class="muted small">No phone on file</span>`;
+    if (c.key === "thanks") return `<span class="wu-actions">${w.phone ? `<button class="btn-primary" data-wu="thanks">Send thank-you</button>` : ""}<button class="btn-ghost" data-wu="markthanked" title="Use this if you already thanked them some other way">Already sent</button></span>`;
     if (c.key === "feedback") return w.thanked && w.phone ? `<button class="btn-ghost" data-wu="nudge">Send a gentle reminder</button>` : `<span class="muted small">Asked for in the thank-you</span>`;
     return "";
   };
@@ -9063,6 +9063,13 @@ async function openWrapUpModal(leadId) {
     const l = LEADS.find((x) => x.id === w.leadId);
     if (!l) return;
     openThankYouMessageModal(l).then(reopenAfter);
+  });
+  root.querySelector('[data-wu="markthanked"]')?.addEventListener("click", async (e) => {
+    e.currentTarget.disabled = true;
+    try {
+      await api(`/api/leads/${w.leadId}`, { method: "PATCH", body: JSON.stringify({ thankedAt: true }) });
+      openWrapUpModal(leadId);
+    } catch (err) { e.currentTarget.disabled = false; alert(err.message); }
   });
   root.querySelector('[data-wu="nudge"]')?.addEventListener("click", async (e) => {
     e.currentTarget.disabled = true;
@@ -11446,14 +11453,15 @@ async function openThankYouMessageModal(lead) {
   root.querySelector("#doneBtn").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
 
-  if (waLink) root.querySelector("#waBtn").addEventListener("click", () => {
+  if (waLink) root.querySelector("#waBtn").addEventListener("click", async () => {
     const text = root.querySelector("#tyMessage").value;
+    await markThankedBeforeLeaving(lead);
     goWhatsApp(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(text)}`);
-    markLeadThanked(lead);
   });
-  if (mailLink) root.querySelector("#mailBtn").addEventListener("click", () => {
-    window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Thank you — Together, Out Loud")}&body=${encodeURIComponent(root.querySelector("#tyMessage").value)}`;
-    markLeadThanked(lead);
+  if (mailLink) root.querySelector("#mailBtn").addEventListener("click", async () => {
+    const body = root.querySelector("#tyMessage").value;
+    await markThankedBeforeLeaving(lead);
+    window.location.href = `mailto:${lead.email}?subject=${encodeURIComponent("Thank you — Together, Out Loud")}&body=${encodeURIComponent(body)}`;
   });
 }
 
@@ -11461,6 +11469,12 @@ async function openThankYouMessageModal(lead) {
 // and updates both the passed-in lead object and its entry in the global
 // LEADS array, so the "🙏 Thank client" / "Thanked ✓" button flips without
 // needing a full reload either way.
+// Opening WhatsApp (or mail) can take the page away and cancel a save still in flight, so the
+// "thanked" mark goes first — waiting at most a couple of seconds so WhatsApp still opens promptly.
+function markThankedBeforeLeaving(lead) {
+  return Promise.race([markLeadThanked(lead), new Promise((resolve) => setTimeout(resolve, 2500))]);
+}
+
 async function markLeadThanked(lead) {
   if (lead.thanked_at) return;
   const thankedAt = new Date().toISOString();
@@ -11545,8 +11559,8 @@ function openBulkThankYouModal(leadIds, main) {
     });
     root.querySelector("#bulkThanksOpenBtn").addEventListener("click", async () => {
       const digitsOnly = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
+      await markThankedBeforeLeaving(lead);
       goWhatsApp(`https://wa.me/${digitsOnly}?text=${encodeURIComponent(message)}`);
-      await markLeadThanked(lead);
       sentCount++;
       index++;
       renderStep();

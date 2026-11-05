@@ -123,9 +123,9 @@
           ${FACES.map((f) => `<button type="button" class="face" role="radio" aria-checked="false" data-n="${f.n}"><span class="emoji" aria-hidden="true">${f.emoji}</span><span class="word">${f.word}</span></button>`).join("")}
         </div>
         <div class="saved" id="saved"></div>
-        <div class="more" id="more" hidden>
+        <div class="more" id="more">
           <label class="note-label" for="note">Anything you'd like to tell us? (optional)</label>
-          <textarea id="note" maxlength="2000" placeholder="A moment you loved, or something we could do better">${esc(data.message || "")}</textarea>
+          <textarea id="note" maxlength="2000" placeholder="Write anything — a moment you loved, a message for the band, or something we could do better">${esc(data.message || "")}</textarea>
           <label class="share"><input type="checkbox" id="shareOk" ${data.shareOk ? "checked" : ""} /> <span>Happy for us to share your words on our website (we never use your name)</span></label>
           <button class="submit" id="submitBtn">Send</button>
         </div>
