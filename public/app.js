@@ -6344,16 +6344,34 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
           ${eventHubHtml(lead)}
           <div class="card" style="margin-bottom:12px; padding:10px 14px;">
             <div style="font-weight:700; margin-bottom:6px;">Event details</div>
-            ${[
-              ["Date", lead.date ? fmtDate(lead.date) : ""],
-              ["City", lead.city || ""],
-              ["Format", packageName(lead.event_type)],
-              ["🎉 Occasion", String(occasionLabel(lead)).replace(/&/g, "&amp;").replace(/</g, "&lt;")],
-              ["📝 Client's notes", String(lead.details || "").trim().replace(/&/g, "&amp;").replace(/</g, "&lt;")],
-              ["Timing", [lead.soundcheck_time ? `Sound check ${fmtTimeHM(lead.soundcheck_time)}` : "", lead.event_time ? `Event ${fmtTimeHM(lead.event_time)}` : ""].filter(Boolean).join(" · ")],
-              ["Set", lead.pcs && lead.event_type !== "pheras" ? `${lead.pcs} pieces` : ""],
-              ["Duration", lead.duration || ""],
-            ].filter(([, v]) => v).map(([k, v]) => `<div class="performer-event-row"><span class="muted small">${k}:</span> <span>${v}</span></div>`).join("")}
+            ${(() => {
+              // The essentials are always listed; anything missing says so, so gaps are easy to spot and fill.
+              const notSet = `<span class="ov-missing">Not set</span>`;
+              const isPheras = lead.event_type === "pheras";
+              const crew = assignments.filter((a) => a.status !== "declined");
+              const yes = assignments.filter((a) => a.status === "accepted").length;
+              const waiting = assignments.filter((a) => a.status === "pending").length;
+              const out = assignments.filter((a) => a.status === "declined" || a.status === "cancel_requested").length;
+              const need = Number(lead.pcs) || 0;
+              const teamTxt = !assignments.length ? notSet
+                : `<b>${yes}${need ? ` of ${need}` : ""} confirmed</b>${waiting ? ` · ${waiting} waiting` : ""}${out ? ` · <span style="color:#A6432B;">${out} declined</span>` : ""}${need && crew.length < need ? ` · <span style="color:#A6432B;">${need - crew.length} still to pick</span>` : ""}`;
+              const pcsHtml = isPheras ? (lead.pcs ? `${lead.pcs} pieces` : "") : hasLeadsAccess()
+                ? `<select id="ovPcs" class="ov-pcs"><option value="">Not set</option>${[2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => `<option value="${n}" ${String(lead.pcs) === String(n) ? "selected" : ""}>${n} pieces</option>`).join("")}</select> <span class="muted small" id="ovPcsSaved"></span>`
+                : (lead.pcs ? `${lead.pcs} pieces` : notSet);
+              return [
+                ["Date", lead.date ? fmtDate(lead.date) : notSet],
+                ["City", escH(lead.city || "") || notSet],
+                ["Venue", escH(lead.venue || "") || notSet],
+                ["Format", packageName(lead.event_type)],
+                ["🎉 Occasion", escH(occasionLabel(lead)) || notSet],
+                ["Guests", escH(lead.guest_range || "") || notSet],
+                ["🎸 Band", pcsHtml],
+                ["👥 Team", teamTxt],
+                ["Timing", [lead.soundcheck_time ? `Sound check ${fmtTimeHM(lead.soundcheck_time)}` : "", lead.event_time ? `Event ${fmtTimeHM(lead.event_time)}` : ""].filter(Boolean).join(" · ") || notSet],
+                ["Duration", escH(lead.duration || "") || notSet],
+                ["📝 Client's notes", escH(String(lead.details || "").trim())],
+              ].filter(([, v]) => v).map(([k, v]) => `<div class="performer-event-row"><span class="muted small">${k}:</span> <span>${v}</span></div>`).join("");
+            })()}
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
               <button class="btn-ghost" id="openMapsBtn" style="font-size:12px; padding:4px 10px;">📍 Open in Maps</button>
               <button class="btn-ghost" id="shareEventSummaryBtn" style="font-size:12px; padding:4px 10px;">📤 Share event summary</button>
@@ -6625,6 +6643,20 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     const q = [lead.venue, lead.city].filter(Boolean).join(", ");
     if (!q) return alert("No venue or city on this event yet.");
     window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`, "_blank", "noopener");
+  });
+  // Band size can be set right here; it decides when the line-up counts as complete.
+  root.querySelector("#ovPcs")?.addEventListener("change", async (e) => {
+    const sel = e.target, msg = root.querySelector("#ovPcsSaved");
+    sel.disabled = true;
+    try {
+      await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ pcs: sel.value || null }) });
+      lead.pcs = sel.value || null;
+      if (msg) msg.textContent = "Saved";
+      openAssignTeamModal(leadId);
+    } catch (err) {
+      alert(err.message);
+      sel.value = lead.pcs || "";
+    } finally { sel.disabled = false; }
   });
   root.querySelector("#shareEventSummaryBtn").addEventListener("click", () => {
     const lines = [

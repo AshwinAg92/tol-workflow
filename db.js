@@ -1247,6 +1247,23 @@ Warmly,
   // deliberate later edit in Settings is never overwritten.
   // One-time upgrade: a warmer thank-you that asks for one-tap feedback. Only replaces the
   // original seed text — a thank-you someone has rewritten in Settings is left alone.
+  // One-time: put Ashwin & Prakriti (team members linked to an admin login) on every upcoming
+  // Confirmed event as confirmed, where they aren't on the line-up already. New bookings get this
+  // automatically when they're confirmed.
+  const foundersFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'founders_default_applied'")).rows[0];
+  if (!foundersFlag) {
+    const nowIso = new Date().toISOString();
+    const today = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+    const r = await pool.query(`
+      INSERT INTO event_assignments (id, lead_id, team_id, status, created_at, responded_at)
+      SELECT md5(random()::text || clock_timestamp()::text || l.id || u.team_id), l.id, u.team_id, 'accepted', $1, $1
+      FROM leads l CROSS JOIN (SELECT DISTINCT team_id FROM users WHERE access_level = 'admin' AND team_id IS NOT NULL) u
+      WHERE l.stage = 'Confirmed' AND l.date >= $2
+        AND NOT EXISTS (SELECT 1 FROM event_assignments ea WHERE ea.lead_id = l.id AND ea.team_id = u.team_id)`, [nowIso, today]);
+    console.log(`Founders added to ${r.rowCount} upcoming event line-up slot(s)`);
+    await pool.query(`INSERT INTO message_templates (key, template, updated_at) VALUES ('founders_default_applied', '1', $1) ON CONFLICT (key) DO NOTHING`, [nowIso]);
+  }
+
   const thankTplFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'thank_you_v2_applied'")).rows[0];
   if (!thankTplFlag) {
     const current = (await pool.query("SELECT template FROM message_templates WHERE key = 'thank_you'")).rows[0];

@@ -530,3 +530,7 @@ input[type="checkbox"] { width:18px; height:18px; cursor:pointer; accent-color:v
 .nav-fav-sorting, .nav-fav-sorting * { cursor:grabbing !important; user-select:none; }
 .nav-row-dragging { background:#FBEFE2; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,.12); position:relative; z-index:1; }
 @media (max-width: 900px) { .nav-grip { width:26px; font-size:17px; padding:10px 0; color:#B8A88C; } }
+
+/* Overview: missing essentials and the inline band-size picker */
+.ov-missing { color:#A6432B; font-size:13px; font-style:italic; }
+.modal-body select.ov-pcs { display:inline-block; width:auto; padding:3px 8px; font-size:14px; }

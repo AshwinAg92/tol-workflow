@@ -2408,6 +2408,7 @@ app.post("/api/leads/combo", requireAuth, requireSection("leads"), async (req, r
     if (nameParts) await pool.query("UPDATE leads SET first_name = $2, last_name = $3 WHERE id = $1", [id, nameParts.first || null, nameParts.last || null]);
     createdIds.push(id);
   }
+  if (alreadyConfirmed) for (const cid of createdIds) await addFoundersToEvent(cid);
   if (alreadyConfirmed && advanceAmount && Number(advanceAmount) > 0 && advanceDate) {
     await pool.query(`
       INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, created_at)
@@ -2590,6 +2591,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     }
   }
 
+  if (req.body.stage === "Confirmed" && lead.stage !== "Confirmed") await addFoundersToEvent(req.params.id);
   const updatedLead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   res.json(hasLeads ? stripLeadMoney(updatedLead, req.user) : restrictedLeadView(updatedLead));
   syncLeadToGoogleCalendar(updatedLead).catch((err) => console.error("Google Calendar sync error:", err.message));
@@ -2794,9 +2796,10 @@ app.post("/api/leads/:id/assignments", requireAuth, requireCapability("assign_te
 // "Team complete": fires ONE major alert when every member assigned to a Confirmed event has
 // accepted (nobody pending, declined or asking to cancel). If the line-up later stops being
 // complete (someone added/declines), the flag resets so the alert fires again when it is.
+const DEFAULT_BAND_PCS = 5;
 async function checkTeamComplete(leadId) {
   try {
-    const lead = (await pool.query("SELECT id, name, date, city, stage, pcs, team_complete_notified FROM leads WHERE id = $1", [leadId])).rows[0];
+    const lead = (await pool.query("SELECT id, name, date, city, stage, pcs, event_type, team_complete_notified FROM leads WHERE id = $1", [leadId])).rows[0];
     if (!lead) return;
     const as = [
       ...(await pool.query("SELECT status FROM event_assignments WHERE lead_id = $1", [leadId])).rows,
@@ -2804,7 +2807,8 @@ async function checkTeamComplete(leadId) {
     ];
     // Everyone assigned must have accepted AND the line-up must actually be full: a 4-piece booking
     // with only 3 chosen is not "complete" yet, however many of those 3 have said yes.
-    const needed = Number(lead.pcs) || 0;
+    // Band size not filled in yet: assume the usual 5-piece band, so two founders saying yes is never "complete".
+    const needed = Number(lead.pcs) || (lead.event_type === "pheras" ? 0 : DEFAULT_BAND_PCS);
     const complete = lead.stage === "Confirmed" && as.length > 0 && as.length >= needed && as.every((a) => a.status === "accepted");
     if (!complete) {
       if (lead.team_complete_notified) await pool.query("UPDATE leads SET team_complete_notified = 0 WHERE id = $1", [leadId]);
@@ -2817,6 +2821,20 @@ async function checkTeamComplete(leadId) {
     logActivity({ user: null }, `Team complete: everyone confirmed ${lead.name} (${lead.date})`, leadId);
     await sendPushToAll("\ud83c\udf89 Team complete!", `${lead.name} (${lead.date}) \u2014 every member has confirmed.`, "/login", { adminOnly: true });
   } catch (err) { console.error("checkTeamComplete failed (not fatal):", err.message); }
+}
+
+// Ashwin & Prakriti (team members linked to an admin login) play every event: put them on the line-up
+// as confirmed when an event is booked. Anyone already on it (in any state) is left alone.
+async function addFoundersToEvent(leadId) {
+  try {
+    const now = new Date().toISOString();
+    const founders = (await pool.query("SELECT DISTINCT team_id FROM users WHERE access_level = 'admin' AND team_id IS NOT NULL")).rows;
+    for (const f of founders) {
+      await pool.query(`INSERT INTO event_assignments (id, lead_id, team_id, status, created_at, responded_at)
+        SELECT $1, $2, $3, 'accepted', $4, $4 WHERE NOT EXISTS (SELECT 1 FROM event_assignments WHERE lead_id = $2 AND team_id = $3)`,
+        [uuid(), leadId, f.team_id, now]);
+    }
+  } catch (err) { console.error("addFoundersToEvent failed (not fatal):", err.message); }
 }
 
 app.delete("/api/assignments/:id", requireAuth, requireCapability("assign_team"), async (req, res) => {
