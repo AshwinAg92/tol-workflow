@@ -1711,6 +1711,54 @@ async function toggleNavFavorite(id) {
   }
 }
 
+// Save a new favourites order (from dragging). Favourites not shown to this login keep their place at the end.
+async function saveNavFavoriteOrder(visibleIds) {
+  const current = Array.isArray(CURRENT_USER?.navFavorites) ? CURRENT_USER.navFavorites : [];
+  const next = [...visibleIds, ...current.filter((f) => !visibleIds.includes(f))];
+  if (next.join("|") === current.join("|")) return;
+  CURRENT_USER.navFavorites = next;
+  try {
+    await api("/api/my/nav-favorites", { method: "PUT", body: JSON.stringify({ favorites: next }) });
+  } catch (err) {
+    CURRENT_USER.navFavorites = current;
+    renderNav();
+  }
+}
+
+// Drag a favourite by its handle to move it up or down the list.
+function wireFavDrag(list) {
+  list.querySelectorAll(".nav-grip").forEach((grip) => {
+    grip.addEventListener("click", (e) => e.stopPropagation());
+    grip.addEventListener("pointerdown", (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault();
+      const row = grip.closest(".nav-row");
+      // Listen on the window: moving the row in the page would drop pointer capture on the handle.
+      row.classList.add("nav-row-dragging");
+      list.classList.add("nav-fav-sorting");
+      const move = (ev) => {
+        if (ev.pointerId !== e.pointerId) return;
+        const rows = [...list.querySelectorAll(".nav-row")].filter((r) => r !== row);
+        const after = rows.find((r) => { const b = r.getBoundingClientRect(); return ev.clientY < b.top + b.height / 2; });
+        if (after) { if (row.nextElementSibling !== after) list.insertBefore(row, after); }
+        else if (list.lastElementChild !== row) list.appendChild(row);
+      };
+      const end = (ev) => {
+        if (ev.pointerId !== e.pointerId) return;
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", end);
+        window.removeEventListener("pointercancel", end);
+        row.classList.remove("nav-row-dragging");
+        list.classList.remove("nav-fav-sorting");
+        saveNavFavoriteOrder([...list.querySelectorAll(".nav-row")].map((r) => r.dataset.navId));
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+    });
+  });
+}
+
 function renderNav() {
   const nav = document.getElementById("nav");
   nav.innerHTML = "";
@@ -1740,10 +1788,11 @@ function renderNav() {
   }
   if (!visibleNav.some((n) => n.id === currentTab)) currentTab = "dashboard";
 
-  function navRow(id, label) {
+  function navRow(id, label, inFavList = false) {
     const isFav = isNavFavorite(id);
     const row = el(`
-      <div class="nav-row">
+      <div class="nav-row" data-nav-id="${id}">
+        ${inFavList ? `<span class="nav-grip" title="Drag to reorder" aria-label="Drag to reorder">⠿</span>` : ""}
         <button class="nav-item${currentTab === id ? " nav-item-active" : ""}">${label}</button>
         <button class="nav-star-btn${isFav ? " nav-star-active" : ""}" title="${isFav ? "Remove from favourites" : "Add to favourites"}">${isFav ? "★" : "☆"}</button>
       </div>
@@ -1771,9 +1820,12 @@ function renderNav() {
   const favorites = visibleNav.filter((n) => isNavFavorite(n.id));
   if (favorites.length > 0) {
     nav.appendChild(el(`<div class="nav-group-label">Favourites</div>`));
+    const favList = el(`<div class="nav-fav-list"></div>`);
     favorites
       .sort((a, b) => CURRENT_USER.navFavorites.indexOf(a.id) - CURRENT_USER.navFavorites.indexOf(b.id))
-      .forEach(({ id, label }) => nav.appendChild(navRow(id, label)));
+      .forEach(({ id, label }) => favList.appendChild(navRow(id, label, favorites.length > 1)));
+    nav.appendChild(favList);
+    if (favorites.length > 1) wireFavDrag(favList);
   }
 
   let lastGroup = null;
