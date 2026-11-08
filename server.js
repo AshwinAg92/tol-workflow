@@ -534,6 +534,45 @@ app.post("/api/auth/login", async (req, res) => {
 // Which release is running, so an open CRM can offer to reload after an upgrade.
 const APP_VERSION = process.env.RAILWAY_GIT_COMMIT_SHA || `boot-${Date.now()}`;
 app.get("/api/version", (req, res) => res.json({ version: APP_VERSION }));
+// ---------- Private money feed for the separate TOL Money app (read-only) ----------
+// Off unless MONEY_FEED_TOKEN is set. Cash basis: money counts on the day it was actually received
+// or paid. Book-only entries (a client buying our ticket and having it adjusted from the fee) are
+// left out on both sides, and so is anything paid to a founder, since that money stays with us.
+app.get("/api/feed/money", async (req, res) => {
+  const token = process.env.MONEY_FEED_TOKEN;
+  if (!token) return res.status(404).json({ error: "Not found" });
+  const given = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  const a = crypto.createHash("sha256").update(given).digest(), b = crypto.createHash("sha256").update(token).digest();
+  if (!given || !crypto.timingSafeEqual(a, b)) return res.status(401).json({ error: "Bad token" });
+  try {
+    const founders = (await pool.query("SELECT DISTINCT team_id FROM users WHERE access_level = 'admin' AND team_id IS NOT NULL")).rows.map((r) => r.team_id);
+    const inflows = (await pool.query(`
+      SELECT p.id, p.payment_date AS date, p.amount, p.type, p.payment_mode AS mode,
+             l.id AS event_id, l.name AS event_name, l.date AS event_date, l.city
+      FROM payments p LEFT JOIN leads l ON l.id = p.lead_id
+      WHERE p.status = 'received' AND COALESCE(p.payment_mode, '') <> 'Travel fare adjustment'
+      ORDER BY p.payment_date`)).rows;
+    const outRows = (await pool.query(`
+      SELECT e.id, COALESCE(e.payment_date, LEFT(e.created_at, 10)) AS date, e.amount, e.category, e.head, e.paid,
+             l.id AS event_id, l.name AS event_name, l.date AS event_date, l.city
+      FROM expenses e LEFT JOIN leads l ON l.id = e.lead_id
+      LEFT JOIN shared_travel_costs s ON s.id = e.shared_cost_id
+      WHERE e.approved = 1 AND (e.team_id IS NULL OR NOT (e.team_id = ANY($1::text[])))
+        AND (e.shared_cost_id IS NULL OR COALESCE(s.paid_by, 'us') = 'us')
+      ORDER BY 2`, [founders])).rows;
+    const shape = (r) => ({ ...r, amount: Number(r.amount) || 0 });
+    res.json({
+      generatedAt: new Date().toISOString(),
+      inflows: inflows.map(shape),
+      outflows: outRows.filter((r) => Number(r.paid) === 1).map(({ paid, ...r }) => shape(r)),
+      owed: outRows.filter((r) => Number(r.paid) !== 1).map(({ paid, ...r }) => shape(r)),
+    });
+  } catch (err) {
+    console.error("Money feed failed:", err.message);
+    res.status(500).json({ error: "Feed failed" });
+  }
+});
+
 
 app.post("/api/auth/logout", (req, res) => {
   clearSessionCookie(res);
