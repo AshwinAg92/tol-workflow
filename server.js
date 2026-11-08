@@ -561,11 +561,51 @@ app.get("/api/feed/money", async (req, res) => {
         AND (e.shared_cost_id IS NULL OR COALESCE(s.paid_by, 'us') = 'us')
       ORDER BY 2`, [founders])).rows;
     const shape = (r) => ({ ...r, amount: Number(r.amount) || 0 });
+
+    // Money still to come from booked events: same maths as Accounts — fee (final, else quote)
+    // minus fee payments received plus reimbursements still due — less costs not yet paid.
+    // A combo is one booking: its money sits on the primary event, its costs on every date.
+    const booked = (await pool.query(`SELECT id, name, date, city, stage, final_amount, quote_amount, combo_group_id, is_combo_primary, balance_due_date
+      FROM leads WHERE stage IN ('Confirmed', 'Completed')`)).rows;
+    const ids = booked.map((l) => l.id);
+    const sumBy = async (sql) => Object.fromEntries((await pool.query(sql, [ids])).rows.map((r) => [r.lead_id, Number(r.total)]));
+    const feePaid = await sumBy(`SELECT lead_id, SUM(amount) AS total FROM payments WHERE lead_id = ANY($1::text[]) AND status = 'received' AND type = 'payment' GROUP BY lead_id`);
+    const reimbDue = await sumBy(`SELECT lead_id, SUM(amount) AS total FROM payments WHERE lead_id = ANY($1::text[]) AND status = 'due' AND type = 'client_reimbursement' GROUP BY lead_id`);
+    const costsDue = {};
+    outRows.filter((r) => Number(r.paid) !== 1 && r.event_id).forEach((r) => { costsDue[r.event_id] = (costsDue[r.event_id] || 0) + (Number(r.amount) || 0); });
+    // Team members on the line-up with no fee entered yet — the real cost will be higher.
+    const missing = {};
+    (await pool.query(`SELECT ea.lead_id, COUNT(*) AS n FROM event_assignments ea
+      WHERE ea.lead_id = ANY($1::text[]) AND ea.status <> 'declined' AND NOT (ea.team_id = ANY($2::text[]))
+        AND NOT EXISTS (SELECT 1 FROM expenses e WHERE e.lead_id = ea.lead_id AND e.team_id = ea.team_id AND e.category = 'artist_fee')
+      GROUP BY ea.lead_id`, [ids, founders])).rows.forEach((r) => { missing[r.lead_id] = Number(r.n); });
+    const groups = new Map();
+    booked.forEach((l) => { const k = l.combo_group_id || l.id; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(l); });
+    const receivables = [];
+    for (const g of groups.values()) {
+      const primary = g.find((l) => l.is_combo_primary) || g[0];
+      const fee = Number(primary.final_amount || primary.quote_amount || 0);
+      const paid = g.reduce((a, l) => a + (feePaid[l.id] || 0), 0);
+      const reimb = g.reduce((a, l) => a + (reimbDue[l.id] || 0), 0);
+      const balance = Math.max(0, fee - paid + reimb);
+      const costs = g.reduce((a, l) => a + (costsDue[l.id] || 0), 0);
+      const lastDate = g.map((l) => l.date).filter(Boolean).sort().pop() || null;
+      const missingFees = g.reduce((a, l) => a + (missing[l.id] || 0), 0);
+      if (!balance && !costs && !(missingFees && primary.stage === "Confirmed")) continue;
+      receivables.push({
+        event_id: primary.id, name: primary.name, city: primary.city ? String(primary.city).trim() : null, stage: primary.stage,
+        date: lastDate, dates: g.map((l) => l.date).filter(Boolean).sort(), due_date: primary.balance_due_date || null,
+        fee, received: paid, reimbursement_due: reimb, balance, costs_due: costs, missing_fees: missingFees,
+      });
+    }
+    receivables.sort((a, b) => String(a.due_date || a.date).localeCompare(String(b.due_date || b.date)));
+
     res.json({
       generatedAt: new Date().toISOString(),
       inflows: inflows.map(shape),
       outflows: outRows.filter((r) => Number(r.paid) === 1).map(({ paid, ...r }) => shape(r)),
       owed: outRows.filter((r) => Number(r.paid) !== 1).map(({ paid, ...r }) => shape(r)),
+      receivables,
     });
   } catch (err) {
     console.error("Money feed failed:", err.message);
