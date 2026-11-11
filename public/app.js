@@ -7765,10 +7765,12 @@ async function openTravelPlanModal(leadId) {
     try { (await api(`/api/shared-travel/legs?ids=${legs.map((l) => l.id).join(",")}`)).forEach((c) => (fareSplits[c.legId] = c)); } catch { /* shown as not split */ }
   };
   await loadFareSplits();
+  let editingFareLegId = null; // a split being changed: its box opens filled in with what was saved
   const fareShareHtml = (leg) => {
     if (!canSplitFare || leg.mode === "stay") return "";
     const split = fareSplits[leg.id];
-    if (split) {
+    const editing = split && editingFareLegId === leg.id;
+    if (split && !editing) {
       const rows = split.shares.map((p) => {
         if (p.isPayer) return `<span>${escH(p.name)} ${inr(p.amount)} <b class="fare-ok">Own share, paid</b></span>`;
         const l = LEADS.find((x) => x.id === p.leadId);
@@ -7781,21 +7783,25 @@ async function openTravelPlanModal(leadId) {
         <div>💰 <b>Fare ${inr(split.total)}</b> · paid by <b>${escH(split.paidBy === "us" ? "us" : split.payerName)}</b></div>
         <div class="fare-parties">${rows.join("")}</div>
         ${split.credit ? `<div class="muted small" style="margin-top:4px;">${inr(split.credit)} adjusted from our fee for ${escH(split.payerName)}</div>` : ""}
-        ${collectable.every((p) => p.status === "due") ? `<button class="btn-ghost" data-fare-remove="${split.id}">Remove split</button>` : ""}
+        ${collectable.every((p) => p.status === "due") ? `<div class="fare-actions"><button class="btn-ghost" data-fare-edit="${leg.id}">✎ Edit split</button><button class="btn-ghost" data-fare-remove="${split.id}">Remove split</button></div>` : `<div class="muted small" style="margin-top:4px;">A share has been collected, so this split can't be changed.</div>`}
       </div>`;
     }
     const parties = fareParties(leg);
-    return `<label class="fare-check"><input type="checkbox" data-fare-toggle="${leg.id}" /> 💰 Fare shared between events</label>
-      <div class="fare-box" data-fare-box="${leg.id}" hidden>
-        <label>Total fare (₹)<input type="number" min="1" inputmode="numeric" data-fare-total /></label>
-        ${parties.map((p, i) => `<label>${escH(p.name)}${p.place ? ` <span class="muted small">· ${escH(p.place)}</span>` : ""}<input type="number" min="0" inputmode="numeric" data-fare-part="${i}"${p.us ? " data-fare-us" : ""} /></label>`).join("")}
+    // When editing, every box starts with what was saved.
+    const was = (pt) => !editing ? "" : pt.us ? split.ourShare || 0 : ((split.shares.find((x) => x.leadId === pt.leadId) || {}).amount || 0);
+    const wasPayer = editing ? (split.paidBy === "us" ? "us" : split.paidBy) : "";
+    return `${editing ? "" : `<label class="fare-check"><input type="checkbox" data-fare-toggle="${leg.id}" /> 💰 Fare shared between events</label>`}
+      <div class="fare-box" data-fare-box="${leg.id}"${editing ? "" : " hidden"}>
+        ${editing ? `<div style="font-weight:600; margin-bottom:4px;">✎ Change the fare split</div>` : ""}
+        <label>Total fare (₹)<input type="number" min="1" inputmode="numeric" data-fare-total value="${editing ? split.total : ""}" /></label>
+        ${parties.map((p, i) => `<label>${escH(p.name)}${p.place ? ` <span class="muted small">· ${escH(p.place)}</span>` : ""}<input type="number" min="0" inputmode="numeric" data-fare-part="${i}"${p.us ? " data-fare-us" : ""} value="${was(p)}" /></label>`).join("")}
         <label>Who paid the fare?<select data-fare-payer>
           <option value="">Choose who paid…</option>
-          <option value="us">Us (Together, Out Loud)</option>
-          ${parties.filter((p) => !p.us).map((p) => `<option value="${p.leadId}">${escH(p.name)}</option>`).join("")}
+          <option value="us"${wasPayer === "us" ? " selected" : ""}>Us (Together, Out Loud)</option>
+          ${parties.filter((p) => !p.us).map((p) => `<option value="${p.leadId}"${wasPayer === p.leadId ? " selected" : ""}>${escH(p.name)}</option>`).join("")}
         </select></label>
         <p class="small fare-left" style="margin:6px 0 0;"></p><p class="muted small fare-hint" style="margin:6px 0 8px;">Split 50:50 between the events — set a share to 0 to leave that party out; whatever the clients don't cover is ours.</p>
-        <button class="btn-primary" data-fare-save="${leg.id}">Save split</button>
+        <div class="fare-actions"><button class="btn-primary" data-fare-save="${leg.id}">${editing ? "Save changes" : "Save split"}</button>${editing ? `<button class="btn-ghost" data-fare-edit-cancel>Cancel</button>` : ""}</div>
       </div>`;
   };
   let linkingExisting = false;
@@ -8374,10 +8380,16 @@ async function openTravelPlanModal(leadId) {
       if (!paidBy) return alert("Choose who paid the fare.");
       btn.disabled = true;
       try {
-        await api("/api/shared-travel", { method: "POST", body: JSON.stringify({ legId: leg.id, description: `${TRAVEL_MODE_LABELS[leg.mode] || "Travel"} ${joinRoute(leg.from_city, leg.to_city) || ""}`.trim(), travelDate: String(leg.departure_at || "").slice(0, 10) || null, total: t, parts, ourShare, paidBy }) });
+        const body = JSON.stringify({ legId: leg.id, description: `${TRAVEL_MODE_LABELS[leg.mode] || "Travel"} ${joinRoute(leg.from_city, leg.to_city) || ""}`.trim(), travelDate: String(leg.departure_at || "").slice(0, 10) || null, total: t, parts, ourShare, paidBy });
+        const existing = fareSplits[leg.id];
+        if (existing) await api(`/api/shared-travel/${existing.id}`, { method: "PUT", body });
+        else await api("/api/shared-travel", { method: "POST", body });
+        editingFareLegId = null;
         await refreshLeads(); await loadFareSplits(); renderModal();
       } catch (err) { btn.disabled = false; alert(err.message); }
     }));
+    root.querySelectorAll("[data-fare-edit]").forEach((btn) => btn.addEventListener("click", () => { editingFareLegId = btn.dataset.fareEdit; renderModal(); }));
+    root.querySelectorAll("[data-fare-edit-cancel]").forEach((btn) => btn.addEventListener("click", () => { editingFareLegId = null; renderModal(); }));
     root.querySelectorAll("[data-fare-remove]").forEach((btn) => btn.addEventListener("click", async () => {
       if (!confirm("Remove this fare split? The shares it added to each client's balance, and its expense, are taken off.")) return;
       btn.disabled = true;

@@ -4371,7 +4371,16 @@ app.get("/api/shared-travel/legs", requireAuth, requireSection("accounts"), requ
   res.json(await describeSharedCosts(costs));
 });
 
-app.post("/api/shared-travel", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+app.post("/api/shared-travel", requireAuth, requireSection("accounts"), requireAdmin, (req, res) => saveSharedTravel(req, res, null));
+// Editing a split replaces it — allowed, like removing it, only while no client's share has been collected.
+app.put("/api/shared-travel/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const c = (await pool.query("SELECT * FROM shared_travel_costs WHERE id = $1", [req.params.id])).rows[0];
+  if (!c) return res.status(404).json({ error: "Shared cost not found" });
+  const got = (await pool.query("SELECT 1 FROM payments WHERE shared_cost_id = $1 AND type = 'client_reimbursement' AND status <> 'due' LIMIT 1", [c.id])).rows[0];
+  if (got) return res.status(400).json({ error: "A share of this has already been marked received, so it can't be changed. Mark it due again in the client's payments first." });
+  return saveSharedTravel(req, res, c);
+});
+async function saveSharedTravel(req, res, replacing) {
   const description = cleanText(req.body.description, 160);
   const total = Math.round(Number(req.body.total));
   const travelDate = req.body.travelDate && isDayString(req.body.travelDate) ? req.body.travelDate : null;
@@ -4388,21 +4397,28 @@ app.post("/api/shared-travel", requireAuth, requireSection("accounts"), requireA
   if (leads.length !== parts.length) return res.status(404).json({ error: "Event not found" });
   const combos = leads.map((l) => l.combo_group_id).filter(Boolean);
   if (new Set(combos).size !== combos.length) return res.status(400).json({ error: "Those two events are one combo booking — there's nothing to split between them." });
-  const legId = req.body.legId ? String(req.body.legId) : null;
+  const legId = replacing ? replacing.leg_id : req.body.legId ? String(req.body.legId) : null;
+  let ownerLeadId = null; // the event this journey belongs to — our share of the fare is its travel expense
   if (legId) {
-    const leg = (await pool.query("SELECT id FROM travel_legs WHERE id = $1", [legId])).rows[0];
+    const leg = (await pool.query("SELECT id, lead_id FROM travel_legs WHERE id = $1", [legId])).rows[0];
     if (!leg) return res.status(404).json({ error: "Journey not found" });
-    const taken = (await pool.query("SELECT 1 FROM shared_travel_costs WHERE leg_id = $1", [legId])).rows[0];
-    if (taken) return res.status(409).json({ error: "This journey's fare is already split. Remove that split first to change it." });
+    ownerLeadId = leg.lead_id || null;
+    const taken = (await pool.query("SELECT 1 FROM shared_travel_costs WHERE leg_id = $1 AND id <> $2", [legId, replacing ? replacing.id : ""])).rows[0];
+    if (taken) return res.status(409).json({ error: "This journey's fare is already split. Edit that split instead." });
   }
   const nameOf = (id) => leads.find((l) => l.id === id).name;
   const shares = parts.map((p) => ({ leadId: p.leadId, name: nameOf(p.leadId), amount: p.amount }));
   const now = new Date().toISOString(), today = todayIST();
-  const id = uuid();
+  const id = replacing ? replacing.id : uuid();
   const pctOf = (n) => Math.round((n / total) * 100);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    if (replacing) {
+      await client.query("DELETE FROM payments WHERE shared_cost_id = $1", [id]);
+      await client.query("DELETE FROM expenses WHERE shared_cost_id = $1", [id]);
+      await client.query("DELETE FROM shared_travel_costs WHERE id = $1", [id]);
+    }
     await client.query(`INSERT INTO shared_travel_costs (id, description, travel_date, total, our_share, created_by, created_at, leg_id, paid_by, shares)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [id, description, travelDate, total, ourShare, await actorName(req.user), now, legId, paidBy, JSON.stringify(shares)]);
     const due = (leadId, amount, note) => client.query(`INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, type, status, created_at, shared_cost_id)
@@ -4411,7 +4427,16 @@ app.post("/api/shared-travel", requireAuth, requireSection("accounts"), requireA
       VALUES ($1,$2,$3,$4,1,'Shared travel fare',$5,$6,'expense',$7)`, [uuid(), leadId, head, amount, now, today, id]);
     if (paidBy === "us") {
       for (const p of parts) await due(p.leadId, p.amount, `Shared travel: ${description} (${pctOf(p.amount)}%)`);
-      for (const [i, p] of parts.entries()) await expense(p.leadId, p.amount + (i === 0 ? ourShare : 0), `Travel — ${description}`);
+      const byEvent = new Map(parts.map((p) => [p.leadId, p.amount]));
+      if (ourShare > 0) {
+        const home = ownerLeadId || parts[0].leadId;
+        byEvent.set(home, (byEvent.get(home) || 0) + ourShare);
+      }
+      for (const [leadId, amount] of byEvent) {
+        const isOurs = ourShare > 0 && leadId === (ownerLeadId || parts[0].leadId);
+        const theirs = parts.find((p) => p.leadId === leadId);
+        await expense(leadId, amount, `Travel — ${description}${isOurs && !theirs ? " (our share)" : ""}`);
+      }
     } else {
       const payerShare = parts.find((p) => p.leadId === paidBy).amount;
       const credit = total - payerShare;
@@ -4432,9 +4457,9 @@ app.post("/api/shared-travel", requireAuth, requireSection("accounts"), requireA
     return res.status(500).json({ error: "Couldn't save the split. Nothing was changed — please try again." });
   } finally { client.release(); }
   const summary = shares.map((s) => `${s.name} ₹${s.amount.toLocaleString("en-IN")}`).concat(ourShare ? [`us ₹${ourShare.toLocaleString("en-IN")}`] : []).join(", ");
-  for (const p of parts) logActivity(req, `Shared fare ₹${total.toLocaleString("en-IN")} (${description}), paid by ${paidBy === "us" ? "us" : nameOf(paidBy)}: ${summary}`, p.leadId);
-  res.status(201).json({ id });
-});
+  for (const p of parts) logActivity(req, `${replacing ? "Changed shared fare to" : "Shared fare"} ₹${total.toLocaleString("en-IN")} (${description}), paid by ${paidBy === "us" ? "us" : nameOf(paidBy)}: ${summary}`, p.leadId);
+  res.status(replacing ? 200 : 201).json({ id });
+}
 
 // Removing a split takes back everything it created — only while no share has been collected.
 app.delete("/api/shared-travel/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {

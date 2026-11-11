@@ -1264,6 +1264,34 @@ Warmly,
     await pool.query(`INSERT INTO message_templates (key, template, updated_at) VALUES ('founders_default_applied', '1', $1) ON CONFLICT (key) DO NOTHING`, [nowIso]);
   }
 
+  // One-time: a fare we paid used to book OUR share as an expense on the first client's event.
+  // It belongs to the event the journey is part of — move it there (each client's own share stays put).
+  const fareFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'shared_fare_owner_v1'")).rows[0];
+  if (!fareFlag) {
+    const costs = (await pool.query(`SELECT c.*, tl.lead_id AS owner FROM shared_travel_costs c JOIN travel_legs tl ON tl.id = c.leg_id
+      WHERE c.paid_by = 'us' AND c.our_share > 0 AND tl.lead_id IS NOT NULL`)).rows;
+    let moved = 0;
+    for (const c of costs) {
+      let shares = [];
+      try { shares = JSON.parse(c.shares || "[]"); } catch { continue; }
+      if (!shares.length) continue;
+      const byEvent = new Map(shares.map((x) => [x.leadId, Number(x.amount)]));
+      byEvent.set(c.owner, (byEvent.get(c.owner) || 0) + Number(c.our_share));
+      const old = (await pool.query("SELECT * FROM expenses WHERE shared_cost_id = $1", [c.id])).rows;
+      if (old.some((e) => e.payout_id)) continue; // never touch anything settled through Team Pay
+      const day = String(c.created_at || new Date().toISOString()).slice(0, 10);
+      await pool.query("DELETE FROM expenses WHERE shared_cost_id = $1", [c.id]);
+      for (const [leadId, amount] of byEvent) {
+        const ours = leadId === c.owner && !shares.some((x) => x.leadId === leadId);
+        await pool.query(`INSERT INTO expenses (id, lead_id, head, amount, paid, notes, created_at, payment_date, category, shared_cost_id)
+          VALUES ($1,$2,$3,$4,1,'Shared travel fare',$5,$6,'expense',$7)`, [uuid(), leadId, `Travel — ${c.description}${ours ? " (our share)" : ""}`, Math.round(amount), c.created_at, day, c.id]);
+      }
+      moved++;
+    }
+    if (moved) console.log(`Shared fares: our share moved to the journey's own event on ${moved} split(s)`);
+    await pool.query(`INSERT INTO message_templates (key, template, updated_at) VALUES ('shared_fare_owner_v1', '1', $1) ON CONFLICT (key) DO NOTHING`, [new Date().toISOString()]);
+  }
+
   const thankTplFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'thank_you_v2_applied'")).rows[0];
   if (!thankTplFlag) {
     const current = (await pool.query("SELECT template FROM message_templates WHERE key = 'thank_you'")).rows[0];
