@@ -534,3 +534,10 @@ input[type="checkbox"] { width:18px; height:18px; cursor:pointer; accent-color:v
 /* Overview: missing essentials and the inline band-size picker */
 .ov-missing { color:#A6432B; font-size:13px; font-style:italic; }
 .modal-body select.ov-pcs { display:inline-block; width:auto; padding:3px 8px; font-size:14px; }
+
+/* Event window: editable sticky note in Overview */
+.ev-sticky { margin-top:10px; background:#FBF3D9; border:1px solid #E8D488; border-radius:8px; padding:8px 10px; }
+.ev-sticky-head { display:flex; justify-content:space-between; align-items:center; font-size:12.5px; color:#8A6A54; margin-bottom:4px; }
+.ev-sticky textarea { width:100%; padding:7px 9px; border:1px solid #E0CE8A; border-radius:6px; font-family:inherit; font-size:16px; background:#FFFDF6; resize:vertical; min-height:52px; }
+/* Reimbursement slips shown inline for a quick check */
+.slip-thumb { width:84px; height:84px; object-fit:cover; border-radius:8px; border:1px solid #EAD9BE; margin:4px 6px 0 0; vertical-align:top; }

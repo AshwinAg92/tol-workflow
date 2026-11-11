@@ -2526,6 +2526,11 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     const onlyReopening = Object.keys(req.body).length === 1 && req.body.stage !== undefined && req.body.stage !== "Completed";
     // Recording that the client was thanked is part of closing out a played event, not an edit.
     const onlyThanked = Object.keys(req.body).length === 1 && req.body.thankedAt !== undefined;
+    const onlyNote = Object.keys(req.body).length === 1 && req.body.notes !== undefined;
+    if (onlyNote && hasLeads) {
+      await pool.query("UPDATE leads SET notes = $1 WHERE id = $2", [req.body.notes ? String(req.body.notes).slice(0, 5000) : null, lead.id]);
+      return res.json((await pool.query("SELECT * FROM leads WHERE id = $1", [lead.id])).rows[0]);
+    }
     if (onlyThanked && hasLeads) {
       const at = req.body.thankedAt ? new Date().toISOString() : null;
       await pool.query("UPDATE leads SET thanked_at = $1 WHERE id = $2", [at, lead.id]);
@@ -2888,7 +2893,8 @@ async function checkTeamComplete(leadId) {
     // with only 3 chosen is not "complete" yet, however many of those 3 have said yes.
     // Band size not filled in yet: assume the usual 5-piece band, so two founders saying yes is never "complete".
     const needed = Number(lead.pcs) || (lead.event_type === "pheras" ? 0 : DEFAULT_BAND_PCS);
-    const complete = lead.stage === "Confirmed" && as.length > 0 && as.length >= needed && as.every((a) => a.status === "accepted");
+    // Never "complete" while the band size is unknown (e.g. pheras with no size set).
+    const complete = lead.stage === "Confirmed" && needed > 0 && as.length > 0 && as.length >= needed && as.every((a) => a.status === "accepted");
     if (!complete) {
       if (lead.team_complete_notified) await pool.query("UPDATE leads SET team_complete_notified = 0 WHERE id = $1", [leadId]);
       return;
@@ -4717,9 +4723,9 @@ async function reimbOwnedBy(req, expId) {
 }
 async function attachReceiptInfo(rows) {
   if (!rows.length) return rows;
-  const r = (await pool.query("SELECT id, expense_id, original_name FROM reimbursement_receipts WHERE expense_id = ANY($1::text[]) ORDER BY uploaded_at ASC", [rows.map((x) => x.id)])).rows;
+  const r = (await pool.query("SELECT id, expense_id, original_name, mime_type FROM reimbursement_receipts WHERE expense_id = ANY($1::text[]) ORDER BY uploaded_at ASC", [rows.map((x) => x.id)])).rows;
   const by = {};
-  r.forEach((x) => (by[x.expense_id] = by[x.expense_id] || []).push({ id: x.id, name: x.original_name }));
+  r.forEach((x) => (by[x.expense_id] = by[x.expense_id] || []).push({ id: x.id, name: x.original_name, mime: x.mime_type }));
   return rows.map((x) => ({ ...x, receipts: by[x.id] || [] }));
 }
 app.post("/api/reimbursements/:id/receipt", requireAuth, upload.single("file"), async (req, res) => {
@@ -5696,7 +5702,7 @@ async function loadArtistPortal(token) {
            ex.paid AS pay_paid, ex.amount AS pay_amount, ex.payment_date, ex.payment_mode
     FROM event_assignments ea
     JOIN leads ON leads.id = ea.lead_id
-    LEFT JOIN expenses ex ON ex.team_id = ea.team_id AND ex.lead_id = ea.lead_id
+    LEFT JOIN expenses ex ON ex.team_id = ea.team_id AND ex.lead_id = ea.lead_id AND ex.category = 'artist_fee'
     WHERE ea.team_id = $1 AND leads.stage IN ('Confirmed', 'Completed', 'Tentative')
     ORDER BY leads.date ASC
   `, [m.id])).rows;
@@ -5743,9 +5749,49 @@ app.get("/api/public/me/:token", async (req, res) => {
     };
   });
   for (const e of events) { const row = p.rows.find((r) => r.confirm_token === e.confirmToken); e.travelAck = e.travel.length && row ? await travelAckState(row.lead_id, p.member.id) : { state: "none", at: null }; }
+  const claimRows = await attachReceiptInfo((await pool.query(
+    "SELECT * FROM expenses WHERE category = 'reimbursement' AND team_id = $1 AND lead_id = ANY($2::text[]) ORDER BY created_at DESC",
+    [p.member.id, p.rows.map((r) => r.lead_id)])).rows);
+  for (const e of events) {
+    const row = p.rows.find((r) => r.confirm_token === e.confirmToken);
+    e.claims = claimRows.filter((c) => row && c.lead_id === row.lead_id).map((c) => ({
+      amount: Number(c.amount), what: c.notes || "", at: String(c.created_at).slice(0, 10), receipts: (c.receipts || []).length,
+      status: !c.approved ? "waiting" : c.paid ? "paid" : "approved", paidOn: c.payment_date || null,
+    }));
+  }
   const login = (await pool.query("SELECT username FROM users WHERE team_id = $1 LIMIT 1", [p.member.id])).rows[0];
   res.json({ name: p.member.name, hasLogin: !!login, username: login ? login.username : null, upcoming: events.filter((e) => !e.past), past: events.filter((e) => e.past).reverse() });
 });
+app.post("/api/public/me/:token/claims", upload.single("file"), async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const p = await loadArtistPortal(req.params.token);
+  if (!p) return res.status(404).json({ error: "This link isn't valid — ask Team TOL for a fresh one." });
+  const row = p.rows.find((r) => r.confirm_token && r.confirm_token === String(req.body.confirmToken || ""));
+  if (!row) return res.status(404).json({ error: "That event isn't on your list." });
+  if (row.status === "declined") return res.status(400).json({ error: "You declined this event." });
+  const amount = Math.round(Number(String(req.body.amount || "").replace(/[,₹\s]/g, "")));
+  if (!(amount > 0 && amount <= 500000)) return res.status(400).json({ error: "Enter the amount you spent." });
+  const what = String(req.body.what || "").trim().slice(0, 200);
+  if (!what) return res.status(400).json({ error: "Say what it was for — e.g. cab to the venue." });
+  if (req.file && !RECEIPT_MIMES.test(req.file.mimetype || "")) return res.status(400).json({ error: "Please attach a photo (JPG/PNG) or a PDF of the slip." });
+  const waiting = (await pool.query("SELECT COUNT(*)::int AS c FROM expenses WHERE category = 'reimbursement' AND team_id = $1 AND approved = 0", [p.member.id])).rows[0].c;
+  if (waiting >= 20) return res.status(400).json({ error: "You have a lot of claims waiting — please wait for Team TOL to check them first." });
+  const id = uuid(), now = new Date().toISOString();
+  await pool.query(`INSERT INTO expenses (id, lead_id, team_id, head, amount, paid, notes, created_at, category, approved, requested_by)
+    VALUES ($1, $2, $3, $4, $5, 0, $6, $7, 'reimbursement', 0, $8)`, [id, row.lead_id, p.member.id, `Reimbursement — ${p.member.name}`, amount, what, now, p.member.name]);
+  if (req.file) {
+    await pool.query("INSERT INTO reimbursement_receipts (id, expense_id, original_name, mime_type, file_data, uploaded_at) VALUES ($1,$2,$3,$4,$5,$6)",
+      [uuid(), id, (req.file.originalname || "slip").slice(0, 200), req.file.mimetype, req.file.buffer, now]);
+  }
+  res.status(201).json({ ok: true });
+  // Let admin know straight away — in the app's alerts and as a push.
+  const where = [row.city ? String(row.city).trim() : "", row.date].filter(Boolean).join(", ");
+  pool.query("INSERT INTO admin_notifications (id, message, assignment_id, audience, created_at) VALUES ($1,$2,NULL,'admin',$3)",
+    [uuid(), `🧾 Reimbursement claim: ${escHtml(p.member.name)} — ₹${amount.toLocaleString("en-IN")} for ${escHtml(what)} (${escHtml(row.client_name)}, ${escHtml(where)})${req.file ? " · slip attached" : " · no slip"}. Check it in the event's Money tab.`, now]).catch(() => {});
+  logActivity({ user: null }, `Reimbursement claimed by ${p.member.name}: ₹${amount.toLocaleString("en-IN")} — ${what}`, row.lead_id);
+  sendPushToAll("🧾 Reimbursement to check", `${p.member.name} — ₹${amount.toLocaleString("en-IN")} for ${what}`, "/login", { adminOnly: true }).catch(() => {});
+});
+
 app.get("/api/public/me/:token/ticket/:docId", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   const p = await loadArtistPortal(req.params.token);

@@ -14,7 +14,7 @@ const EMBED_VIEW = (() => {
     return window.parent !== window && (v === "calendar" || v === "travelcal") ? v : null;
   } catch { return null; }
 })();
-let currentTab = EMBED_VIEW || "today";
+let currentTab = EMBED_VIEW || "dashboard";
 let leadsFilter = "all";
 let leadsStageFilter = "all";
 let leadsSearch = "";
@@ -2581,10 +2581,11 @@ async function renderLeadsLog(main, skipRefresh) {
           ${l.stage === "Confirmed" && canAssignTeam() ? (() => {
             const total = l.team_total || 0, acc = l.team_accepted || 0, dec = l.team_declined || 0;
             const pending = total - acc - dec;
-            const needed = Number(l.pcs) || 0;
+            const needed = teamNeeded(l);
             let bg, fg, bd, icon, text;
             if (total === 0) { bg = "#F3EFE9"; fg = "#7A6A5A"; bd = "#E2D9CC"; icon = "\ud83c\udfa4"; text = "No team assigned yet"; }
-            else if (acc === total && total < needed) { bg = "#FFF3DC"; fg = "#8A5A1F"; bd = "#F0D9A8"; icon = "\u23f3"; text = `Team ${acc} of ${needed} \u00b7 ${needed - total} more to assign`; }
+            else if (acc === total && total < needed) { bg = "#FFF3DC"; fg = "#8A5A1F"; bd = "#F0D9A8"; icon = "\u23f3"; text = `Team ${acc} of ${needed} \u00b7 ${needed - total} more to assign${l.pcs ? "" : " (band size not set — assumed 5)"}`; }
+            else if (acc === total && !l.pcs && !needed) { bg = "#FFF3DC"; fg = "#8A5A1F"; bd = "#F0D9A8"; icon = "\u23f3"; text = `${acc}/${total} accepted \u00b7 set the band size`; }
             else if (acc === total) { bg = "#E4F4E6"; fg = "#1F6B33"; bd = "#B9DEC0"; icon = "\u2705"; text = `Team complete \u00b7 ${acc}/${total}`; }
             else if (dec > 0) { bg = "#FBE9E5"; fg = "#A6432B"; bd = "#EFC4BA"; icon = "\u26a0\ufe0f"; text = `Team ${acc}/${total} confirmed \u00b7 ${dec} declined`; }
             else { bg = "#FFF3DC"; fg = "#8A5A1F"; bd = "#F0D9A8"; icon = "\u23f3"; text = `Team ${acc}/${total} confirmed \u00b7 ${pending} awaiting`; }
@@ -3862,7 +3863,7 @@ async function renderCalendar(main) {
   const crewOf = (leadId) => crewStatus.crew.filter((c) => c.lead_id === leadId);
   const guestsOf = (leadId) => crewStatus.guests.filter((g) => g.lead_id === leadId);
   // "Needs attention" = nobody allotted, or anyone not yet accepted.
-  const needsAttention = (l) => { const c = crewOf(l.id); return c.length === 0 || c.some((x) => x.status !== "accepted"); };
+  const needsAttention = (l) => { const c = crewOf(l.id); return c.length === 0 || c.some((x) => x.status !== "accepted") || c.filter((x) => x.status !== "declined").length < teamNeeded(l); };
   let calFilter = "all";
   const eventNameEsc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
@@ -6078,9 +6079,15 @@ function openTempArtistDirectoryModal(directory, onBack) {
 // order: a section heading switches the tab for what follows, and a few one-off blocks are
 // placed directly. The open tab is remembered while the window reopens itself after each save.
 let teamWindowState = { leadId: null, tab: "team" };
+// Team members list: stays open, with its search text, while picking people for one event.
+let teamListMemo = { leadId: null, open: false, search: "" };
 const TEAM_WINDOW_TABS = [["details", "Overview"], ["team", "Team"], ["travel", "Travel"], ["money", "Money"], ["files", "Messages"]];
 
 const isBookedEvent = (l) => l.stage === "Confirmed" || l.stage === "Completed";
+// How many people a booking needs. Band size not filled in yet: assume the usual 5-piece band,
+// so two people saying yes never reads as a full team. (Same rule as the server's "Team complete".)
+const DEFAULT_BAND_PCS = 5;
+const teamNeeded = (l) => Number(l && l.pcs) || (l && l.event_type === "pheras" ? 0 : DEFAULT_BAND_PCS);
 
 // The one way into a booked event: everything about it in one window, in tabs. A lead that isn't
 // booked yet — or a login that can't plan teams — gets the lead's Details window instead.
@@ -6125,7 +6132,7 @@ function eventHubHtml(lead) {
         ${phone ? `<button class="btn-ghost" type="button" data-ev="wa">💬 WhatsApp</button>` : ""}
         ${lead.email ? `<a class="btn-ghost" href="mailto:${escH(lead.email)}">✉️ Email</a>` : ""}
       </div>` : ""}
-      ${lead.notes ? `<div class="ev-note">📌 ${escH(lead.notes)}</div>` : ""}
+      ${hasLeadsAccess() ? `<div class="ev-sticky"><div class="ev-sticky-head"><span>📌 Sticky note</span><span class="muted small" id="evNoteStatus"></span></div><textarea id="evNoteInput" rows="2" placeholder="Jot anything down — only your team sees this…">${escH(lead.notes || "")}</textarea></div>` : lead.notes ? `<div class="ev-note">📌 ${escH(lead.notes)}</div>` : ""}
       ${hasLeadsAccess() ? `<div class="ev-actions">
         <button class="btn-ghost" type="button" data-ev="detail">🕘 Full details &amp; history</button>
         ${lead.stage !== "Completed" ? `<button class="btn-ghost" type="button" data-ev="edit">✎ Edit event</button>` : ""}
@@ -6155,6 +6162,7 @@ function eventHubHtml(lead) {
     booked && hasLeadsAccess() && hasAccountsAccess() ? `<button class="btn-ghost" type="button" data-ev="confirmation">✅ Confirmation message</button>` : "",
     hasLeadsAccess() ? `<button class="btn-ghost" type="button" data-ev="rider">🎛 Tech rider</button>` : "",
     hasLeadsAccess() ? `<button class="btn-ghost" type="button" data-ev="documents">📄 Documents</button>` : "",
+    hasAccountsAccess() && lead.stage !== "Cancelled" ? `<button class="btn-ghost" type="button" data-ev="bank">💳 Bank details &amp; UPI QR</button>` : "",
     `<button class="btn-ghost" type="button" data-ev="chat">💬 Event chat</button>`,
     lead.stage === "Completed" && hasLeadsAccess() && phone ? `<button class="btn-ghost" type="button" data-ev="thanks">${lead.thanked_at ? "🙏 Thanked ✓ — send again" : "🙏 Thank client"}</button>` : "",
     lead.stage === "Completed" && CURRENT_USER?.accessLevel === "admin" && hasAccountsAccess() ? `<button class="btn-ghost" type="button" data-ev="wrapup">${lead.closed_at ? "✅ Closed" : "✅ Wrap-up"}</button>` : "",
@@ -6172,6 +6180,21 @@ function wireEventHub(root, lead) {
   const back = () => whenModalCloses(() => { if (document.getElementById("modalRoot").children.length === 0) openAssignTeamModal(lead.id); });
   const open = (fn) => () => { root.innerHTML = ""; back(); fn(); };
   const on = (key, fn) => root.querySelector(`[data-ev="${key}"]`)?.addEventListener("click", fn);
+  // Sticky note: saves itself as you type.
+  const noteBox = root.querySelector("#evNoteInput"), noteStatus = root.querySelector("#evNoteStatus");
+  if (noteBox) {
+    let t = null;
+    const save = async () => {
+      if (noteStatus) noteStatus.textContent = "Saving…";
+      try {
+        await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ notes: noteBox.value.trim() || null }) });
+        const l = LEADS.find((x) => x.id === lead.id); if (l) l.notes = noteBox.value.trim() || null;
+        if (noteStatus) { noteStatus.textContent = "Saved ✓"; setTimeout(() => { if (noteStatus.textContent === "Saved ✓") noteStatus.textContent = ""; }, 1500); }
+      } catch (err) { if (noteStatus) noteStatus.textContent = "Couldn't save"; }
+    };
+    noteBox.addEventListener("input", () => { if (noteStatus) noteStatus.textContent = ""; clearTimeout(t); t = setTimeout(save, 800); });
+    noteBox.addEventListener("blur", () => { if (t) { clearTimeout(t); t = null; save(); } });
+  }
   const phone = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
   on("wa", () => goWhatsApp(`https://wa.me/${phone}?text=`));
   on("detail", open(() => openLeadDetailModal(lead)));
@@ -6182,6 +6205,7 @@ function wireEventHub(root, lead) {
   on("rider", open(() => openTechRiderModal(lead)));
   on("documents", open(() => openLeadDocumentsModal(lead)));
   on("chat", open(() => openEventChat(lead.id, lead.name)));
+  on("bank", open(() => openBankDetailsModal(lead)));
   on("thanks", open(() => openThankYouMessageModal(lead)));
   on("wrapup", () => { root.innerHTML = ""; openWrapUpModal(lead.id); });
 }
@@ -6352,12 +6376,11 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
               const yes = assignments.filter((a) => a.status === "accepted").length;
               const waiting = assignments.filter((a) => a.status === "pending").length;
               const out = assignments.filter((a) => a.status === "declined" || a.status === "cancel_requested").length;
-              const need = Number(lead.pcs) || 0;
+              const need = teamNeeded(lead);
               const teamTxt = !assignments.length ? notSet
                 : `<b>${yes}${need ? ` of ${need}` : ""} confirmed</b>${waiting ? ` · ${waiting} waiting` : ""}${out ? ` · <span style="color:#A6432B;">${out} declined</span>` : ""}${need && crew.length < need ? ` · <span style="color:#A6432B;">${need - crew.length} still to pick</span>` : ""}`;
-              const pcsHtml = isPheras ? (lead.pcs ? `${lead.pcs} pieces` : "") : hasLeadsAccess()
-                ? `<select id="ovPcs" class="ov-pcs"><option value="">Not set</option>${[2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => `<option value="${n}" ${String(lead.pcs) === String(n) ? "selected" : ""}>${n} pieces</option>`).join("")}</select> <span class="muted small" id="ovPcsSaved"></span>`
-                : (lead.pcs ? `${lead.pcs} pieces` : notSet);
+              // Read-only here on purpose: band size is set when the event is confirmed and changed only via Edit event.
+              const pcsHtml = isPheras ? (lead.pcs ? `${lead.pcs} pieces` : "") : lead.pcs ? `${lead.pcs} pieces` : `${notSet}${hasLeadsAccess() ? ` <span class="muted small">— set it in Edit event</span>` : ""}`;
               return [
                 ["Date", lead.date ? fmtDate(lead.date) : notSet],
                 ["City", escH(lead.city || "") || notSet],
@@ -6404,7 +6427,8 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
             // to decide on reopen) — expanded for a fresh event with nobody
             // assigned yet, or right after adding someone, since those are
             // exactly the moments you need the full list in view.
-            const startExpanded = assignedCount === 0 || !!autoCheckTeamId;
+            if (teamListMemo.leadId !== leadId) teamListMemo = { leadId, open: false, search: "" };
+            const startExpanded = assignedCount === 0 || !!autoCheckTeamId || teamListMemo.open;
             const lineupTeam = TEAM.filter((m) => byTeamId[m.id]).map((m) => ({ name: m.name, role: m.role, status: byTeamId[m.id].status, guest: false }));
             const lineupGuests = [];
             const lineupAll = [...lineupTeam, ...lineupGuests];
@@ -6428,7 +6452,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
               <span class="muted" style="font-weight:600; font-size:13px;">(${assignedCount} of ${TEAM.length} assigned${tempArtists.length ? ` \u00b7 guests listed below` : ""})</span>
             </div>
             <div id="teamMembersList" style="display:${startExpanded ? "block" : "none"};">
-              <input id="teamPickSearch" type="search" placeholder="🔍 Search everyone — name, instrument, city…" style="margin-bottom:8px;" autocomplete="off" />
+              <input id="teamPickSearch" type="search" placeholder="🔍 Search everyone — name, instrument, city…" style="margin-bottom:8px;" autocomplete="off" value="${String(teamListMemo.search || "").replace(/"/g, "&quot;")}" />
               ${TEAM.slice().sort((x, y) => (byTeamId[y.id] ? 1 : 0) - (byTeamId[x.id] ? 1 : 0) || (x.kind === "freelance" ? 1 : 0) - (y.kind === "freelance" ? 1 : 0) || x.name.localeCompare(y.name)).map((m) => {
                 const a = byTeamId[m.id];
                 const existingFee = feeExpenseByTeamId[m.id];
@@ -6530,6 +6554,12 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
               <input id="otherExpenseHead" placeholder="e.g. Travel, Venue rental, Decor" />
               <input id="otherExpenseAmount" type="number" placeholder="Amount ₹" />
             </div>
+            <select id="otherExpenseMode" style="margin-top:8px;">
+              <option value="UPI">Paid · UPI</option>
+              <option value="Cash">Paid · Cash</option>
+              <option value="Card">Paid · Card</option>
+              <option value="">Not paid yet</option>
+            </select>
             <button class="btn-ghost full" id="addOtherExpenseBtn" style="margin-top:8px;">+ Add expense</button>
           ` : ""}
 
@@ -6540,7 +6570,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                 <div class="dash-list-item">
                   <div>${r.head.replace(/^Reimbursement — /, "")}${r.notes ? ` <span class="muted small">— ${r.notes}</span>` : ""}</div>
                   <div class="muted small">requested by ${r.requested_by || "—"} · <span style="color:#B6752C;">Pending approval</span></div>
-                  <div class="small" style="margin-top:4px;">${(r.receipts || []).length ? r.receipts.map((x, i) => `<a href="/api/reimbursement-receipts/${x.id}/file" target="_blank" rel="noopener">📎 Receipt ${i + 1}</a>`).join(" · ") : `<span style="color:#B6752C;">⚠ No receipt attached</span>`}</div>
+                  <div class="small" style="margin-top:4px;">${(r.receipts || []).length ? r.receipts.map((x, i) => /^image\//.test(x.mime || "") ? `<a href="/api/reimbursement-receipts/${x.id}/file" target="_blank" rel="noopener" title="Open full size"><img src="/api/reimbursement-receipts/${x.id}/file" alt="Slip ${i + 1}" class="slip-thumb" loading="lazy" /></a>` : `<a href="/api/reimbursement-receipts/${x.id}/file" target="_blank" rel="noopener">📎 Receipt ${i + 1}</a>`).join(" ") : `<span style="color:#B6752C;">⚠ No receipt attached</span>`}</div>
                   <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px;">
                     <input type="number" class="ra-amount" data-id="${r.id}" value="${r.amount}" style="width:90px;" />
                     <input type="date" class="ra-date" data-id="${r.id}" max="${new Date().toISOString().slice(0, 10)}" style="flex:1; min-width:130px;" />
@@ -6644,20 +6674,6 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     if (!q) return alert("No venue or city on this event yet.");
     window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`, "_blank", "noopener");
   });
-  // Band size can be set right here; it decides when the line-up counts as complete.
-  root.querySelector("#ovPcs")?.addEventListener("change", async (e) => {
-    const sel = e.target, msg = root.querySelector("#ovPcsSaved");
-    sel.disabled = true;
-    try {
-      await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ pcs: sel.value || null }) });
-      lead.pcs = sel.value || null;
-      if (msg) msg.textContent = "Saved";
-      openAssignTeamModal(leadId);
-    } catch (err) {
-      alert(err.message);
-      sel.value = lead.pcs || "";
-    } finally { sel.disabled = false; }
-  });
   root.querySelector("#shareEventSummaryBtn").addEventListener("click", () => {
     const lines = [
       `🎶 ${packageName(lead.event_type)}${lead.occasion ? ` — ${lead.occasion}` : ""}`,
@@ -6696,6 +6712,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       const expanded = list.style.display !== "none";
       list.style.display = expanded ? "none" : "block";
       caret.textContent = expanded ? "▸" : "▾";
+      teamListMemo.open = !expanded;
     });
   }
   const addOtherExpenseBtn = root.querySelector("#addOtherExpenseBtn");
@@ -6706,7 +6723,8 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       if (!head || !amount) return alert("Enter both a description and an amount.");
       addOtherExpenseBtn.disabled = true;
       try {
-        await api("/api/expenses", { method: "POST", body: JSON.stringify({ leadId, head, amount, paid: false }) });
+        const mode = root.querySelector("#otherExpenseMode")?.value || "";
+        await api("/api/expenses", { method: "POST", body: JSON.stringify({ leadId, head, amount, paid: !!mode, paymentMode: mode || null }) });
         openAssignTeamModal(leadId);
       } catch (err) {
         alert(err.message);
@@ -6733,6 +6751,11 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       if (form) form.style.display = "none";
     });
   });
+  // Picking how it was paid means it was paid.
+  root.querySelectorAll(".epf-mode").forEach((sel) => sel.addEventListener("change", () => {
+    const box = root.querySelector(`.epf-paid[data-expense-id="${sel.dataset.expenseId}"]`);
+    if (box && sel.value) box.checked = true;
+  }));
   root.querySelectorAll(".epf-save-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const id = btn.dataset.expenseId;
@@ -6858,10 +6881,15 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     });
   });
   const pickSearch = root.querySelector("#teamPickSearch");
-  if (pickSearch) pickSearch.addEventListener("input", () => {
-    const q = pickSearch.value.trim().toLowerCase();
-    root.querySelectorAll(".team-pick-row").forEach((r) => { r.style.display = !q || r.dataset.search.includes(q) ? "" : "none"; });
-  });
+  if (pickSearch) {
+    const filterPicks = () => {
+      const q = pickSearch.value.trim().toLowerCase();
+      teamListMemo.search = pickSearch.value;
+      root.querySelectorAll(".team-pick-row").forEach((r) => { r.style.display = !q || r.dataset.search.includes(q) ? "" : "none"; });
+    };
+    pickSearch.addEventListener("input", filterPicks);
+    if (pickSearch.value) filterPicks();
+  }
 
   // Cap staffing at the committed band size (+1, for a manager/coordinator
   // who isn't playing) — cheaper to catch an over-staffed lineup here than
@@ -6904,6 +6932,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
             await api("/api/expenses", { method: "POST", body: JSON.stringify({ head: `Artist fee \u2014 ${member?.name || ""}`, amount: v, leadId, teamId, paid: false }) });
           }
         }
+        teamListMemo = { ...teamListMemo, leadId, open: true };
         await refreshLeads();
         openAssignTeamModal(leadId);
       } catch (err) {
@@ -9039,7 +9068,7 @@ async function renderAccounts(main) {
             <div>
               <div>${r.head}${r.notes ? ` <span class="muted small">— ${r.notes}</span>` : ""}</div>
               <div class="muted small">${lead ? lead.name : "General"} · requested by ${r.requested_by || "—"}</div>
-              <div class="small" style="margin-top:4px;">${(r.receipts || []).length ? r.receipts.map((x, i) => `<a href="/api/reimbursement-receipts/${x.id}/file" target="_blank" rel="noopener">📎 Receipt ${i + 1}</a>`).join(" · ") : `<span style="color:#B6752C;">⚠ No receipt attached</span>`}</div>
+              <div class="small" style="margin-top:4px;">${(r.receipts || []).length ? r.receipts.map((x, i) => /^image\//.test(x.mime || "") ? `<a href="/api/reimbursement-receipts/${x.id}/file" target="_blank" rel="noopener" title="Open full size"><img src="/api/reimbursement-receipts/${x.id}/file" alt="Slip ${i + 1}" class="slip-thumb" loading="lazy" /></a>` : `<a href="/api/reimbursement-receipts/${x.id}/file" target="_blank" rel="noopener">📎 Receipt ${i + 1}</a>`).join(" ") : `<span style="color:#B6752C;">⚠ No receipt attached</span>`}</div>
             </div>
           </div>
           <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px;">
@@ -9279,7 +9308,9 @@ function todayTeam(upcoming) {
     const open = (l.team_total || 0) - (l.team_declined || 0);
     const pending = open - (l.team_accepted || 0);
     if (open <= 0) return [{ lead: l, detail: "No team allotted", tone: "danger" }];
-    return pending > 0 ? [{ lead: l, detail: `${pending} of ${open} yet to confirm`, tone: "warn" }] : [];
+    if (pending > 0) return [{ lead: l, detail: `${pending} of ${open} yet to confirm`, tone: "warn" }];
+    const need = teamNeeded(l);
+    return open < need ? [{ lead: l, detail: `${open} of ${need} picked — ${need - open} more needed`, tone: "warn" }] : [];
   });
 }
 
@@ -9317,7 +9348,7 @@ function wrapUpRow(w) {
   return { wrapup: w, title: w.name, meta: `${fmtDate(w.date)} · ${w.place}`, detail: next ? `${done}/4 · ${next.todo}` : "Ready to close", tone: next && next.key !== "feedback" ? "warn" : "ok" };
 }
 
-function todaySections(teamPay, wrapups) {
+function todaySections(teamPay, wrapups, claims) {
   const todayStr = new Date().toISOString().slice(0, 10);
   const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
   const upcomingWithin = (n) => LEADS
@@ -9328,6 +9359,7 @@ function todaySections(teamPay, wrapups) {
   if (hasLeadsAccess()) sections.push({ id: "followups", icon: "💬", title: "Follow-ups due", clear: "Every lead has been followed up.", rows: todayFollowUps() });
   if (LEADS.some((l) => "final_amount" in l)) sections.push({ id: "payments", icon: "₹", title: "Payments to chase", clear: "No payments to chase.", rows: todayPayments(todayStr, inDays(14)) });
   if (teamPay) sections.push({ id: "artistpay", icon: "💸", title: "Artists to pay", clear: "Every artist is paid up.", rows: todayArtistsToPay(teamPay) });
+  if (claims) sections.push({ id: "claims", icon: "🧾", title: "Reimbursements to check", hint: "from artists", clear: "No claims waiting.", rows: claims.filter((c) => LEADS.some((l) => l.id === c.lead_id)).map((c) => ({ lead: LEADS.find((l) => l.id === c.lead_id), detail: `${inr(c.amount)} · ${String(c.head || "").replace(/^Reimbursement — /, "")}${(c.receipts || []).length ? " · 📎" : " · no slip"}`, tone: "warn" })) });
   if (wrapups) sections.push({ id: "wrapup", icon: "✅", title: "Wrap-up", hint: "played events to close", clear: "Every played event is closed.", rows: wrapups.map(wrapUpRow) });
   if (planner) sections.push({ id: "team", icon: "🎵", title: "Team not confirmed", hint: "next 60 days", clear: "Every upcoming event has its team.", rows: todayTeam(upcomingWithin(60)) });
   if (planner || hasLeadsAccess()) sections.push({ id: "details", icon: "📍", title: "Event details missing", hint: "next 30 days", clear: "Upcoming events have their details.", rows: todayDetails(upcomingWithin(30)) });
@@ -9377,19 +9409,20 @@ function openTodayRow(sectionId, leadId, artistId) {
   if (sectionId === "followups" || !canAssignTeam() && sectionId !== "payments") return jumpToLead(lead);
   refreshTodayAfterModal();
   if (sectionId === "payments") return openLeadPaymentsModal(lead.id);
-  teamWindowState = { leadId: lead.id, tab: sectionId === "details" ? "details" : "team" };
+  teamWindowState = { leadId: lead.id, tab: sectionId === "details" ? "details" : sectionId === "claims" ? "money" : "team" };
   openAssignTeamModal(lead.id);
 }
 
 async function renderToday(main) {
   const canPayTeam = CURRENT_USER?.accessLevel === "admin" && hasAccountsAccess();
-  const [, teamPay, wrapups] = await Promise.all([
+  const [, teamPay, wrapups, claims] = await Promise.all([
     refreshLeads(),
     canPayTeam ? api("/api/team-pay").catch(() => null) : null,
     canPayTeam ? api("/api/wrapup").catch(() => null) : null,
+    canPayTeam ? api("/api/reimbursements/pending").catch(() => null) : null,
   ]);
   if (currentTab !== "today") return;
-  const sections = todaySections(teamPay, wrapups);
+  const sections = todaySections(teamPay, wrapups, claims);
   const total = sections.reduce((s, x) => s + x.rows.length, 0);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
@@ -11075,6 +11108,42 @@ function openConfirmEventModal(lead, rateHint) {
 // Sent from a Tentative lead — tells the client what's needed to lock the
 // date in (advance + bank details) and what they'll get once it's actually
 // confirmed (tech rider, etc.), without promising those documents early.
+// Bank details and the UPI QR, sent on their own — for a client who asks "where do I pay?".
+function openBankDetailsModal(lead) {
+  const root = document.getElementById("modalRoot");
+  const bank = (MESSAGE_TEMPLATES.bank_details || "").trim();
+  const hasQr = MESSAGE_TEMPLATES.bank_qr_document_id && MESSAGE_TEMPLATES.bank_qr_document_id !== "none";
+  const first = leadFirstName(lead) || "there";
+  const m = "final_amount" in lead ? eventMoney(lead) : null;
+  const dueLine = m && m.balance > 0 ? `\n\nBalance due: ${inr(m.balance)}${lead.balance_due_date ? ` (by ${fmtDate(lead.balance_due_date)})` : ""}.` : "";
+  const message = `Hi ${first}, here are our payment details for your event on ${fmtDate(lead.date)}:\n\n${bank}${dueLine}\n\nPlease share a screenshot once it's done. Thank you!\n— Together, Out Loud`;
+  const digits = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card" style="width:520px; max-width:96vw;">
+        <div class="modal-head"><h3>💳 Bank details &amp; UPI QR</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body">
+          ${bank ? `<textarea id="bdMessage" rows="10" style="width:100%; padding:10px; border:1px solid #DDD5C4; border-radius:6px; font-family:inherit; font-size:16px;">${escH(message)}</textarea>`
+            : `<p class="muted small" style="color:#B6752C;">No bank details saved yet — add them in Settings → “Bank / UPI details for advance payments”, then they fill in here.</p>`}
+          ${hasQr ? `<div style="margin-top:12px;"><div class="muted small" style="margin-bottom:6px;">UPI QR — sent as its own image:</div><img src="/api/documents/${MESSAGE_TEMPLATES.bank_qr_document_id}/file" alt="UPI QR" style="width:160px; border-radius:10px; border:1px solid #EAD9BE;" /></div>`
+            : `<p class="muted small" style="margin-top:10px;">No UPI QR saved — add one in Settings to send it from here.</p>`}
+        </div>
+        <div class="modal-foot">
+          ${bank && digits ? `<button class="btn-primary" id="bdWa">💬 Send bank details</button>` : ""}
+          ${hasQr ? `<button class="btn-ghost" id="bdQr">💳 Send UPI QR</button>` : ""}
+          ${!digits ? `<span class="muted small">No WhatsApp number on file</span>` : ""}
+          <button class="btn-ghost" id="bdDone">Done</button>
+        </div>
+      </div>
+    </div>`;
+  const close = () => { root.innerHTML = ""; };
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#bdDone").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#bdWa")?.addEventListener("click", () => goWhatsApp(`https://wa.me/${digits}?text=${encodeURIComponent(root.querySelector("#bdMessage").value)}`));
+  root.querySelector("#bdQr")?.addEventListener("click", () => shareImageOrOpen(`/api/documents/${MESSAGE_TEMPLATES.bank_qr_document_id}/file`, "upi-qr.png", "UPI QR — Together, Out Loud"));
+}
+
 async function openTentativeConfirmInfoModal(lead) {
   const root = document.getElementById("modalRoot");
   const firstName = leadFirstName(lead) || "there";

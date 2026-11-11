@@ -44,6 +44,12 @@
     .save { width:100%; margin-top:6px; padding:10px; border-radius:9px; border:none; background:#F0DCC8; font-weight:700; font-family:inherit; cursor:pointer; }
     .msg { font-size:13px; color:#2B2420; margin-top:6px; min-height:16px; }
     .muted { color:#8A6A54; font-size:13px; } .error, .loading { text-align:center; padding:40px 0; color:#8A6A54; }
+    .claim { border-top:1px solid #EAD9BE; padding:8px 0; font-size:14px; display:flex; justify-content:space-between; gap:10px; }
+    .claim-form { margin-top:8px; padding:12px; border:1.5px dashed #EAD9BE; border-radius:12px; background:#FFFDFA; }
+    .claim-form input[type=text], .claim-form input[type=number] { width:100%; padding:11px; border:1.5px solid #EAD9BE; border-radius:9px; font-size:16px; font-family:inherit; background:#fff; margin-top:6px; }
+    .claim-form .file { display:block; margin-top:8px; padding:12px; border:1.5px solid #EAD9BE; border-radius:9px; background:#fff; text-align:center; font-weight:700; color:#1C7A80; cursor:pointer; }
+    .claim-form .file input { display:none; }
+    .b-claim { background:#C7401E; color:#fff; }
   </style>
 </head>
 <body>
@@ -61,7 +67,7 @@
     const TYPE = { going: "➡ Going", return: "⬅ Return", going_onward: "🔗 Going & Onward", return_onward: "🔗 Return & Onward", onward: "🔗 Onward" };
     const MODE = { flight: "Flight", train: "Train", bus: "Bus", car: "Car", cab: "Cab" };
     const ST = { booked: "Booked", not_booked: "Not booked yet" };
-    let data = null, tab = "upcoming";
+    let data = null, tab = "upcoming", openClaim = null;
 
     function eventCard(e, i) {
       const rows = [ ["🕒", e.eventTime ? "Event time: " + e.eventTime : ""], ["🎶", e.soundcheckTime ? "Sound check: " + e.soundcheckTime : ""], ["🎸", e.pcs ? e.pcs + " pcs" : ""]].filter((r) => r[1]);
@@ -93,13 +99,23 @@
         ${e.status === "accepted" ? `<div class="muted" style="margin-top:6px;">Need to make a change? Please contact Team Together, Out Loud directly.</div>` : ""}
         <textarea data-note="${i}" placeholder="Note for the organizer (optional) — e.g. running a bit late">${esc(e.note || "")}</textarea>
         <button class="save" data-save="${i}">Save note</button>` : "";
+      const STATUS = { waiting: ["p-pending", "Waiting for approval"], approved: ["p-accepted", "Approved"], paid: ["p-paid", "Paid"] };
+      const claims = e.status === "declined" ? "" : `<div class="sec">Reimbursements</div>
+        ${(e.claims || []).map((c) => `<div class="claim"><div><b>₹${c.amount.toLocaleString("en-IN")}</b> — ${esc(c.what)}<div class="muted">${esc(fmtDate(c.at))}${c.receipts ? " · 📎 slip attached" : " · no slip"}</div></div><span class="pill ${STATUS[c.status][0]}" style="align-self:flex-start;">${STATUS[c.status][1]}${c.status === "paid" && c.paidOn ? " · " + esc(fmtDate(c.paidOn)) : ""}</span></div>`).join("")}
+        ${openClaim === i ? `<form class="claim-form" data-claim-form="${i}">
+          <input type="number" name="amount" inputmode="numeric" placeholder="Amount you spent (₹)" required />
+          <input type="text" name="what" maxlength="200" placeholder="What for — e.g. cab to the venue" required />
+          <label class="file">📷 Add a photo of the slip<input type="file" name="file" accept="image/*,application/pdf" /></label>
+          <div class="muted" data-file-name="${i}" style="margin-top:4px;"></div>
+          <div class="btns"><button class="act b-claim" type="submit">Send claim</button><button class="act b-dec" type="button" data-claim-cancel>Cancel</button></div>
+        </form>` : `<button class="save" data-claim-open="${i}">🧾 Claim a reimbursement</button>`}`;
       return `<div class="card">
         <div class="when">${esc(fmtDate(e.date))}</div>
         <div class="title">${esc(e.place)}</div>
         <div class="muted">${esc(e.experience)}</div>
         <span class="pill ${pill[0]}">${pill[1]}</span>${e.tentative ? `<span class="pill p-tent">Tentative</span>` : ""}
         <div style="margin-top:6px;">${rows.map((r) => `<div class="row"><div class="ic">${r[0]}</div><div>${esc(r[1])}</div></div>`).join("")}</div>
-        <div class="sec">Travel</div>${travel}${ackHtml}${pay}${respond}
+        <div class="sec">Travel</div>${travel}${ackHtml}${pay}${claims}${respond}
         <div class="msg" id="msg${i}"></div></div>`;
     }
     function render() {
@@ -108,7 +124,29 @@
         ${data.hasLogin ? `<div class="card" style="padding:12px 16px;"><div class="muted">You also have a login for the full app${data.username ? ` (username: <b>${esc(data.username)}</b>)` : ""}.</div><a href="/login" style="display:inline-block; margin-top:8px; padding:10px 16px; border-radius:10px; background:#C7401E; color:#fff; font-weight:700; text-decoration:none;">Log in to the app</a></div>` : ""}
         <div class="tabs"><button class="tab ${tab === "upcoming" ? "on" : ""}" data-tab="upcoming">Upcoming (${data.upcoming.length})</button><button class="tab ${tab === "past" ? "on" : ""}" data-tab="past">Past (${data.past.length})</button></div>
         ${list.length ? list.map(eventCard).join("") : `<div class="card"><div class="muted">${tab === "upcoming" ? "No upcoming events yet — we'll add them here as soon as you're booked." : "Nothing here yet."}</div></div>`}`;
-      app.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; render(); }));
+      app.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; openClaim = null; render(); }));
+      app.querySelectorAll("[data-claim-open]").forEach((b) => b.addEventListener("click", () => { openClaim = +b.dataset.claimOpen; render(); app.querySelector('[data-claim-form] input[name="amount"]')?.focus(); }));
+      app.querySelectorAll("[data-claim-cancel]").forEach((b) => b.addEventListener("click", () => { openClaim = null; render(); }));
+      app.querySelectorAll('[data-claim-form] input[type="file"]').forEach((f) => f.addEventListener("change", () => {
+        const i = f.closest("[data-claim-form]").dataset.claimForm;
+        app.querySelector(`[data-file-name="${i}"]`).textContent = f.files[0] ? "📎 " + f.files[0].name : "";
+      }));
+      app.querySelectorAll("[data-claim-form]").forEach((form) => form.addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const i = +form.dataset.claimForm, list = tab === "upcoming" ? data.upcoming : data.past, e = list[i];
+        const msg = document.getElementById("msg" + i), btn = form.querySelector('button[type="submit"]');
+        const fd = new FormData(form); fd.append("confirmToken", e.confirmToken);
+        if (fd.get("file") && !fd.get("file").size) fd.delete("file");
+        btn.disabled = true; msg.textContent = "Sending…";
+        try {
+          const r = await fetch(`/api/public/me/${encodeURIComponent(token)}/claims`, { method: "POST", body: fd });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j.error || "Couldn't send it — try again.");
+          const fresh = await (await fetch(`/api/public/me/${encodeURIComponent(token)}`)).json();
+          data = fresh; openClaim = null; render();
+          document.getElementById("msg" + i).textContent = "Sent ✓ — Team TOL will check it and let you know.";
+        } catch (err) { btn.disabled = false; msg.textContent = err.message; }
+      }));
       app.querySelectorAll("button.act").forEach((b) => b.addEventListener("click", () => respond(+b.dataset.i, b.dataset.s)));
       app.querySelectorAll("[data-save]").forEach((b) => b.addEventListener("click", () => saveNote(+b.dataset.save)));
       app.querySelectorAll("[data-ack]").forEach((b) => b.addEventListener("click", async () => {
