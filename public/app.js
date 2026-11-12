@@ -4054,7 +4054,12 @@ function eventTravelHtml(lead, legsAll, assignments, opts = {}) {
   const noGoing = info.filter((a) => !a.local && a.goingIn.length === 0).map(nameOf);
   const noBack = info.filter((a) => a.missingReturn).map(nameOf);
   const locals = info.filter((a) => a.local).map(nameOf);
+  // A combo shares one travel plan, so anyone booked for any of its dates counts as on the line-up.
+  const comboIds = new Set(lead.combo_group_id ? LEADS.filter((x) => x.combo_group_id === lead.combo_group_id).map((x) => x.id) : [lead.id]);
+  const onTeam = new Set(assignments.filter((x) => comboIds.has(x.lead_id) && x.status !== "declined").map((x) => x.team_id));
+  const offTeam = ids.filter((id) => !onTeam.has(id)).map((id) => nameOf(info[ids.indexOf(id)]));
   const flags = [
+    offTeam.length ? `<div class="small" style="margin:5px 0; color:#A6432B;">⚠ <b>Not on the line-up any more, but still on this travel:</b> ${esc(offTeam.join(", "))} — take them off in Manage travel (and cancel any booked ticket).</div>` : "",
     noGoing.length ? `<div class="small" style="margin:5px 0; color:#A6432B;">⚠ <b>Going not planned:</b> ${esc(noGoing.join(", "))}</div>` : "",
     noBack.length ? `<div class="small" style="margin:5px 0; color:#A6432B;">⚠ <b>No way back planned:</b> ${esc(noBack.join(", "))}</div>` : "",
     locals.length ? `<div class="small muted" style="margin:5px 0;">🏠 <b>Local, no travel:</b> ${esc(locals.join(", "))}</div>` : "",
@@ -6949,9 +6954,27 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     const checked = [...root.querySelectorAll('input.assign-team-checkbox[data-team-id]:checked')].map((c) => c.dataset.teamId);
     const unchecked = [...root.querySelectorAll('input.assign-team-checkbox[data-team-id]:not(:checked)')].map((c) => c.dataset.teamId);
     try {
+      const leaving = unchecked.filter((id) => byTeamId[id]);
+      // Journeys and stays of this event that someone being removed is still on.
+      const theirLegs = travelLegsAll.filter((l) => l.lead_id === leadId && (l.members || []).some((m) => leaving.includes(m.teamId)));
+      let dropFromTravel = false;
+      if (theirLegs.length) {
+        const who = leaving.filter((id) => theirLegs.some((l) => (l.members || []).some((m) => m.teamId === id))).map((id) => TEAM.find((m) => m.id === id)?.name || "Someone");
+        const lines = theirLegs.map((l) => {
+          const when = l.departure_at ? fmtDate(String(l.departure_at).slice(0, 10)) : "date not set";
+          const what = l.mode === "stay" ? `Night stay in ${l.to_city || l.from_city || "?"}` : `${l.from_city || "?"} → ${l.to_city || "?"} (${TRAVEL_MODE_LABELS[l.mode] || "travel"})`;
+          return `• ${when} · ${what}${l.status && l.status !== "not_booked" ? " — already BOOKED, cancel the ticket separately" : ""}`;
+        });
+        dropFromTravel = confirm(`${who.join(" and ")} ${who.length > 1 ? "are" : "is"} still on this event's travel plan:\n\n${lines.join("\n")}\n\nOK — take ${who.length > 1 ? "them" : who[0]} off these journeys too\nCancel — leave the travel as it is (the travel plan will flag it)`);
+      }
       const newlyChecked = checked.filter((id) => !byTeamId[id]);
       if (newlyChecked.length > 0) {
         await api(`/api/leads/${leadId}/assignments`, { method: "POST", body: JSON.stringify({ teamIds: newlyChecked }) });
+      }
+      if (dropFromTravel) {
+        for (const l of theirLegs) {
+          await api(`/api/travel-legs/${l.id}`, { method: "PATCH", body: JSON.stringify({ teamIds: (l.members || []).map((m) => m.teamId).filter((id) => !leaving.includes(id)) }) });
+        }
       }
       for (const teamId of unchecked) {
         if (byTeamId[teamId]) await api(`/api/assignments/${byTeamId[teamId].id}`, { method: "DELETE" });
