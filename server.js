@@ -2561,7 +2561,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration", "whatsapp_number",
     "cancellation_reason", "cancelled_by", "snooze_until", "state", "rate_type", "rate_note", "rate_inclusions", "occasion_other", "not_interested_reason", "is_b2b", "thanked_at", "balance_due_date",
   ];
-  const sharedFields = ["event_time", "soundcheck_time", "venue", "sound_manager_name", "sound_manager_phone", "coordinator_name", "coordinator_phone", "contacts", "drums"];
+  const sharedFields = ["event_time", "soundcheck_time", "venue", "sound_manager_name", "sound_manager_phone", "coordinator_name", "coordinator_phone", "contacts", "drums", "client_requests"];
   if (req.body.drums !== undefined) req.body.drums = cleanDrums(req.body.drums);
   if (!hasLeads) {
     const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f === "not_interested_reason" ? "notInterestedReason" : f === "is_b2b" ? "isB2b" : f === "thanked_at" ? "thankedAt" : f === "cancelled_by" ? "cancelledBy" : f);
@@ -2598,7 +2598,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const updates = [];
   const values = [];
   fields.forEach((f) => {
-    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f === "not_interested_reason" ? "notInterestedReason" : f === "is_b2b" ? "isB2b" : f === "thanked_at" ? "thankedAt" : f === "balance_due_date" ? "balanceDueDate" : f;
+    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f === "not_interested_reason" ? "notInterestedReason" : f === "is_b2b" ? "isB2b" : f === "thanked_at" ? "thankedAt" : f === "balance_due_date" ? "balanceDueDate" : f === "client_requests" ? "clientRequests" : f;
     if (req.body[key] !== undefined) {
       values.push(f === "is_b2b" ? (req.body[key] ? 1 : 0) : req.body[key]);
       updates.push(`${f} = $${values.length}`);
@@ -5632,7 +5632,7 @@ function contactsWithClientContact(lead, contact) {
     if (lead.coordinator_name || lead.coordinator_phone) list.push({ role: "Event coordinator", name: lead.coordinator_name || "", phone: lead.coordinator_phone || "" });
   }
   list = list.filter((c) => !c.fromClient);
-  if (contact) list.push({ role: "On-site contact (from client)", name: contact.name, phone: contact.phone, fromClient: true });
+  if (contact) list.push({ role: "On-site contact", name: contact.name, phone: contact.phone, fromClient: true });
   return JSON.stringify(list);
 }
 const clientContactOf = (lead) => { try { const l = JSON.parse(lead.contacts || "null"); return Array.isArray(l) ? l.find((c) => c.fromClient) || null : null; } catch { return null; } };

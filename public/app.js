@@ -7356,11 +7356,7 @@ async function openClientPageModal(leadId) {
   const clientContact = () => { try { const l = JSON.parse(lead.contacts || "null"); return Array.isArray(l) ? l.find((c) => c.fromClient) : null; } catch { return null; } };
   const close = () => { root.innerHTML = ""; };
   function render() {
-    const cc = clientContact();
-    const filled = [
-      ["Venue", lead.venue], ["Event time", lead.event_time ? fmtTimeHM(lead.event_time) : ""], ["Sound check", lead.soundcheck_time ? fmtTimeHM(lead.soundcheck_time) : ""],
-      ["On-site contact", cc ? [cc.name, cc.phone].filter(Boolean).join(" · ") : ""], ["Anything specific", lead.client_requests],
-    ];
+    const cc = clientContact() || {};
     const items = [...thread.messages.map((m) => ({ at: m.at, m })), ...thread.files.map((f) => ({ at: f.at, f }))].sort((a, b) => (a.at < b.at ? -1 : 1));
     root.innerHTML = `
       <div class="modal-overlay" id="overlay">
@@ -7376,8 +7372,23 @@ async function openClientPageModal(leadId) {
                 <button class="btn-ghost" id="cpNew" title="Old link stops working">New link</button>
                 <button class="btn-ghost" id="cpOff" style="color:#A6432B;">Turn off</button>
               </div>` : `<button class="btn-primary" id="cpCreate">Create the client's link</button>`}
-            <div class="section-label" style="margin-top:16px;">Filled in for this event${lead.client_updated_at ? ` <span class="muted small" style="text-transform:none; letter-spacing:0; font-weight:400;">· client last updated ${escH(when(lead.client_updated_at))}</span>` : ""}</div>
-            <div class="card" style="padding:8px 12px;">${filled.map(([k, v]) => `<div class="performer-event-row"><span class="muted small">${k}:</span> <span style="white-space:pre-wrap;">${v ? escH(v) : `<span class="muted">not yet</span>`}</span></div>`).join("")}</div>
+            <div class="section-label" style="margin-top:16px;">Event details${lead.client_updated_at ? ` <span class="muted small" style="text-transform:none; letter-spacing:0; font-weight:400;">· client last updated ${escH(when(lead.client_updated_at))}</span>` : ""}</div>
+            <div class="card" style="padding:10px 12px;">
+              <p class="muted small" style="margin:0 0 6px;">Fill these yourself, or let the client fill them on their page — it's the same details either way.</p>
+              <label style="margin-top:0;">Venue name &amp; address</label>
+              <textarea id="cpfVenue" rows="2" placeholder="e.g. The Mayfair Lawns, Hill Cart Road, Siliguri">${escH(lead.venue || "")}</textarea>
+              <div class="row-2">
+                <div><label>Event time</label><input id="cpfTime" type="time" value="${escH(lead.event_time || "")}" /></div>
+                <div><label>Sound check</label><input id="cpfSc" type="time" value="${escH(lead.soundcheck_time || "")}" /></div>
+              </div>
+              <div class="row-2">
+                <div><label>On-site contact</label><input id="cpfCName" placeholder="Name" value="${escH(cc.name || "")}" /></div>
+                <div><label>Phone</label><input id="cpfCPhone" type="tel" placeholder="Phone" value="${escH(cc.phone || "")}" /></div>
+              </div>
+              <label>Anything specific</label>
+              <textarea id="cpfReq" rows="2" placeholder="Songs, rituals, timings, dress code…">${escH(lead.client_requests || "")}</textarea>
+              <div style="display:flex; gap:8px; align-items:center; margin-top:8px;"><button class="btn-primary" id="cpfSave" style="font-size:12.5px; padding:5px 12px;">Save details</button><span class="muted small" id="cpfMsg"></span></div>
+            </div>
             <div class="section-label" style="margin-top:16px;">💬 Conversation with the client</div>
             <div class="card" style="padding:10px 12px;">
               <div style="max-height:280px; overflow:auto; margin-bottom:8px;">${items.length ? items.map((it) => it.m ? `
@@ -7393,6 +7404,25 @@ async function openClientPageModal(leadId) {
     root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
     root.querySelector("#cpReply").addEventListener("input", (e) => { draft = e.target.value; });
     const act = async (fn) => { try { await fn(); await refreshLeads(); lead = LEADS.find((l) => l.id === leadId) || lead; await load(); render(); } catch (err) { alert(err.message); } };
+    root.querySelector("#cpfSave").addEventListener("click", () => {
+      const v = (id) => root.querySelector(id).value.trim();
+      const name = v("#cpfCName"), phone = v("#cpfCPhone");
+      // The on-site contact is one slot in the event's contact list (the same one the client fills); other contacts stay.
+      let list = null;
+      try { list = JSON.parse(lead.contacts || "null"); } catch { list = null; }
+      if (!Array.isArray(list)) {
+        list = [];
+        if (lead.sound_manager_name || lead.sound_manager_phone) list.push({ role: "Sound manager", name: lead.sound_manager_name || "", phone: lead.sound_manager_phone || "" });
+        if (lead.coordinator_name || lead.coordinator_phone) list.push({ role: "Event coordinator", name: lead.coordinator_name || "", phone: lead.coordinator_phone || "" });
+      }
+      list = list.filter((c) => !c.fromClient);
+      if (name || phone) list.push({ role: "On-site contact", name, phone, fromClient: true });
+      root.querySelector("#cpfMsg").textContent = "Saving…";
+      act(() => api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({
+        venue: v("#cpfVenue") || null, eventTime: v("#cpfTime") || null, soundcheckTime: v("#cpfSc") || null,
+        clientRequests: v("#cpfReq") || null, contacts: JSON.stringify(list),
+      }) })).then(() => { const m = root.querySelector("#cpfMsg"); if (m) m.textContent = "Saved ✓"; });
+    });
     root.querySelector("#cpCreate")?.addEventListener("click", () => act(() => api(`/api/leads/${leadId}/client-page`, { method: "POST", body: "{}" })));
     root.querySelector("#cpNew")?.addEventListener("click", () => { if (confirm("Make a new link? The old one stops working.")) act(() => api(`/api/leads/${leadId}/client-page`, { method: "POST", body: JSON.stringify({ regenerate: true }) })); });
     root.querySelector("#cpOff")?.addEventListener("click", () => { if (confirm("Turn the client's page off? The link stops working (you can make a new one later).")) act(() => api(`/api/leads/${leadId}/client-page/revoke`, { method: "POST" })); });
