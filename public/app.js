@@ -6499,7 +6499,9 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
             })()}
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
               <button class="btn-ghost" id="openMapsBtn" style="font-size:12px; padding:4px 10px;">📍 Open in Maps</button>
-              <button class="btn-ghost" id="shareEventSummaryBtn" style="font-size:12px; padding:4px 10px;">📤 Share event summary</button>
+              ${isAdmin && (lead.stage === "Confirmed" || lead.stage === "Completed")
+                ? `<button class="btn-ghost" id="evClientPageBtn" style="font-size:12px; padding:4px 10px;">🔗 Client event page</button>`
+                : `<button class="btn-ghost" id="shareEventSummaryBtn" style="font-size:12px; padding:4px 10px;">📤 Share event summary</button>`}
             </div>
           </div>
           <div class="card" style="margin-bottom:12px; padding:10px 14px;">
@@ -6793,7 +6795,13 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     if (!q) return alert("No venue or city on this event yet.");
     window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`, "_blank", "noopener");
   });
-  root.querySelector("#shareEventSummaryBtn").addEventListener("click", () => {
+  // Client event page from the Overview; closing it comes back to this event.
+  root.querySelector("#evClientPageBtn")?.addEventListener("click", () => {
+    root.innerHTML = "";
+    whenModalCloses(() => { teamWindowState = { leadId, tab: "details" }; openAssignTeamModal(leadId); });
+    openClientPageModal(leadId);
+  });
+  root.querySelector("#shareEventSummaryBtn")?.addEventListener("click", () => {
     const lines = [
       `🎶 ${packageName(lead.event_type)}${lead.occasion ? ` — ${lead.occasion}` : ""}`,
       `📅 ${fmtDate(lead.date)}`,
