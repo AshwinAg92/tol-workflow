@@ -1716,8 +1716,8 @@ app.post("/api/google-calendar/disconnect", requireAuth, requireAdmin, async (re
 // different scope + its own token row, so it costs nothing.
 app.get("/api/google-analytics/status", requireAuth, requireAdmin, async (req, res) => {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) return res.json({ configured: false, connected: false });
-  const row = (await pool.query("SELECT connected_by, connected_at, property_id FROM google_analytics_auth WHERE id = $1", [GOOGLE_ANALYTICS_AUTH_ROW_ID])).rows[0];
-  res.json({ configured: true, connected: !!row, connectedBy: row?.connected_by || null, connectedAt: row?.connected_at || null, propertyId: row?.property_id || null });
+  const row = (await pool.query("SELECT connected_by, connected_at, property_id, refresh_token FROM google_analytics_auth WHERE id = $1", [GOOGLE_ANALYTICS_AUTH_ROW_ID])).rows[0];
+  res.json({ configured: true, connected: !!(row && row.refresh_token), connectedBy: row?.connected_by || null, connectedAt: row?.connected_at || null, propertyId: row?.property_id || null });
 });
 
 app.get("/api/google-analytics/connect", requireAuth, requireAdmin, (req, res) => {
@@ -1807,7 +1807,7 @@ app.patch("/api/google-analytics/property", requireAuth, requireAdmin, async (re
 
 async function getGoogleAnalyticsAuth() {
   const row = (await pool.query("SELECT * FROM google_analytics_auth WHERE id = $1", [GOOGLE_ANALYTICS_AUTH_ROW_ID])).rows[0];
-  if (!row) return null;
+  if (!row || !row.refresh_token) return null;
   if (row.expires_at > Date.now() + 60000) return { accessToken: row.access_token, propertyId: row.property_id };
   const resp = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -1819,7 +1819,8 @@ async function getGoogleAnalyticsAuth() {
   });
   const json = await resp.json();
   if (!resp.ok) {
-    if (json.error === "invalid_grant") await pool.query("DELETE FROM google_analytics_auth WHERE id = $1", [GOOGLE_ANALYTICS_AUTH_ROW_ID]);
+    // Google dropped the access: forget the tokens but keep the property ID, so reconnecting picks it straight back up.
+    if (json.error === "invalid_grant") await pool.query("UPDATE google_analytics_auth SET access_token = '', refresh_token = '', expires_at = 0 WHERE id = $1", [GOOGLE_ANALYTICS_AUTH_ROW_ID]);
     throw new Error(`Google Analytics token refresh failed: ${json.error || resp.status}`);
   }
   await pool.query("UPDATE google_analytics_auth SET access_token = $1, expires_at = $2 WHERE id = $3",
