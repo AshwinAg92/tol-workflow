@@ -3422,6 +3422,72 @@ async function sectorDuplicateNames({ leadId, fromCity, toCity, departureAt, tea
   `, [teamIds, excludeLegId || null, leadId || String(departureAt || "").slice(0, 10)]);
   return [...new Set(rows.filter((r) => norm(r.from_city) === f && norm(r.to_city) === t).map((r) => r.name))];
 }
+// Same place under different names: airport/station codes and old names count as the city.
+const CITY_ALIASES = {
+  ccu: "kolkata", calcutta: "kolkata", hwh: "kolkata", howrah: "kolkata", sdah: "kolkata", sealdah: "kolkata", kolkatta: "kolkata",
+  ixb: "siliguri", bagdogra: "siliguri", njp: "siliguri", "new jalpaiguri": "siliguri",
+  gau: "guwahati", ghy: "guwahati", gauhati: "guwahati",
+  del: "delhi", ndls: "delhi", "new delhi": "delhi", dli: "delhi", nzm: "delhi",
+  bom: "mumbai", bombay: "mumbai", cstm: "mumbai", maa: "chennai", madras: "chennai", mas: "chennai",
+  blr: "bengaluru", bangalore: "bengaluru", sbc: "bengaluru", hyd: "hyderabad", sc: "hyderabad",
+  bbi: "bhubaneswar", bbs: "bhubaneswar", ixr: "ranchi", pat: "patna", pnbe: "patna", jai: "jaipur", jp: "jaipur",
+  udr: "udaipur", amd: "ahmedabad", adi: "ahmedabad", ixa: "agartala", dib: "dibrugarh", ixd: "prayagraj", allahabad: "prayagraj",
+  bdq: "vadodara", baroda: "vadodara", lko: "lucknow", vns: "varanasi", bsb: "varanasi", gay: "gaya", ktm: "kathmandu",
+};
+function placeKey(v) {
+  const k = String(v || "").trim().toLowerCase().replace(/\s+/g, " ").replace(/\b(airport|railway station|station|jn|junction|international)\b/g, "").trim();
+  return CITY_ALIASES[k] || k;
+}
+
+// The same person on two journeys leaving on the same day that don't connect (the second must start
+// where the first ends) is almost always a double booking. Night stays don't count.
+// Each day a journey moves someone: the departure, plus the way back for a round trip logged as one
+// entry (a going leg with a later return date). Same rule as the Travel Calendar's pills.
+function legMovements(l) {
+  if ((l.mode || "") === "stay") return [];
+  const base = String(l.leg_type || "").replace(/_onward$/, "");
+  const single = base === "return" || l.leg_type === "onward";
+  const dep = String(l.departure_at || "").slice(0, 10), arr = String(l.arrival_at || "").slice(0, 10);
+  const out = [];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dep)) out.push({ day: dep, from: l.from_city, to: l.to_city });
+  if (!single && /^\d{4}-\d{2}-\d{2}$/.test(arr) && arr !== dep) out.push({ day: arr, from: l.to_city, to: l.from_city });
+  return out;
+}
+
+// The same person on two journeys on the same day that don't connect (the second must start where the
+// first ends) is almost always a double booking. Night stays don't count.
+async function sameDayTravelClashes({ teamIds, departureAt, arrivalAt, fromCity, toCity, mode, legType, excludeLegId }) {
+  const mine = legMovements({ mode, leg_type: legType, departure_at: departureAt, arrival_at: arrivalAt, from_city: fromCity, to_city: toCity });
+  if (!mine.length || !Array.isArray(teamIds) || !teamIds.length) return [];
+  const days = mine.map((m) => m.day);
+  const rows = (await pool.query(`
+    SELECT tl.id, tl.from_city, tl.to_city, tl.mode, tl.leg_type, tl.departure_at, tl.arrival_at, l.name AS lead_name, tlm.team_id, team.name
+    FROM travel_legs tl
+    JOIN travel_leg_members tlm ON tlm.leg_id = tl.id
+    JOIN team ON team.id = tlm.team_id
+    LEFT JOIN leads l ON l.id = tl.lead_id
+    WHERE tlm.team_id = ANY($1) AND COALESCE(tl.mode, '') <> 'stay' AND ($3::text IS NULL OR tl.id <> $3)
+      AND (LEFT(COALESCE(tl.departure_at, ''), 10) = ANY($2) OR LEFT(COALESCE(tl.arrival_at, ''), 10) = ANY($2))`, [teamIds, days, excludeLegId || null])).rows;
+  const byPerson = new Map();
+  for (const o of rows) {
+    for (const om of legMovements(o)) {
+      for (const m of mine) {
+        if (om.day !== m.day) continue;
+        const connects = placeKey(om.to) === placeKey(m.from) || placeKey(m.to) === placeKey(om.from);
+        if (connects) continue;
+        if (!byPerson.has(o.name)) byPerson.set(o.name, []);
+        const route = `${String(om.from || "?").trim()} → ${String(om.to || "?").trim()}${o.lead_name ? ` (${o.lead_name})` : ""}`;
+        if (!byPerson.get(o.name).includes(route)) byPerson.get(o.name).push(route);
+      }
+    }
+  }
+  return [...byPerson.entries()].map(([name, routes]) => ({ name, routes }));
+}
+function travelClashMessage(clashes, day) {
+  const d = new Date(String(day).slice(0, 10) + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  return `Already travelling on ${d}:\n${clashes.map((c) => `• ${c.name}: ${c.routes.join(", ")}`).join("\n")}\n\nThis journey doesn't connect with that one — is it a double booking?`;
+}
+
 function dupTravelMessage(names, fromCity, toCity) {
   return `${names.join(", ")} already ${names.length > 1 ? "have" : "has"} a travel plan for ${String(fromCity).trim()} \u2192 ${String(toCity).trim()} on this event. Edit that one instead of creating a duplicate.`;
 }
@@ -3437,6 +3503,7 @@ app.post("/api/travel-legs", requireAuth, requireCapability("assign_team"), asyn
     linkLeadId = leadId;
   }
   { const dups = await sectorDuplicateNames({ leadId: linkLeadId, fromCity, toCity, departureAt, teamIds }); if (dups.length) return res.status(400).json({ error: dupTravelMessage(dups, fromCity, toCity) }); }
+  if (!req.body.confirmClash) { const c = await sameDayTravelClashes({ teamIds, departureAt, arrivalAt, fromCity, toCity, mode, legType: req.body.legType }); if (c.length) return res.status(409).json({ code: "travel_clash", error: travelClashMessage(c, departureAt) }); }
   const id = uuid();
   const now = new Date().toISOString();
   await pool.query(`
@@ -3517,6 +3584,7 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
   const managerNotes = req.body.managerNotes || null;
   if (!Array.isArray(teamIds) || teamIds.length === 0) return res.status(400).json({ error: "Select at least one artist" });
   if (mode !== "stay") { const fc = fromCity, tc = toCity || lead.city; const dups = await sectorDuplicateNames({ leadId: req.params.id, fromCity: fc, toCity: tc, teamIds }); if (dups.length) return res.status(400).json({ error: dupTravelMessage(dups, fc, tc) }); }
+  if (!req.body.confirmClash) { const c = await sameDayTravelClashes({ teamIds, departureAt, arrivalAt, fromCity, toCity: toCity || lead.city, mode, legType }); if (c.length) return res.status(409).json({ code: "travel_clash", error: travelClashMessage(c, departureAt) }); }
   const id = uuid();
   const now = new Date().toISOString();
   await pool.query(`
@@ -3558,6 +3626,15 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
     const lid = req.body.leadId !== undefined ? req.body.leadId : leg.lead_id;
     const dups = leg.mode === "stay" ? [] : await sectorDuplicateNames({ leadId: lid || null, fromCity: fc, toCity: tc, departureAt: req.body.departureAt !== undefined ? req.body.departureAt : leg.departure_at, teamIds: Array.isArray(req.body.teamIds) ? req.body.teamIds : curMembers, excludeLegId: req.params.id });
     if (dups.length) return res.status(400).json({ error: dupTravelMessage(dups, fc, tc) });
+    const touched = ["teamIds", "departureAt", "arrivalAt", "fromCity", "toCity", "mode", "legType"].some((k) => req.body[k] !== undefined);
+    if (touched && !req.body.confirmClash) {
+      const dep = req.body.departureAt !== undefined ? req.body.departureAt : leg.departure_at;
+      const mem = Array.isArray(req.body.teamIds) ? req.body.teamIds : curMembers;
+      // only people this edit adds or moves are checked when just the line-up changes
+      const who = Array.isArray(req.body.teamIds) && ["departureAt", "arrivalAt", "fromCity", "toCity", "mode", "legType"].every((k) => req.body[k] === undefined) ? mem.filter((id) => !curMembers.includes(id)) : mem;
+      const c = await sameDayTravelClashes({ teamIds: who, departureAt: dep, arrivalAt: req.body.arrivalAt !== undefined ? req.body.arrivalAt : leg.arrival_at, fromCity: fc, toCity: tc, mode: req.body.mode !== undefined ? req.body.mode : leg.mode, legType: req.body.legType !== undefined ? req.body.legType : leg.leg_type, excludeLegId: req.params.id });
+      if (c.length) return res.status(409).json({ code: "travel_clash", error: travelClashMessage(c, dep) });
+    }
   }
   const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "manager_notes", "label", "lead_id", "leg_type", "preferred_service", "travel_class", "food_included", "departure_time", "arrival_time", "to_lead_id", "from_lead_id", "booked_by"];
   const keyFor = (f) => (f === "manager_notes" ? "managerNotes" : f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f === "lead_id" ? "leadId" : f === "leg_type" ? "legType" : f === "preferred_service" ? "preferredService" : f === "travel_class" ? "travelClass" : f === "food_included" ? "foodIncluded" : f === "departure_time" ? "departureTime" : f === "arrival_time" ? "arrivalTime" : f === "to_lead_id" ? "toLeadId" : f === "from_lead_id" ? "fromLeadId" : f === "booked_by" ? "bookedBy" : f);

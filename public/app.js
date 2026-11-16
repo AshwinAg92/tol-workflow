@@ -1663,8 +1663,14 @@ async function api(path, opts) {
     headers: { "Content-Type": "application/json", ...(opts?.headers || {}) },
   });
   if (!res.ok) {
-    let message = "Request failed";
-    try { message = (await res.json()).error || message; } catch { /* body wasn't JSON */ }
+    let message = "Request failed", code = null;
+    try { const j = await res.json(); message = j.error || message; code = j.code || null; } catch { /* body wasn't JSON */ }
+    if (res.status === 409 && code === "travel_clash" && opts && opts.body) {
+      if (confirm(`⚠ ${message}\n\nOK — save it anyway\nCancel — don't save`)) {
+        return api(path, { ...opts, body: JSON.stringify({ ...JSON.parse(opts.body), confirmClash: true }) });
+      }
+      throw new Error("Not saved — nothing was changed.");
+    }
     throw new Error(message);
   }
   if (res.status === 204) return null; // no body to parse (e.g. DELETE responses)
@@ -3981,6 +3987,51 @@ function artistEventTravel(lead, teamId, legsAll) {
   return { member: m, base, goingIn, returnOut, nights, eventNight, local, missingReturn: goingIn.length > 0 && returnOut.length === 0 };
 }
 
+// Same place under different names (airport/station codes) — must match the server's list.
+const CITY_ALIASES = {
+  ccu: "kolkata", calcutta: "kolkata", hwh: "kolkata", howrah: "kolkata", sdah: "kolkata", sealdah: "kolkata", kolkatta: "kolkata",
+  ixb: "siliguri", bagdogra: "siliguri", njp: "siliguri", "new jalpaiguri": "siliguri",
+  gau: "guwahati", ghy: "guwahati", gauhati: "guwahati",
+  del: "delhi", ndls: "delhi", "new delhi": "delhi", dli: "delhi", nzm: "delhi",
+  bom: "mumbai", bombay: "mumbai", cstm: "mumbai", maa: "chennai", madras: "chennai", mas: "chennai",
+  blr: "bengaluru", bangalore: "bengaluru", sbc: "bengaluru", hyd: "hyderabad", sc: "hyderabad",
+  bbi: "bhubaneswar", bbs: "bhubaneswar", ixr: "ranchi", pat: "patna", pnbe: "patna", jai: "jaipur", jp: "jaipur",
+  udr: "udaipur", amd: "ahmedabad", adi: "ahmedabad", ixa: "agartala", dib: "dibrugarh", ixd: "prayagraj", allahabad: "prayagraj",
+  bdq: "vadodara", baroda: "vadodara", lko: "lucknow", vns: "varanasi", bsb: "varanasi", gay: "gaya", ktm: "kathmandu",
+};
+function placeKey(v) {
+  const k = String(v || "").trim().toLowerCase().replace(/\s+/g, " ").replace(/\b(airport|railway station|station|jn|junction|international)\b/g, "").trim();
+  return CITY_ALIASES[k] || k;
+}
+// Same person, two journeys leaving the same day that don't connect → { legId: [names] } for each leg involved.
+// Each day a journey moves someone: its departure, plus the way back for a round trip logged as one entry.
+function legMovements(l) {
+  if (l.mode === "stay") return [];
+  const single = baseLegType(l.leg_type) === "return" || l.leg_type === "onward";
+  const dep = String(l.departure_at || "").slice(0, 10), arr = String(l.arrival_at || "").slice(0, 10);
+  const out = [];
+  if (dep) out.push({ day: dep, from: l.from_city, to: l.to_city });
+  if (!single && arr && arr !== dep) out.push({ day: arr, from: l.to_city, to: l.from_city });
+  return out;
+}
+function travelDoubleBookings(legsAll) {
+  const byPersonDay = new Map();
+  legsAll.forEach((l) => legMovements(l).forEach((mv) => {
+    (l.members || []).forEach((m) => { const k = (m.teamId || m.name) + "|" + mv.day; if (!byPersonDay.has(k)) byPersonDay.set(k, { name: m.name, moves: [] }); byPersonDay.get(k).moves.push({ ...mv, legId: l.id }); });
+  }));
+  const out = {};
+  byPersonDay.forEach(({ name, moves }) => {
+    for (let i = 0; i < moves.length; i++) for (let j = i + 1; j < moves.length; j++) {
+      const a = moves[i], b = moves[j];
+      if (a.legId === b.legId) continue;
+      const connects = placeKey(a.to) === placeKey(b.from) || placeKey(b.to) === placeKey(a.from);
+      if (connects) continue;
+      [a.legId, b.legId].forEach((id) => { out[id] = out[id] || []; if (!out[id].includes(name)) out[id].push(name); });
+    }
+  });
+  return out;
+}
+
 function eventCrewIds(lead, legsAll, assignments) {
   const ids = new Set(assignments.filter((a) => a.lead_id === lead.id && a.status !== "declined").map((a) => a.team_id));
   legsAll.filter((l) => l.lead_id === lead.id).forEach((l) => (l.members || []).forEach((x) => ids.add(x.teamId)));
@@ -4040,7 +4091,11 @@ function eventTravelHtml(lead, legsAll, assignments, opts = {}) {
   const comboIds = new Set(lead.combo_group_id ? LEADS.filter((x) => x.combo_group_id === lead.combo_group_id).map((x) => x.id) : [lead.id]);
   const onTeam = new Set(assignments.filter((x) => comboIds.has(x.lead_id) && x.status !== "declined").map((x) => x.team_id));
   const offTeam = ids.filter((id) => !onTeam.has(id)).map((id) => nameOf(info[ids.indexOf(id)]));
+  const dbl = travelDoubleBookings(legsAll);
+  const mine = legsAll.filter((l) => dbl[l.id] && (l.lead_id === lead.id || l.to_lead_id === lead.id || l.from_lead_id === lead.id));
+  const dblNames = [...new Set(mine.flatMap((l) => dbl[l.id]))];
   const flags = [
+    dblNames.length ? `<div class="small" style="margin:5px 0; color:#A6432B;">⚠ <b>Two journeys on the same day that don't connect:</b> ${esc(dblNames.join(", "))} — check the Travel Calendar for a double booking.</div>` : "",
     offTeam.length ? `<div class="small" style="margin:5px 0; color:#A6432B;">⚠ <b>Not on the line-up any more, but still on this travel:</b> ${esc(offTeam.join(", "))} — take them off in Manage travel (and cancel any booked ticket).</div>` : "",
     noGoing.length ? `<div class="small" style="margin:5px 0; color:#A6432B;">⚠ <b>Going not planned:</b> ${esc(noGoing.join(", "))}</div>` : "",
     noBack.length ? `<div class="small" style="margin:5px 0; color:#A6432B;">⚠ <b>No way back planned:</b> ${esc(noBack.join(", "))}</div>` : "",
@@ -4222,7 +4277,8 @@ async function renderTravelCalendar(main) {
       const route = [from, to].filter(Boolean).join(" → ");
       const key = [kind, normCity(from), normCity(to), leg.mode || ""].join("|");
       let g = map.get(key);
-      if (!g) { g = { leg, kind, route, names: [] }; map.set(key, g); }
+      if (!g) { g = { leg, kind, route, names: [], legIds: [] }; map.set(key, g); }
+      g.legIds.push(leg.id);
       (leg.members || []).forEach((m) => { if (m.name && !g.names.includes(m.name)) g.names.push(m.name); });
     });
     return [...map.values()];
@@ -4255,6 +4311,7 @@ async function renderTravelCalendar(main) {
       addOn(leg.departure_at, single ? (leg.leg_type === "onward" ? "onward" : "return") : "depart");
       if (!single && leg.arrival_at && leg.arrival_at.slice(0, 10) !== (leg.departure_at || "").slice(0, 10)) addOn(leg.arrival_at, "return");
     });
+    const dbl = travelDoubleBookings(legs);
     const showEvents = {};
     visibleEvents().forEach((l) => {
       const d = new Date(l.date + "T00:00:00");
@@ -4281,7 +4338,7 @@ async function renderTravelCalendar(main) {
           ${dayEvents.map((l) => { const gap = eventTravelGaps(l, legs, tcCtx.assignments).length > 0; return `
             <div class="cal-event tc-event" data-event-id="${l.id}" style="cursor:pointer; background:#1F6F43;" title="Event: ${String(l.name).replace(/"/g, "")}${gap ? " — travel not planned for someone" : ""}">🎤 ${l.name}${gap ? " ⚠" : ""}</div>`; }).join("")}
           ${journeyPills(evs).map((g) => `
-            <div class="cal-event" data-leg-id="${g.leg.id}" style="cursor:pointer; white-space:normal; line-height:1.25; ${g.kind === "return" ? "background:#8A5FA8;" : g.kind === "onward" ? "background:#C1602B;" : ""}" title="${g.names.join(", ")} — ${g.route || "route not set"} — ${legLabel(g.leg)} — ${g.kind === "return" ? "Return" : g.kind === "onward" ? "Onward" : "Going"}">${g.kind === "return" ? "⬅ " : g.kind === "onward" ? "🔗 " : "➡ "}<b>${g.route || legLabel(g.leg)}</b><br><span style="opacity:.92;">${g.names.map((n) => n.split(" ")[0]).join(", ")}</span></div>
+            <div class="cal-event${g.legIds.some((id) => dbl[id]) ? " cal-double" : ""}" data-leg-id="${g.leg.id}" style="cursor:pointer; white-space:normal; line-height:1.25; ${g.kind === "return" ? "background:#8A5FA8;" : g.kind === "onward" ? "background:#C1602B;" : ""}" title="${g.legIds.some((id) => dbl[id]) ? `⚠ Double booked: ${[...new Set(g.legIds.flatMap((id) => dbl[id] || []))].join(", ")} also on another journey this day — ` : ""}${g.names.join(", ")} — ${g.route || "route not set"} — ${legLabel(g.leg)} — ${g.kind === "return" ? "Return" : g.kind === "onward" ? "Onward" : "Going"}">${g.legIds.some((id) => dbl[id]) ? "⚠ " : ""}${g.kind === "return" ? "⬅ " : g.kind === "onward" ? "🔗 " : "➡ "}<b>${g.route || legLabel(g.leg)}</b><br><span style="opacity:.92;">${g.names.map((n) => n.split(" ")[0]).join(", ")}</span></div>
           `).join("")}
         </div>
       `));

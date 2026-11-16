@@ -552,3 +552,6 @@ select.ev-stage { width:auto; padding:4px 26px 4px 10px; font-size:13.5px; font-
 .tp-ev-row:first-of-type { border-top:0; }
 .tp-ev-row .today-row-main { flex:1; min-width:0; }
 .tp-ev-row .btn-ghost { padding:4px 12px; font-size:13px; }
+
+/* Travel Calendar: a journey that double-books someone */
+.cal-event.cal-double { outline:2px solid #FFD27A; outline-offset:-2px; box-shadow:0 0 0 2px #A6432B; }
