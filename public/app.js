@@ -2573,7 +2573,7 @@ async function renderLeadsLog(main, skipRefresh) {
               </div>
             </div>
             <select class="stage-select" data-lead-id="${l.id}" style="color:${STAGE_COLOR[l.stage]}; flex-shrink:0; width:auto;">
-              ${CONFIG.stages.filter((s) => (s !== "Completed" || s === l.stage) && (hasAccountsAccess() || !["Confirmed", "Tentative"].includes(s) || s === l.stage)).map((s) => `<option value="${s}" ${s === l.stage ? "selected" : ""}>${s}</option>`).join("")}
+              ${stageOptionsFor(l).map((s) => `<option value="${s}" ${s === l.stage ? "selected" : ""}>${s}</option>`).join("")}
             </select>
           </div>
           <div class="muted small" style="margin-top:8px;">${packageName(l.event_type)} · ${l.city || "—"} · <span class="mono">${fmtDate(l.date)}</span></div>
@@ -3013,78 +3013,9 @@ async function renderLeadsLog(main, skipRefresh) {
   });
 
   main.querySelectorAll(".stage-select").forEach((sel) => {
-    sel.addEventListener("change", async () => {
-      const leadId = sel.dataset.leadId;
-      const newStage = sel.value;
-      const lead = LEADS.find((l) => l.id === leadId);
-      // Completed events are locked — the only thing the server allows is
-      // moving the stage away from Completed, alone, to "reopen" it. Route
-      // that as a plain single-field PATCH rather than the full Confirm
-      // modal (which sends stage+finalAmount+date together and would be
-      // rejected as an edit attempt on a locked record).
-      if (lead.stage === "Completed" && newStage !== "Completed") {
-        if (!confirm(`Reopen "${lead.name}" by moving it back to ${newStage}? You can re-confirm it properly afterward if needed.`)) {
-          renderMain();
-          return;
-        }
-        sel.disabled = true;
-        try {
-          await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ stage: newStage }) });
-          await refreshLeads();
-          renderMain();
-        } catch (err) {
-          alert(err.message);
-          renderMain();
-        }
-        return;
-      }
-      if (newStage === "Confirmed" && lead.stage !== "Confirmed") {
-        openConfirmEventModal(lead);
-        return;
-      }
-      if (newStage === "Tentative" && lead.stage !== "Tentative") {
-        openTentativeRateModal(lead);
-        return;
-      }
-      let cancellationReason, cancelDecision = null;
-      if (newStage === "Cancelled" && lead.stage !== "Cancelled") {
-        const heldNow = hasAccountsAccess() && CURRENT_USER.accessLevel === "admin" ? (await moneyHeldFor(lead.id)).held : 0;
-        cancelDecision = await openCancelEventModal(lead, heldNow, false);
-        if (cancelDecision === null) {
-          // They backed out — don't change the stage at all.
-          renderMain();
-          return;
-        }
-        cancellationReason = cancelDecision.reason;
-      }
-      let notInterestedReason;
-      if (newStage === "Not Interested" && lead.stage !== "Not Interested") {
-        notInterestedReason = await openNotInterestedReasonModal(lead.name);
-        if (notInterestedReason === null) {
-          renderMain();
-          return;
-        }
-      }
-      sel.disabled = true;
-      try {
-        await api(`/api/leads/${leadId}`, {
-          method: "PATCH",
-          body: JSON.stringify({
-            stage: newStage,
-            ...(cancellationReason !== undefined ? { cancellation_reason: cancellationReason || null } : {}),
-            ...(cancelDecision ? { cancelled_by: cancelDecision.cancelledBy } : {}),
-            ...(notInterestedReason !== undefined ? { notInterestedReason: notInterestedReason || null } : {}),
-          }),
-        });
-        if (cancelDecision && cancelDecision.retained !== null) {
-          await api(`/api/leads/${leadId}/cancel-settlement`, { method: "POST", body: JSON.stringify({ retainedAmount: cancelDecision.retained, cancelledBy: cancelDecision.cancelledBy, notes: cancelDecision.notes }) });
-        }
-        await refreshLeads();
-        renderMain();
-      } catch (err) {
-        alert(err.message);
-        renderMain();
-      }
+    sel.addEventListener("change", () => {
+      const lead = LEADS.find((l) => l.id === sel.dataset.leadId);
+      changeLeadStage(lead, sel.value, { busy: () => (sel.disabled = true), done: renderMain });
     });
   });
 
@@ -3096,6 +3027,57 @@ async function renderLeadsLog(main, skipRefresh) {
     btn.textContent = "Copied";
     setTimeout(() => (btn.textContent = "Copy"), 1500);
   });
+}
+
+// Changing an event's stage — one set of rules for the Leads card and the event window.
+// Some stages open their own form first (Confirm, Tentative rate, Cancel decision, Not Interested reason);
+// backing out of that form changes nothing. `done` runs afterwards to redraw whatever screen asked.
+function stageOptionsFor(l) {
+  return CONFIG.stages.filter((st) => (st !== "Completed" || st === l.stage) && (hasAccountsAccess() || !["Confirmed", "Tentative"].includes(st) || st === l.stage));
+}
+async function changeLeadStage(lead, newStage, { busy = () => {}, done = () => {} } = {}) {
+  if (!lead || newStage === lead.stage) return done();
+  const leadId = lead.id;
+  // Completed events are locked — the only thing the server allows is moving the stage away from
+  // Completed, alone, to "reopen" it. Sent as a plain single-field PATCH.
+  if (lead.stage === "Completed") {
+    if (!confirm(`Reopen "${lead.name}" by moving it back to ${newStage}? You can re-confirm it properly afterward if needed.`)) return done();
+    busy();
+    try { await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ stage: newStage }) }); await refreshLeads(); }
+    catch (err) { alert(err.message); }
+    return done();
+  }
+  if (newStage === "Confirmed") return openConfirmEventModal(lead);
+  if (newStage === "Tentative") return openTentativeRateModal(lead);
+  let cancellationReason, cancelDecision = null;
+  if (newStage === "Cancelled") {
+    const heldNow = hasAccountsAccess() && CURRENT_USER.accessLevel === "admin" ? (await moneyHeldFor(lead.id)).held : 0;
+    cancelDecision = await openCancelEventModal(lead, heldNow, false);
+    if (cancelDecision === null) return done(); // they backed out — no change
+    cancellationReason = cancelDecision.reason;
+  }
+  let notInterestedReason;
+  if (newStage === "Not Interested") {
+    notInterestedReason = await openNotInterestedReasonModal(lead.name);
+    if (notInterestedReason === null) return done();
+  }
+  busy();
+  try {
+    await api(`/api/leads/${leadId}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        stage: newStage,
+        ...(cancellationReason !== undefined ? { cancellation_reason: cancellationReason || null } : {}),
+        ...(cancelDecision ? { cancelled_by: cancelDecision.cancelledBy } : {}),
+        ...(notInterestedReason !== undefined ? { notInterestedReason: notInterestedReason || null } : {}),
+      }),
+    });
+    if (cancelDecision && cancelDecision.retained !== null) {
+      await api(`/api/leads/${leadId}/cancel-settlement`, { method: "POST", body: JSON.stringify({ retainedAmount: cancelDecision.retained, cancelledBy: cancelDecision.cancelledBy, notes: cancelDecision.notes }) });
+    }
+    await refreshLeads();
+  } catch (err) { alert(err.message); }
+  done();
 }
 
 // ---------- Quotation ----------
@@ -6130,7 +6112,7 @@ function eventHubHtml(lead) {
   const facts = [packageName(lead.event_type), occasionLabel(lead), lead.guest_range ? `${lead.guest_range} guests` : "", lead.pcs ? `${lead.pcs} pcs` : ""].filter(Boolean).join(" · ");
   const overview = `
     <div class="card ev-card" data-tab="details">
-      <div class="ev-head"><b>${escH(lead.name)}</b><span class="tag" style="color:${STAGE_COLOR[lead.stage]};">${lead.stage}</span></div>
+      <div class="ev-head"><b>${escH(lead.name)}</b>${hasLeadsAccess() ? `<select class="ev-stage" data-ev-stage title="Change the event's stage" style="color:${STAGE_COLOR[lead.stage]};">${stageOptionsFor(lead).map((st) => `<option value="${st}" ${st === lead.stage ? "selected" : ""}>${st}</option>`).join("")}</select>` : `<span class="tag" style="color:${STAGE_COLOR[lead.stage]};">${lead.stage}</span>`}</div>
       <div class="muted small">${escH(facts)}</div>
       ${lead.phone || lead.email ? `<div class="ev-actions">
         ${lead.phone ? `<a class="btn-ghost" href="tel:${lead.phone.replace(/\s+/g, "")}">📞 ${escH(lead.phone)}</a>` : ""}
@@ -6185,6 +6167,21 @@ function wireEventHub(root, lead) {
   const back = () => whenModalCloses(() => { if (document.getElementById("modalRoot").children.length === 0) openAssignTeamModal(lead.id); });
   const open = (fn) => () => { root.innerHTML = ""; back(); fn(); };
   const on = (key, fn) => root.querySelector(`[data-ev="${key}"]`)?.addEventListener("click", fn);
+  // Stage: same rules as the Leads card. Afterwards the event window comes back if it's still a booking.
+  const stageSel = root.querySelector("[data-ev-stage]");
+  if (stageSel) stageSel.addEventListener("change", () => {
+    const fresh = LEADS.find((x) => x.id === lead.id) || lead;
+    const target = stageSel.value;
+    const reopen = () => {
+      renderMain();
+      const now = LEADS.find((x) => x.id === lead.id);
+      if (now && isBookedEvent(now)) { teamWindowState = { leadId: lead.id, tab: "details" }; openAssignTeamModal(lead.id); }
+      else root.innerHTML = "";
+    };
+    // Confirm / Tentative open their own form in this window; come back here once it closes.
+    if (target === "Confirmed" || target === "Tentative") { root.innerHTML = ""; whenModalCloses(reopen); }
+    changeLeadStage(fresh, target, { busy: () => (stageSel.disabled = true), done: reopen });
+  });
   // Sticky note: saves itself as you type.
   const noteBox = root.querySelector("#evNoteInput"), noteStatus = root.querySelector("#evNoteStatus");
   if (noteBox) {
