@@ -259,6 +259,11 @@ const TRAVEL_CLASS_SUGGESTIONS = {
   car: ["Sedan", "SUV / Innova", "Tempo Traveller"],
 };
 const FOOD_LABELS = { included: "Included", not_included: "Not included" };
+const DRUMS_LABELS = { venue_kit: "Venue / sound vendor provides a drum kit", v_drums: "Drummer carries V-drums", none: "No drums" };
+const isDrummer = (m) => /drum/i.test((m && m.role) || "");
+// The line a drummer gets in their confirmation message.
+const drumLineFor = (m, lead) => (isDrummer(m) && lead.drums ? `\n\n🥁 ${{ v_drums: "Please carry your V-drums.", venue_kit: "A drum kit will be provided at the venue.", none: "No drums at this event." }[lead.drums]}` : "");
+const drumsSelectHtml = (id, cur) => `<select id="${id}"><option value="">Not decided</option>${Object.entries(DRUMS_LABELS).map(([k, v]) => `<option value="${k}" ${cur === k ? "selected" : ""}>${v}</option>`).join("")}</select>`;
 // Shared by both travel forms. `p` is the id prefix ("new", "edit" or "stl").
 function travelBookingFieldsHtml(p, leg) {
   const mode = leg?.mode || "";
@@ -274,6 +279,17 @@ function travelBookingFieldsHtml(p, leg) {
       <option value="tol" ${leg?.booked_by === "tol" ? "selected" : ""}>Team TOL books it</option>
       <option value="other" ${leg?.booked_by === "other" ? "selected" : ""}>Someone else books it (clients are told not to)</option>
     </select>
+    <div id="${p}CancelBox" style="display:${leg?.booked_by === "tol" ? "block" : "none"}; margin-top:8px; padding:8px 10px; background:#F7F2E8; border-radius:8px;">
+      <label style="margin-top:0;">Can this ticket be cancelled?</label>
+      <div class="row-2">
+        <div><select id="${p}CancelPolicy">
+          <option value="">Not noted</option>
+          ${Object.entries(CANCEL_LABELS).map(([k, v]) => `<option value="${k}" ${leg?.cancel_policy === k ? "selected" : ""}>${v}</option>`).join("")}
+        </select></div>
+        <div id="${p}CancelUntilWrap"><input id="${p}CancelUntil" type="datetime-local" value="${escH(leg?.cancel_until || "")}" title="Cancel by (date and time)" /></div>
+      </div>
+      <input id="${p}CancelNote" value="${escH(leg?.cancel_note || "")}" placeholder="Charges / note (optional) — e.g. ₹1,200 per ticket" style="margin-top:6px;" />
+    </div>
     <label style="margin-top:8px;">Which train / flight should the client book? <span class="muted small">(name &amp; number, optional)</span></label>
     <input id="${p}Service" value="${(leg?.preferred_service || "").replace(/"/g, "&quot;")}" placeholder="e.g. 12345 Kanchankanya Exp, or IndiGo 6E-123 (07:40)" />
     <div class="row-2" style="margin-top:8px;">
@@ -283,12 +299,33 @@ function travelBookingFieldsHtml(p, leg) {
 }
 // Keep the class suggestions in step with the chosen mode.
 function wireTravelClassSuggestions(root, p) {
+  // Cancellation terms only matter for tickets we book; the "until" box only when it can be cancelled.
+  const bb = root.querySelector(`#${p}BookedBy`), cbox = root.querySelector(`#${p}CancelBox`);
+  if (bb && cbox) bb.addEventListener("change", () => { cbox.style.display = bb.value === "tol" ? "block" : "none"; });
+  const pol = root.querySelector(`#${p}CancelPolicy`), uw = root.querySelector(`#${p}CancelUntilWrap`);
+  if (pol && uw) { const f = () => { uw.style.visibility = pol.value === "free" || pol.value === "charge" ? "visible" : "hidden"; }; pol.addEventListener("change", f); f(); }
   const modeSel = root.querySelector(`#${p}Mode`), list = root.querySelector(`#${p}ClassList`);
   if (!modeSel || !list) return;
   const draw = () => { list.innerHTML = (TRAVEL_CLASS_SUGGESTIONS[modeSel.value] || []).map((x) => `<option value="${x}">`).join(""); };
   modeSel.addEventListener("change", draw);
 }
+const CANCEL_LABELS = { free: "Free cancellation", charge: "Cancellable with charges", none: "Non-refundable" };
+const nowLocalStamp = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+const cancelDeadline = (l) => (l.cancel_until ? (l.cancel_until.length === 10 ? l.cancel_until + "T23:59" : l.cancel_until) : null);
+const fmtCancelUntil = (v) => (v ? `${fmtDate(v.slice(0, 10))}${v.length > 10 ? ` ${fmtTimeHM(v.slice(11, 16))}` : ""}` : "");
+// "Free cancellation until 2 Dec 6:00 PM · ₹1,200 per ticket" — empty when nothing is noted.
+function cancelText(l) {
+  if (!l || !l.cancel_policy) return "";
+  const can = l.cancel_policy !== "none";
+  const closed = can && cancelDeadline(l) && cancelDeadline(l) < nowLocalStamp();
+  return `${CANCEL_LABELS[l.cancel_policy] || ""}${can && l.cancel_until ? ` until ${fmtCancelUntil(l.cancel_until)}` : ""}${l.cancel_note ? ` · ${l.cancel_note}` : ""}${closed ? " — window closed" : ""}`;
+}
 const readTravelBookingFields = (root, p) => ({
+  ...(root.querySelector(`#${p}CancelPolicy`) ? (() => {
+    const ours = root.querySelector(`#${p}BookedBy`)?.value === "tol";
+    const pol = ours ? root.querySelector(`#${p}CancelPolicy`).value || null : null;
+    return { cancelPolicy: pol, cancelUntil: pol === "free" || pol === "charge" ? root.querySelector(`#${p}CancelUntil`).value || null : null, cancelNote: pol ? root.querySelector(`#${p}CancelNote`).value.trim() || null : null };
+  })() : {}),
   preferredService: root.querySelector(`#${p}Service`)?.value.trim() || null,
   bookedBy: root.querySelector(`#${p}BookedBy`)?.value || null,
   travelClass: root.querySelector(`#${p}Class`)?.value.trim() || null,
@@ -6208,6 +6245,7 @@ function eventHubHtml(lead) {
     hasLeadsAccess() ? `<button class="btn-ghost" type="button" data-ev="rider">🎛 Tech rider</button>` : "",
     hasLeadsAccess() ? `<button class="btn-ghost" type="button" data-ev="documents">📄 Documents</button>` : "",
     hasAccountsAccess() && lead.stage !== "Cancelled" ? `<button class="btn-ghost" type="button" data-ev="bank">💳 Bank details &amp; UPI QR</button>` : "",
+    booked && CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost" type="button" data-ev="clientpage">🔗 Client event page</button>` : "",
     `<button class="btn-ghost" type="button" data-ev="chat">💬 Event chat</button>`,
     lead.stage === "Completed" && hasLeadsAccess() && phone ? `<button class="btn-ghost" type="button" data-ev="thanks">${lead.thanked_at ? "🙏 Thanked ✓ — send again" : "🙏 Thank client"}</button>` : "",
     lead.stage === "Completed" && CURRENT_USER?.accessLevel === "admin" && hasAccountsAccess() ? `<button class="btn-ghost" type="button" data-ev="wrapup">${lead.closed_at ? "✅ Closed" : "✅ Wrap-up"}</button>` : "",
@@ -6266,6 +6304,7 @@ function wireEventHub(root, lead) {
   on("documents", open(() => openLeadDocumentsModal(lead)));
   on("chat", open(() => openEventChat(lead.id, lead.name)));
   on("bank", open(() => openBankDetailsModal(lead)));
+  on("clientpage", open(() => openClientPageModal(lead.id)));
   on("thanks", open(() => openThankYouMessageModal(lead)));
   on("wrapup", () => { root.innerHTML = ""; openWrapUpModal(lead.id); });
 }
@@ -6450,10 +6489,12 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                 ["🎉 Occasion", escH(occasionLabel(lead)) || notSet],
                 ["Guests", escH(lead.guest_range || "") || notSet],
                 ["🎸 Band", pcsHtml],
+                ["🥁 Drums", DRUMS_LABELS[lead.drums] || ""],
                 ["👥 Team", teamTxt],
                 ["Timing", [lead.soundcheck_time ? `Sound check ${fmtTimeHM(lead.soundcheck_time)}` : "", lead.event_time ? `Event ${fmtTimeHM(lead.event_time)}` : ""].filter(Boolean).join(" · ") || notSet],
                 ["Duration", escH(lead.duration || "") || notSet],
                 ["📝 Client's notes", escH(String(lead.details || "").trim())],
+                ["💬 From the client's page", escH(String(lead.client_requests || "").trim())],
               ].filter(([, v]) => v).map(([k, v]) => `<div class="performer-event-row"><span class="muted small">${k}:</span> <span>${v}</span></div>`).join("");
             })()}
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
@@ -6537,7 +6578,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                   eventTimeClause: isManager && lead.event_time ? ` Event time: ${lead.event_time}.` : "",
                   soundcheckClause: isManager && lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : "",
                   pcsClause: isManager && lead.pcs ? ` Band size for this event: ${lead.pcs} pcs.` : "",
-                }) + (confirmLink ? `\n\nAccept or decline here: ${confirmLink}` : "");
+                }) + drumLineFor(m, lead) + (confirmLink ? `\n\nAccept or decline here: ${confirmLink}` : "");
                 const clash = !a ? busyClash(travelCtx.busy, m.id, lead) : null;
                 const isLocalEvent = m.base_city && lead.city && m.base_city.trim().toLowerCase() === lead.city.trim().toLowerCase();
                 const rateOnDate = feeRateOn(m, lead.date); // the rate that applies on the event's date (revisions respected)
@@ -6934,7 +6975,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       if (!m) return;
       const waDigits = (m.phone || "").replace(/\D/g, "");
       if (!waDigits) return;
-      let waMsg = `Hi ${m.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.venue ? ` at ${lead.venue}` : lead.city ? ` in ${lead.city}` : ""}.${lead.event_time ? ` Event time: ${lead.event_time}.` : ""}${lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : ""}${lead.pcs ? ` Band size for this event: ${lead.pcs} pcs.` : ""} Let us know if you have any questions!`;
+      let waMsg = `Hi ${m.name}, confirming your performance for ${lead.name} — ${packageName(lead.event_type)} on ${fmtDate(lead.date)}${lead.venue ? ` at ${lead.venue}` : lead.city ? ` in ${lead.city}` : ""}.${lead.event_time ? ` Event time: ${lead.event_time}.` : ""}${lead.soundcheck_time ? ` Sound check: ${lead.soundcheck_time}.` : ""}${lead.pcs ? ` Band size for this event: ${lead.pcs} pcs.` : ""} Let us know if you have any questions!` + drumLineFor(m, lead);
       const includeContact = root.querySelector(`.include-client-contact-checkbox[data-team-id="${m.id}"]`)?.checked;
       if (includeContact) {
         waMsg += `\n\nClient contact: ${lead.name}${lead.phone ? `, ${lead.phone}` : ""}`;
@@ -7036,7 +7077,8 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
         const lines = theirLegs.map((l) => {
           const when = l.departure_at ? fmtDate(String(l.departure_at).slice(0, 10)) : "date not set";
           const what = l.mode === "stay" ? `Night stay in ${l.to_city || l.from_city || "?"}` : `${l.from_city || "?"} → ${l.to_city || "?"} (${TRAVEL_MODE_LABELS[l.mode] || "travel"})`;
-          return `• ${when} · ${what}${l.status && l.status !== "not_booked" ? " — already BOOKED, cancel the ticket separately" : ""}`;
+          const ct = l.booked_by === "tol" ? cancelText(l) : "";
+          return `• ${when} · ${what}${l.status && l.status !== "not_booked" ? ` — already BOOKED, cancel the ticket separately${ct ? ` (${ct})` : ""}` : ""}`;
         });
         dropFromTravel = confirm(`${who.join(" and ")} ${who.length > 1 ? "are" : "is"} still on this event's travel plan:\n\n${lines.join("\n")}\n\nOK — take ${who.length > 1 ? "them" : who[0]} off these journeys too\nCancel — leave the travel as it is (the travel plan will flag it)`);
       }
@@ -7297,6 +7339,77 @@ function openRegistrationReviewModal(reg, onDone) {
 }
 
 // ---------- Send team IDs + travel details to the client (for ticket booking) ----------
+// The client's one page for a confirmed event: create/share the link, see what they filled in, and talk to them.
+async function openClientPageModal(leadId) {
+  await refreshLeads();
+  let lead = LEADS.find((l) => l.id === leadId);
+  if (!lead) return;
+  const root = document.getElementById("modalRoot");
+  let info, thread = { messages: [], files: [] }, draft = "";
+  const load = async () => {
+    [info, thread] = await Promise.all([api(`/api/leads/${leadId}/client-page`), api(`/api/leads/${leadId}/client-thread`).catch(() => ({ messages: [], files: [] }))]);
+  };
+  try { await load(); } catch (err) { return alert(err.message); }
+  const when = (iso) => { try { return new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
+  const url = () => (info.token ? `${location.origin}/event/${info.token}` : "");
+  const waText = () => `Hi ${leadFirstName(lead)},\n\nHere's your event page for *${packageName(lead.event_type)} on ${fmtDate(lead.date)}*:\n${url()}\n\nIt has your event details and our tech rider. Please fill in the venue, timings and an on-site contact there — and message us any time on the same page.\n\nTogether, Out Loud`;
+  const clientContact = () => { try { const l = JSON.parse(lead.contacts || "null"); return Array.isArray(l) ? l.find((c) => c.fromClient) : null; } catch { return null; } };
+  const close = () => { root.innerHTML = ""; };
+  function render() {
+    const cc = clientContact();
+    const filled = [
+      ["Venue", lead.venue], ["Event time", lead.event_time ? fmtTimeHM(lead.event_time) : ""], ["Sound check", lead.soundcheck_time ? fmtTimeHM(lead.soundcheck_time) : ""],
+      ["On-site contact", cc ? [cc.name, cc.phone].filter(Boolean).join(" · ") : ""], ["Anything specific", lead.client_requests],
+    ];
+    const items = [...thread.messages.map((m) => ({ at: m.at, m })), ...thread.files.map((f) => ({ at: f.at, f }))].sort((a, b) => (a.at < b.at ? -1 : 1));
+    root.innerHTML = `
+      <div class="modal-overlay" id="overlay">
+        <div class="modal-card" style="width:600px; max-width:96vw;">
+          <div class="modal-head"><h3>🔗 Client event page — ${escH(lead.name)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+          <div class="modal-body">
+            <p class="muted small" style="margin:0 0 10px;">One private link for the client: their event details, a short form (venue, timings, on-site contact, anything specific) that goes straight into this event, the tech rider, their travel &amp; IDs (once you send them), and a chat with you. It stays open till a week after the event.</p>
+            ${info.token ? `
+              <div style="display:flex; gap:6px; align-items:center;"><input id="cpUrl" readonly value="${escH(url())}" style="flex:1; font-size:12.5px;" /><button class="btn-ghost" id="cpCopy">Copy</button></div>
+              <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
+                ${(lead.whatsapp_number || lead.phone) ? `<button class="btn-primary" id="cpWa">💬 Send to client on WhatsApp</button>` : ""}
+                <a class="btn-ghost" href="${escH(url())}" target="_blank" rel="noopener">Open page</a>
+                <button class="btn-ghost" id="cpNew" title="Old link stops working">New link</button>
+                <button class="btn-ghost" id="cpOff" style="color:#A6432B;">Turn off</button>
+              </div>` : `<button class="btn-primary" id="cpCreate">Create the client's link</button>`}
+            <div class="section-label" style="margin-top:16px;">Filled in for this event${lead.client_updated_at ? ` <span class="muted small" style="text-transform:none; letter-spacing:0; font-weight:400;">· client last updated ${escH(when(lead.client_updated_at))}</span>` : ""}</div>
+            <div class="card" style="padding:8px 12px;">${filled.map(([k, v]) => `<div class="performer-event-row"><span class="muted small">${k}:</span> <span style="white-space:pre-wrap;">${v ? escH(v) : `<span class="muted">not yet</span>`}</span></div>`).join("")}</div>
+            <div class="section-label" style="margin-top:16px;">💬 Conversation with the client</div>
+            <div class="card" style="padding:10px 12px;">
+              <div style="max-height:280px; overflow:auto; margin-bottom:8px;">${items.length ? items.map((it) => it.m ? `
+                <div style="margin:5px 0; padding:7px 10px; border-radius:10px; font-size:13px; white-space:pre-wrap; ${it.m.from === "client" ? "background:#FFF3DC;" : "background:#EEF4F1; margin-left:24px;"}"><div class="muted small">${it.m.from === "client" ? escH(it.m.name || "Client") : "You (Team TOL)"} · ${escH(when(it.m.at))}${it.m.unread ? " · <b style='color:#C1602B;'>new</b>" : ""}</div>${escH(it.m.body)}</div>` : `
+                <div style="margin:5px 0; padding:7px 10px; border-radius:10px; font-size:13px; background:#FFF3DC;"><div class="muted small">${escH(it.f.by || "Client")} uploaded · ${escH(when(it.f.at))}${it.f.unread ? " · <b style='color:#C1602B;'>new</b>" : ""}</div>📎 <a href="${it.f.url}" target="_blank" rel="noopener">${escH(it.f.label || it.f.name)}</a></div>`).join("") : `<p class="muted small" style="margin:0;">Nothing yet. Whatever the client writes on their page shows up here (and on the travel link's conversation — it's one thread).</p>`}</div>
+              <textarea id="cpReply" rows="2" placeholder="Reply — the client sees it on their page…">${escH(draft)}</textarea>
+              <button class="btn-primary" id="cpSend" style="margin-top:6px; font-size:12.5px; padding:5px 12px;">Send reply</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    root.querySelector("#closeModal").addEventListener("click", close);
+    root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+    root.querySelector("#cpReply").addEventListener("input", (e) => { draft = e.target.value; });
+    const act = async (fn) => { try { await fn(); await refreshLeads(); lead = LEADS.find((l) => l.id === leadId) || lead; await load(); render(); } catch (err) { alert(err.message); } };
+    root.querySelector("#cpCreate")?.addEventListener("click", () => act(() => api(`/api/leads/${leadId}/client-page`, { method: "POST", body: "{}" })));
+    root.querySelector("#cpNew")?.addEventListener("click", () => { if (confirm("Make a new link? The old one stops working.")) act(() => api(`/api/leads/${leadId}/client-page`, { method: "POST", body: JSON.stringify({ regenerate: true }) })); });
+    root.querySelector("#cpOff")?.addEventListener("click", () => { if (confirm("Turn the client's page off? The link stops working (you can make a new one later).")) act(() => api(`/api/leads/${leadId}/client-page/revoke`, { method: "POST" })); });
+    root.querySelector("#cpCopy")?.addEventListener("click", async () => { try { await navigator.clipboard.writeText(url()); root.querySelector("#cpCopy").textContent = "Copied ✓"; } catch { root.querySelector("#cpUrl").select(); } });
+    root.querySelector("#cpWa")?.addEventListener("click", () => {
+      const d = (lead.whatsapp_number || lead.phone || "").replace(/\D/g, "");
+      goWhatsApp(`https://wa.me/${d.length === 10 ? "91" + d : d}?text=${encodeURIComponent(waText())}`);
+    });
+    root.querySelector("#cpSend").addEventListener("click", () => {
+      const body = draft.trim(); if (!body) return;
+      act(async () => { await api(`/api/leads/${leadId}/client-thread/reply`, { method: "POST", body: JSON.stringify({ body }) }); draft = ""; });
+    });
+  }
+  render();
+  if (thread.messages.some((m) => m.unread) || thread.files.some((f) => f.unread)) api(`/api/leads/${leadId}/client-thread/read`, { method: "POST" }).catch(() => {});
+}
+
 async function openTravelShareModal(leadId) {
   const lead = LEADS.find((l) => l.id === leadId);
   if (!lead) return;
@@ -7486,7 +7599,10 @@ async function openTravelShareModal(leadId) {
     const hasLegs = legsFor().some((l) => l.who.length > 0);
     if (!hasLegs && !confirm("No travel details are linked to this event for the selected people. Send with just the IDs?")) return null;
     const r = await api(`/api/leads/${leadId}/travel-share`, { method: "POST", body: JSON.stringify({ teamIds: ids, note: clientNote, includeTickets: includeTickets && legsFor().some((l) => l.who.length > 0 && (l.tickets || []).length > 0) }) });
-    const link = `${window.location.origin}/trip/${r.token}`;
+    let link = `${window.location.origin}/trip/${r.token}`;
+    if (lead.stage === "Confirmed" || lead.stage === "Completed") {
+      try { const cp = await api(`/api/leads/${leadId}/client-page`, { method: "POST", body: "{}" }); link = `${window.location.origin}/event/${cp.token}`; } catch { /* keep the travel link */ }
+    }
     text = text.includes(LINK) ? text.replace(LINK, link) : `${text}\n\n🪪 ${link}`;
     return { text, link };
   }
@@ -8016,6 +8132,8 @@ async function openTravelPlanModal(leadId) {
         ${legWhenText(leg) ? `<div class="muted small" style="margin-top:6px;">${legWhenText(leg)}</div>` : ""}
         ${leg.booking_ref ? `<div class="muted small" style="margin-top:2px;">Ref: ${leg.booking_ref}</div>` : ""}
         ${leg.booked_by === "tol" ? `<div class="small" style="margin-top:4px;">🧾 Booked by Team TOL</div>` : leg.booked_by === "other" ? `<div class="small" style="margin-top:4px;">🧾 Booked by someone else</div>` : ""}
+        ${leg.booked_by === "tol" && cancelText(leg) ? `<div class="small" style="margin-top:2px; color:${leg.cancel_policy === "none" ? "#A6432B" : "#1C7A80"};">🎫 ${escH(cancelText(leg))}</div>` : ""}
+        ${leg.mode !== "stay" && lead.drums === "v_drums" && (leg.members || []).some((m) => isDrummer(TEAM.find((t) => t.id === m.teamId))) ? `<div class="small" style="margin-top:2px;">🥁 Drummer carries V-drums — allow for extra baggage</div>` : ""}
         ${leg.mode !== "stay" && (leg.preferred_service || leg.travel_class || leg.food_included) ? `<div class="small" style="margin-top:4px;">🎟 ${[leg.preferred_service ? escH(leg.preferred_service) : "", leg.travel_class ? "Class " + escH(leg.travel_class) : "", leg.food_included ? "Food " + FOOD_LABELS[leg.food_included].toLowerCase() : ""].filter(Boolean).join(" · ")}</div>` : ""}
         ${leg.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${leg.notes}</div>` : ""}
         ${leg.manager_notes ? `<div class="muted small" style="margin-top:2px;">🗒 Manager: ${leg.manager_notes}</div>` : ""}
@@ -9457,7 +9575,17 @@ function wrapUpRow(w) {
   return { wrapup: w, title: w.name, meta: `${fmtDate(w.date)} · ${w.place}`, detail: next ? `${done}/4 · ${next.todo}` : "Ready to close", tone: next && next.key !== "feedback" ? "warn" : "ok" };
 }
 
-function todaySections(teamPay, wrapups, claims) {
+// Tickets we booked that may not be needed (event cancelled / someone on it not confirmed), whose cancellation window closes soon.
+function todayCancelWindows(list) {
+  return list.map((l) => {
+    const lead = LEADS.find((x) => x.id === l.lead_id);
+    if (!lead) return null;
+    const why = l.stage === "Cancelled" ? "event cancelled" : `${l.unsure.join(", ")} not confirmed`;
+    return { lead, detail: `${l.from_city || "?"} → ${l.to_city || "?"}: ${l.cancel_policy === "charge" ? "cancel (with charges)" : "free cancel"} by ${fmtCancelUntil(l.cancel_until)} · ${why}`, tone: "danger" };
+  }).filter(Boolean);
+}
+
+function todaySections(teamPay, wrapups, claims, cancelWins) {
   const todayStr = new Date().toISOString().slice(0, 10);
   const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
   const upcomingWithin = (n) => LEADS
@@ -9468,6 +9596,7 @@ function todaySections(teamPay, wrapups, claims) {
   if (hasLeadsAccess()) sections.push({ id: "followups", icon: "💬", title: "Follow-ups due", clear: "Every lead has been followed up.", rows: todayFollowUps() });
   if (LEADS.some((l) => "final_amount" in l)) sections.push({ id: "payments", icon: "₹", title: "Payments to chase", clear: "No payments to chase.", rows: todayPayments(todayStr, inDays(14)) });
   if (teamPay) sections.push({ id: "artistpay", icon: "💸", title: "Artists to pay", clear: "Every artist is paid up.", rows: todayArtistsToPay(teamPay) });
+  if (cancelWins) sections.push({ id: "cancelwin", icon: "🎫", title: "Ticket cancellation closing", hint: "next 3 days", clear: "No cancellation windows closing.", rows: todayCancelWindows(cancelWins) });
   if (claims) sections.push({ id: "claims", icon: "🧾", title: "Reimbursements to check", hint: "from artists", clear: "No claims waiting.", rows: claims.filter((c) => LEADS.some((l) => l.id === c.lead_id)).map((c) => ({ lead: LEADS.find((l) => l.id === c.lead_id), detail: `${inr(c.amount)} · ${String(c.head || "").replace(/^Reimbursement — /, "")}${(c.receipts || []).length ? " · 📎" : " · no slip"}`, tone: "warn" })) });
   if (wrapups) sections.push({ id: "wrapup", icon: "✅", title: "Wrap-up", hint: "played events to close", clear: "Every played event is closed.", rows: wrapups.map(wrapUpRow) });
   if (planner) sections.push({ id: "team", icon: "🎵", title: "Team not confirmed", hint: "next 60 days", clear: "Every upcoming event has its team.", rows: todayTeam(upcomingWithin(60)) });
@@ -9518,20 +9647,22 @@ function openTodayRow(sectionId, leadId, artistId) {
   if (sectionId === "followups" || !canAssignTeam() && sectionId !== "payments") return jumpToLead(lead);
   refreshTodayAfterModal();
   if (sectionId === "payments") return openLeadPaymentsModal(lead.id);
+  if (sectionId === "cancelwin") return openTravelPlanModal(lead.id);
   teamWindowState = { leadId: lead.id, tab: sectionId === "details" ? "details" : sectionId === "claims" ? "money" : "team" };
   openAssignTeamModal(lead.id);
 }
 
 async function renderToday(main) {
   const canPayTeam = CURRENT_USER?.accessLevel === "admin" && hasAccountsAccess();
-  const [, teamPay, wrapups, claims] = await Promise.all([
+  const [, teamPay, wrapups, claims, cancelWins] = await Promise.all([
     refreshLeads(),
     canPayTeam ? api("/api/team-pay").catch(() => null) : null,
     canPayTeam ? api("/api/wrapup").catch(() => null) : null,
     canPayTeam ? api("/api/reimbursements/pending").catch(() => null) : null,
+    CURRENT_USER?.accessLevel === "admin" ? api("/api/travel-legs/cancel-windows").catch(() => null) : null,
   ]);
   if (currentTab !== "today") return;
-  const sections = todaySections(teamPay, wrapups, claims);
+  const sections = todaySections(teamPay, wrapups, claims, cancelWins);
   const total = sections.reduce((s, x) => s + x.rows.length, 0);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
@@ -11181,6 +11312,8 @@ function openConfirmEventModal(lead, rateHint) {
             <div><label for="ceEventTime" style="margin-top:0;">Event time</label><input id="ceEventTime" type="time" value="${lead.event_time || ""}" /></div>
             <div><label for="ceVenue" style="margin-top:0;">Venue</label><input id="ceVenue" value="${escH(lead.venue || "")}" placeholder="e.g. Mayfair, Siliguri" /></div>
           </div>
+          <label for="ceDrums">🥁 Drums</label>
+          ${drumsSelectHtml("ceDrums", lead.drums)}
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Confirm event</button></div>
       </div>
@@ -11203,6 +11336,7 @@ function openConfirmEventModal(lead, rateHint) {
       const eventTime = root.querySelector("#ceEventTime").value, venue = root.querySelector("#ceVenue").value.trim();
       if (eventTime) eventDay.eventTime = eventTime;
       if (venue) eventDay.venue = venue;
+      if (root.querySelector("#ceDrums").value) eventDay.drums = root.querySelector("#ceDrums").value;
       await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ stage: "Confirmed", finalAmount: finalAmount || null, date: chosenDate, rateInclusions: JSON.stringify(readRateInclusions(root, "ce")), rateNote: root.querySelector("#ceRateNote").value.trim() || null, balanceDueDate: root.querySelector("#ceBalanceDue").value || null, ...eventDay }) });
       const advanceAmount = root.querySelector("#ceAdvanceAmount").value;
       if (advanceAmount && Number(advanceAmount) > 0) {
@@ -12536,6 +12670,8 @@ function openEditLeadModal(leadId) {
           </div>
           <label>Band size (Pcs)</label>
           <input id="mPcs" type="number" min="1" value="${lead.pcs || ""}" placeholder="e.g. 4" />
+          <label>🥁 Drums</label>
+          ${drumsSelectHtml("mDrums", lead.drums)}
           ${hasAccountsAccess() && ["Tentative", "Confirmed", "Completed"].includes(lead.stage) ? `
             <label>${lead.stage === "Tentative" ? "Tentative rate held (₹)" : "Final confirmed amount (₹)"}</label>
             <input id="mFinalAmount" type="number" value="${lead.final_amount || ""}" placeholder="e.g. 150000" />
@@ -12582,6 +12718,7 @@ function openEditLeadModal(leadId) {
           occasion: root.querySelector("#mOccasion").value || null,
           occasionOther: root.querySelector("#mOccasion").value === "Other" ? (root.querySelector("#mOccasionOther").value.trim() || null) : null,
           pcs: root.querySelector("#mPcs").value.trim() || null,
+          drums: root.querySelector("#mDrums").value || null,
           ...(root.querySelector("#mFinalAmount") ? { finalAmount: root.querySelector("#mFinalAmount").value ? Number(root.querySelector("#mFinalAmount").value) : null } : {}),
           ...(root.querySelector(`#mInclusion_${RATE_INCLUSIONS[0].id}`) ? { rateInclusions: JSON.stringify(readRateInclusions(root, "m")) } : {}),
           ...(root.querySelector("#mRateNote") ? { rateNote: root.querySelector("#mRateNote").value.trim() || null } : {}),

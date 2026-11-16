@@ -70,7 +70,7 @@
     let data = null, tab = "upcoming", openClaim = null;
 
     function eventCard(e, i) {
-      const rows = [ ["🕒", e.eventTime ? "Event time: " + e.eventTime : ""], ["🎶", e.soundcheckTime ? "Sound check: " + e.soundcheckTime : ""], ["🎸", e.pcs ? e.pcs + " pcs" : ""]].filter((r) => r[1]);
+      const rows = [ ["🕒", e.eventTime ? "Event time: " + e.eventTime : ""], ["🎶", e.soundcheckTime ? "Sound check: " + e.soundcheckTime : ""], ["🎸", e.pcs ? e.pcs + " pcs" : ""], ["🥁", e.drumNote || ""]].filter((r) => r[1]);
       const pill = { pending: ["p-pending", "Awaiting your response"], accepted: ["p-accepted", "You've accepted"], declined: ["p-declined", "You've declined"], cancel_requested: ["p-pending", "Cancellation requested"] }[e.status] || ["p-pending", e.status];
       const legsSorted = e.travel; // already in trip order from the server
       const travel = legsSorted.length ? legsSorted.map((l, li) => {

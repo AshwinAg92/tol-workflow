@@ -1024,6 +1024,24 @@ async function setup() {
   )`);
   await pool.query(`ALTER TABLE travel_share_files ADD COLUMN IF NOT EXISTS leg_id TEXT`);
   await pool.query(`ALTER TABLE travel_share_files ADD COLUMN IF NOT EXISTS document_id TEXT`);
+  // Tickets we book: can they be cancelled, until when, and at what charge.
+  // cancel_policy: 'free' (free cancellation), 'charge' (cancellable with charges), 'none' (non-refundable).
+  await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS cancel_policy TEXT`);
+  await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS cancel_until TEXT`);
+  await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS cancel_note TEXT`);
+  // Drum kit for the event: 'venue_kit' (venue / sound vendor provides an acoustic kit), 'v_drums' (drummer carries V-drums), 'none'.
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS drums TEXT`);
+  // What the client wrote on their event page under "Anything specific?".
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS client_requests TEXT`);
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS client_updated_at TEXT`);
+  // One private page per confirmed event for the client: details, a short form, tech rider, travel/IDs and the chat.
+  await pool.query(`CREATE TABLE IF NOT EXISTS client_pages (
+    token TEXT PRIMARY KEY,
+    lead_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    created_by TEXT,
+    revoked INTEGER NOT NULL DEFAULT 0
+  )`);
   await pool.query(`ALTER TABLE temp_artists ADD COLUMN IF NOT EXISTS migrated_assignment_id TEXT`);
   {
     const ins = (await pool.query("SELECT musician_id, instrument FROM musician_instruments ORDER BY instrument ASC")).rows;

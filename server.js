@@ -181,7 +181,7 @@ function restrictedLeadView(l) {
     event_time: l.event_time, soundcheck_time: l.soundcheck_time, occasion: l.occasion, venue: l.venue,
     combo_group_id: l.combo_group_id, is_combo_primary: l.is_combo_primary, pcs: l.pcs, duration: l.duration,
     sound_manager_name: l.sound_manager_name, sound_manager_phone: l.sound_manager_phone,
-    coordinator_name: l.coordinator_name, coordinator_phone: l.coordinator_phone, contacts: l.contacts,
+    coordinator_name: l.coordinator_name, coordinator_phone: l.coordinator_phone, contacts: l.contacts, drums: l.drums,
   };
 }
 // Events a team member is allotted to (not declined). null = no roster link, i.e. no scoping possible.
@@ -223,6 +223,16 @@ const artistEventPhrase = async (leadId) => {
   return `the event in ${placeOf(r)}`;
 };
 const cleanBookedBy = (x) => (x === "client" || x === "tol" || x === "other" ? x : null);
+const cleanCancelPolicy = (x) => (x === "free" || x === "charge" || x === "none" ? x : null);
+const cleanCancelUntil = (x) => (/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/.test(String(x || "")) ? String(x) : null);
+const cleanDrums = (x) => (x === "venue_kit" || x === "v_drums" || x === "none" ? x : null);
+// Cancellation terms of a ticket we booked (saved with a new journey; edits go through PATCH).
+async function saveLegCancel(id, body) {
+  if (body.cancelPolicy === undefined && body.cancelUntil === undefined && body.cancelNote === undefined) return;
+  const pol = cleanCancelPolicy(body.cancelPolicy);
+  await pool.query("UPDATE travel_legs SET cancel_policy = $1, cancel_until = $2, cancel_note = $3 WHERE id = $4",
+    [pol, pol && pol !== "none" ? cleanCancelUntil(body.cancelUntil) : null, cleanText(body.cancelNote, 200), id]);
+}
 const cleanFood = (v) => (v === "included" || v === "not_included" ? v : null);
 const cleanText = (v, n = 200) => (v == null || String(v).trim() === "" ? null : String(v).trim().slice(0, n));
 function legForUser(leg, user) {
@@ -2551,7 +2561,8 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration", "whatsapp_number",
     "cancellation_reason", "cancelled_by", "snooze_until", "state", "rate_type", "rate_note", "rate_inclusions", "occasion_other", "not_interested_reason", "is_b2b", "thanked_at", "balance_due_date",
   ];
-  const sharedFields = ["event_time", "soundcheck_time", "venue", "sound_manager_name", "sound_manager_phone", "coordinator_name", "coordinator_phone", "contacts"];
+  const sharedFields = ["event_time", "soundcheck_time", "venue", "sound_manager_name", "sound_manager_phone", "coordinator_name", "coordinator_phone", "contacts", "drums"];
+  if (req.body.drums !== undefined) req.body.drums = cleanDrums(req.body.drums);
   if (!hasLeads) {
     const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f === "not_interested_reason" ? "notInterestedReason" : f === "is_b2b" ? "isB2b" : f === "thanked_at" ? "thankedAt" : f === "cancelled_by" ? "cancelledBy" : f);
     const attemptedRestricted = leadsOnlyFields.some((f) => req.body[keyFor(f)] !== undefined);
@@ -3513,8 +3524,33 @@ app.post("/api/travel-legs", requireAuth, requireCapability("assign_team"), asyn
   for (const teamId of (Array.isArray(teamIds) ? teamIds : [])) {
     await pool.query(`INSERT INTO travel_leg_members (id, leg_id, team_id) VALUES ($1, $2, $3)`, [uuid(), id, teamId]);
   }
+  await saveLegCancel(id, req.body);
   logActivity(req, `Travel logged manually: ${label.trim()}`, linkLeadId);
   res.status(201).json({ id });
+});
+
+// Booked tickets whose free/charged cancellation window closes within the next 3 days, on events where
+// the ticket may not be needed: the event is cancelled, or someone on the ticket isn't a confirmed artist.
+app.get("/api/travel-legs/cancel-windows", requireAuth, requireAdmin, async (req, res) => {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const ist = (d) => { const x = new Date(d.getTime() + 5.5 * 3600000); return `${x.getUTCFullYear()}-${pad(x.getUTCMonth() + 1)}-${pad(x.getUTCDate())}T${pad(x.getUTCHours())}:${pad(x.getUTCMinutes())}`; };
+  const from = ist(now), to = ist(new Date(now.getTime() + 3 * 86400000));
+  const legs = (await pool.query(`
+    SELECT tl.id, tl.lead_id, tl.mode, tl.from_city, tl.to_city, tl.departure_at, tl.cancel_policy, tl.cancel_until, tl.cancel_note, l.stage
+    FROM travel_legs tl JOIN leads l ON l.id = tl.lead_id
+    WHERE tl.booked_by = 'tol' AND tl.cancel_policy IN ('free', 'charge') AND tl.cancel_until IS NOT NULL
+      AND COALESCE(tl.status, 'not_booked') <> 'not_booked' AND tl.cancel_until >= $1 AND tl.cancel_until <= $2`, [from.slice(0, 10), to])).rows
+    .filter((l) => (l.cancel_until.length === 10 ? l.cancel_until + "T23:59" : l.cancel_until) >= from);
+  if (!legs.length) return res.json([]);
+  const ids = legs.map((l) => l.id);
+  const mem = (await pool.query(`SELECT tlm.leg_id, team.name, ea.status FROM travel_leg_members tlm JOIN team ON team.id = tlm.team_id
+    JOIN travel_legs tl ON tl.id = tlm.leg_id LEFT JOIN event_assignments ea ON ea.team_id = tlm.team_id AND ea.lead_id = tl.lead_id
+    WHERE tlm.leg_id = ANY($1)`, [ids])).rows;
+  res.json(legs.map((l) => {
+    const unsure = mem.filter((m) => m.leg_id === l.id && m.status !== "accepted").map((m) => m.name);
+    return { ...l, unsure };
+  }).filter((l) => l.stage === "Cancelled" || l.unsure.length));
 });
 
 // Put a leg in the same trip as another leg of the same event (the other leg's trip id, or its own id if it has none yet).
@@ -3594,6 +3630,7 @@ app.post("/api/leads/:id/travel-legs", requireAuth, requireCapability("assign_te
   for (const teamId of teamIds) {
     await pool.query(`INSERT INTO travel_leg_members (id, leg_id, team_id) VALUES ($1, $2, $3)`, [uuid(), id, teamId]);
   }
+  await saveLegCancel(id, req.body);
   if (req.body.groupWith) await joinLegGroup(id, req.body.groupWith);
   if (req.body.groupWith && req.body.insertAfter) { // a stay (or leg) placed right after a chosen leg instead of at the end
     const g = (await pool.query("SELECT group_id FROM travel_legs WHERE id = $1", [id])).rows[0];
@@ -3636,8 +3673,8 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
       if (c.length) return res.status(409).json({ code: "travel_clash", error: travelClashMessage(c, dep) });
     }
   }
-  const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "manager_notes", "label", "lead_id", "leg_type", "preferred_service", "travel_class", "food_included", "departure_time", "arrival_time", "to_lead_id", "from_lead_id", "booked_by"];
-  const keyFor = (f) => (f === "manager_notes" ? "managerNotes" : f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f === "lead_id" ? "leadId" : f === "leg_type" ? "legType" : f === "preferred_service" ? "preferredService" : f === "travel_class" ? "travelClass" : f === "food_included" ? "foodIncluded" : f === "departure_time" ? "departureTime" : f === "arrival_time" ? "arrivalTime" : f === "to_lead_id" ? "toLeadId" : f === "from_lead_id" ? "fromLeadId" : f === "booked_by" ? "bookedBy" : f);
+  const fields = ["mode", "from_city", "to_city", "departure_at", "arrival_at", "booking_ref", "status", "notes", "manager_notes", "label", "lead_id", "leg_type", "preferred_service", "travel_class", "food_included", "departure_time", "arrival_time", "to_lead_id", "from_lead_id", "booked_by", "cancel_policy", "cancel_until", "cancel_note"];
+  const keyFor = (f) => (f === "cancel_policy" ? "cancelPolicy" : f === "cancel_until" ? "cancelUntil" : f === "cancel_note" ? "cancelNote" : f === "manager_notes" ? "managerNotes" : f === "from_city" ? "fromCity" : f === "to_city" ? "toCity" : f === "departure_at" ? "departureAt" : f === "arrival_at" ? "arrivalAt" : f === "booking_ref" ? "bookingRef" : f === "lead_id" ? "leadId" : f === "leg_type" ? "legType" : f === "preferred_service" ? "preferredService" : f === "travel_class" ? "travelClass" : f === "food_included" ? "foodIncluded" : f === "departure_time" ? "departureTime" : f === "arrival_time" ? "arrivalTime" : f === "to_lead_id" ? "toLeadId" : f === "from_lead_id" ? "fromLeadId" : f === "booked_by" ? "bookedBy" : f);
   const updates = [];
   const values = [];
   fields.forEach((f) => {
@@ -3645,7 +3682,7 @@ app.patch("/api/travel-legs/:id", requireAuth, requireCapability("assign_team"),
     const key = keyFor(f);
     if (f === "to_lead_id" || f === "from_lead_id") return; // handled below, once the leg type is known
     if ((f === "departure_time" || f === "arrival_time") && req.body[key] && !cleanTime(req.body[key])) return; // ignore a malformed time instead of wiping the saved one
-    if (req.body[key] !== undefined) { values.push(f === "leg_type" ? cleanLegType(req.body[key]) : f === "food_included" ? cleanFood(req.body[key]) : (f === "departure_time" || f === "arrival_time") ? cleanTime(req.body[key]) : f === "preferred_service" ? cleanText(req.body[key]) : f === "travel_class" ? cleanText(req.body[key], 60) : f === "booked_by" ? cleanBookedBy(req.body[key]) : req.body[key]); updates.push(`${f} = $${values.length}`); }
+    if (req.body[key] !== undefined) { values.push(f === "leg_type" ? cleanLegType(req.body[key]) : f === "food_included" ? cleanFood(req.body[key]) : (f === "departure_time" || f === "arrival_time") ? cleanTime(req.body[key]) : f === "preferred_service" ? cleanText(req.body[key]) : f === "travel_class" ? cleanText(req.body[key], 60) : f === "booked_by" ? cleanBookedBy(req.body[key]) : f === "cancel_policy" ? cleanCancelPolicy(req.body[key]) : f === "cancel_until" ? cleanCancelUntil(req.body[key]) : f === "cancel_note" ? cleanText(req.body[key], 200) : req.body[key]); updates.push(`${f} = $${values.length}`); }
   });
   if (req.body.toLeadId !== undefined || req.body.fromLeadId !== undefined || req.body.legType !== undefined) {
     const finalType = req.body.legType !== undefined ? cleanLegType(req.body.legType) : leg.leg_type;
@@ -5352,65 +5389,72 @@ async function threadFor(leadId) {
   ]);
   return { messages: messages.rows, files: files.rows.map((f) => ({ ...f, leg_title: f.leg_id ? legTitle({ mode: f.leg_mode, from_city: f.leg_from, to_city: f.leg_to, departure_at: f.leg_dep }) : null })) };
 }
-app.get("/trip/:token/thread", async (req, res) => {
-  res.setHeader("Cache-Control", "no-store");
-  const s = await loadTravelShare(req.params.token);
-  if (!s) return res.status(404).json({ error: "This link is no longer available." });
-  const t = await threadFor(s.lead_id);
-  res.json({
-    messages: t.messages.map((m) => ({ id: m.id, from: m.sender, name: m.sender_name, body: m.body, at: m.created_at })),
-    files: t.files.map((f) => ({ id: f.id, label: f.label, name: f.original_name, by: f.uploader_name, at: f.uploaded_at, journey: f.leg_title, url: `/trip/${encodeURIComponent(req.params.token)}/file/${f.id}` })),
+// The client's side of the conversation + uploads. The same handlers serve the travel link (/trip/:token)
+// and the client event page (/event/:token); `load` turns the token into { lead_id } or null.
+function clientThreadRoutes(prefix, load, where) {
+  app.get(`${prefix}/:token/thread`, async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const s = await load(req.params.token);
+    if (!s) return res.status(404).json({ error: "This link is no longer available." });
+    const t = await threadFor(s.lead_id);
+    res.json({
+      messages: t.messages.map((m) => ({ id: m.id, from: m.sender, name: m.sender_name, body: m.body, at: m.created_at })),
+      files: t.files.map((f) => ({ id: f.id, label: f.label, name: f.original_name, by: f.uploader_name, at: f.uploaded_at, journey: f.leg_title, url: `${prefix}/${encodeURIComponent(req.params.token)}/file/${f.id}` })),
+    });
   });
-});
-app.post("/trip/:token/message", async (req, res) => {
-  const s = await loadTravelShare(req.params.token);
-  if (!s) return res.status(404).json({ error: "This link is no longer available." });
-  if (!shareRateOk("m:" + clientIp(req) + ":" + req.params.token)) return res.status(429).json({ error: "Too many messages — please try again later." });
-  const body = String(req.body.body || "").trim().slice(0, 2000);
-  const name = String(req.body.name || "").trim().slice(0, 80) || null;
-  if (!body) return res.status(400).json({ error: "Write a message first." });
-  await pool.query("INSERT INTO travel_share_messages (id, lead_id, share_token, sender, sender_name, body, created_at, read_by_team) VALUES ($1,$2,$3,'client',$4,$5,$6,0)",
-    [uuid(), s.lead_id, req.params.token, name, body, new Date().toISOString()]);
-  const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [s.lead_id])).rows[0];
-  sendPushToAll("\ud83d\udcac Client message", `${lead ? lead.name : "Event"}${name ? " \u2014 " + name : ""}: ${body.slice(0, 90)}`, "/login", { adminOnly: true }).catch(() => {});
-  notifyAdminOfClientActivity(`\ud83d\udcac Client message \u2014 ${escHtml(lead ? lead.name : "Event")}${name ? " (" + escHtml(name) + ")" : ""}: \u201c${escHtml(body.slice(0, 120))}${body.length > 120 ? "\u2026" : ""}\u201d`, s.lead_id, `Client message on travel link: ${lead ? lead.name : ""}`);
-  res.status(201).json({ ok: true });
-});
-app.post("/trip/:token/upload", (req, res, next) => {
-  upload.single("file")(req, res, (err) => {
-    if (err) return res.status(400).json({ error: err.code === "LIMIT_FILE_SIZE" ? "That file is over 15 MB — please send a smaller one." : "Upload failed." });
-    next();
+  app.post(`${prefix}/:token/message`, async (req, res) => {
+    const s = await load(req.params.token);
+    if (!s) return res.status(404).json({ error: "This link is no longer available." });
+    if (!shareRateOk("m:" + clientIp(req) + ":" + req.params.token)) return res.status(429).json({ error: "Too many messages — please try again later." });
+    const body = String(req.body.body || "").trim().slice(0, 2000);
+    const name = String(req.body.name || "").trim().slice(0, 80) || null;
+    if (!body) return res.status(400).json({ error: "Write a message first." });
+    await pool.query("INSERT INTO travel_share_messages (id, lead_id, share_token, sender, sender_name, body, created_at, read_by_team) VALUES ($1,$2,$3,'client',$4,$5,$6,0)",
+      [uuid(), s.lead_id, req.params.token, name, body, new Date().toISOString()]);
+    const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [s.lead_id])).rows[0];
+    sendPushToAll("\ud83d\udcac Client message", `${lead ? lead.name : "Event"}${name ? " \u2014 " + name : ""}: ${body.slice(0, 90)}`, "/login", { adminOnly: true }).catch(() => {});
+    notifyAdminOfClientActivity(`\ud83d\udcac Client message \u2014 ${escHtml(lead ? lead.name : "Event")}${name ? " (" + escHtml(name) + ")" : ""}: \u201c${escHtml(body.slice(0, 120))}${body.length > 120 ? "\u2026" : ""}\u201d`, s.lead_id, `Client message on ${where}: ${lead ? lead.name : ""}`);
+    res.status(201).json({ ok: true });
   });
-}, async (req, res) => {
-  const s = await loadTravelShare(req.params.token);
-  if (!s) return res.status(404).json({ error: "This link is no longer available." });
-  if (!shareRateOk("u:" + clientIp(req) + ":" + req.params.token, 20)) return res.status(429).json({ error: "Too many uploads — please try again later." });
-  if (!req.file) return res.status(400).json({ error: "Choose a file first." });
-  if (!SHARE_FILE_MIMES.test(req.file.mimetype || "")) return res.status(400).json({ error: "Please upload a PDF, a photo (JPG/PNG) or a Word/text file." });
-  const name = String(req.body.name || "").trim().slice(0, 80) || null;
-  const label = String(req.body.label || "").trim().slice(0, 120) || null;
-  const fileId = uuid();
-  await pool.query("INSERT INTO travel_share_files (id, lead_id, share_token, label, original_name, mime_type, file_data, uploader_name, uploaded_at, read_by_team) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0)",
-    [fileId, s.lead_id, req.params.token, label, req.file.originalname, req.file.mimetype, req.file.buffer, name, new Date().toISOString()]);
-  // If the client said which journey it is for (and it is one of this event's), it goes straight into the Travel plan as a ticket.
-  const wantLeg = String(req.body.legId || "");
-  if (wantLeg) { try { await attachClientFileToLeg(fileId, wantLeg); } catch (e) { console.error("attach client file:", e.message); } }
-  const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [s.lead_id])).rows[0];
-  sendPushToAll("\ud83d\udcce Client uploaded a file", `${lead ? lead.name : "Event"}: ${req.file.originalname}`, "/login", { adminOnly: true }).catch(() => {});
-  notifyAdminOfClientActivity(`\ud83d\udcce Client uploaded \u201c${escHtml(label || req.file.originalname)}\u201d \u2014 ${escHtml(lead ? lead.name : "Event")}${name ? " (" + escHtml(name) + ")" : ""}`, s.lead_id, `Client uploaded a file on travel link: ${lead ? lead.name : ""} \u2014 ${req.file.originalname}`);
-  res.status(201).json({ ok: true });
-});
-app.get("/trip/:token/file/:fileId", async (req, res) => {
-  res.setHeader("Cache-Control", "no-store");
-  res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  const s = await loadTravelShare(req.params.token);
-  if (!s) return res.status(404).send("Link no longer available");
-  const d = (await pool.query("SELECT original_name, mime_type, file_data FROM travel_share_files WHERE id = $1 AND lead_id = $2", [req.params.fileId, s.lead_id])).rows[0];
-  if (!d || !d.file_data) return res.status(404).send("File not found");
-  res.setHeader("Content-Type", d.mime_type || "application/octet-stream");
-  res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(d.original_name)}"`);
-  res.send(d.file_data);
-});
+  app.post(`${prefix}/:token/upload`, (req, res, next) => {
+    upload.single("file")(req, res, (err) => {
+      if (err) return res.status(400).json({ error: err.code === "LIMIT_FILE_SIZE" ? "That file is over 15 MB — please send a smaller one." : "Upload failed." });
+      next();
+    });
+  }, async (req, res) => {
+    const s = await load(req.params.token);
+    if (!s) return res.status(404).json({ error: "This link is no longer available." });
+    if (!shareRateOk("u:" + clientIp(req) + ":" + req.params.token, 20)) return res.status(429).json({ error: "Too many uploads — please try again later." });
+    if (!req.file) return res.status(400).json({ error: "Choose a file first." });
+    if (!SHARE_FILE_MIMES.test(req.file.mimetype || "")) return res.status(400).json({ error: "Please upload a PDF, a photo (JPG/PNG) or a Word/text file." });
+    const name = String(req.body.name || "").trim().slice(0, 80) || null;
+    const label = String(req.body.label || "").trim().slice(0, 120) || null;
+    const fileId = uuid();
+    await pool.query("INSERT INTO travel_share_files (id, lead_id, share_token, label, original_name, mime_type, file_data, uploader_name, uploaded_at, read_by_team) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0)",
+      [fileId, s.lead_id, req.params.token, label, req.file.originalname, req.file.mimetype, req.file.buffer, name, new Date().toISOString()]);
+    // If the client said which journey it is for (and it is one of this event's), it goes straight into the Travel plan as a ticket.
+    const wantLeg = String(req.body.legId || "");
+    if (wantLeg) { try { await attachClientFileToLeg(fileId, wantLeg); } catch (e) { console.error("attach client file:", e.message); } }
+    const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [s.lead_id])).rows[0];
+    sendPushToAll("\ud83d\udcce Client uploaded a file", `${lead ? lead.name : "Event"}: ${req.file.originalname}`, "/login", { adminOnly: true }).catch(() => {});
+    notifyAdminOfClientActivity(`\ud83d\udcce Client uploaded \u201c${escHtml(label || req.file.originalname)}\u201d \u2014 ${escHtml(lead ? lead.name : "Event")}${name ? " (" + escHtml(name) + ")" : ""}`, s.lead_id, `Client uploaded a file on ${where}: ${lead ? lead.name : ""} \u2014 ${req.file.originalname}`);
+    res.status(201).json({ ok: true });
+  });
+  app.get(`${prefix}/:token/file/:fileId`, async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
+    const s = await load(req.params.token);
+    if (!s) return res.status(404).send("Link no longer available");
+    const d = (await pool.query("SELECT original_name, mime_type, file_data FROM travel_share_files WHERE id = $1 AND lead_id = $2", [req.params.fileId, s.lead_id])).rows[0];
+    if (!d || !d.file_data) return res.status(404).send("File not found");
+    res.setHeader("Content-Type", d.mime_type || "application/octet-stream");
+    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(d.original_name)}"`);
+    res.send(d.file_data);
+  });
+}
+clientThreadRoutes("/trip", (t) => loadTravelShare(t), "travel link");
+clientThreadRoutes("/event", (t) => loadClientPage(t), "event page");
+
 // Admin side of the same conversation
 app.get("/api/leads/:id/client-thread", requireAuth, requireAdmin, async (req, res) => {
   const t = await threadFor(req.params.id);
@@ -5463,15 +5507,16 @@ const fmtWall = (v) => {
   if (m[4]) { const h = Number(m[4]); out += `, ${((h + 11) % 12) + 1}:${m[5]} ${h >= 12 ? "PM" : "AM"}`; }
   return out;
 };
-function clientHubHtml(token, legs = []) {
+function clientHubHtml(token, legs = [], opts = {}) {
   const T = JSON.stringify(token);
+  const BASE = JSON.stringify(opts.base || "/trip/" + encodeURIComponent(token));
   const legOpts = legs.map((l) => `<option value="${escHtml(l.id)}">${escHtml(legTitle(l))}</option>`).join("");
-  return `<h2>Send us your itinerary, tickets or a message</h2>
+  return `<h2>${opts.title || "Send us your itinerary, tickets or a message"}</h2>
 <div class="c">
-  <div class="m" style="margin-bottom:8px">Booked the tickets? Upload them here (PDF or photo). You can also leave a message — we'll reply and it stays on this page.</div>
+  <div class="m" style="margin-bottom:8px">${opts.intro || "Booked the tickets? Upload them here (PDF or photo). You can also leave a message — we'll reply and it stays on this page."}</div>
   <input id="hubName" placeholder="Your name (optional)" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;margin-bottom:8px">
-  <input id="hubLabel" placeholder="What is this? e.g. Train tickets Delhi → Pune" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;margin-bottom:8px">
-  <select id="hubLeg" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;margin-bottom:8px;background:#fff"><option value="">Which journey is this for? (optional)</option>${legOpts}</select>
+  <input id="hubLabel" placeholder="${opts.labelHint || "What is this? e.g. Train tickets Delhi → Pune"}" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;margin-bottom:8px">
+  ${legOpts ? `<select id="hubLeg" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;margin-bottom:8px;background:#fff"><option value="">Which journey is this for? (optional)</option>${legOpts}</select>` : `<input type="hidden" id="hubLeg" value="">`}
   <input id="hubFile" type="file" accept="image/*,application/pdf,.doc,.docx,.txt" style="width:100%;margin-bottom:8px">
   <button id="hubUp" style="padding:11px 16px;border:0;border-radius:10px;background:#B5541C;color:#fff;font:inherit;font-size:15px;cursor:pointer">⬆ Upload</button>
   <div id="hubUpMsg" class="m" style="margin-top:6px"></div>
@@ -5485,7 +5530,7 @@ function clientHubHtml(token, legs = []) {
 </div>
 <script>
 (function(){
-  var TOKEN=${T}, base="/trip/"+encodeURIComponent(TOKEN);
+  var TOKEN=${T}, base=${BASE};
   var $=function(id){return document.getElementById(id)};
   try{var saved=localStorage.getItem("tolHubName"); if(saved) $("hubName").value=saved;}catch(e){}
   function fmt(iso){try{return new Date(iso).toLocaleString("en-IN",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit"})}catch(e){return ""}}
@@ -5540,6 +5585,147 @@ function clientHubHtml(token, legs = []) {
 })();
 </script>`;
 }
+
+// ---------- Client event page — one private link per confirmed event ----------
+// Shows the client their event details, a very short form (venue, timings, on-site contact, anything
+// specific) that goes straight into the event, the tech rider, their travel/IDs (from the latest live travel
+// link) and the conversation with us. Open until a week after the event; revocable; dies if the event is cancelled.
+async function loadClientPage(token) {
+  if (!token || String(token).length < 16) return null;
+  const s = (await pool.query("SELECT cp.token, cp.lead_id, cp.revoked, l.date, l.stage FROM client_pages cp JOIN leads l ON l.id = cp.lead_id WHERE cp.token = $1", [String(token)])).rows[0];
+  if (!s || s.revoked || s.stage === "Cancelled") return null;
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(s.date || ""));
+  if (m && new Date(`${m[1]}T23:59:59+05:30`).getTime() + 7 * 86400000 < Date.now()) return null;
+  return s;
+}
+app.get("/api/leads/:id/client-page", requireAuth, requireAdmin, async (req, res) => {
+  const row = (await pool.query("SELECT token, created_at FROM client_pages WHERE lead_id = $1 AND revoked = 0 ORDER BY created_at DESC LIMIT 1", [req.params.id])).rows[0];
+  const lead = (await pool.query("SELECT client_requests, client_updated_at FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  if (!lead) return res.status(404).json({ error: "Event not found" });
+  res.json({ token: row ? row.token : null, createdAt: row ? row.created_at : null, clientRequests: lead.client_requests, clientUpdatedAt: lead.client_updated_at });
+});
+app.post("/api/leads/:id/client-page", requireAuth, requireAdmin, async (req, res) => {
+  const lead = (await pool.query("SELECT name, stage FROM leads WHERE id = $1", [req.params.id])).rows[0];
+  if (!lead) return res.status(404).json({ error: "Event not found" });
+  if (!["Confirmed", "Completed"].includes(lead.stage)) return res.status(400).json({ error: "The client page is for confirmed events." });
+  const cur = (await pool.query("SELECT token FROM client_pages WHERE lead_id = $1 AND revoked = 0 ORDER BY created_at DESC LIMIT 1", [req.params.id])).rows[0];
+  if (cur && !req.body.regenerate) return res.json({ token: cur.token });
+  await pool.query("UPDATE client_pages SET revoked = 1 WHERE lead_id = $1", [req.params.id]);
+  const token = crypto.randomBytes(18).toString("base64url");
+  await pool.query("INSERT INTO client_pages (token, lead_id, created_at, created_by) VALUES ($1,$2,$3,$4)", [token, req.params.id, new Date().toISOString(), req.user.username || null]);
+  logActivity(req, `${cur ? "New" : "Created the"} client event page link for ${lead.name}`, req.params.id);
+  res.status(201).json({ token });
+});
+app.post("/api/leads/:id/client-page/revoke", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("UPDATE client_pages SET revoked = 1 WHERE lead_id = $1", [req.params.id]);
+  logActivity(req, "Turned off the client event page link", req.params.id);
+  res.json({ ok: true });
+});
+
+// The client's on-site contact sits in the event's contact list, marked as theirs (replaced on each save).
+function contactsWithClientContact(lead, contact) {
+  let list = null;
+  try { list = JSON.parse(lead.contacts || "null"); } catch { list = null; }
+  if (!Array.isArray(list)) {
+    list = [];
+    if (lead.sound_manager_name || lead.sound_manager_phone) list.push({ role: "Sound manager", name: lead.sound_manager_name || "", phone: lead.sound_manager_phone || "" });
+    if (lead.coordinator_name || lead.coordinator_phone) list.push({ role: "Event coordinator", name: lead.coordinator_name || "", phone: lead.coordinator_phone || "" });
+  }
+  list = list.filter((c) => !c.fromClient);
+  if (contact) list.push({ role: "On-site contact (from client)", name: contact.name, phone: contact.phone, fromClient: true });
+  return JSON.stringify(list);
+}
+const clientContactOf = (lead) => { try { const l = JSON.parse(lead.contacts || "null"); return Array.isArray(l) ? l.find((c) => c.fromClient) || null : null; } catch { return null; } };
+
+app.post("/event/:token/details", async (req, res) => {
+  const s = await loadClientPage(req.params.token);
+  if (!s) return res.status(404).json({ error: "This link is no longer available." });
+  if (!shareRateOk("d:" + clientIp(req) + ":" + req.params.token, 30)) return res.status(429).json({ error: "Too many saves — please try again later." });
+  const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [s.lead_id])).rows[0];
+  if (!lead) return res.status(404).json({ error: "This link is no longer available." });
+  const txt = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
+  const venue = txt(req.body.venue, 400), notes = txt(req.body.requests, 2000);
+  const eventTime = cleanTime(req.body.eventTime), scTime = cleanTime(req.body.soundcheckTime);
+  const cName = txt(req.body.contactName, 80), cPhone = txt(req.body.contactPhone, 30);
+  // Blank boxes never wipe what we already have; only what the client actually wrote is saved.
+  const sets = [], vals = [], changed = [];
+  const put = (col, v, label) => { if (v && v !== (lead[col] || "")) { vals.push(v); sets.push(`${col} = $${vals.length}`); changed.push(label); } };
+  put("venue", venue, "venue");
+  put("event_time", eventTime, "event time");
+  put("soundcheck_time", scTime, "sound check time");
+  put("client_requests", notes, "special requests");
+  const oldC = clientContactOf(lead);
+  if ((cName || cPhone) && (!oldC || oldC.name !== cName || oldC.phone !== cPhone)) {
+    vals.push(contactsWithClientContact(lead, { name: cName, phone: cPhone })); sets.push(`contacts = $${vals.length}`); changed.push("on-site contact");
+  }
+  if (!sets.length) return res.json({ ok: true, changed: [] });
+  vals.push(new Date().toISOString()); sets.push(`client_updated_at = $${vals.length}`);
+  vals.push(s.lead_id);
+  await pool.query(`UPDATE leads SET ${sets.join(", ")} WHERE id = $${vals.length}`, vals);
+  const what = changed.join(", ");
+  sendPushToAll("\ud83d\udcdd Client updated event details", `${lead.name}: ${what}`, "/login", { adminOnly: true }).catch(() => {});
+  notifyAdminOfClientActivity(`\ud83d\udcdd Client updated ${escHtml(what)} \u2014 ${escHtml(lead.name)}`, s.lead_id, `Client updated ${what} on their event page: ${lead.name}${venue && changed.includes("venue") ? ` \u2014 venue: ${venue}` : ""}${eventTime && changed.includes("event time") ? ` \u2014 event ${eventTime}` : ""}`);
+  res.json({ ok: true, changed });
+});
+
+app.get("/event/:token", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  const shell = (body) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Your event — Together, Out Loud</title>
+<style>body{font-family:Georgia,serif;background:#FBF6EC;color:#3A2A1A;margin:0;padding:18px}.w{max-width:640px;margin:0 auto}h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.06em;color:#8A5A1F}.c{background:#fff;border:1px solid #E9DFCF;border-radius:12px;padding:12px 14px;margin-bottom:10px}.m{color:#7A6A58;font-size:13px}img{max-width:100%;border-radius:8px;border:1px solid #E9DFCF;margin-top:8px}a{color:#B5541C}.r{display:flex;gap:10px;padding:5px 0;border-bottom:1px dashed #EFE6D6;font-size:15px}.r:last-child{border-bottom:0}.r span:first-child{color:#7A6A58;min-width:110px}label{display:block;font-size:13px;color:#7A6A58;margin:10px 0 4px}.f{width:100%;box-sizing:border-box;padding:10px;border:1px solid #DDD5C4;border-radius:8px;font:inherit;font-size:16px;background:#fff}.two{display:flex;gap:10px;align-items:flex-end}.two>div{flex:1}.btn{display:inline-block;padding:11px 16px;border:0;border-radius:10px;background:#B5541C;color:#fff;font:inherit;font-size:15px;cursor:pointer;text-decoration:none}</style></head><body><div class="w">${body}</div></body></html>`;
+  const s = await loadClientPage(req.params.token);
+  if (!s) return res.status(404).send(shell(`<h1>This link is no longer available</h1><p class="m">It may have expired or been replaced. Please ask Together, Out Loud for a fresh link.</p>`));
+  const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [s.lead_id])).rows[0];
+  const rider = (await pool.query("SELECT token FROM tech_riders WHERE lead_id = $1", [s.lead_id])).rows[0];
+  const share = (await pool.query("SELECT * FROM travel_shares WHERE lead_id = $1 AND revoked = 0 AND expires_at > $2 ORDER BY created_at DESC LIMIT 1", [s.lead_id, new Date().toISOString()])).rows[0];
+  const parts = share ? await tripPartsHtml(share) : null;
+  const first = String(lead.first_name || lead.name || "").trim().split(/\s+/)[0];
+  const occ = lead.occasion === "Other" ? lead.occasion_other : lead.occasion;
+  const rows = [
+    ["Date", lead.date ? fmtWall(String(lead.date).slice(0, 10)) : ""],
+    ["City", lead.city], ["Format", packageName(lead.event_type)], ["Occasion", occ], ["Guests", lead.guest_range],
+    ["Band", lead.pcs ? `${lead.pcs} musicians` : ""], ["Duration", lead.duration],
+  ].filter(([, v]) => v);
+  const cc = clientContactOf(lead) || {};
+  const v = (x) => escHtml(x || "");
+  const drumsLine = lead.drums === "venue_kit" ? "🥁 Please arrange an acoustic drum kit through your sound vendor."
+    : lead.drums === "v_drums" ? "🥁 Our drummer brings electronic drums (V-drums) — no drum kit needed from your side." : "";
+  res.send(shell(`<h1>Your event with Together, Out Loud</h1>
+    <div class="m">Hi ${escHtml(first)} — everything about your event in one place. Fill in the few details below and message us any time; we see it straight away.</div>
+    <h2>Event</h2>
+    <div class="c">${rows.map(([k, x]) => `<div class="r"><span>${k}</span><span>${escHtml(x)}</span></div>`).join("")}
+      <div class="m" style="margin-top:8px">Something not right? Tell us in the messages below.</div></div>
+    <h2>Venue &amp; timing</h2>
+    <form class="c" id="cpForm" onsubmit="return false">
+      <label for="cpVenue">Venue name &amp; full address <span class="m">(a Google Maps link is fine too)</span></label>
+      <textarea class="f" id="cpVenue" rows="2" placeholder="e.g. The Mayfair Lawns, Hill Cart Road, Siliguri">${v(lead.venue)}</textarea>
+      <div class="two"><div><label for="cpTime">Event start time</label><input class="f" id="cpTime" type="time" value="${v(lead.event_time)}"></div>
+      <div><label for="cpSc">Sound check time <span class="m">(if known)</span></label><input class="f" id="cpSc" type="time" value="${v(lead.soundcheck_time)}"></div></div>
+      <div class="two"><div><label for="cpCName">On-site contact on the day</label><input class="f" id="cpCName" placeholder="Name" value="${v(cc.name)}"></div>
+      <div><label for="cpCPhone">&nbsp;</label><input class="f" id="cpCPhone" type="tel" placeholder="Phone" value="${v(cc.phone)}"></div></div>
+      <label for="cpReq">Anything specific we should know? <span class="m">(songs, rituals, timings, dress code…)</span></label>
+      <textarea class="f" id="cpReq" rows="3" placeholder="Anything at all">${v(lead.client_requests)}</textarea>
+      <div style="margin-top:12px"><button class="btn" id="cpSave" type="button">Save details</button> <span class="m" id="cpMsg"></span></div>
+    </form>
+    ${rider || drumsLine ? `<h2>${rider ? "Tech rider" : "Sound setup"}</h2><div class="c">${rider ? `<div>What our sound setup needs — please share it with your sound vendor.</div><div style="margin-top:10px"><a class="btn" href="/rider/${encodeURIComponent(rider.token)}" target="_blank" rel="noopener">🎛 Open tech rider</a></div>` : ""}${drumsLine ? `<div style="margin-top:${rider ? 10 : 0}px">${drumsLine}</div>` : ""}</div>` : ""}
+    ${parts ? `<h2>Team travelling (${parts.people})</h2>${parts.idCards}<h2>Travel plan</h2>${parts.legCards || `<div class="c m">Travel plan will be shared shortly.</div>`}` : ""}
+    ${clientHubHtml(req.params.token, parts ? parts.hubLegs : [], { base: "/event/" + encodeURIComponent(req.params.token), title: "Messages &amp; files", intro: "Write to us here — we reply on this page. You can also upload anything useful: tickets, itinerary, venue layout, song list.", labelHint: "What is this? e.g. Venue layout, song list" })}
+<script>
+(function(){
+  var base=${JSON.stringify("/event/" + encodeURIComponent(req.params.token))};
+  var $=function(id){return document.getElementById(id)};
+  $("cpSave").onclick=function(){
+    var body={venue:$("cpVenue").value,eventTime:$("cpTime").value,soundcheckTime:$("cpSc").value,contactName:$("cpCName").value,contactPhone:$("cpCPhone").value,requests:$("cpReq").value};
+    $("cpSave").disabled=true; $("cpMsg").textContent="Saving…";
+    fetch(base+"/details",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)})
+      .then(function(r){return r.json().then(function(j){if(!r.ok) throw new Error(j.error||"Could not save"); return j;})})
+      .then(function(j){$("cpMsg").textContent=j.changed&&j.changed.length?"✓ Saved — thank you, we've been notified.":"✓ Nothing new to save.";})
+      .catch(function(e){$("cpMsg").textContent=e.message;})
+      .then(function(){$("cpSave").disabled=false;});
+  };
+})();
+</script>`));
+});
 
 // ---------- Artist "my events" link — a no-login mini CRM for every artist and freelancer ----------
 // The token is the key (same model as the WhatsApp confirmation and trip links). It only ever shows the
@@ -5793,14 +5979,15 @@ async function sendTravelReminders() {
   } catch (err) { console.error("sendTravelReminders failed (not fatal):", err.message); }
 }
 
+const DRUM_NOTE_FOR_DRUMMER = { v_drums: "Please carry your V-drums", venue_kit: "Drum kit is provided at the venue", none: "No drums at this event" };
 async function loadArtistPortal(token) {
   if (!token || String(token).length < 16) return null;
-  const m = (await pool.query("SELECT id, name FROM team WHERE portal_token = $1", [String(token)])).rows[0];
+  const m = (await pool.query("SELECT id, name, role FROM team WHERE portal_token = $1", [String(token)])).rows[0];
   if (!m) return null;
   const rows = (await pool.query(`
     SELECT ea.id AS assignment_id, ea.status, ea.note, ea.confirm_token,
            leads.id AS lead_id, leads.name AS client_name, leads.event_type, leads.city, leads.date, leads.venue,
-           leads.event_time, leads.soundcheck_time, leads.pcs, leads.stage, leads.combo_group_id,
+           leads.event_time, leads.soundcheck_time, leads.pcs, leads.stage, leads.combo_group_id, leads.drums,
            ex.paid AS pay_paid, ex.amount AS pay_amount, ex.payment_date, ex.payment_mode
     FROM event_assignments ea
     JOIN leads ON leads.id = ea.lead_id
@@ -5846,6 +6033,7 @@ app.get("/api/public/me/:token", async (req, res) => {
     return {
       confirmToken: r.confirm_token, status: r.status, note: r.note, place: placeOf({ venue: r.venue, city: r.city }), experience: packageName(r.event_type), city: r.city, date: r.date,
       venue: r.venue, eventTime: r.event_time, soundcheckTime: r.soundcheck_time, pcs: r.pcs, tentative: r.stage === "Tentative", past: isPast,
+      drumNote: /drum/i.test(p.member.role || "") ? DRUM_NOTE_FOR_DRUMMER[r.drums] || null : null,
       travel: mine, travelAck: null,
       pay: isPast ? { paid: !!r.pay_paid, amount: r.pay_amount != null ? Number(r.pay_amount) : null, date: r.payment_date, mode: r.payment_mode } : null,
     };
@@ -5910,14 +6098,9 @@ app.get("/me/:token", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "me.html"), { acceptRanges: false });
 });
 
-app.get("/trip/:token", async (req, res) => {
-  res.setHeader("Cache-Control", "no-store");
-  res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  const s = await loadTravelShare(req.params.token);
-  const shell = (body, head = "") => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Travel details — Together, Out Loud</title>${head}
-<style>body{font-family:Georgia,serif;background:#FBF6EC;color:#3A2A1A;margin:0;padding:18px}.w{max-width:640px;margin:0 auto}h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.06em;color:#8A5A1F}.c{background:#fff;border:1px solid #E9DFCF;border-radius:12px;padding:12px 14px;margin-bottom:10px}.m{color:#7A6A58;font-size:13px}img{max-width:100%;border-radius:8px;border:1px solid #E9DFCF;margin-top:8px}a{color:#B5541C}</style></head><body><div class="w">${body}</div></body></html>`;
-  if (!s) return res.status(404).send(shell(`<h1>This link is no longer available</h1><p class="m">It may have expired or been replaced. Please ask Together, Out Loud for a fresh link.</p>`));
-  const lead = (await pool.query("SELECT name, date, city, event_type, occasion FROM leads WHERE id = $1", [s.lead_id])).rows[0];
+// IDs + travel plan of one travel-share link, as HTML cards (file links go through that link's token).
+async function tripPartsHtml(s) {
+  const tok = encodeURIComponent(s.token);
   const allIds = JSON.parse(s.team_ids || "[]");
   const teamIds = allIds.filter((x) => !String(x).startsWith("g:"));
   const trav = await loadTravellers(s.lead_id, allIds);
@@ -5927,7 +6110,6 @@ app.get("/trip/:token", async (req, res) => {
     pool.query("SELECT travel_leg_members.leg_id, team.id AS team_id, team.name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1)", [s.lead_id]),
   ]);
   legs.rows = orderLegs(legs.rows.filter((l) => l.mode !== "stay"));
-  // Not this client's to book: it belongs to another event, or it's marked as booked by Team TOL / someone else.
   const notYours = (l) => l.lead_id !== s.lead_id || l.booked_by === "other" || l.booked_by === "tol";
   const legCards = legs.rows.map((l) => {
     const who = members.rows.filter((m) => m.leg_id === l.id && teamIds.includes(m.team_id)).map((m) => m.name);
@@ -5937,16 +6119,25 @@ app.get("/trip/:token", async (req, res) => {
       ${!notYours(l) && l.preferred_service ? `<div class="m">Please book: <b>${escHtml(l.preferred_service)}</b></div>` : ""}${!notYours(l) && l.travel_class ? `<div class="m">Class: ${escHtml(l.travel_class)}</div>` : ""}${notYours(l) ? "" : l.food_included === "included" ? `<div class="m">Food: included</div>` : l.food_included === "not_included" ? `<div class="m">Food: not included</div>` : ""}
       ${l.departure_at || l.departure_time ? `<div class="m">Depart: ${escHtml([l.departure_at ? fmtWall(String(l.departure_at).slice(0, 10)) : "", fmt12(l.departure_time)].filter(Boolean).join(", "))}</div>` : ""}${l.arrival_time ? `<div class="m">Arrive: ${escHtml(fmt12(l.arrival_time))}</div>` : ""}${l.arrival_at ? `<div class="m">Return: ${escHtml(fmtWall(String(l.arrival_at).slice(0, 10)))}</div>` : ""}
       <div style="margin-top:6px">Travelling: ${who.map(escHtml).join(", ")}</div>
-      ${ticketDocs.filter((d) => d.travel_leg_id === l.id).map((d) => { const url = `/trip/${encodeURIComponent(req.params.token)}/ticket/${d.id}`; return `<div style="margin-top:8px"><span class="m">\ud83c\udfab ${escHtml(d.original_name)}</span>${/^image\//i.test(d.mime_type || "") && !/hei[cf]/i.test(d.mime_type) ? `<br><img src="${url}" alt="Ticket">` : ""}<br><a href="${url}" target="_blank" rel="noopener">Open ticket</a></div>`; }).join("")}</div>`;
+      ${ticketDocs.filter((d) => d.travel_leg_id === l.id).map((d) => { const url = `/trip/${tok}/ticket/${d.id}`; return `<div style="margin-top:8px"><span class="m">\ud83c\udfab ${escHtml(d.original_name)}</span>${/^image\//i.test(d.mime_type || "") && !/hei[cf]/i.test(d.mime_type) ? `<br><img src="${url}" alt="Ticket">` : ""}<br><a href="${url}" target="_blank" rel="noopener">Open ticket</a></div>`; }).join("")}</div>`;
   }).join("");
-  const idCards = [...trav.team, ...trav.guests].map((t) => {
-    const docs = t.docs;
-    return `<div class="c"><b>${escHtml(t.name)}</b>
-      ${docs.length === 0 ? `<div class="m" style="color:#A6432B">ID not available — we'll send it separately.</div>` : docs.map((d) => {
-        const url = `/trip/${encodeURIComponent(req.params.token)}/id/${d.id}`;
+  const idCards = [...trav.team, ...trav.guests].map((t) => `<div class="c"><b>${escHtml(t.name)}</b>
+      ${t.docs.length === 0 ? `<div class="m" style="color:#A6432B">ID not available — we'll send it separately.</div>` : t.docs.map((d) => {
+        const url = `/trip/${tok}/id/${d.id}`;
         return `<div style="margin-top:8px"><span class="m">${escHtml(d.label || d.original_name)}</span>${/^image\//i.test(d.mime_type || "") && !/hei[cf]/i.test(d.mime_type) ? `<br><img src="${url}" alt="ID">` : ""}<br><a href="${url}" target="_blank" rel="noopener">Open / download</a></div>`;
-      }).join("")}</div>`;
-  }).join("");
+      }).join("")}</div>`).join("");
+  return { idCards, legCards, people: trav.team.length + trav.guests.length, hubLegs: legs.rows.filter((l) => members.rows.some((m) => m.leg_id === l.id && teamIds.includes(m.team_id))) };
+}
+
+app.get("/trip/:token", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  const s = await loadTravelShare(req.params.token);
+  const shell = (body, head = "") => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Travel details — Together, Out Loud</title>${head}
+<style>body{font-family:Georgia,serif;background:#FBF6EC;color:#3A2A1A;margin:0;padding:18px}.w{max-width:640px;margin:0 auto}h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.06em;color:#8A5A1F}.c{background:#fff;border:1px solid #E9DFCF;border-radius:12px;padding:12px 14px;margin-bottom:10px}.m{color:#7A6A58;font-size:13px}img{max-width:100%;border-radius:8px;border:1px solid #E9DFCF;margin-top:8px}a{color:#B5541C}</style></head><body><div class="w">${body}</div></body></html>`;
+  if (!s) return res.status(404).send(shell(`<h1>This link is no longer available</h1><p class="m">It may have expired or been replaced. Please ask Together, Out Loud for a fresh link.</p>`));
+  const lead = (await pool.query("SELECT name, date, city, event_type, occasion FROM leads WHERE id = $1", [s.lead_id])).rows[0];
+  const parts = await tripPartsHtml(s);
   const ogHost = `https://${req.headers["x-forwarded-host"] || req.get("host")}`;
   const ogImg = `${ogHost}/trip-card/${encodeURIComponent(req.params.token)}.png`;
   const ogTitle = `Travel details \u2014 ${lead ? lead.name : "your event"}`;
@@ -5955,9 +6146,9 @@ app.get("/trip/:token", async (req, res) => {
   res.send(shell(`<h1>Travel details & IDs</h1><div class="m">${escHtml(lead ? `${lead.name}${lead.city ? " · " + lead.city : ""}${lead.date ? " · " + fmtWall(lead.date) : ""}` : "")}</div>
     <div class="m" style="margin-top:6px">Shared by Together, Out Loud for booking tickets. This link stays open until the event date (${escHtml(new Date(s.expires_at).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Kolkata" }))}) — use it any time to send us your itinerary, tickets or questions.</div>
     ${s.note ? `<div class="c" style="margin-top:12px;border-left:4px solid #C1602B"><b>Note from Together, Out Loud</b><div style="margin-top:4px;white-space:pre-wrap">${escHtml(s.note)}</div></div>` : ""}
-    <h2>Team travelling (${trav.team.length + trav.guests.length})</h2>${idCards}
-    <h2>Travel plan</h2>${legCards || `<div class="c m">Travel plan will be shared shortly.</div>`}
-    ${clientHubHtml(req.params.token, legs.rows.filter((l) => members.rows.some((m) => m.leg_id === l.id && teamIds.includes(m.team_id))))}`, ogHead));
+    <h2>Team travelling (${parts.people})</h2>${parts.idCards}
+    <h2>Travel plan</h2>${parts.legCards || `<div class="c m">Travel plan will be shared shortly.</div>`}
+    ${clientHubHtml(req.params.token, parts.hubLegs)}`, ogHead));
 });
 app.get("/trip/:token/ticket/:docId", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
