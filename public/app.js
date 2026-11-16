@@ -5051,7 +5051,7 @@ async function openTeamMemberEventsModal(member) {
   };
   const rowHtml = (e, editable = true) => `
     <div class="dash-list-item" style="padding-bottom:14px; margin-bottom:14px; border-bottom:1px solid #EAE3D4;">
-      <div style="font-size:14.5px;">${e.lead_name} <span class="muted small">— ${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""}</span></div>
+      <div style="font-size:14.5px;">${e.lead_id && LEADS.some((x) => x.id === e.lead_id) ? `<button class="link member-open-event" data-lead-id="${e.lead_id}" style="font-size:14.5px; font-weight:600;">${e.lead_name} ›</button>` : e.lead_name} <span class="muted small">— ${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""}</span></div>
       <div class="muted small" style="margin-top:2px;">${fmtDate(e.date)}${e.city ? ` · ${e.city}` : ""}${e.event_time ? ` · Event ${fmtTimeHM(e.event_time)}` : ""}${e.soundcheck_time ? ` · SC ${fmtTimeHM(e.soundcheck_time)}` : ""}</div>
       ${e.venue ? `<div class="muted small">📍 ${e.venue}</div>` : ""}
       ${feeLine(e)}
@@ -5072,6 +5072,7 @@ async function openTeamMemberEventsModal(member) {
     + `<div class="section-label" style="justify-content:space-between;">Past events (${past.length})${canPay && past.length ? `<button class="btn-ghost" id="memberOpenTeamPay" style="font-size:12px; padding:4px 10px;">Pay or correct in Team Pay</button>` : ""}</div>`
     + (past.length === 0 ? `<p class="muted small">No past events yet.</p>` : past.map((e) => rowHtml(e, false)).join(""));
   body.querySelector("#memberOpenTeamPay")?.addEventListener("click", () => { close(); openTeamPayFor(member.id); });
+  body.querySelectorAll(".member-open-event").forEach((b) => b.addEventListener("click", () => { close(); openEvent(b.dataset.leadId, "team"); }));
 
   // WhatsApp button is available whenever there's a phone number and at
   // least one upcoming event — for both admin and manager, not just
@@ -6251,7 +6252,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   const _prevScroll = _prevCard ? _prevCard.scrollTop : 0;
   const lead = LEADS.find((l) => l.id === leadId);
   const isAdmin = CURRENT_USER?.accessLevel === "admin";
-  const [assignments, tempArtists, leadExpenses, myReimbursements, myOwnFee, tempArtistDirectory, allMusicians, allDocs, travelCtx, travelLegsAll, pendingAll] = await Promise.all([
+  const [assignments, tempArtists, leadExpenses, myReimbursements, myOwnFee, tempArtistDirectory, allMusicians, allDocs, travelCtx, travelLegsAll, pendingAll, teamPayData] = await Promise.all([
     api(`/api/leads/${leadId}/assignments`),
     Promise.resolve([]),
     isAdmin ? api(`/api/expenses?leadId=${leadId}`) : Promise.resolve([]),
@@ -6263,6 +6264,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     api(`/api/travel-context`).catch(() => ({ busy: [] })),
     api(`/api/travel-legs`).catch(() => []),
     isAdmin ? api(`/api/reimbursements/pending`).catch(() => []) : Promise.resolve([]),
+    isAdmin && hasAccountsAccess() ? api("/api/team-pay").catch(() => null) : Promise.resolve(null),
   ]);
   const adminPending = pendingAll.filter((r) => r.lead_id === leadId);
   // Riders (Tech / Hospitality) — this event's own copy first, else the general library one.
@@ -6533,6 +6535,23 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
           <button class="btn-ghost full" id="addMemberInlineBtn" style="margin-top:10px;">+ Add a new person to the team list</button>
 
           ${isAdmin ? `
+            ${teamPayData ? (() => {
+              // Everyone owed something for this event (founders aren't), from the same figures as Team Pay.
+              const rows = teamPayData.artists.flatMap((a) => a.items.filter((i) => i.leadId === leadId).map((i) => ({ a, i })));
+              const noFee = (teamPayData.needsFee || []).filter((n) => n.leadId === leadId);
+              if (!rows.length && !noFee.length) return "";
+              const due = rows.filter((r) => !r.i.paid).reduce((t, r) => t + r.i.amount, 0);
+              return `<div class="card ev-card" data-tab="money">
+                <div class="section-label" style="margin-top:0; display:flex; justify-content:space-between;">Team payments<span>${due ? `<span style="color:var(--danger);">${inr(due)} to pay</span>` : rows.length ? `<span style="color:var(--success);">All paid ✓</span>` : ""}</span></div>
+                ${rows.map(({ a, i }) => `<div class="tp-ev-row">
+                  <span class="today-row-main"><b>${escH(a.name)}</b><span class="muted small">${i.kind === "reimbursement" ? "Reimbursement" : "Fee"}${i.paid ? ` · paid${i.paymentDate ? ` ${fmtDate(i.paymentDate)}` : ""}${i.mode ? ` · ${escH(i.mode)}` : ""}` : i.due ? " · due" : " · after the event"}</span></span>
+                  <b class="mono">${inr(i.amount)}</b>
+                  ${i.paid ? `<span class="tag" style="color:var(--success);">Paid</span>` : `<button class="btn-ghost ev-pay-artist" data-team-id="${escH(a.id)}">Pay</button>`}
+                </div>`).join("")}
+                ${noFee.map((n) => `<div class="tp-ev-row"><span class="today-row-main"><b>${escH(n.artist)}</b><span class="muted small" style="color:var(--danger);">Fee not set — enter it in the Team tab</span></span></div>`).join("")}
+                <button class="link small" id="evOpenTeamPay" style="margin-top:8px;">All artists in Team Pay ›</button>
+              </div>`;
+            })() : ""}
             <div class="section-label" style="margin-top:20px;">Other event expenses (travel, venue, decor, etc.)</div>
             <div id="otherExpensesList">
               ${otherExpenses.length === 0 ? `<p class="muted small">None added yet.</p>` : otherExpenses.map((e) => `
@@ -6910,10 +6929,10 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   }
 
   root.querySelector("#assignOpenTravelBtn")?.addEventListener("click", () => openTravelPlanModal(leadId));
-  root.querySelectorAll(".open-team-pay-btn").forEach((b) => b.addEventListener("click", () => {
-    root.innerHTML = "";
-    openTeamPayFor(b.dataset.teamId);
-  }));
+  // Team tab's "Pay" next to a fee, and the Money tab's Team payments: pay without leaving the event.
+  root.querySelectorAll(".open-team-pay-btn").forEach((b) => b.addEventListener("click", () => payArtistForEvent(b.dataset.teamId, leadId, "team")));
+  root.querySelectorAll(".ev-pay-artist").forEach((b) => b.addEventListener("click", () => payArtistForEvent(b.dataset.teamId, leadId, "money")));
+  root.querySelector("#evOpenTeamPay")?.addEventListener("click", () => { root.innerHTML = ""; openTeamPayFor(null); });
 
   // Ticking someone assigns them right away, so their WhatsApp / Copy link buttons
   // (which need the assignment's confirm link) appear immediately instead of only
@@ -8996,7 +9015,8 @@ async function renderAccounts(main) {
           </div>
         </div>
       `);
-      card.addEventListener("click", () => openLeadPaymentsModal(l.id));
+      // A booking opens its event on the Money tab — payments, expenses, team payments all in one place.
+      card.addEventListener("click", () => (isBookedEvent(l) && canAssignTeam() ? openEvent(l.id, "money") : openLeadPaymentsModal(l.id)));
       acctCards.appendChild(card);
     });
     if (shownBookings.length < filtered.length) {
@@ -9594,6 +9614,15 @@ async function openWrapUpModal(leadId) {
 // one go. Fees on events still to come can be ticked too, to pay an advance.
 let teamPayOpenArtist = null;
 
+// Pay an artist from inside an event: their Team Pay sheet with just this event ticked, then back here.
+async function payArtistForEvent(teamId, leadId, backTab = "money") {
+  let data;
+  try { data = await api("/api/team-pay"); } catch (err) { return alert(err.message); }
+  const artist = data.artists.find((a) => a.id === teamId);
+  if (!artist || !artist.items.some((i) => i.leadId === leadId)) return alert("There's no fee recorded for this artist on this event yet — enter it in the Team tab first.");
+  openArtistPayModal(artist, data, { onlyLeadId: leadId, onClose: async () => { await refreshLeads(); teamWindowState = { leadId, tab: backTab }; openAssignTeamModal(leadId); } });
+}
+
 function openTeamPayFor(artistId) {
   teamPayOpenArtist = artistId || null;
   currentTab = "teampay";
@@ -9680,7 +9709,7 @@ async function renderTeamPay(main) {
   }
 }
 
-function openArtistPayModal(artist, data) {
+function openArtistPayModal(artist, data, opts = {}) {
   const root = document.getElementById("modalRoot");
   const dueItems = artist.items.filter((i) => !i.paid && i.due);
   const laterItems = artist.items.filter((i) => !i.paid && !i.due);
@@ -9701,7 +9730,8 @@ function openArtistPayModal(artist, data) {
       </div>
     </div>`;
   };
-  const selected = new Set(dueItems.map((i) => i.id));
+  // Opened from an event: only that event's unpaid items start ticked (anything else can still be ticked).
+  const selected = new Set(opts.onlyLeadId ? artist.items.filter((i) => !i.paid && i.leadId === opts.onlyLeadId).map((i) => i.id) : dueItems.map((i) => i.id));
   const byId = Object.fromEntries(artist.items.map((i) => [i.id, i]));
   const firstName = artist.name.split(" ")[0];
   const digits = (artist.phone || "").replace(/\D/g, "");
@@ -9713,7 +9743,7 @@ function openArtistPayModal(artist, data) {
       ${i.kind === "fee" ? `<input type="number" min="1" inputmode="numeric" class="tp-amount" data-id="${escH(i.id)}" value="${i.amount}" aria-label="Fee for ${escH(title)}" />` : `<span class="mono tp-amount-fixed">${inr(i.amount)}</span>`}
     </label>`;
   };
-  const close = () => { root.innerHTML = ""; renderMain(); };
+  const close = () => { root.innerHTML = ""; if (opts.onClose) opts.onClose(); else renderMain(); };
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal-card" style="width:560px; max-width:96vw;">
@@ -9816,7 +9846,7 @@ function openArtistPayModal(artist, data) {
     }
   });
   // Correcting a paid amount reloads Team Pay with this artist open, so every total is redrawn.
-  const reopen = () => { teamPayOpenArtist = artist.id; root.innerHTML = ""; renderMain(); };
+  const reopen = () => { if (opts.onClose) return close(); teamPayOpenArtist = artist.id; root.innerHTML = ""; renderMain(); };
   root.querySelectorAll(".tp-edit").forEach((b) => b.addEventListener("click", () => {
     root.querySelector(`.tp-edit-box[data-box="${b.dataset.id}"]`).hidden = false;
     b.hidden = true;
