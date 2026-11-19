@@ -6202,6 +6202,14 @@ function sendBalanceReminder(lead, balance) {
 
 // The Overview, Money and Messages & files tabs of the Event window. What a login can't use is
 // left out; money only appears when the server sent money fields for this login.
+// A rider labelled for a band size ("Tech Rider — 6 pcs") is only offered on events of that size.
+// Events without a band size, and riders without a size in the label, see everything.
+function riderFitsBand(doc, lead) {
+  const m = /(\d+)\s*pcs/i.exec(doc.notes || "");
+  const pcs = Number(lead && lead.pcs);
+  return !m || !pcs || Number(m[1]) === pcs;
+}
+
 function eventHubHtml(lead) {
   const phone = lead.whatsapp_number || lead.phone || "";
   const facts = [packageName(lead.event_type), occasionLabel(lead), lead.guest_range ? `${lead.guest_range} guests` : "", lead.pcs ? `${lead.pcs} pcs` : ""].filter(Boolean).join(" · ");
@@ -6365,7 +6373,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   const adminPending = pendingAll.filter((r) => r.lead_id === leadId);
   // Riders (Tech / Hospitality) — this event's own copy first, else the general library one.
   const riderDocs = [];
-  allDocs.filter((d) => /rider/i.test(d.notes || "") && (!d.lead_id || d.lead_id === leadId))
+  allDocs.filter((d) => /rider/i.test(d.notes || "") && (!d.lead_id || d.lead_id === leadId) && riderFitsBand(d, lead))
     .sort((x, y) => (y.lead_id === leadId ? 1 : 0) - (x.lead_id === leadId ? 1 : 0))
     .forEach((d) => { if (!riderDocs.some((r) => (r.notes || "").trim().toLowerCase() === (d.notes || "").trim().toLowerCase())) riderDocs.push(d); });
   // Only musicians not already promoted into Team are offered here — once

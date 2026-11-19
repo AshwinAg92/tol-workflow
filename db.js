@@ -1310,6 +1310,30 @@ Warmly,
     await pool.query(`INSERT INTO message_templates (key, template, updated_at) VALUES ('shared_fare_owner_v1', '1', $1) ON CONFLICT (key) DO NOTHING`, [new Date().toISOString()]);
   }
 
+  // One-time: the standard 5 / 6 / 7 pcs Technical Riders (event manager version) in the Documents library.
+  // Replaces the older library copies in place (same document, new file) and labels them "Tech Rider — N pcs",
+  // so each event offers the one matching its band size. Copies already attached to an event are left alone.
+  // To ship newer riders later: drop the PDFs into seed/riders and bump the flag name.
+  const riderFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'tech_rider_pdfs_v2'")).rows[0];
+  if (!riderFlag) {
+    for (const n of [5, 6, 7]) {
+      const file = path.join(__dirname, "seed", "riders", `Technical Rider_${n} pcs.pdf`);
+      if (!fs.existsSync(file)) continue;
+      const data = fs.readFileSync(file), label = `Tech Rider — ${n} pcs`, name = `TOL Technical Rider - ${n} pcs.pdf`, now = new Date().toISOString();
+      const old = (await pool.query(`SELECT id FROM documents WHERE lead_id IS NULL AND travel_leg_id IS NULL
+        AND (notes = $1 OR original_name ILIKE $2 OR original_name ILIKE $3) ORDER BY uploaded_at DESC`,
+        [label, `%Technical%Rider%${n}pcs%`, `%Technical%Rider%${n} pcs%`])).rows;
+      if (old.length) {
+        await pool.query("UPDATE documents SET file_data = $1, original_name = $2, notes = $3, mime_type = 'application/pdf', uploaded_at = $4 WHERE id = $5", [data, name, label, now, old[0].id]);
+        if (old.length > 1) await pool.query("DELETE FROM documents WHERE id = ANY($1)", [old.slice(1).map((r) => r.id)]);
+      } else {
+        await pool.query("INSERT INTO documents (id, lead_id, original_name, notes, uploaded_at, mime_type, file_data) VALUES ($1, NULL, $2, $3, $4, 'application/pdf', $5)", [uuid(), name, label, now, data]);
+      }
+    }
+    console.log("Tech riders: 5 / 6 / 7 pcs PDFs updated in the Documents library");
+    await pool.query(`INSERT INTO message_templates (key, template, updated_at) VALUES ('tech_rider_pdfs_v2', '1', $1) ON CONFLICT (key) DO NOTHING`, [new Date().toISOString()]);
+  }
+
   const thankTplFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'thank_you_v2_applied'")).rows[0];
   if (!thankTplFlag) {
     const current = (await pool.query("SELECT template FROM message_templates WHERE key = 'thank_you'")).rows[0];

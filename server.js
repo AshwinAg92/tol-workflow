@@ -5678,6 +5678,10 @@ app.get("/event/:token", async (req, res) => {
   if (!s) return res.status(404).send(shell(`<h1>This link is no longer available</h1><p class="m">It may have expired or been replaced. Please ask Together, Out Loud for a fresh link.</p>`));
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [s.lead_id])).rows[0];
   const rider = (await pool.query("SELECT token FROM tech_riders WHERE lead_id = $1", [s.lead_id])).rows[0];
+  // The event-manager Technical Rider PDF for this band size: the event's own copy first, else the library one.
+  const riderPdf = (await pool.query(`SELECT id, notes FROM documents WHERE notes ILIKE '%tech%rider%' AND (lead_id = $1 OR lead_id IS NULL)
+    AND (notes !~* '[0-9]+\\s*pcs' OR $2::int IS NULL OR substring(notes from '([0-9]+)\\s*pcs')::int = $2::int)
+    ORDER BY (lead_id IS NOT NULL) DESC, uploaded_at DESC LIMIT 1`, [s.lead_id, /^\d+$/.test(String(lead.pcs || "").trim()) ? Number(lead.pcs) : null])).rows[0];
   const share = (await pool.query("SELECT * FROM travel_shares WHERE lead_id = $1 AND revoked = 0 AND expires_at > $2 ORDER BY created_at DESC LIMIT 1", [s.lead_id, new Date().toISOString()])).rows[0];
   const parts = share ? await tripPartsHtml(share) : null;
   const first = String(lead.first_name || lead.name || "").trim().split(/\s+/)[0];
@@ -5708,7 +5712,7 @@ app.get("/event/:token", async (req, res) => {
       <textarea class="f" id="cpReq" rows="3" placeholder="Anything at all">${v(lead.client_requests)}</textarea>
       <div style="margin-top:12px"><button class="btn" id="cpSave" type="button">Save details</button> <span class="m" id="cpMsg"></span></div>
     </form>
-    ${rider || drumsLine ? `<h2>${rider ? "Tech rider" : "Sound setup"}</h2><div class="c">${rider ? `<div>What our sound setup needs — please share it with your sound vendor.</div><div style="margin-top:10px"><a class="btn" href="/rider/${encodeURIComponent(rider.token)}" target="_blank" rel="noopener">🎛 Open tech rider</a></div>` : ""}${drumsLine ? `<div style="margin-top:${rider ? 10 : 0}px">${drumsLine}</div>` : ""}</div>` : ""}
+    ${rider || riderPdf || drumsLine ? `<h2>${rider || riderPdf ? "Tech rider" : "Sound setup"}</h2><div class="c">${riderPdf ? `<div>Stage, drums, power and hospitality — <b>please share it with your event manager</b>.</div><div style="margin-top:10px"><a class="btn" href="/api/documents/${encodeURIComponent(riderPdf.id)}/file" target="_blank" rel="noopener">📄 Technical rider (event manager)</a></div>` : ""}${rider ? `<div style="margin-top:${riderPdf ? 14 : 0}px">Sound, mics and monitors — <b>please share it with your sound vendor</b>.</div><div style="margin-top:10px"><a class="btn" href="/rider/${encodeURIComponent(rider.token)}" target="_blank" rel="noopener">🎛 Technical rider (sound vendor)</a></div>` : ""}${drumsLine ? `<div style="margin-top:${rider || riderPdf ? 12 : 0}px">${drumsLine}</div>` : ""}</div>` : ""}
     ${parts ? `<h2>Team travelling (${parts.people})</h2>${parts.idCards}<h2>Travel plan</h2>${parts.legCards || `<div class="c m">Travel plan will be shared shortly.</div>`}` : ""}
     ${clientHubHtml(req.params.token, parts ? parts.hubLegs : [], { base: "/event/" + encodeURIComponent(req.params.token), title: "Messages &amp; files", intro: "Write to us here — we reply on this page. You can also upload anything useful: tickets, itinerary, venue layout, song list.", labelHint: "What is this? e.g. Venue layout, song list" })}
 <script>
