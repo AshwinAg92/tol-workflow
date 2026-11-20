@@ -1314,7 +1314,7 @@ Warmly,
   // Replaces the older library copies in place (same document, new file) and labels them "Tech Rider — N pcs",
   // so each event offers the one matching its band size. Copies already attached to an event are left alone.
   // To ship newer riders later: drop the PDFs into seed/riders and bump the flag name.
-  const riderFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'tech_rider_pdfs_v2'")).rows[0];
+  const riderFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'tech_rider_pdfs_v3'")).rows[0];
   if (!riderFlag) {
     for (const n of [5, 6, 7]) {
       const file = path.join(__dirname, "seed", "riders", `Technical Rider_${n} pcs.pdf`);
@@ -1331,7 +1331,7 @@ Warmly,
       }
     }
     console.log("Tech riders: 5 / 6 / 7 pcs PDFs updated in the Documents library");
-    await pool.query(`INSERT INTO message_templates (key, template, updated_at) VALUES ('tech_rider_pdfs_v2', '1', $1) ON CONFLICT (key) DO NOTHING`, [new Date().toISOString()]);
+    await pool.query(`INSERT INTO message_templates (key, template, updated_at) VALUES ('tech_rider_pdfs_v3', '1', $1) ON CONFLICT (key) DO NOTHING`, [new Date().toISOString()]);
   }
 
   const thankTplFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'thank_you_v2_applied'")).rows[0];
