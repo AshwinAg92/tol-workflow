@@ -2570,6 +2570,10 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     if (attemptedRestricted) return res.status(403).json({ error: "You don't have permission to update those fields" });
   }
 
+  // A combo's price lives on its main date; another date can't hold one (it would never be counted).
+  if (lead.combo_group_id && !lead.is_combo_primary && [req.body.quoteAmount, req.body.finalAmount].some((v) => v != null && v !== "" && Number(v) > 0)) {
+    return res.status(400).json({ error: "This is one date of a combo — its price is kept on the combo's main date. Change it there." });
+  }
   // Amounts are Accounts-only: a manager can't set or change anything financial.
   if (!canSeeMoney(req.user) && ["quoteAmount", "finalAmount", "advance", "advanceDate", "rateType"].some((k) => req.body[k] !== undefined)) {
     return res.status(403).json({ error: "Amounts can only be changed with Accounts access" });
@@ -2724,6 +2728,11 @@ app.delete("/api/leads/:id", requireAuth, requireAdmin, async (req, res) => {
     return res.status(403).json({ error: "Completed events can't be deleted — they're a closed record of past business." });
   }
 
+  // Deleting the main date of a combo would take the combo's price and payments with it: hand them to the next date first.
+  if (lead.combo_group_id && lead.is_combo_primary) {
+    const next = (await pool.query("SELECT id FROM leads WHERE combo_group_id = $1 AND id <> $2 ORDER BY (stage = 'Cancelled') ASC, date ASC LIMIT 1", [lead.combo_group_id, lead.id])).rows[0];
+    if (next) await moveComboMain(lead.id, next.id);
+  }
   const assignmentIds = (await pool.query("SELECT id FROM event_assignments WHERE lead_id = $1", [req.params.id])).rows.map((r) => r.id);
   if (assignmentIds.length > 0) {
     await pool.query("DELETE FROM admin_notifications WHERE assignment_id = ANY($1::text[])", [assignmentIds]);
@@ -2739,6 +2748,7 @@ app.delete("/api/leads/:id", requireAuth, requireAdmin, async (req, res) => {
   await pool.query("DELETE FROM notifications WHERE lead_id = $1", [req.params.id]);
   await pool.query("DELETE FROM activity_log WHERE lead_id = $1", [req.params.id]);
   await pool.query("DELETE FROM leads WHERE id = $1", [req.params.id]);
+  await dissolveLoneCombo(lead.combo_group_id);
 
   res.status(204).end();
   logActivity(req, `Deleted event/lead: ${lead.name}`);
@@ -3430,8 +3440,8 @@ async function sectorDuplicateNames({ leadId, fromCity, toCity, departureAt, tea
     JOIN travel_leg_members ON travel_leg_members.leg_id = travel_legs.id
     JOIN team ON team.id = travel_leg_members.team_id
     WHERE travel_leg_members.team_id = ANY($1) AND ($2::text IS NULL OR travel_legs.id <> $2)
-      AND ${leadId ? "travel_legs.lead_id = $3" : "travel_legs.lead_id IS NULL AND LEFT(COALESCE(travel_legs.departure_at, ''), 10) = $3"}
-  `, [teamIds, excludeLegId || null, leadId || String(departureAt || "").slice(0, 10)]);
+      AND ${leadId ? "travel_legs.lead_id = ANY($3::text[])" : "travel_legs.lead_id IS NULL AND LEFT(COALESCE(travel_legs.departure_at, ''), 10) = $3"}
+  `, [teamIds, excludeLegId || null, leadId ? await comboLeadIds(leadId) : String(departureAt || "").slice(0, 10)]);
   return [...new Set(rows.filter((r) => norm(r.from_city) === f && norm(r.to_city) === t).map((r) => r.name))];
 }
 // Same place under different names: airport/station codes and old names count as the city.
@@ -4419,6 +4429,7 @@ app.get("/api/leads/:id/payments", requireAuth, requireSection("accounts"), asyn
 });
 
 app.post("/api/leads/:id/payments", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  req.params.id = await comboMainId(req.params.id); // a combo's payments always sit on its main date
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
   const { amount, date, mode, notes, type, status } = req.body;
@@ -5248,6 +5259,7 @@ app.delete("/api/team-id-docs/:docId", requireAuth, requireAdmin, async (req, re
 // database for this event). Guest ids look like "g:<temp_artist id>". Guests' IDs live on
 // the musician record (or on the team record if they were promoted to Team later).
 async function loadTravellers(leadId, ids) {
+  const leadIds = Array.isArray(leadId) ? leadId : [leadId]; // a combo passes all its dates
   let teamIds = ids.filter((x) => !String(x).startsWith("g:"));
   const guestIdsAll = ids.filter((x) => String(x).startsWith("g:")).map((x) => String(x).slice(2));
   // Old links may name guests that have since become normal team entries.
@@ -5259,7 +5271,7 @@ async function loadTravellers(leadId, ids) {
   const teamDocs = teamIds.length ? (await pool.query("SELECT id, team_id, label, original_name, mime_type FROM team_id_docs WHERE team_id = ANY($1) ORDER BY uploaded_at ASC", [teamIds])).rows : [];
   const guests = guestIds.length ? (await pool.query(
     `SELECT ta.id, ta.name, ta.description AS role, ta.phone, ta.musician_id, m.team_id AS musician_team_id
-     FROM temp_artists ta JOIN musicians m ON m.id = ta.musician_id WHERE ta.lead_id = $1 AND ta.id = ANY($2) AND ta.migrated_assignment_id IS NULL ORDER BY ta.name ASC`, [leadId, guestIds])).rows : [];
+     FROM temp_artists ta JOIN musicians m ON m.id = ta.musician_id WHERE ta.lead_id = ANY($1) AND ta.id = ANY($2) AND ta.migrated_assignment_id IS NULL ORDER BY ta.name ASC`, [leadIds, guestIds])).rows : [];
   const mids = guests.map((g) => g.musician_id);
   const mteams = guests.map((g) => g.musician_team_id).filter(Boolean);
   const guestDocs = guests.length ? (await pool.query(
@@ -5272,14 +5284,16 @@ async function loadTravellers(leadId, ids) {
 // Everything the "Send IDs & travel details" screen needs, in one call.
 app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, res) => {
   const leadId = req.params.id;
-  const [assigned, temps, legs, shares] = await Promise.all([
+  const combo = await comboLeadIds(leadId); // a combo is one trip: everyone on any of its dates, every journey
+  const [assignedAll, temps, legs, shares] = await Promise.all([
     pool.query(`SELECT team.id AS team_id, team.name, team.role, team.phone, event_assignments.status
                 FROM event_assignments JOIN team ON team.id = event_assignments.team_id
-                WHERE event_assignments.lead_id = $1 ORDER BY team.name ASC`, [leadId]),
-    pool.query("SELECT id, name, description, phone, musician_id FROM temp_artists WHERE lead_id = $1 AND migrated_assignment_id IS NULL", [leadId]),
-    pool.query("SELECT id, lead_id, booked_by, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time, group_id, trip_order FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [leadId]),
-    pool.query("SELECT token, team_ids, created_at, expires_at, revoked FROM travel_shares WHERE lead_id = $1 ORDER BY created_at DESC", [leadId]),
+                WHERE event_assignments.lead_id = ANY($1) ORDER BY team.name ASC, (event_assignments.status = 'declined') ASC`, [combo]),
+    pool.query("SELECT id, name, description, phone, musician_id FROM temp_artists WHERE lead_id = ANY($1) AND migrated_assignment_id IS NULL", [combo]),
+    pool.query("SELECT id, lead_id, booked_by, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time, group_id, trip_order FROM travel_legs WHERE lead_id = ANY($1) OR to_lead_id = ANY($1) OR from_lead_id = ANY($1) ORDER BY departure_at ASC NULLS LAST, created_at ASC", [combo]),
+    pool.query("SELECT token, team_ids, created_at, expires_at, revoked FROM travel_shares WHERE lead_id = ANY($1) ORDER BY created_at DESC", [combo]),
   ]);
+  const assigned = { rows: [...new Map(assignedAll.rows.map((r) => [r.team_id, r])).values()] }; // one row a person (accepted wins over declined)
   const teamIds = assigned.rows.map((r) => r.team_id);
   const legIds = legs.rows.map((l) => l.id);
   const [ids, members] = await Promise.all([
@@ -5288,7 +5302,7 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
   ]);
   const ticketRows = legIds.length ? (await pool.query("SELECT id, original_name, travel_leg_id FROM documents WHERE travel_leg_id = ANY($1) ORDER BY uploaded_at ASC", [legIds])).rows : [];
   const guestRows = temps.rows.filter((t) => t.musician_id);
-  const trav = guestRows.length ? await loadTravellers(leadId, guestRows.map((t) => "g:" + t.id)) : { guests: [] };
+  const trav = guestRows.length ? await loadTravellers(combo, guestRows.map((t) => "g:" + t.id)) : { guests: [] };
   res.json({
     team: [
       ...assigned.rows.map((r) => ({
@@ -5303,9 +5317,9 @@ app.get("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, re
       })),
     ],
     tempArtists: temps.rows.filter((t) => !t.musician_id).map((t) => t.name),
-    legs: orderLegs(legs.rows.filter((l) => l.mode !== "stay")).map((l) => ({ ...l, bookedElsewhere: l.lead_id !== leadId || l.booked_by === "other" || l.booked_by === "tol", bookedByTol: l.booked_by === "tol" && l.lead_id === leadId, memberIds: members.rows.filter((m) => m.leg_id === l.id).map((m) => m.team_id), tickets: ticketRows.filter((t) => t.travel_leg_id === l.id).map((t) => ({ id: t.id, name: t.original_name })) })),
+    legs: orderLegs(legs.rows.filter((l) => l.mode !== "stay")).map((l) => ({ ...l, bookedElsewhere: !combo.includes(l.lead_id) || l.booked_by === "other" || l.booked_by === "tol", bookedByTol: l.booked_by === "tol" && combo.includes(l.lead_id), memberIds: members.rows.filter((m) => m.leg_id === l.id).map((m) => m.team_id), tickets: ticketRows.filter((t) => t.travel_leg_id === l.id).map((t) => ({ id: t.id, name: t.original_name })) })),
     shares: shares.rows.map((s) => ({ token: s.token, teamIds: JSON.parse(s.team_ids || "[]"), createdAt: s.created_at, expiresAt: s.expires_at, revoked: !!s.revoked })),
-    clientUnread: Number((await pool.query("SELECT (SELECT COUNT(*) FROM travel_share_messages WHERE lead_id = $1 AND sender = 'client' AND read_by_team = 0) + (SELECT COUNT(*) FROM travel_share_files WHERE lead_id = $1 AND read_by_team = 0) AS n", [leadId])).rows[0].n),
+    clientUnread: Number((await pool.query("SELECT (SELECT COUNT(*) FROM travel_share_messages WHERE lead_id = ANY($1) AND sender = 'client' AND read_by_team = 0) + (SELECT COUNT(*) FROM travel_share_files WHERE lead_id = ANY($1) AND read_by_team = 0) AS n", [combo])).rows[0].n),
   });
 });
 app.post("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, res) => {
@@ -5317,9 +5331,10 @@ app.post("/api/leads/:id/travel-share", requireAuth, requireAdmin, async (req, r
   const leadRow = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [leadId])).rows[0];
   if (!leadRow) return res.status(404).json({ error: "Event not found" });
   const lead = leadRow;
-  // Only people actually assigned to THIS event can ever be included.
-  const ok = (teamIds.length ? await pool.query("SELECT team_id FROM event_assignments WHERE lead_id = $1 AND team_id = ANY($2)", [leadId, teamIds]) : { rows: [] }).rows.map((r) => r.team_id);
-  const okGuests = guestIds.length ? (await pool.query("SELECT id FROM temp_artists WHERE lead_id = $1 AND musician_id IS NOT NULL AND id = ANY($2)", [leadId, guestIds])).rows : [];
+  // Only people actually assigned to this event (any date of a combo) can ever be included.
+  const combo = await comboLeadIds(leadId);
+  const ok = [...new Set((teamIds.length ? await pool.query("SELECT team_id FROM event_assignments WHERE lead_id = ANY($1) AND team_id = ANY($2)", [combo, teamIds]) : { rows: [] }).rows.map((r) => r.team_id))];
+  const okGuests = guestIds.length ? (await pool.query("SELECT id FROM temp_artists WHERE lead_id = ANY($1) AND musician_id IS NOT NULL AND id = ANY($2)", [combo, guestIds])).rows : [];
   if (ok.length !== teamIds.length || okGuests.length !== guestIds.length) return res.status(400).json({ error: "Someone selected isn't assigned to this event." });
   const token = crypto.randomBytes(24).toString("base64url");
   const now = new Date();
@@ -5366,11 +5381,11 @@ async function attachClientFileToLeg(fileId, legId) {
   const f = (await pool.query("SELECT * FROM travel_share_files WHERE id = $1", [fileId])).rows[0];
   if (!f) return { error: "File not found", status: 404 };
   const leg = (await pool.query("SELECT id, lead_id FROM travel_legs WHERE id = $1", [legId])).rows[0];
-  if (!leg || leg.lead_id !== f.lead_id) return { error: "That journey isn't part of this event.", status: 400 };
+  if (!leg || !(await comboLeadIds(f.lead_id)).includes(leg.lead_id)) return { error: "That journey isn't part of this event.", status: 400 };
   if (f.document_id) await pool.query("DELETE FROM documents WHERE id = $1", [f.document_id]).catch(() => {});
   const docId = uuid();
   await pool.query("INSERT INTO documents (id, lead_id, travel_leg_id, original_name, notes, uploaded_at, mime_type, file_data) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-    [docId, f.lead_id, leg.id, f.original_name, `Uploaded by ${f.uploader_name || "client"} via travel link${f.label ? " \u2014 " + f.label : ""}`, new Date().toISOString(), f.mime_type, f.file_data]);
+    [docId, leg.lead_id, leg.id, f.original_name, `Uploaded by ${f.uploader_name || "client"} via travel link${f.label ? " \u2014 " + f.label : ""}`, new Date().toISOString(), f.mime_type, f.file_data]);
   await pool.query("UPDATE travel_legs SET status = 'booked', updated_at = $1 WHERE id = $2 AND status = 'not_booked'", [new Date().toISOString(), leg.id]);
   await pool.query("UPDATE travel_share_files SET leg_id = $1, document_id = $2 WHERE id = $3", [leg.id, docId, fileId]);
   return { ok: true };
@@ -5384,9 +5399,10 @@ function notifyAdminOfClientActivity(message, leadId, activityText) {
   try { logActivity({ user: null }, activityText, leadId); } catch (e) { /* non-fatal */ }
 }
 async function threadFor(leadId) {
+  const combo = await comboLeadIds(leadId); // a combo's dates share one conversation with the client
   const [messages, files] = await Promise.all([
-    pool.query("SELECT id, sender, sender_name, body, created_at, read_by_team FROM travel_share_messages WHERE lead_id = $1 ORDER BY created_at ASC", [leadId]),
-    pool.query("SELECT f.id, f.label, f.original_name, f.mime_type, f.uploader_name, f.uploaded_at, f.read_by_team, f.leg_id, f.document_id, l.mode AS leg_mode, l.from_city AS leg_from, l.to_city AS leg_to, l.departure_at AS leg_dep FROM travel_share_files f LEFT JOIN travel_legs l ON l.id = f.leg_id WHERE f.lead_id = $1 ORDER BY f.uploaded_at ASC", [leadId]),
+    pool.query("SELECT id, sender, sender_name, body, created_at, read_by_team FROM travel_share_messages WHERE lead_id = ANY($1) ORDER BY created_at ASC", [combo]),
+    pool.query("SELECT f.id, f.label, f.original_name, f.mime_type, f.uploader_name, f.uploaded_at, f.read_by_team, f.leg_id, f.document_id, l.mode AS leg_mode, l.from_city AS leg_from, l.to_city AS leg_to, l.departure_at AS leg_dep FROM travel_share_files f LEFT JOIN travel_legs l ON l.id = f.leg_id WHERE f.lead_id = ANY($1) ORDER BY f.uploaded_at ASC", [combo]),
   ]);
   return { messages: messages.rows, files: files.rows.map((f) => ({ ...f, leg_title: f.leg_id ? legTitle({ mode: f.leg_mode, from_city: f.leg_from, to_city: f.leg_to, departure_at: f.leg_dep }) : null })) };
 }
@@ -5472,8 +5488,9 @@ app.post("/api/leads/:id/client-thread/reply", requireAuth, requireAdmin, async 
   res.status(201).json({ ok: true });
 });
 app.post("/api/leads/:id/client-thread/read", requireAuth, requireAdmin, async (req, res) => {
-  await pool.query("UPDATE travel_share_messages SET read_by_team = 1 WHERE lead_id = $1", [req.params.id]);
-  await pool.query("UPDATE travel_share_files SET read_by_team = 1 WHERE lead_id = $1", [req.params.id]);
+  const combo = await comboLeadIds(req.params.id);
+  await pool.query("UPDATE travel_share_messages SET read_by_team = 1 WHERE lead_id = ANY($1)", [combo]);
+  await pool.query("UPDATE travel_share_files SET read_by_team = 1 WHERE lead_id = ANY($1)", [combo]);
   res.json({ ok: true });
 });
 app.get("/api/client-files/:fileId/file", requireAuth, requireAdmin, async (req, res) => {
@@ -5593,19 +5610,24 @@ function clientHubHtml(token, legs = [], opts = {}) {
 // link) and the conversation with us. Open until a week after the event; revocable; dies if the event is cancelled.
 async function loadClientPage(token) {
   if (!token || String(token).length < 16) return null;
-  const s = (await pool.query("SELECT cp.token, cp.lead_id, cp.revoked, l.date, l.stage FROM client_pages cp JOIN leads l ON l.id = cp.lead_id WHERE cp.token = $1", [String(token)])).rows[0];
-  if (!s || s.revoked || s.stage === "Cancelled") return null;
-  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(s.date || ""));
+  const s = (await pool.query("SELECT cp.token, cp.lead_id, cp.revoked FROM client_pages cp WHERE cp.token = $1", [String(token)])).rows[0];
+  if (!s || s.revoked) return null;
+  // A combo's page stays open while any of its dates is still on, until a week after the last one.
+  const dates = (await pool.query("SELECT date, stage FROM leads WHERE id = ANY($1) ORDER BY date ASC", [await comboLeadIds(s.lead_id)])).rows.filter((x) => x.stage !== "Cancelled");
+  if (!dates.length) return null;
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(dates[dates.length - 1].date || ""));
   if (m && new Date(`${m[1]}T23:59:59+05:30`).getTime() + 7 * 86400000 < Date.now()) return null;
   return s;
 }
 app.get("/api/leads/:id/client-page", requireAuth, requireAdmin, async (req, res) => {
+  req.params.id = await comboMainId(req.params.id); // one page per combo, on its main date
   const row = (await pool.query("SELECT token, created_at FROM client_pages WHERE lead_id = $1 AND revoked = 0 ORDER BY created_at DESC LIMIT 1", [req.params.id])).rows[0];
   const lead = (await pool.query("SELECT client_requests, client_updated_at FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Event not found" });
   res.json({ token: row ? row.token : null, createdAt: row ? row.created_at : null, clientRequests: lead.client_requests, clientUpdatedAt: lead.client_updated_at });
 });
 app.post("/api/leads/:id/client-page", requireAuth, requireAdmin, async (req, res) => {
+  req.params.id = await comboMainId(req.params.id);
   const lead = (await pool.query("SELECT name, stage FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Event not found" });
   if (!["Confirmed", "Completed"].includes(lead.stage)) return res.status(400).json({ error: "The client page is for confirmed events." });
@@ -5618,7 +5640,7 @@ app.post("/api/leads/:id/client-page", requireAuth, requireAdmin, async (req, re
   res.status(201).json({ token });
 });
 app.post("/api/leads/:id/client-page/revoke", requireAuth, requireAdmin, async (req, res) => {
-  await pool.query("UPDATE client_pages SET revoked = 1 WHERE lead_id = $1", [req.params.id]);
+  await pool.query("UPDATE client_pages SET revoked = 1 WHERE lead_id = ANY($1)", [await comboLeadIds(req.params.id)]);
   logActivity(req, "Turned off the client event page link", req.params.id);
   res.json({ ok: true });
 });
@@ -5651,15 +5673,28 @@ app.post("/event/:token/details", async (req, res) => {
   // Blank boxes never wipe what we already have; only what the client actually wrote is saved.
   const sets = [], vals = [], changed = [];
   const put = (col, v, label) => { if (v && v !== (lead[col] || "")) { vals.push(v); sets.push(`${col} = $${vals.length}`); changed.push(label); } };
+  // A combo: the venue goes on every date; each date has its own times.
+  const others = (await pool.query("SELECT id, date, venue, event_time, soundcheck_time FROM leads WHERE id = ANY($1) AND id <> $2 AND stage <> 'Cancelled'", [await comboLeadIds(s.lead_id), s.lead_id])).rows;
+  const perDate = req.body.times && typeof req.body.times === "object" ? req.body.times : {};
+  for (const o of others) {
+    const t = perDate[o.id] || {};
+    const oSets = [], oVals = [];
+    const oPut = (col, v, label) => { if (v && v !== (o[col] || "")) { oVals.push(v); oSets.push(`${col} = $${oVals.length}`); if (!changed.includes(label)) changed.push(label); } };
+    oPut("venue", venue, "venue");
+    oPut("event_time", cleanTime(t.eventTime), "event time");
+    oPut("soundcheck_time", cleanTime(t.soundcheckTime), "sound check time");
+    if (oSets.length) { oVals.push(o.id); await pool.query(`UPDATE leads SET ${oSets.join(", ")} WHERE id = $${oVals.length}`, oVals); }
+  }
+  const mine = perDate[s.lead_id] || {};
   put("venue", venue, "venue");
-  put("event_time", eventTime, "event time");
-  put("soundcheck_time", scTime, "sound check time");
+  put("event_time", cleanTime(mine.eventTime) || eventTime, "event time");
+  put("soundcheck_time", cleanTime(mine.soundcheckTime) || scTime, "sound check time");
   put("client_requests", notes, "special requests");
   const oldC = clientContactOf(lead);
   if ((cName || cPhone) && (!oldC || oldC.name !== cName || oldC.phone !== cPhone)) {
     vals.push(contactsWithClientContact(lead, { name: cName, phone: cPhone })); sets.push(`contacts = $${vals.length}`); changed.push("on-site contact");
   }
-  if (!sets.length) return res.json({ ok: true, changed: [] });
+  if (!sets.length && !changed.length) return res.json({ ok: true, changed: [] });
   vals.push(new Date().toISOString()); sets.push(`client_updated_at = $${vals.length}`);
   vals.push(s.lead_id);
   await pool.query(`UPDATE leads SET ${sets.join(", ")} WHERE id = $${vals.length}`, vals);
@@ -5677,20 +5712,25 @@ app.get("/event/:token", async (req, res) => {
   const s = await loadClientPage(req.params.token);
   if (!s) return res.status(404).send(shell(`<h1>This link is no longer available</h1><p class="m">It may have expired or been replaced. Please ask Together, Out Loud for a fresh link.</p>`));
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [s.lead_id])).rows[0];
-  const rider = (await pool.query("SELECT token FROM tech_riders WHERE lead_id = $1", [s.lead_id])).rows[0];
+  const comboIds = await comboLeadIds(s.lead_id);
+  const dates = (await pool.query("SELECT id, date, event_type, pcs, duration, event_time, soundcheck_time FROM leads WHERE id = ANY($1) AND stage <> 'Cancelled' ORDER BY date ASC", [comboIds])).rows;
+  const isCombo = dates.length > 1;
+  const rider = (await pool.query("SELECT token FROM tech_riders WHERE lead_id = ANY($1) ORDER BY (lead_id = $2) DESC LIMIT 1", [comboIds, s.lead_id])).rows[0];
   // The event-manager Technical Rider PDF for this band size: the event's own copy first, else the library one.
   const riderPdf = (await pool.query(`SELECT id, notes FROM documents WHERE notes ILIKE '%tech%rider%' AND (lead_id = $1 OR lead_id IS NULL)
     AND (notes !~* '[0-9]+\\s*pcs' OR $2::int IS NULL OR substring(notes from '([0-9]+)\\s*pcs')::int = $2::int)
     ORDER BY (lead_id IS NOT NULL) DESC, uploaded_at DESC LIMIT 1`, [s.lead_id, /^\d+$/.test(String(lead.pcs || "").trim()) ? Number(lead.pcs) : null])).rows[0];
-  const share = (await pool.query("SELECT * FROM travel_shares WHERE lead_id = $1 AND revoked = 0 AND expires_at > $2 ORDER BY created_at DESC LIMIT 1", [s.lead_id, new Date().toISOString()])).rows[0];
+  const share = (await pool.query("SELECT * FROM travel_shares WHERE lead_id = ANY($1) AND revoked = 0 AND expires_at > $2 ORDER BY created_at DESC LIMIT 1", [comboIds, new Date().toISOString()])).rows[0];
   const parts = share ? await tripPartsHtml(share) : null;
   const first = String(lead.first_name || lead.name || "").trim().split(/\s+/)[0];
   const occ = lead.occasion === "Other" ? lead.occasion_other : lead.occasion;
-  const rows = [
-    ["Date", lead.date ? fmtWall(String(lead.date).slice(0, 10)) : ""],
-    ["City", lead.city], ["Format", packageName(lead.event_type)], ["Occasion", occ], ["Guests", lead.guest_range],
-    ["Band", lead.pcs ? `${lead.pcs} musicians` : ""], ["Duration", lead.duration],
-  ].filter(([, v]) => v);
+  const rows = (isCombo
+    ? [...dates.map((d) => [fmtWall(String(d.date).slice(0, 10)), [packageName(d.event_type), d.pcs ? `${d.pcs} musicians` : "", d.duration].filter(Boolean).join(" · ")]),
+       ["City", lead.city], ["Occasion", occ], ["Guests", lead.guest_range]]
+    : [["Date", lead.date ? fmtWall(String(lead.date).slice(0, 10)) : ""],
+       ["City", lead.city], ["Format", packageName(lead.event_type)], ["Occasion", occ], ["Guests", lead.guest_range],
+       ["Band", lead.pcs ? `${lead.pcs} musicians` : ""], ["Duration", lead.duration]]
+  ).filter(([, v]) => v);
   const cc = clientContactOf(lead) || {};
   const v = (x) => escHtml(x || "");
   const drumsLine = lead.drums === "venue_kit" ? "🥁 Please arrange an acoustic drum kit through your sound vendor."
@@ -5704,8 +5744,9 @@ app.get("/event/:token", async (req, res) => {
     <form class="c" id="cpForm" onsubmit="return false">
       <label for="cpVenue">Venue name &amp; full address <span class="m">(a Google Maps link is fine too)</span></label>
       <textarea class="f" id="cpVenue" rows="2" placeholder="e.g. The Mayfair Lawns, Hill Cart Road, Siliguri">${v(lead.venue)}</textarea>
-      <div class="two"><div><label for="cpTime">Event start time</label><input class="f" id="cpTime" type="time" value="${v(lead.event_time)}"></div>
-      <div><label for="cpSc">Sound check time <span class="m">(if known)</span></label><input class="f" id="cpSc" type="time" value="${v(lead.soundcheck_time)}"></div></div>
+      ${(isCombo ? dates : [lead]).map((d) => `${isCombo ? `<div style="margin-top:12px;font-weight:bold">${escHtml(fmtWall(String(d.date).slice(0, 10)))} — ${escHtml(packageName(d.event_type))}</div>` : ""}
+      <div class="two"><div><label>Event start time</label><input class="f cp-time" data-lead="${escHtml(d.id)}" type="time" value="${v(d.event_time)}"></div>
+      <div><label>Sound check time <span class="m">(if known)</span></label><input class="f cp-sc" data-lead="${escHtml(d.id)}" type="time" value="${v(d.soundcheck_time)}"></div></div>`).join("")}
       <div class="two"><div><label for="cpCName">On-site contact on the day</label><input class="f" id="cpCName" placeholder="Name" value="${v(cc.name)}"></div>
       <div><label for="cpCPhone">&nbsp;</label><input class="f" id="cpCPhone" type="tel" placeholder="Phone" value="${v(cc.phone)}"></div></div>
       <label for="cpReq">Anything specific we should know? <span class="m">(songs, rituals, timings, dress code…)</span></label>
@@ -5720,7 +5761,8 @@ app.get("/event/:token", async (req, res) => {
   var base=${JSON.stringify("/event/" + encodeURIComponent(req.params.token))};
   var $=function(id){return document.getElementById(id)};
   $("cpSave").onclick=function(){
-    var body={venue:$("cpVenue").value,eventTime:$("cpTime").value,soundcheckTime:$("cpSc").value,contactName:$("cpCName").value,contactPhone:$("cpCPhone").value,requests:$("cpReq").value};
+    var times={}; document.querySelectorAll(".cp-time").forEach(function(i){times[i.getAttribute("data-lead")]={eventTime:i.value}}); document.querySelectorAll(".cp-sc").forEach(function(i){var k=i.getAttribute("data-lead"); times[k]=times[k]||{}; times[k].soundcheckTime=i.value});
+    var body={venue:$("cpVenue").value,times:times,contactName:$("cpCName").value,contactPhone:$("cpCPhone").value,requests:$("cpReq").value};
     $("cpSave").disabled=true; $("cpMsg").textContent="Saving…";
     fetch(base+"/details",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)})
       .then(function(r){return r.json().then(function(j){if(!r.ok) throw new Error(j.error||"Could not save"); return j;})})
@@ -5757,6 +5799,47 @@ async function comboLeadIds(leadId) {
 }
 // The one lead that carries acknowledgements and "sent" marks for a combo: its earliest date.
 async function travelAnchor(leadId) { return (await comboLeadIds(leadId))[0]; }
+// The combo's main event: the one carrying its price and payments (the primary; failing that, the earliest date).
+// The client event page and its conversation also live there.
+async function comboMainId(leadId) {
+  const r = (await pool.query(`SELECT id FROM leads WHERE id = $1 OR (combo_group_id IS NOT NULL AND combo_group_id = (SELECT combo_group_id FROM leads WHERE id = $1))
+    ORDER BY is_combo_primary DESC, date ASC, id ASC LIMIT 1`, [leadId])).rows[0];
+  return r ? r.id : leadId;
+}
+// Hand a combo's money (price, rate details, payments) and its client page/conversation from one date to another,
+// which becomes the main event. Used when the main date is deleted or cancelled while other dates go ahead.
+async function moveComboMain(fromId, toId) {
+  const from = (await pool.query("SELECT * FROM leads WHERE id = $1", [fromId])).rows[0];
+  const to = (await pool.query("SELECT * FROM leads WHERE id = $1", [toId])).rows[0];
+  if (!from || !to || !from.combo_group_id || from.combo_group_id !== to.combo_group_id || fromId === toId) return false;
+  const keep = (a, b) => (b == null || b === "" || Number(b) === 0 ? a : b); // the new main keeps anything it already had
+  await pool.query(`UPDATE leads SET is_combo_primary = 1, quote_amount = $2, final_amount = $3, advance = $4, advance_date = $5, rate_type = $6,
+    rate_note = $7, rate_inclusions = $8, balance_due_date = $9 WHERE id = $1`,
+    [toId, keep(from.quote_amount, to.quote_amount), keep(from.final_amount, to.final_amount), keep(from.advance, to.advance), keep(from.advance_date, to.advance_date),
+     keep(from.rate_type, to.rate_type), keep(from.rate_note, to.rate_note), keep(from.rate_inclusions, to.rate_inclusions), keep(from.balance_due_date, to.balance_due_date)]);
+  await pool.query("UPDATE leads SET is_combo_primary = 0, quote_amount = NULL, final_amount = NULL, advance = 0 WHERE id = $1", [fromId]);
+  await pool.query("UPDATE payments SET lead_id = $2 WHERE lead_id = $1", [fromId, toId]);
+  await pool.query("UPDATE client_pages SET lead_id = $2 WHERE lead_id = $1", [fromId, toId]);
+  await pool.query("UPDATE travel_share_messages SET lead_id = $2 WHERE lead_id = $1", [fromId, toId]);
+  await pool.query("UPDATE travel_share_files SET lead_id = $2 WHERE lead_id = $1", [fromId, toId]);
+  if (from.client_requests && !to.client_requests) await pool.query("UPDATE leads SET client_requests = $2 WHERE id = $1", [toId, from.client_requests]);
+  return true;
+}
+// A combo left with one date is just a normal event again.
+async function dissolveLoneCombo(groupId) {
+  if (!groupId) return;
+  const left = (await pool.query("SELECT id FROM leads WHERE combo_group_id = $1", [groupId])).rows;
+  if (left.length === 1) await pool.query("UPDATE leads SET combo_group_id = NULL, is_combo_primary = 0 WHERE id = $1", [left[0].id]);
+}
+// Main date cancelled while other dates go ahead: move the money to the earliest date still on.
+app.post("/api/leads/:id/combo-main", requireAuth, requireSection("leads"), requireAdmin, async (req, res) => {
+  const to = String((req.body || {}).to || "");
+  const ok = await moveComboMain(req.params.id, to);
+  if (!ok) return res.status(400).json({ error: "Those two dates aren't one combo." });
+  const l = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [to])).rows[0];
+  logActivity(req, `Combo's price and payments moved to the ${l.date} date`, to);
+  res.json({ ok: true });
+});
 // What an artist's plan for one event currently says (journeys + stays they are on). A change in any of it = a new hash.
 async function planHashFor(leadId, teamId) {
   const { rows } = await pool.query(`SELECT tl.id, tl.group_id, tl.trip_order, tl.mode, tl.from_city, tl.to_city, tl.departure_at, tl.arrival_at, tl.departure_time, tl.arrival_time, tl.status, tl.booking_ref, tl.preferred_service
@@ -5886,7 +5969,10 @@ async function buildTravelDesk(user) {
   let leads = (await pool.query("SELECT id, name, date, city, venue, event_type, combo_group_id, no_travel FROM leads WHERE stage = 'Confirmed' AND date >= $1 AND date <= $2 ORDER BY date ASC", [todayIst, horizon])).rows;
   if (scope) leads = leads.filter((l) => scope.has(l.id));
   if (!leads.length) return { events: [], needsAction: 0 };
-  const ids = leads.map((l) => l.id);
+  // Every date of an upcoming combo, past ones included: their journeys and crew are the same trip.
+  const comboKeys = [...new Set(leads.map((l) => l.combo_group_id).filter(Boolean))];
+  const comboAll = comboKeys.length ? (await pool.query("SELECT id, combo_group_id, date FROM leads WHERE combo_group_id = ANY($1) AND stage IN ('Confirmed', 'Completed') ORDER BY date ASC", [comboKeys])).rows : [];
+  const ids = [...new Set([...leads.map((l) => l.id), ...comboAll.map((x) => x.id)])];
   const crewRows = (await pool.query(`SELECT ea.lead_id, team.id AS team_id, team.name, team.base_city FROM event_assignments ea JOIN team ON team.id = ea.team_id WHERE ea.lead_id = ANY($1) AND ea.status <> 'declined'`, [ids])).rows.filter((c) => !adminTeams.has(c.team_id));
   const legs = (await pool.query("SELECT id, lead_id, to_lead_id, from_lead_id, mode, status, from_city, to_city, departure_at FROM travel_legs WHERE lead_id = ANY($1) OR to_lead_id = ANY($1) OR from_lead_id = ANY($1)", [ids])).rows;
   const mem = legs.length ? (await pool.query("SELECT leg_id, team_id FROM travel_leg_members WHERE leg_id = ANY($1)", [legs.map((l) => l.id)])).rows : [];
@@ -5901,7 +5987,10 @@ async function buildTravelDesk(user) {
   }
   for (const grp of groups) {
     const l = grp[0];
-    const gids = new Set(grp.map((x) => x.id));
+    const sibs = l.combo_group_id ? comboAll.filter((x) => x.combo_group_id === l.combo_group_id) : [];
+    const gids = new Set([...grp.map((x) => x.id), ...sibs.map((x) => x.id)]);
+    const allDates = [...new Set([...grp.map((x) => x.date), ...sibs.map((x) => x.date)])].sort();
+    const anchor = sibs.length ? sibs[0].id : l.id;
     const myLegs = legs.filter((x) => gids.has(x.lead_id) || gids.has(x.to_lead_id) || gids.has(x.from_lead_id)).map((x) => ({ ...x, team: mem.filter((m) => m.leg_id === x.id).map((m) => m.team_id).filter((t) => !adminTeams.has(t)) }))
       .filter((x) => adminTeams.size === 0 || x.team.length > 0 || !mem.some((m) => m.leg_id === x.id));
     const crewAll = crewRows.filter((c) => gids.has(c.lead_id));
@@ -5915,7 +6004,7 @@ async function buildTravelDesk(user) {
     let sent = 0, seen = 0;
     for (const t of people) {
       const hash = await planHashFor(l.id, t);
-      const sd = (await pool.query("SELECT plan_hash FROM travel_sends WHERE team_id = $1 AND lead_id = $2", [t, l.id])).rows[0];
+      const sd = (await pool.query("SELECT plan_hash FROM travel_sends WHERE team_id = $1 AND lead_id = $2", [t, anchor])).rows[0];
       if (sd && sd.plan_hash === hash) sent += 1;
       if ((await travelAckState(l.id, t)).state === "seen") seen += 1;
     }
@@ -5928,7 +6017,7 @@ async function buildTravelDesk(user) {
     else if (noTicket.length) { next = `Attach ${noTicket.length} ticket${noTicket.length > 1 ? "s" : ""}`; kind = "tickets"; }
     else if (!people.length && crew.length === 0) { next = "Assign the team"; kind = "plan"; }
     else if (!people.length && !needsTravel.length) { next = "Everyone is local — no travel needed"; kind = "done"; }
-    events.push({ leadId: l.id, name: l.name, noTravel: noTravel && !myLegs.length, date: l.date, dates: grp.map((x) => x.date), combo: grp.length > 1, city: l.city, daysLeft: days, crew: crew.length,
+    events.push({ leadId: l.id, name: l.name, noTravel: noTravel && !myLegs.length, date: l.date, dates: allDates, combo: allDates.length > 1, city: l.city, daysLeft: days, crew: crew.length,
       planned: noTravel || (missing.length === 0 && crew.length > 0), missing: missing.length, legs: myLegs.length, unbooked: unbooked.length, noTicket: noTicket.length, people: people.length, sent, seen,
       urgent: days <= 7 && (unbooked.length > 0 || missing.length > 0), next, kind, done: kind === "done" });
   }
@@ -6108,19 +6197,20 @@ async function tripPartsHtml(s) {
   const tok = encodeURIComponent(s.token);
   const allIds = JSON.parse(s.team_ids || "[]");
   const teamIds = allIds.filter((x) => !String(x).startsWith("g:"));
-  const trav = await loadTravellers(s.lead_id, allIds);
-  const ticketDocs = s.include_tickets ? (await pool.query("SELECT id, original_name, mime_type, travel_leg_id FROM documents WHERE travel_leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1) ORDER BY uploaded_at ASC", [s.lead_id])).rows : [];
+  const combo = await comboLeadIds(s.lead_id); // a combo is one trip
+  const trav = await loadTravellers(combo, allIds);
+  const ticketDocs = s.include_tickets ? (await pool.query("SELECT id, original_name, mime_type, travel_leg_id FROM documents WHERE travel_leg_id IN (SELECT id FROM travel_legs WHERE lead_id = ANY($1) OR to_lead_id = ANY($1) OR from_lead_id = ANY($1)) ORDER BY uploaded_at ASC", [combo])).rows : [];
   const [legs, members] = await Promise.all([
-    pool.query("SELECT id, lead_id, booked_by, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time, group_id, trip_order FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1 ORDER BY departure_at ASC NULLS LAST, created_at ASC", [s.lead_id]),
-    pool.query("SELECT travel_leg_members.leg_id, team.id AS team_id, team.name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $1 OR to_lead_id = $1 OR from_lead_id = $1)", [s.lead_id]),
+    pool.query("SELECT id, lead_id, booked_by, mode, from_city, to_city, departure_at, arrival_at, preferred_service, travel_class, food_included, departure_time, arrival_time, group_id, trip_order FROM travel_legs WHERE lead_id = ANY($1) OR to_lead_id = ANY($1) OR from_lead_id = ANY($1) ORDER BY departure_at ASC NULLS LAST, created_at ASC", [combo]),
+    pool.query("SELECT travel_leg_members.leg_id, team.id AS team_id, team.name FROM travel_leg_members JOIN team ON team.id = travel_leg_members.team_id WHERE leg_id IN (SELECT id FROM travel_legs WHERE lead_id = ANY($1) OR to_lead_id = ANY($1) OR from_lead_id = ANY($1))", [combo]),
   ]);
   legs.rows = orderLegs(legs.rows.filter((l) => l.mode !== "stay"));
-  const notYours = (l) => l.lead_id !== s.lead_id || l.booked_by === "other" || l.booked_by === "tol";
+  const notYours = (l) => !combo.includes(l.lead_id) || l.booked_by === "other" || l.booked_by === "tol";
   const legCards = legs.rows.map((l) => {
     const who = members.rows.filter((m) => m.leg_id === l.id && teamIds.includes(m.team_id)).map((m) => m.name);
     if (who.length === 0) return "";
     return `<div class="c"><b>${escHtml(l.mode ? l.mode[0].toUpperCase() + l.mode.slice(1) : "Travel")}</b> — ${escHtml(l.from_city || "?")} → ${escHtml(l.to_city || "?")}
-      ${notYours(l) ? `<div class="m" style="color:#1C7A80"><b>No need to book this one</b> — ${l.booked_by === "tol" && l.lead_id === s.lead_id ? "Team Together, Out Loud is booking it." : "it is being booked separately, so please skip it to avoid double booking."}</div>` : ""}
+      ${notYours(l) ? `<div class="m" style="color:#1C7A80"><b>No need to book this one</b> — ${l.booked_by === "tol" && combo.includes(l.lead_id) ? "Team Together, Out Loud is booking it." : "it is being booked separately, so please skip it to avoid double booking."}</div>` : ""}
       ${!notYours(l) && l.preferred_service ? `<div class="m">Please book: <b>${escHtml(l.preferred_service)}</b></div>` : ""}${!notYours(l) && l.travel_class ? `<div class="m">Class: ${escHtml(l.travel_class)}</div>` : ""}${notYours(l) ? "" : l.food_included === "included" ? `<div class="m">Food: included</div>` : l.food_included === "not_included" ? `<div class="m">Food: not included</div>` : ""}
       ${l.departure_at || l.departure_time ? `<div class="m">Depart: ${escHtml([l.departure_at ? fmtWall(String(l.departure_at).slice(0, 10)) : "", fmt12(l.departure_time)].filter(Boolean).join(", "))}</div>` : ""}${l.arrival_time ? `<div class="m">Arrive: ${escHtml(fmt12(l.arrival_time))}</div>` : ""}${l.arrival_at ? `<div class="m">Return: ${escHtml(fmtWall(String(l.arrival_at).slice(0, 10)))}</div>` : ""}
       <div style="margin-top:6px">Travelling: ${who.map(escHtml).join(", ")}</div>
@@ -6160,7 +6250,7 @@ app.get("/trip/:token/ticket/:docId", async (req, res) => {
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
   const s = await loadTravelShare(req.params.token);
   if (!s || !s.include_tickets) return res.status(404).send("Link no longer available");
-  const d = (await pool.query(`SELECT original_name, mime_type, file_data FROM documents WHERE id = $1 AND travel_leg_id IN (SELECT id FROM travel_legs WHERE lead_id = $2 OR to_lead_id = $2 OR from_lead_id = $2)`, [req.params.docId, s.lead_id])).rows[0];
+  const d = (await pool.query(`SELECT original_name, mime_type, file_data FROM documents WHERE id = $1 AND travel_leg_id IN (SELECT id FROM travel_legs WHERE lead_id = ANY($2) OR to_lead_id = ANY($2) OR from_lead_id = ANY($2))`, [req.params.docId, await comboLeadIds(s.lead_id)])).rows[0];
   if (!d || !d.file_data) return res.status(404).send("File not found");
   res.setHeader("Content-Type", d.mime_type || "application/octet-stream");
   res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(d.original_name)}"`);
@@ -6171,7 +6261,7 @@ app.get("/trip/:token/id/:docId", async (req, res) => {
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
   const s = await loadTravelShare(req.params.token);
   if (!s) return res.status(404).send("Link no longer available");
-  const trav = await loadTravellers(s.lead_id, JSON.parse(s.team_ids || "[]"));
+  const trav = await loadTravellers(await comboLeadIds(s.lead_id), JSON.parse(s.team_ids || "[]"));
   const allowed = new Set([...trav.team, ...trav.guests].flatMap((t) => t.docs.map((x) => x.id)));
   const d = allowed.has(req.params.docId) ? (await pool.query("SELECT original_name, mime_type, file_data FROM team_id_docs WHERE id = $1", [req.params.docId])).rows[0] : null;
   if (!d || !d.file_data) return res.status(404).send("File not found");

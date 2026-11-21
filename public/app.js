@@ -3093,6 +3093,20 @@ async function changeLeadStage(lead, newStage, { busy = () => {}, done = () => {
   if (newStage === "Confirmed") return openConfirmEventModal(lead);
   if (newStage === "Tentative") return openTentativeRateModal(lead);
   let cancellationReason, cancelDecision = null;
+  // The combo's main date is being cancelled but other dates go ahead: its price and payments move to the next date first.
+  if (newStage === "Cancelled" && lead.combo_group_id && comboMain(lead).id === lead.id) {
+    const next = comboDates(lead).find((x) => x.id !== lead.id);
+    if (next) {
+      if (!confirm(`${fmtDate(lead.date)} carries this combo's price and payments, and ${fmtDate(next.date)} is still on.\n\nOK — move the price and payments to ${fmtDate(next.date)}, then cancel only ${fmtDate(lead.date)}\nCancel — don't change anything`)) return done();
+      busy();
+      try {
+        await api(`/api/leads/${leadId}/combo-main`, { method: "POST", body: JSON.stringify({ to: next.id }) });
+        await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ stage: "Cancelled", cancellation_reason: "Combo date dropped (other date goes ahead)" }) });
+        await refreshLeads();
+      } catch (err) { alert(err.message); }
+      return done();
+    }
+  }
   if (newStage === "Cancelled") {
     const heldNow = hasAccountsAccess() && CURRENT_USER.accessLevel === "admin" ? (await moneyHeldFor(lead.id)).held : 0;
     cancelDecision = await openCancelEventModal(lead, heldNow, false);
@@ -3994,18 +4008,22 @@ function artistEventTravel(lead, teamId, legsAll) {
   const m = TEAM.find((x) => x.id === teamId);
   const base = m?.base_city || "";
   const moves = artistMoves(teamId, legsAll, base);
-  const D = lead.date;
+  // A combo is one trip: journeys saved on any of its dates belong here; arrival is judged against the first
+  // date, leaving against the last.
+  const dates = comboDates(lead);
+  const own = new Set(lead.combo_group_id ? LEADS.filter((x) => x.combo_group_id === lead.combo_group_id).map((x) => x.id) : [lead.id]);
+  const D = dates[dates.length - 1].date || lead.date, D0 = dates[0].date || lead.date;
   // An onward journey logged on this event that leaves after the event day (or from this event's city on the day) is a departure, not an arrival.
   // An older "Onward" entry logged on another event that ends in this event's city just before it is this event's arrival.
-  const arrivesHereLegacy = (x) => x.type === "onward" && x.leg.lead_id !== lead.id && !!lead.city && normCity(x.to) === normCity(lead.city) && x.date >= addDaysYmd(D, -4) && x.date <= D;
-  const leavesHere = (x) => x.type === "onward" && x.leg.lead_id === lead.id && normCity(x.to) !== normCity(lead.city)
+  const arrivesHereLegacy = (x) => x.type === "onward" && !own.has(x.leg.lead_id) && !!lead.city && normCity(x.to) === normCity(lead.city) && x.date >= addDaysYmd(D0, -4) && x.date <= D0;
+  const leavesHere = (x) => x.type === "onward" && own.has(x.leg.lead_id) && normCity(x.to) !== normCity(lead.city)
     && (x.date > D || (x.date === D && normCity(x.from) === normCity(lead.city)));
-  const goingIn = moves.filter((x) => x.leg.lead_id === lead.id && !x.derived && (x.type === "going" || x.type === "onward") && !leavesHere(x))
-    .concat(moves.filter((x) => x.leg.lead_id !== lead.id && !x.derived && ((x.leg.leg_type === "return_onward" && x.leg.to_lead_id === lead.id) || arrivesHereLegacy(x))));
-  const returnOut = moves.filter((x) => (x.leg.lead_id === lead.id && (x.type === "return" || x.derived))
+  const goingIn = moves.filter((x) => own.has(x.leg.lead_id) && !x.derived && (x.type === "going" || x.type === "onward") && !leavesHere(x))
+    .concat(moves.filter((x) => !own.has(x.leg.lead_id) && !x.derived && ((x.leg.leg_type === "return_onward" && own.has(x.leg.to_lead_id)) || arrivesHereLegacy(x))));
+  const returnOut = moves.filter((x) => (own.has(x.leg.lead_id) && (x.type === "return" || x.derived))
     || leavesHere(x)
-    || (x.leg.lead_id !== lead.id && x.leg.leg_type === "going_onward" && x.leg.from_lead_id === lead.id && !x.derived)
-    || (x.type === "onward" && x.leg.lead_id !== lead.id && x.date >= D && x.date <= addDaysYmd(D, 4) && !arrivesHereLegacy(x)));
+    || (!own.has(x.leg.lead_id) && x.leg.leg_type === "going_onward" && own.has(x.leg.from_lead_id) && !x.derived)
+    || (x.type === "onward" && !own.has(x.leg.lead_id) && x.date >= D && x.date <= addDaysYmd(D, 4) && !arrivesHereLegacy(x)));
   const posOn = (n) => { let c = base; moves.forEach((x) => { if (x.date <= n && x.to) c = x.to; }); return c; };
   const nights = [];
   const start = goingIn.length ? goingIn[0].date : "";
@@ -4015,14 +4033,29 @@ function artistEventTravel(lead, teamId, legsAll) {
     for (let n = start, guard = 0; n <= end && guard < 40; n = addDaysYmd(n, 1), guard++) {
       const c = posOn(n);
       // home = their base city, or wherever their first journey started (people type codes like NJP for Siliguri)
-      const isHome = c && ((base && normCity(c) === normCity(base)) || normCity(c) === normCity(goingIn[0].from));
+      const isHome = c && ((base && placeKey(c) === placeKey(base)) || placeKey(c) === placeKey(goingIn[0].from)); // NJP = Siliguri, Howrah = Kolkata
       if (c && !isHome) nights.push({ date: n, city: c });
     }
   }
-  const eventNight = start ? posOn(D) : (base || "");
+  const eventNight = start ? posOn(lead.date) : (base || "");
   const local = !!base && normCity(base) === normCity(lead.city) && goingIn.length === 0;
   return { member: m, base, goingIn, returnOut, nights, eventNight, local, missingReturn: goingIn.length > 0 && returnOut.length === 0 };
 }
+
+// ---- Combos: several dates, one booking ----
+// Every date of the lead's combo still going ahead (just the lead when it isn't a combo), earliest first.
+function comboDates(lead) {
+  if (!lead || !lead.combo_group_id) return lead ? [lead] : [];
+  const all = LEADS.filter((x) => x.combo_group_id === lead.combo_group_id && x.stage !== "Cancelled").sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  return all.length ? all : [lead];
+}
+// The date carrying the combo's price, payments and client page: the primary, failing that the earliest.
+function comboMain(lead) {
+  if (!lead || !lead.combo_group_id) return lead;
+  const all = LEADS.filter((x) => x.combo_group_id === lead.combo_group_id).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  return all.find((x) => x.is_combo_primary) || all[0] || lead;
+}
+const isComboSecondary = (lead) => !!(lead && lead.combo_group_id && comboMain(lead).id !== lead.id);
 
 // Same place under different names (airport/station codes) — must match the server's list.
 const CITY_ALIASES = {
@@ -4070,8 +4103,10 @@ function travelDoubleBookings(legsAll) {
 }
 
 function eventCrewIds(lead, legsAll, assignments) {
-  const ids = new Set(assignments.filter((a) => a.lead_id === lead.id && a.status !== "declined").map((a) => a.team_id));
-  legsAll.filter((l) => l.lead_id === lead.id).forEach((l) => (l.members || []).forEach((x) => ids.add(x.teamId)));
+  // A combo's travel plan covers everyone on any of its dates.
+  const own = new Set(comboDates(lead).map((x) => x.id).concat(lead.id));
+  const ids = new Set(assignments.filter((a) => own.has(a.lead_id) && a.status !== "declined").map((a) => a.team_id));
+  legsAll.filter((l) => own.has(l.lead_id)).forEach((l) => (l.members || []).forEach((x) => ids.add(x.teamId)));
   return [...ids];
 }
 
@@ -6505,7 +6540,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                 ["Timing", [lead.soundcheck_time ? `Sound check ${fmtTimeHM(lead.soundcheck_time)}` : "", lead.event_time ? `Event ${fmtTimeHM(lead.event_time)}` : ""].filter(Boolean).join(" · ") || notSet],
                 ["Duration", escH(lead.duration || "") || notSet],
                 ["📝 Client's notes", escH(String(lead.details || "").trim())],
-                ["💬 From the client's page", escH(String(lead.client_requests || "").trim())],
+                ["💬 From the client's page", escH(String((comboMain(lead) || lead).client_requests || "").trim())],
               ].filter(([, v]) => v).map(([k, v]) => `<div class="performer-event-row"><span class="muted small">${k}:</span> <span>${v}</span></div>`).join("");
             })()}
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
@@ -7088,11 +7123,16 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     const unchecked = [...root.querySelectorAll('input.assign-team-checkbox[data-team-id]:not(:checked)')].map((c) => c.dataset.teamId);
     try {
       const leaving = unchecked.filter((id) => byTeamId[id]);
-      // Journeys and stays of this event that someone being removed is still on.
-      const theirLegs = travelLegsAll.filter((l) => l.lead_id === leadId && (l.members || []).some((m) => leaving.includes(m.teamId)));
+      // Journeys and stays of this event (any date of a combo) that someone being removed is still on — unless
+      // they still play another date of the combo, which needs the same travel.
+      const thisLead = LEADS.find((x) => x.id === leadId);
+      const comboIdsHere = new Set(comboDates(thisLead).map((x) => x.id).concat(leadId));
+      const stillOnCombo = new Set((travelCtx.assignments || []).filter((a) => a.lead_id !== leadId && comboIdsHere.has(a.lead_id) && a.status !== "declined").map((a) => a.team_id));
+      const reallyLeaving = leaving.filter((id) => !stillOnCombo.has(id));
+      const theirLegs = travelLegsAll.filter((l) => comboIdsHere.has(l.lead_id) && (l.members || []).some((m) => reallyLeaving.includes(m.teamId)));
       let dropFromTravel = false;
       if (theirLegs.length) {
-        const who = leaving.filter((id) => theirLegs.some((l) => (l.members || []).some((m) => m.teamId === id))).map((id) => TEAM.find((m) => m.id === id)?.name || "Someone");
+        const who = reallyLeaving.filter((id) => theirLegs.some((l) => (l.members || []).some((m) => m.teamId === id))).map((id) => TEAM.find((m) => m.id === id)?.name || "Someone");
         const lines = theirLegs.map((l) => {
           const when = l.departure_at ? fmtDate(String(l.departure_at).slice(0, 10)) : "date not set";
           const what = l.mode === "stay" ? `Night stay in ${l.to_city || l.from_city || "?"}` : `${l.from_city || "?"} → ${l.to_city || "?"} (${TRAVEL_MODE_LABELS[l.mode] || "travel"})`;
@@ -7107,7 +7147,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       }
       if (dropFromTravel) {
         for (const l of theirLegs) {
-          await api(`/api/travel-legs/${l.id}`, { method: "PATCH", body: JSON.stringify({ teamIds: (l.members || []).map((m) => m.teamId).filter((id) => !leaving.includes(id)) }) });
+          await api(`/api/travel-legs/${l.id}`, { method: "PATCH", body: JSON.stringify({ teamIds: (l.members || []).map((m) => m.teamId).filter((id) => !reallyLeaving.includes(id)) }) });
         }
       }
       for (const teamId of unchecked) {
@@ -7363,6 +7403,9 @@ async function openClientPageModal(leadId) {
   await refreshLeads();
   let lead = LEADS.find((l) => l.id === leadId);
   if (!lead) return;
+  // A combo has one client page, on its main date; each date keeps its own times.
+  lead = comboMain(lead); leadId = lead.id;
+  const dates = comboDates(lead);
   const root = document.getElementById("modalRoot");
   let info, thread = { messages: [], files: [] }, draft = "";
   const load = async () => {
@@ -7371,7 +7414,7 @@ async function openClientPageModal(leadId) {
   try { await load(); } catch (err) { return alert(err.message); }
   const when = (iso) => { try { return new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
   const url = () => (info.token ? `${location.origin}/event/${info.token}` : "");
-  const waText = () => `Hi ${leadFirstName(lead)},\n\nHere's your event page for *${packageName(lead.event_type)} on ${fmtDate(lead.date)}*:\n${url()}\n\nIt has your event details and our tech rider. Please fill in the venue, timings and an on-site contact there — and message us any time on the same page.\n\nTogether, Out Loud`;
+  const waText = () => `Hi ${leadFirstName(lead)},\n\nHere's your event page for *${dates.map((d) => `${packageName(d.event_type)} on ${fmtDate(d.date)}`).join(" and ")}*:\n${url()}\n\nIt has your event details and our tech rider. Please fill in the venue, timings and an on-site contact there — and message us any time on the same page.\n\nTogether, Out Loud`;
   const clientContact = () => { try { const l = JSON.parse(lead.contacts || "null"); return Array.isArray(l) ? l.find((c) => c.fromClient) : null; } catch { return null; } };
   const close = () => { root.innerHTML = ""; };
   function render() {
@@ -7396,10 +7439,11 @@ async function openClientPageModal(leadId) {
               <p class="muted small" style="margin:0 0 6px;">Fill these yourself, or let the client fill them on their page — it's the same details either way.</p>
               <label style="margin-top:0;">Venue name &amp; address</label>
               <textarea id="cpfVenue" rows="2" placeholder="e.g. The Mayfair Lawns, Hill Cart Road, Siliguri">${escH(lead.venue || "")}</textarea>
+              ${dates.map((d) => `${dates.length > 1 ? `<div class="small" style="margin-top:8px; font-weight:600;">${fmtDate(d.date)} · ${escH(packageName(d.event_type))}</div>` : ""}
               <div class="row-2">
-                <div><label>Event time</label><input id="cpfTime" type="time" value="${escH(lead.event_time || "")}" /></div>
-                <div><label>Sound check</label><input id="cpfSc" type="time" value="${escH(lead.soundcheck_time || "")}" /></div>
-              </div>
+                <div><label>Event time</label><input class="cpf-time" data-lead="${escH(d.id)}" type="time" value="${escH(d.event_time || "")}" /></div>
+                <div><label>Sound check</label><input class="cpf-sc" data-lead="${escH(d.id)}" type="time" value="${escH(d.soundcheck_time || "")}" /></div>
+              </div>`).join("")}
               <div class="row-2">
                 <div><label>On-site contact</label><input id="cpfCName" placeholder="Name" value="${escH(cc.name || "")}" /></div>
                 <div><label>Phone</label><input id="cpfCPhone" type="tel" placeholder="Phone" value="${escH(cc.phone || "")}" /></div>
@@ -7437,10 +7481,16 @@ async function openClientPageModal(leadId) {
       list = list.filter((c) => !c.fromClient);
       if (name || phone) list.push({ role: "On-site contact", name, phone, fromClient: true });
       root.querySelector("#cpfMsg").textContent = "Saving…";
-      act(() => api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({
-        venue: v("#cpfVenue") || null, eventTime: v("#cpfTime") || null, soundcheckTime: v("#cpfSc") || null,
-        clientRequests: v("#cpfReq") || null, contacts: JSON.stringify(list),
-      }) })).then(() => { const m = root.querySelector("#cpfMsg"); if (m) m.textContent = "Saved ✓"; });
+      const timeOf = (cls, id) => (root.querySelector(`.${cls}[data-lead="${id}"]`)?.value || null);
+      act(async () => {
+        // The venue goes on every date of a combo; each date keeps its own times; contact and requests sit on the main date.
+        for (const d of dates) {
+          await api(`/api/leads/${d.id}`, { method: "PATCH", body: JSON.stringify({
+            venue: v("#cpfVenue") || null, eventTime: timeOf("cpf-time", d.id), soundcheckTime: timeOf("cpf-sc", d.id),
+            ...(d.id === leadId ? { clientRequests: v("#cpfReq") || null, contacts: JSON.stringify(list) } : {}),
+          }) });
+        }
+      }).then(() => { const m = root.querySelector("#cpfMsg"); if (m) m.textContent = "Saved ✓"; });
     });
     root.querySelector("#cpCreate")?.addEventListener("click", () => act(() => api(`/api/leads/${leadId}/client-page`, { method: "POST", body: "{}" })));
     root.querySelector("#cpNew")?.addEventListener("click", () => { if (confirm("Make a new link? The old one stops working.")) act(() => api(`/api/leads/${leadId}/client-page`, { method: "POST", body: JSON.stringify({ regenerate: true }) })); });
@@ -11272,6 +11322,8 @@ function openTentativeRateModal(lead) {
               ⚠️ ${conflict.name} is already ${conflict.stage} for ${fmtDate(lead.date)}. Double-check before holding another event the same day.
             </div>
           ` : ""}
+          ${isComboSecondary(lead) ? `<div class="muted small" style="background:#F3ECF8; color:#6B4488; padding:8px 10px; border-radius:6px; margin-bottom:10px;">🔗 One date of a combo — its rate is held on the main date (${fmtDate(comboMain(lead).date)}).</div>` : ""}
+          <div style="${isComboSecondary(lead) ? "display:none;" : ""}">
           <div class="muted small mono" style="margin-bottom:8px;">Quoted: ${lead.quote_amount ? inr(lead.quote_amount) : "—"}</div>
           <label>Rate held (₹, optional)</label>
           <input id="teAmount" type="number" value="${lead.final_amount || lead.quote_amount || ""}" placeholder="e.g. 145000" />
@@ -11279,6 +11331,7 @@ function openTentativeRateModal(lead) {
           ${rateInclusionsCheckboxesHtml("te", parseRateInclusions(lead.rate_inclusions))}
           <label style="margin-top:10px;">Anything else to note? (optional)</label>
           <input id="teRateNote" value="${lead.rate_note || ""}" placeholder="e.g. Hotel only for the lead artist, not the full band" />
+          </div>
         </div>
         <div class="modal-foot"><button class="btn-ghost" id="cancelModal">Cancel</button><button class="btn-primary" id="submitModal">Hold as Tentative</button></div>
       </div>
@@ -11295,7 +11348,7 @@ function openTentativeRateModal(lead) {
     try {
       await api(`/api/leads/${lead.id}`, {
         method: "PATCH",
-        body: JSON.stringify({
+        body: JSON.stringify(isComboSecondary(lead) ? { stage: "Tentative" } : {
           stage: "Tentative",
           finalAmount: finalAmount || null,
           rateInclusions: JSON.stringify(readRateInclusions(root, "te")),
@@ -11334,6 +11387,8 @@ function openConfirmEventModal(lead, rateHint) {
               <option value="${lead.alt_date}">${fmtDate(lead.alt_date)} (customer's alternative)</option>
             </select>
           ` : ""}
+          ${isComboSecondary(lead) ? `<div class="muted small" style="background:#F3ECF8; color:#6B4488; padding:8px 10px; border-radius:6px; margin-bottom:10px;">🔗 This is one date of a combo. Its price and payments are on the main date (${fmtDate(comboMain(lead).date)}), so there's nothing to enter here.</div>` : ""}
+          <div class="ce-money" style="${isComboSecondary(lead) ? "display:none;" : ""}">
           <div class="muted small mono" style="margin-bottom:8px;">Quoted: ${lead.quote_amount ? inr(lead.quote_amount) : "—"}</div>
           <label>Final closed rate (₹)</label>
           <input id="ceAmount" type="number" value="${lead.quote_amount || rateHint || ""}" placeholder="e.g. 145000" />
@@ -11356,6 +11411,7 @@ function openConfirmEventModal(lead, rateHint) {
           <label style="margin-top:10px;" for="ceBalanceDue">Balance due by</label>
           <input id="ceBalanceDue" type="date" value="${lead.balance_due_date || lead.date || ""}" data-no-clear />
           <div class="muted small" style="margin-top:2px;">Today reminds you to chase it from this date. Usually the event day.</div>
+          </div>
           <div class="section-label" style="margin-top:16px;">Event day (optional — fill now or later)</div>
           <div class="row-2">
             <div><label for="ceEventTime" style="margin-top:0;">Event time</label><input id="ceEventTime" type="time" value="${lead.event_time || ""}" /></div>
@@ -11386,8 +11442,11 @@ function openConfirmEventModal(lead, rateHint) {
       if (eventTime) eventDay.eventTime = eventTime;
       if (venue) eventDay.venue = venue;
       if (root.querySelector("#ceDrums").value) eventDay.drums = root.querySelector("#ceDrums").value;
-      await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify({ stage: "Confirmed", finalAmount: finalAmount || null, date: chosenDate, rateInclusions: JSON.stringify(readRateInclusions(root, "ce")), rateNote: root.querySelector("#ceRateNote").value.trim() || null, balanceDueDate: root.querySelector("#ceBalanceDue").value || null, ...eventDay }) });
-      const advanceAmount = root.querySelector("#ceAdvanceAmount").value;
+      const secondary = isComboSecondary(lead);
+      await api(`/api/leads/${lead.id}`, { method: "PATCH", body: JSON.stringify(secondary
+        ? { stage: "Confirmed", date: chosenDate, ...eventDay }
+        : { stage: "Confirmed", finalAmount: finalAmount || null, date: chosenDate, rateInclusions: JSON.stringify(readRateInclusions(root, "ce")), rateNote: root.querySelector("#ceRateNote").value.trim() || null, balanceDueDate: root.querySelector("#ceBalanceDue").value || null, ...eventDay }) });
+      const advanceAmount = secondary ? "" : root.querySelector("#ceAdvanceAmount").value;
       if (advanceAmount && Number(advanceAmount) > 0) {
         try {
           await api(`/api/leads/${lead.id}/payments`, {
@@ -11550,8 +11609,9 @@ function confirmationTermsLines(lead) {
 async function buildConfirmationPdfBase64(lead) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
-  const finalAmount = Number(lead.final_amount || lead.quote_amount || 0);
-  const received = Number(lead.received || 0);
+  const ml = comboMain(lead) || lead; // a combo's price and payments sit on its main date
+  const finalAmount = Number(ml.final_amount || ml.quote_amount || 0);
+  const received = Number(ml.received || 0);
   const isPheras = lead.event_type === "pheras";
   const ref = `TOL-${String(lead.date || "").replace(/-/g, "")}-${String(lead.id || "").replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase()}`;
   const { pageWidth, marginX } = await pdfLetterhead(doc, "BOOKING AGREEMENT", "Together, Out Loud - Performance booking confirmation");
@@ -11675,11 +11735,12 @@ async function openConfirmationMessageModal(lead) {
   let riderToken = null;
   try { riderToken = (await api(`/api/leads/${lead.id}/tech-rider`)).token || null; } catch (e) { riderToken = null; }
   const firstName = leadFirstName(lead) || "there";
-  const finalAmount = lead.final_amount || lead.quote_amount || 0;
-  const received = lead.received || 0;
+  const ml = comboMain(lead) || lead; // a combo's price and payments sit on its main date
+  const finalAmount = ml.final_amount || ml.quote_amount || 0;
+  const received = ml.received || 0;
   const outstanding = finalAmount - received;
   const isPheras = lead.event_type === "pheras";
-  const amountLine = lead.final_amount ? `\nTotal: ₹${Number(lead.final_amount).toLocaleString("en-IN")}` : "";
+  const amountLine = ml.final_amount ? `\nTotal: ₹${Number(ml.final_amount).toLocaleString("en-IN")}` : "";
   const tpl = MESSAGE_TEMPLATES.confirmed || TEMPLATE_META.confirmed.default;
   const pdfLink = await publishConfirmationPdf(lead);
   let message = fillTemplate(pdfLink ? tpl : (MESSAGE_TEMPLATES.confirmed ? tpl : TEMPLATE_META.confirmed.longDefault), {
@@ -12706,7 +12767,7 @@ function openEditLeadModal(leadId) {
             <div><label>State</label><input id="mState" value="${lead.state || ""}" placeholder="e.g. West Bengal" /></div>
             <div><label>Event date</label><input id="mDate" type="date" value="${lead.date || ""}" /></div>
           </div>
-          ${hasAccountsAccess() ? `<div class="row-2">
+          ${hasAccountsAccess() && !isComboSecondary(lead) ? `<div class="row-2">
             <div><label>Quoted amount (₹)</label><input id="mQuoteAmount" type="number" value="${lead.quote_amount || ""}" placeholder="e.g. 150000" /></div>
           </div>` : ""}
           <div class="row-2">
@@ -12721,7 +12782,8 @@ function openEditLeadModal(leadId) {
           <input id="mPcs" type="number" min="1" value="${lead.pcs || ""}" placeholder="e.g. 4" />
           <label>🥁 Drums</label>
           ${drumsSelectHtml("mDrums", lead.drums)}
-          ${hasAccountsAccess() && ["Tentative", "Confirmed", "Completed"].includes(lead.stage) ? `
+          ${isComboSecondary(lead) && hasAccountsAccess() ? `<p class="muted small" style="color:#6B4488;">🔗 Price and payments for this combo are on its main date (${fmtDate(comboMain(lead).date)}).</p>` : ""}
+          ${hasAccountsAccess() && !isComboSecondary(lead) && ["Tentative", "Confirmed", "Completed"].includes(lead.stage) ? `
             <label>${lead.stage === "Tentative" ? "Tentative rate held (₹)" : "Final confirmed amount (₹)"}</label>
             <input id="mFinalAmount" type="number" value="${lead.final_amount || ""}" placeholder="e.g. 150000" />
             <label style="margin-top:10px;">This rate is —</label>

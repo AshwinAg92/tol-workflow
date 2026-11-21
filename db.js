@@ -1334,6 +1334,44 @@ Warmly,
     await pool.query(`INSERT INTO message_templates (key, template, updated_at) VALUES ('tech_rider_pdfs_v3', '1', $1) ON CONFLICT (key) DO NOTHING`, [new Date().toISOString()]);
   }
 
+  // One-time: repair combo bookings left inconsistent (a date deleted, no main date, money on a non-main date).
+  // - A "combo" with one date left is a normal event again (it keeps its own price and payments).
+  // - Exactly one main date per combo: the one holding the money, else the earliest.
+  // - Payments and a price sitting on a non-main date move to the main date (only fills what the main is missing).
+  const comboFixFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'combo_repair_v1'")).rows[0];
+  if (!comboFixFlag) {
+    const groups = (await pool.query("SELECT DISTINCT combo_group_id g FROM leads WHERE combo_group_id IS NOT NULL")).rows.map((r) => r.g);
+    const fixed = [];
+    for (const g of groups) {
+      const ls = (await pool.query(`SELECT l.*, (SELECT COALESCE(SUM(amount), 0) FROM payments p WHERE p.lead_id = l.id) AS paid FROM leads l WHERE combo_group_id = $1 ORDER BY date ASC, id ASC`, [g])).rows;
+      if (ls.length === 1) {
+        await pool.query("UPDATE leads SET combo_group_id = NULL, is_combo_primary = 0 WHERE id = $1", [ls[0].id]);
+        fixed.push(`${ls[0].name} (${ls[0].date}): one-date combo made a normal event`);
+        continue;
+      }
+      const hasMoney = (l) => Number(l.final_amount || 0) > 0 || Number(l.quote_amount || 0) > 0 || Number(l.paid || 0) > 0;
+      const prims = ls.filter((l) => l.is_combo_primary);
+      const main = prims.find(hasMoney) || prims[0] || ls.find(hasMoney) || ls[0];
+      if (!main.is_combo_primary || prims.length !== 1) {
+        await pool.query("UPDATE leads SET is_combo_primary = CASE WHEN id = $1 THEN 1 ELSE 0 END WHERE combo_group_id = $2", [main.id, g]);
+        fixed.push(`${main.name}: main date set to ${main.date}`);
+      }
+      for (const o of ls) {
+        if (o.id === main.id || !hasMoney(o)) continue;
+        const moved = await pool.query("UPDATE payments SET lead_id = $2 WHERE lead_id = $1", [o.id, main.id]);
+        const fills = [];
+        for (const col of ["quote_amount", "final_amount"]) {
+          if (Number(o[col] || 0) > 0 && !(Number(main[col] || 0) > 0)) { await pool.query(`UPDATE leads SET ${col} = $1 WHERE id = $2`, [o[col], main.id]); main[col] = o[col]; fills.push(col); }
+        }
+        // Whatever was copied is cleared on the non-main date; a different price there (both set) is left for a person to settle.
+        for (const col of fills) await pool.query(`UPDATE leads SET ${col} = NULL WHERE id = $1`, [o.id]);
+        fixed.push(`${o.name} (${o.date}): ${moved.rowCount} payment(s)${fills.length ? " and the price" : ""} moved to the main date`);
+      }
+    }
+    if (fixed.length) console.log("Combo repair: " + fixed.join(" | "));
+    await pool.query(`INSERT INTO message_templates (key, template, updated_at) VALUES ('combo_repair_v1', $1, $2) ON CONFLICT (key) DO NOTHING`, [JSON.stringify(fixed), new Date().toISOString()]);
+  }
+
   const thankTplFlag = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'thank_you_v2_applied'")).rows[0];
   if (!thankTplFlag) {
     const current = (await pool.query("SELECT template FROM message_templates WHERE key = 'thank_you'")).rows[0];
