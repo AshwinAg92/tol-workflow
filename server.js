@@ -560,14 +560,14 @@ app.get("/api/feed/money", async (req, res) => {
       SELECT p.id, p.payment_date AS date, p.amount, p.type, p.payment_mode AS mode,
              l.id AS event_id, l.name AS event_name, l.date AS event_date, l.city
       FROM payments p LEFT JOIN leads l ON l.id = p.lead_id
-      WHERE p.status = 'received' AND COALESCE(p.payment_mode, '') <> 'Travel fare adjustment'
+      WHERE p.status = 'received' AND COALESCE(p.payment_mode, '') NOT IN ('Travel fare adjustment', 'Adjusted against fee')
       ORDER BY p.payment_date`)).rows;
     const outRows = (await pool.query(`
       SELECT e.id, COALESCE(e.payment_date, LEFT(e.created_at, 10)) AS date, e.amount, e.category, e.head, e.paid, e.paid_amount,
              l.id AS event_id, l.name AS event_name, l.date AS event_date, l.city
       FROM expenses e LEFT JOIN leads l ON l.id = e.lead_id
       LEFT JOIN shared_travel_costs s ON s.id = e.shared_cost_id
-      WHERE e.approved = 1 AND (e.team_id IS NULL OR NOT (e.team_id = ANY($1::text[])))
+      WHERE e.approved = 1 AND (e.team_id IS NULL OR NOT (e.team_id = ANY($1::text[]))) AND COALESCE(e.payment_mode, '') <> 'Adjusted against fee'
         AND (e.shared_cost_id IS NULL OR COALESCE(s.paid_by, 'us') = 'us')
       ORDER BY 2`, [founders])).rows;
     const shape = (r) => ({ ...r, amount: Number(r.amount) || 0 });
@@ -795,7 +795,8 @@ app.post("/api/team", requireAuth, requireCapability("manage_team"), async (req,
 });
 
 // ---------- Artist fee history: revisions with an "applicable from" date ----------
-const todayIST = () => new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+// Today in India (the business runs on IST; a UTC date is still yesterday before 5:30 AM).
+function todayIST() { return new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10); }
 const cleanFee = (v) => { if (v === null || v === undefined || v === "") return null; const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 0 ? n : undefined; };
 // A member who has rates but no history yet gets their current rates recorded as the "original" rate.
 async function ensureFeeBaseline(teamId) {
@@ -1482,7 +1483,7 @@ app.post("/api/leads", async (req, res) => {
   // Reject any enquiry for a date that's already passed — a past date can't
   // be booked, and letting it through just clutters the pipeline. Uses the
   // same UTC-date convention as the rest of the app for consistency.
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIST();
   if (date < today) {
     return res.status(400).json({ error: "That event date has already passed. Please choose today's date or a future date." });
   }
@@ -2155,7 +2156,7 @@ app.get("/api/website-traffic", requireAuth, requireAdmin, async (req, res) => {
 });
 
 app.get("/api/public/upcoming-events", async (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIST();
   const { rows } = await pool.query(`
     SELECT date, city, event_type, occasion FROM leads
     WHERE stage = 'Confirmed' AND date >= $1
@@ -2593,7 +2594,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     return res.status(403).json({ error: "Amounts can only be changed with Accounts access" });
   }
   if (req.body.advanceDate) {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayIST();
     if (req.body.advanceDate > today) return res.status(400).json({ error: "Advance received date can't be in the future" });
   }
 
@@ -2601,12 +2602,12 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   if (req.body.balanceDueDate !== undefined && !canSeeMoney(req.user)) return res.status(403).json({ error: "Payment dates can only be changed with Accounts access" });
 
   if (req.body.snoozeUntil) {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayIST();
     if (req.body.snoozeUntil <= today) return res.status(400).json({ error: "Snooze date must be a real future date, not today or earlier" });
   }
 
   if (req.body.stage === "Completed" && lead.stage !== "Completed") {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayIST();
     const effectiveDate = req.body.date || lead.date;
     if (!(effectiveDate < today)) {
       return res.status(400).json({ error: "Can't mark as Completed until the day after the event date — this happens automatically." });
@@ -2662,7 +2663,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
       autoMovedThreshold = autoCloseThreshold;
       values.push("Not Interested");
       updates.push(`stage = $${values.length}`);
-      const autoNote = `[Auto] Moved to Not Interested — ${autoCloseThreshold} follow-up${autoCloseThreshold === 1 ? "" : "s"} sent with no response (as of ${new Date().toISOString().slice(0, 10)}).`;
+      const autoNote = `[Auto] Moved to Not Interested — ${autoCloseThreshold} follow-up${autoCloseThreshold === 1 ? "" : "s"} sent with no response (as of ${todayIST()}).`;
       values.push(lead.notes ? `${autoNote}\n${lead.notes}` : autoNote);
       updates.push(`notes = $${values.length}`);
       if (!lead.not_interested_reason) {
@@ -3379,7 +3380,7 @@ app.get("/api/leads/:id/travel-legs", requireAuth, async (req, res) => {
 // A scoped manager only gets the events allotted to them. No money anywhere in this payload.
 app.get("/api/crew-status", requireAuth, requireCapability("assign_team"), async (req, res) => {
   const scope = isScopedManager(req.user) ? await assignedLeadIdSet(req.user) : null;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIST();
   const crew = (await pool.query(`
     SELECT ea.lead_id, ea.team_id, ea.status, t.name, t.role
     FROM event_assignments ea JOIN team t ON t.id = ea.team_id JOIN leads l ON l.id = ea.lead_id
@@ -4237,7 +4238,7 @@ app.post("/api/admin/clear-demo-data", requireAuth, requireAdmin, async (req, re
 
 // ---------- Team ----------
 app.get("/api/team", requireAuth, async (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIST();
   const assignments = (await pool.query(`
     SELECT event_assignments.team_id, leads.id, leads.name, leads.date
     FROM event_assignments
@@ -4450,7 +4451,7 @@ app.post("/api/leads/:id/payments", requireAuth, requireSection("accounts"), req
   const { amount, date, mode, notes, type, status } = req.body;
   if (!amount || Number(amount) <= 0) return res.status(400).json({ error: "Enter a valid amount" });
   if (!date) return res.status(400).json({ error: "Date is required" });
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIST();
   if (date > today) return res.status(400).json({ error: "Date can't be in the future" });
   // Named "client_reimbursement" (not just "reimbursement") to stay distinct
   // from the existing artist-expense reimbursement system in the expenses
@@ -4463,6 +4464,19 @@ app.post("/api/leads/:id/payments", requireAuth, requireSection("accounts"), req
   // received (e.g. the client paid it back on the spot).
   const finalStatus = finalType === "payment" ? "received" : (status === "received" ? "received" : "due");
   const id = uuid();
+  // The client paid one of our costs (e.g. arranged the photographer): it counts against our fee like a payment,
+  // and the cost is booked on the event as paid — no cash moves either way.
+  if (type === "fee_adjustment") {
+    const what = String(notes || "").trim().slice(0, 200);
+    if (!what) return res.status(400).json({ error: "Say what the client paid for — e.g. Photographer." });
+    const expId = uuid(), pid = uuid(), now = new Date().toISOString();
+    await pool.query(`INSERT INTO expenses (id, lead_id, head, amount, paid, paid_amount, notes, created_at, payment_date, payment_mode, category)
+      VALUES ($1, $2, $3, $4, 1, $4, $5, $6, $7, 'Adjusted against fee', 'expense')`, [expId, eventId, what, Number(amount), "Paid by the client, adjusted against our fee", now, date]);
+    await pool.query(`INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, type, status, created_at, expense_id)
+      VALUES ($1, $2, $3, $4, 'Adjusted against fee', $5, 'payment', 'received', $6, $7)`, [pid, req.params.id, Number(amount), date, what, now, expId]);
+    logActivity(req, `Adjusted against fee for ${lead.name}: ₹${Number(amount).toLocaleString("en-IN")} — ${what} (paid by the client)`, lead.id);
+    return res.status(201).json((await pool.query("SELECT * FROM payments WHERE id = $1", [pid])).rows[0]);
+  }
   // A reimbursement the client owes for something an artist paid out of their own pocket: the artist is owed it
   // too, in Team Pay with their fee. One entry does both, linked so they stay together.
   let paidById = null, paidByName = null;
@@ -4648,7 +4662,7 @@ app.post("/api/leads/:id/cancel-settlement", requireAuth, requireSection("accoun
   const notes = String(req.body.notes || "").slice(0, 500) || null;
   const refund = held - retained;
   await pool.query("DELETE FROM payments WHERE lead_id = $1 AND type = 'refund' AND status = 'due'", [lead.id]);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIST();
   if (refund > 0) {
     await pool.query("INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, type, status, created_at) VALUES ($1,$2,$3,$4,NULL,$5,'refund','due',$6)",
       [uuid(), lead.id, refund, today, notes, new Date().toISOString()]);
@@ -4747,8 +4761,8 @@ app.patch("/api/payments/:id", requireAuth, requireSection("accounts"), requireA
     if (status !== "paid" && status !== "due") return res.status(400).json({ error: "status must be 'paid' or 'due'" });
     const lead = (await pool.query("SELECT name FROM leads WHERE id = $1", [payment.lead_id])).rows[0];
     if (status === "paid") {
-      const d = date || new Date().toISOString().slice(0, 10);
-      if (d > new Date().toISOString().slice(0, 10)) return res.status(400).json({ error: "Date can't be in the future" });
+      const d = date || todayIST();
+      if (d > todayIST()) return res.status(400).json({ error: "Date can't be in the future" });
       await pool.query("UPDATE payments SET status = 'paid', payment_date = $1, payment_mode = $2, notes = COALESCE($3, notes) WHERE id = $4", [d, mode || null, notes ? String(notes).slice(0, 300) : null, payment.id]);
     } else {
       await pool.query("UPDATE payments SET status = 'due', payment_mode = NULL WHERE id = $1", [payment.id]);
@@ -4760,7 +4774,7 @@ app.patch("/api/payments/:id", requireAuth, requireSection("accounts"), requireA
   const { status, date, mode } = req.body;
   if (status !== "received" && status !== "due") return res.status(400).json({ error: "status must be 'received' or 'due'" });
   if (status === "received") {
-    const receivedDate = date || new Date().toISOString().slice(0, 10);
+    const receivedDate = date || todayIST();
     await pool.query("UPDATE payments SET status = 'received', payment_date = $1, payment_mode = $2 WHERE id = $3", [receivedDate, mode || null, payment.id]);
   } else {
     await pool.query("UPDATE payments SET status = 'due', payment_mode = NULL WHERE id = $1", [payment.id]);
@@ -4774,6 +4788,12 @@ app.delete("/api/payments/:id", requireAuth, requireSection("accounts"), require
   // A reimbursement an artist paid: removing it also removes what we owe them — unless we've already paid them
   // something for it, in which case that has to be undone in Team Pay first.
   const p = (await pool.query("SELECT p.expense_id, e.category, e.paid, e.paid_amount FROM payments p LEFT JOIN expenses e ON e.id = p.expense_id WHERE p.id = $1", [req.params.id])).rows[0];
+  if (p && p.expense_id && p.category === "expense") {
+    // an adjustment against the fee: the cost it booked goes with it
+    await pool.query("DELETE FROM payments WHERE id = $1", [req.params.id]);
+    await pool.query("DELETE FROM expenses WHERE id = $1 AND payment_mode = 'Adjusted against fee'", [p.expense_id]);
+    return res.status(204).end();
+  }
   if (p && p.expense_id && p.category === "reimbursement") {
     if (p.paid || Number(p.paid_amount) > 0) return res.status(400).json({ error: "The artist has already been paid for this in Team Pay. Undo that payment there first." });
     await pool.query("DELETE FROM payments WHERE id = $1", [req.params.id]);
@@ -4905,7 +4925,7 @@ app.post("/api/expenses", requireAuth, requireSection("accounts"), requireAdmin,
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
   `, [
     id, leadId || null, teamId || null, head, Number(amount), paid ? 1 : 0, notes || null, new Date().toISOString(),
-    paid ? (paymentDate || new Date().toISOString().slice(0, 10)) : (paymentDate || null),
+    paid ? (paymentDate || todayIST()) : (paymentDate || null),
     paymentMode || null, category, paid ? Number(amount) : 0,
   ]);
   if (billToClient && leadId && category === "expense") await billExpenseToClient(id);
@@ -4929,7 +4949,7 @@ app.patch("/api/expenses/:id", requireAuth, requireSection("accounts"), requireA
   // Stamp today's date automatically the moment something is marked paid, if no date was given.
   const resolvedPaymentDate = paymentDate !== undefined
     ? paymentDate
-    : (nowPaid && !exp.payment_date ? new Date().toISOString().slice(0, 10) : exp.payment_date);
+    : (nowPaid && !exp.payment_date ? todayIST() : exp.payment_date);
   const newAmount = amount !== undefined ? Number(amount) : Number(exp.amount);
   // paid_amount follows: marked paid = all of it; unpaid = none; a corrected amount on a paid item = the new amount.
   const newPaidAmount = nowPaid ? newAmount : (paid !== undefined && !paid ? 0 : Math.min(Number(exp.paid_amount || 0), newAmount));
@@ -4967,6 +4987,9 @@ app.patch("/api/expenses/:id", requireAuth, requireSection("accounts"), requireA
 app.delete("/api/expenses/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   const exp = (await pool.query("SELECT payout_id, paid_amount, paid FROM expenses WHERE id = $1", [req.params.id])).rows[0];
   if (exp && (exp.payout_id || (!exp.paid && Number(exp.paid_amount) > 0))) return res.status(400).json({ error: "This was paid through Team Pay. Undo that payment there before removing it." });
+  if ((await pool.query("SELECT 1 FROM payments WHERE expense_id = $1 AND payment_mode = 'Adjusted against fee'", [req.params.id])).rows.length) {
+    return res.status(400).json({ error: "This was adjusted against the client's fee — remove it in Payments & receipts instead." });
+  }
   await unbillExpense(req.params.id);
   await pool.query("DELETE FROM expenses WHERE id = $1", [req.params.id]);
   res.status(204).end();
@@ -5072,7 +5095,7 @@ app.post("/api/reimbursements/:id/approve", requireAuth, requireSection("account
   `, [
     amt,
     nowPaid,
-    nowPaid ? (paymentDate || new Date().toISOString().slice(0, 10)) : (paymentDate || null),
+    nowPaid ? (paymentDate || todayIST()) : (paymentDate || null),
     paymentMode || null,
     exp.id,
     nowPaid ? amt : 0,
@@ -6290,7 +6313,7 @@ app.get("/api/public/me/:token", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   const p = await loadArtistPortal(req.params.token);
   if (!p) return res.status(404).json({ error: "This link isn't valid — ask Team TOL for a fresh one." });
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIST();
   const events = p.rows.map((r) => {
     const sib = new Set([r.lead_id, ...(r.combo_group_id ? p.rows.filter((x) => x.combo_group_id === r.combo_group_id).map((x) => x.lead_id) : []), ...(r.combo_group_id ? p.comboSibs.filter((x) => x.combo_group_id === r.combo_group_id).map((x) => x.id) : [])]);
     const mine = orderLegs(p.legs.filter((l) => sib.has(l.lead_id) || sib.has(l.to_lead_id) || sib.has(l.from_lead_id))).map((l) => {
@@ -6873,7 +6896,7 @@ app.post("/api/my/cash", requireAuth, async (req, res) => {
   if (!CASH_KINDS.includes(kind)) return res.status(400).json({ error: "Pick a type" });
   if (!String(title || "").trim()) return res.status(400).json({ error: "Add a short title" });
   if (!Number.isFinite(amt) || amt <= 0) return res.status(400).json({ error: "Enter an amount above 0" });
-  const d = /^\d{4}-\d{2}-\d{2}$/.test(date || "") ? date : new Date().toISOString().slice(0, 10);
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(date || "") ? date : todayIST();
   const id = uuid();
   await pool.query("INSERT INTO personal_cash (id, user_id, kind, title, amount, entry_date, notes, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
     [id, req.user.id, kind, String(title).trim().slice(0, 120), amt, d, String(notes || "").slice(0, 500) || null, new Date().toISOString()]);
@@ -6885,7 +6908,7 @@ app.delete("/api/my/cash/:id", requireAuth, async (req, res) => {
 });
 
 app.get("/api/dashboard", requireAuth, async (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIST();
   const weekAhead = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
   // No Leads access (e.g. a manager): no pipeline, no totals, no outstanding —
@@ -7106,7 +7129,7 @@ async function sendBackupEmail(recipient) {
   const to = recipient || process.env.BACKUP_EMAIL || "togetheroutloudclub@gmail.com";
   if (!to) throw new Error("No recipient email configured.");
   const buffer = await buildBackupWorkbook();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIST();
   const attachments = [{ filename: `tol-backup-${today}.xlsx`, content: buffer }];
   // The complete, restorable copy (every table; uploaded files left out here to keep the email small).
   try {
@@ -7155,7 +7178,7 @@ async function runDailyBackupCheck() {
 app.get("/api/admin/backup", requireAuth, requireAdmin, async (req, res) => {
   try {
     const buffer = await buildBackupWorkbook();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayIST();
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="tol-backup-${today}.xlsx"`);
     res.send(buffer);
@@ -7180,7 +7203,7 @@ function backupTokenOrAdmin(req, res, next) {
 app.get("/api/admin/backup/full", backupTokenOrAdmin, async (req, res) => {
   try {
     const buffer = await buildFullBackup(pool, { includeFiles: true });
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayIST();
     res.setHeader("Content-Type", "application/gzip");
     res.setHeader("Content-Disposition", `attachment; filename="tol-full-backup-${today}.json.gz"`);
     res.send(buffer);

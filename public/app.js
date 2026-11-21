@@ -1,3 +1,5 @@
+// Today on this device (India), as YYYY-MM-DD. A UTC date is still yesterday before 5:30 AM IST.
+function todayYmd() { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
 // ---------- State ----------
 let CURRENT_USER = null;
 let CONFIG = { stages: [], packages: [], addons: [] };
@@ -29,7 +31,7 @@ let leadsDueOnly = false;
 let leadsNoAdvanceOnly = false;
 // Confirmed, still to happen, and nothing received yet (a combo's money sits on its primary event).
 function noAdvance(l) {
-  if (!l || l.stage !== "Confirmed" || !l.date || l.date < new Date().toISOString().slice(0, 10)) return false;
+  if (!l || l.stage !== "Confirmed" || !l.date || l.date < todayYmd()) return false;
   const prim = l.combo_group_id ? (l.is_combo_primary ? l : LEADS.find((x) => x.combo_group_id === l.combo_group_id && x.is_combo_primary)) : null;
   return !((prim || l).received > 0);
 }
@@ -108,7 +110,7 @@ function quoteExpiry(lead) {
 }
 function isDueToday(lead) {
   if (!OPEN_STAGES.includes(lead.stage)) return false;
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = todayYmd();
   if (lead.date && lead.date < todayStr && lead.stage !== "Tentative") return false;
   if (lead.snooze_until && lead.snooze_until > todayStr) return false;
   return !lead.last_followup_at || daysSince(lead.last_followup_at) >= 3 || !!quoteExpiry(lead);
@@ -710,7 +712,7 @@ function openCancelEventModal(lead, held, settleOnly) {
 function openRefundPaidModal(payment, leadName) {
   return new Promise((resolve) => {
     const root = document.getElementById("modalRoot");
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayYmd();
     root.innerHTML = `
       <div class="modal-overlay" id="overlay">
         <div class="modal-card" style="width:420px; max-width:96vw;">
@@ -1470,7 +1472,7 @@ async function downloadLedgerPDF(booking, payments, reimbursements = [], shareOp
   doc.setFont("helvetica", "italic");
   doc.setFontSize(8.3);
   doc.setTextColor(...PDF_COLORS.muted);
-  doc.text("Generated on " + fmtDate(new Date().toISOString().slice(0, 10)), marginX, y);
+  doc.text("Generated on " + fmtDate(todayYmd()), marginX, y);
   y += 14;
 
   pdfWarmClosing(doc, pageWidth, "We look forward to creating a memorable, soul-stirring experience with you.", y);
@@ -2388,7 +2390,7 @@ async function renderLeadsLog(main, skipRefresh) {
     await refreshLeads();
   }
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = todayYmd();
   const baseFiltered = LEADS
     // "All stages" is meant as "everything active" — Completed events, and
     // any other past-dated lead, would otherwise bury the actual pipeline.
@@ -2685,7 +2687,7 @@ async function renderLeadsLog(main, skipRefresh) {
               ${hasLeadsAccess() && hasAccountsAccess() ? `<button class="btn-ghost quote-lead-btn" data-lead-id="${l.id}" style="font-size:12px; padding:3px 10px;">\u21BB Re-quote</button>` : ""}</div>`;
           })()}
           ${hasLeadsAccess() && ["New", "Follow-up", "Interested", "Tentative"].includes(l.stage) ? (() => {
-            const todayStr = new Date().toISOString().slice(0, 10);
+            const todayStr = todayYmd();
             const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
             const isSnoozed = !!l.snooze_until && l.snooze_until > todayStr;
             const days = daysSince(l.last_followup_at);
@@ -3745,7 +3747,7 @@ function wireCalendarGrid(container) {
       const evs = d ? (eventsByDay[d] || []) : [];
       const dateStr = d ? `${calYear}-${String(calMonth).padStart(2, "0")}-${String(d).padStart(2, "0")}` : null;
       const blocked = dateStr ? isDateBlocked(dateStr) : null;
-      const todayStr = new Date().toISOString().slice(0, 10);
+      const todayStr = todayYmd();
       const canQuickAdd = !!d && !blocked && evs.length === 0 && dateStr >= todayStr && hasLeadsAccess() && hasAccountsAccess();
       calCells.appendChild(el(`
         <div class="cal-cell${d ? "" : " cal-cell-empty"}"${canQuickAdd ? ` data-quick-add="${dateStr}" title="Add an event on this date"` : ""}${blocked ? ` style="background:repeating-linear-gradient(45deg, #E5DFD1, #E5DFD1 6px, #DCD4C0 6px, #DCD4C0 12px);"` : canQuickAdd ? ` style="cursor:pointer;"` : ""}>
@@ -3871,7 +3873,7 @@ async function renderCalendar(main) {
   main.innerHTML = `<div class="view-head"><div><h2>Calendar</h2></div></div><p class="muted">Loading…</p>`;
   await refreshLeads();
   BLOCKED_DATES = await api("/api/blocked-dates").catch(() => BLOCKED_DATES);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmd();
   const upcoming = LEADS
     .filter((l) => (l.stage === "Confirmed" || l.stage === "Completed" || l.stage === "Tentative") && l.date >= today)
     .slice()
@@ -4458,7 +4460,7 @@ async function renderTravelCalendar(main) {
   const listEl = main.querySelector("#travelCalList");
   const eventsListEl = main.querySelector("#travelCalEvents");
   function redrawEvents() {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayYmd();
     const stColor = { accepted: "#1C7A80", pending: "#B6752C", declined: "#A6432B", cancel_requested: "#A6432B" };
     const upEvents = visibleEvents().filter((l) => l.date >= today).sort((a, b) => a.date.localeCompare(b.date));
     eventsListEl.innerHTML = upEvents.length === 0 ? `<p class="muted small">No upcoming events${travelCalSelectedIds === null ? "" : " for the selected people"}.</p>` : "";
@@ -4487,7 +4489,7 @@ async function renderTravelCalendar(main) {
 
   function redrawList() {
     redrawEvents();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayYmd();
     // Sort/filter by whichever date is actually set — a leg logged with only
     // a return date (no departure known yet) should still show up here.
     const upcoming = visibleLegs()
@@ -4854,7 +4856,7 @@ async function renderTeam(main, subTab = "team") {
           ${m.phone ? `<div><span class="muted">Phone:</span> ${escT(m.phone)}</div>` : ""}
           ${m.email ? `<div><span class="muted">Email:</span> ${escT(m.email)}</div>` : ""}
           ${m.base_city ? `<div><span class="muted">City:</span> \ud83d\udccd ${escT(m.base_city)}</div>` : ""}
-          ${(() => { const up = (m.fee_history || []).filter((f) => f.effective_from > new Date().toISOString().slice(0, 10)).sort((x, y) => x.effective_from.localeCompare(y.effective_from))[0]; return up ? `<div class="small" style="color:#B6752C;">Revised rate from ${fmtDate(up.effective_from)}: ${[up.local_fee ? "Local " + inr(up.local_fee) : "", up.outstation_fee ? "Outstation " + inr(up.outstation_fee) : ""].filter(Boolean).join(" · ")}</div>` : ""; })()}
+          ${(() => { const up = (m.fee_history || []).filter((f) => f.effective_from > todayYmd()).sort((x, y) => x.effective_from.localeCompare(y.effective_from))[0]; return up ? `<div class="small" style="color:#B6752C;">Revised rate from ${fmtDate(up.effective_from)}: ${[up.local_fee ? "Local " + inr(up.local_fee) : "", up.outstation_fee ? "Outstation " + inr(up.outstation_fee) : ""].filter(Boolean).join(" · ")}</div>` : ""; })()}
           ${(m.local_fee || m.outstation_fee) ? `<div><span class="muted">Rates:</span> ${m.local_fee ? `Local ${inr(m.local_fee)}` : ""}${m.local_fee && m.outstation_fee ? " \u00b7 " : ""}${m.outstation_fee ? `Outstation ${inr(m.outstation_fee)}` : ""}</div>` : ""}
           ${m.notes ? `<div><span class="muted">Notes:</span> ${escT(m.notes)}</div>` : ""}
           <div style="margin-top:4px;"><span class="muted">Upcoming shows (${m.activeShows.length}):</span> ${m.activeShows.length ? m.activeShows.map((s2) => escT(s2.name)).join(", ") : "none"}</div>
@@ -5148,7 +5150,7 @@ async function openTeamMemberEventsModal(member) {
   }
   const body = root.querySelector(".modal-body");
   if (!body) return; // modal was closed while loading
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmd();
   const upcoming = events.filter((e) => e.date >= today);
   const past = events.filter((e) => e.date < today && e.status !== "declined").reverse();
 
@@ -6068,12 +6070,13 @@ async function openLeadPaymentsModal(leadId) {
 
       <div class="row-2">
         <input id="lpAmount" type="number" placeholder="Amount ₹" />
-        <input id="lpDate" type="date" value="${new Date().toISOString().slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" />
+        <input id="lpDate" type="date" value="${todayYmd()}" max="${todayYmd()}" />
       </div>
       <div class="row-2" style="margin-top:8px;">
         <select id="lpType">
           <option value="payment">Payment received</option>
           <option value="client_reimbursement">Add a reimbursement (to the client's total)</option>
+          <option value="fee_adjustment">Adjusted against fee (client paid a cost for us)</option>
         </select>
         <select id="lpMode">
           <option value="">Mode —</option>
@@ -6100,10 +6103,15 @@ async function openLeadPaymentsModal(leadId) {
     const modeSelect = body.querySelector("#lpMode");
     function refreshPaymentFormFields() {
       const isReimbursement = typeSelect.value === "client_reimbursement";
-      notesInput.placeholder = isReimbursement ? "What's this reimbursement for? (e.g. Train and Cab)"
+      const isAdjust = typeSelect.value === "fee_adjustment";
+      notesInput.placeholder = isAdjust ? "What did the client pay for? (e.g. Photographer)"
+        : isReimbursement ? "What's this reimbursement for? (e.g. Train and Cab)"
         : modeSelect.value === "TDS" ? "TDS details (e.g. 194J, Form 16A awaited)"
         : "Bank account it was received from (e.g. HDFC - Gopi Gogoi)";
-      modeSelect.style.display = isReimbursement ? "none" : "";
+      modeSelect.style.display = isReimbursement || isAdjust ? "none" : "";
+      let hint = body.querySelector("#lpAdjustHint");
+      if (!hint) { hint = document.createElement("p"); hint.id = "lpAdjustHint"; hint.className = "muted small"; hint.style.margin = "6px 0 0"; notesInput.after(hint); }
+      hint.textContent = isAdjust ? "Comes off what the client owes, and is booked on this event as a cost the client paid. No cash moves, so TOL Money ignores it." : "";
       body.querySelector("#lpPaidByWrap").style.display = isReimbursement ? "" : "none";
     }
     typeSelect.addEventListener("change", refreshPaymentFormFields);
@@ -6185,7 +6193,8 @@ async function openLeadPaymentsModal(leadId) {
       // A reimbursement is simply a charge added to the client's total (kept as "due" internally);
       // a payment is money received. No splitting between the two — the balance is one number.
       const status = type === "client_reimbursement" ? "due" : "received";
-      const mode = type === "client_reimbursement" ? null : (body.querySelector("#lpMode").value || null);
+      const mode = type === "client_reimbursement" || type === "fee_adjustment" ? null : (body.querySelector("#lpMode").value || null);
+      if (type === "fee_adjustment" && !body.querySelector("#lpNotes").value.trim()) return alert("Say what the client paid for — e.g. Photographer.");
       const btn = body.querySelector("#lpAddBtn");
       btn.disabled = true;
       try {
@@ -6299,7 +6308,7 @@ function eventMoney(lead) {
 
 function sendBalanceReminder(lead, balance) {
   const due = lead.balance_due_date || lead.date;
-  const overdue = due && due < new Date().toISOString().slice(0, 10);
+  const overdue = due && due < todayYmd();
   const text = `Hi ${leadFirstName(lead) || "there"}, hope you're doing well! 🙏 A gentle reminder that the balance of ${inr(balance)} for your ${occasionPhrase(lead)} on ${fmtDate(lead.date)} ${overdue ? `was due on ${fmtDate(due)}` : `is due by ${fmtDate(due)}`}. Please let us know once it's done. Thank you!\n\nTogether, Out Loud`;
   goWhatsApp(`https://wa.me/${(lead.whatsapp_number || lead.phone).replace(/\D/g, "")}?text=${encodeURIComponent(text)}`);
 }
@@ -9090,7 +9099,7 @@ async function renderPanchang(main) {
   let data;
   try { data = await api("/api/panchang"); } catch (e) { main.innerHTML = `<div class="view-head"><div><h2>Wedding Dates</h2></div></div><p class="muted">Couldn't load: ${escH(e.message)}</p>`; return; }
   await refreshLeads();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmd();
   const dmap = new Map(data.dates.map((d) => [d.date, d]));
   const blockOf = (iso) => data.blocks.find((b) => iso >= b.from && iso <= b.to);
   const BOOKED = ["Confirmed", "Completed"], OPEN = ["New", "Follow-up", "Interested"];
@@ -9269,7 +9278,7 @@ async function renderAccounts(main) {
         </select>
         <input id="expCustomHead" placeholder="Custom expense name" style="display:none; flex:1; min-width:140px;" />
         <input id="expAmount" type="number" placeholder="Amount ₹" style="width:130px;" />
-        <input id="expDate" type="date" max="${new Date().toISOString().slice(0, 10)}" />
+        <input id="expDate" type="date" max="${todayYmd()}" />
         <select id="expMode">
           <option value="">Mode —</option>
           <option value="Cash">Cash</option>
@@ -9445,7 +9454,7 @@ async function renderAccounts(main) {
             <span class="mono" style="flex-shrink:0;">${inr(e.amount)}</span>
           </div>
           <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px;">
-            <input type="date" class="exp-date" data-exp-id="${e.id}" value="${e.payment_date || ""}" max="${new Date().toISOString().slice(0, 10)}" style="flex:1; min-width:130px;" />
+            <input type="date" class="exp-date" data-exp-id="${e.id}" value="${e.payment_date || ""}" max="${todayYmd()}" style="flex:1; min-width:130px;" />
             <select class="exp-mode" data-exp-id="${e.id}" style="width:100px;">
               <option value="">Mode —</option>
               <option value="Cash" ${e.payment_mode === "Cash" ? "selected" : ""}>Cash</option>
@@ -9500,7 +9509,7 @@ async function renderAccounts(main) {
           </div>
           <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px;">
             <input type="number" class="reimb-amount" data-reimb-id="${r.id}" value="${r.amount}" style="width:90px;" />
-            <input type="date" class="reimb-date" data-reimb-id="${r.id}" max="${new Date().toISOString().slice(0, 10)}" style="flex:1; min-width:130px;" />
+            <input type="date" class="reimb-date" data-reimb-id="${r.id}" max="${todayYmd()}" style="flex:1; min-width:130px;" />
             <select class="reimb-mode" data-reimb-id="${r.id}" style="width:100px;">
               <option value="">Mode —</option>
               <option value="Cash">Cash</option>
@@ -9582,7 +9591,7 @@ async function renderAccounts(main) {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(LEADS), "Leads");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(bookings), "Accounts");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expenses), "Expenses");
-    XLSX.writeFile(wb, `TOL-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `TOL-export-${todayYmd()}.xlsx`);
   });
 }
 
@@ -9786,7 +9795,7 @@ function todayCancelWindows(list) {
 }
 
 function todaySections(teamPay, wrapups, claims, cancelWins) {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = todayYmd();
   const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
   const upcomingWithin = (n) => LEADS
     .filter((l) => l.stage === "Confirmed" && l.date && l.date >= todayStr && l.date <= inDays(n))
@@ -10402,7 +10411,7 @@ async function renderDashboard(main) {
       ${calendarGridMarkup()}
     </div>
     ${(() => {
-      const todayStr = new Date().toISOString().slice(0, 10);
+      const todayStr = todayYmd();
       const eventsToday = data.upcomingEvents.filter((l) => l.date === todayStr);
       const followUpsOverdue = (data.pendingFollowUps || []).filter((l) => !l.last_followup_at || daysSince(l.last_followup_at) >= 3);
       if (eventsToday.length === 0 && followUpsOverdue.length === 0) return "";
@@ -10503,7 +10512,7 @@ async function renderDashboard(main) {
         <button class="btn-ghost" id="dashSeeTravelCalBtn" style="font-size:12px; padding:3px 8px;">See Travel Calendar</button>
       </div>
       ${(() => {
-        const today = new Date().toISOString().slice(0, 10);
+        const today = todayYmd();
         const mine = CURRENT_USER?.teamId
           ? travelLegs.filter((l) => l.members.some((m) => m.teamId === CURRENT_USER.teamId))
           : travelLegs;
@@ -10672,7 +10681,7 @@ async function renderDashboard(main) {
       }
       // Same-date check on what's in the CRM, since that's what a double booking looks like.
       const byDate = {};
-      LEADS.filter((l) => l.stage === "Confirmed" && l.date && l.date >= new Date().toISOString().slice(0, 10)).forEach((l) => { (byDate[l.date] = byDate[l.date] || []).push(l); });
+      LEADS.filter((l) => l.stage === "Confirmed" && l.date && l.date >= todayYmd()).forEach((l) => { (byDate[l.date] = byDate[l.date] || []).push(l); });
       const clashes = Object.entries(byDate).filter(([, ls]) => new Set(ls.map((l) => (l.name || "").trim().toLowerCase())).size > 1);
       const base = `✓ Google Calendar is up to date — ${r.created} added, ${r.updated} refreshed${r.failed ? `, ${r.failed} skipped (no date or error)` : ""}.`;
       if (clashes.length) {
@@ -10711,7 +10720,7 @@ async function renderDashboard(main) {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(LEADS), "Leads");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(bookings), "Accounts");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expenses), "Expenses");
-    XLSX.writeFile(wb, `TOL-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `TOL-export-${todayYmd()}.xlsx`);
   });
   const openEventForCurrentUser = (leadId, fallbackStage) => {
     const booked = LEADS.find((l) => l.id === leadId);
@@ -10871,7 +10880,7 @@ async function renderB2bContacts(main) {
         try {
           const msg = `Hi ${c.name.split(" ")[0]}, sharing our rate card with Together, Out Loud for future reference. Please find the PDF attached.\n\n📷 instagram.com/togetheroutloudclub\n🌐 togetheroutloud.in`;
           await downloadRateCardPDF(c.name, { text: msg, digitsOnly });
-          const today = new Date().toISOString().slice(0, 10);
+          const today = todayYmd();
           await api(`/api/b2b-contacts/${c.id}`, {
             method: "PATCH",
             body: JSON.stringify({ lastContactedAt: today, lastRateCardSentAt: today, lastRateCardSnapshot: currentRateCardSnapshot }),
@@ -10893,8 +10902,8 @@ async function renderB2bContacts(main) {
         const c = contacts.find((x) => x.id === btn.dataset.contactId);
         btn.disabled = true;
         try {
-          await api(`/api/b2b-contacts/${c.id}`, { method: "PATCH", body: JSON.stringify({ lastContactedAt: new Date().toISOString().slice(0, 10) }) });
-          c.last_contacted_at = new Date().toISOString().slice(0, 10);
+          await api(`/api/b2b-contacts/${c.id}`, { method: "PATCH", body: JSON.stringify({ lastContactedAt: todayYmd() }) });
+          c.last_contacted_at = todayYmd();
           renderList();
         } catch (err) {
           alert(err.message);
@@ -11526,7 +11535,7 @@ function openConfirmEventModal(lead, rateHint) {
           <label style="margin-top:10px;">Advance received now (optional)</label>
           <div class="row-2">
             <input id="ceAdvanceAmount" type="number" placeholder="e.g. 20000" />
-            <input id="ceAdvanceDate" type="date" value="${new Date().toISOString().slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" />
+            <input id="ceAdvanceDate" type="date" value="${todayYmd()}" max="${todayYmd()}" />
           </div>
           <select id="ceAdvanceMode" style="margin-top:8px;">
             <option value="">Mode —</option>
@@ -11767,7 +11776,7 @@ async function buildConfirmationPdfBase64(lead) {
 
   // Reference + date issued
   doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...PDF_COLORS.muted);
-  doc.text(`Reference: ${ref}`, marginX, y); doc.text(`Issued: ${fmtDate(new Date().toISOString().slice(0, 10))}`, pageWidth - marginX, y, { align: "right" });
+  doc.text(`Reference: ${ref}`, marginX, y); doc.text(`Issued: ${fmtDate(todayYmd())}`, pageWidth - marginX, y, { align: "right" });
   y += 8;
   text(`This agreement confirms the booking between Together, Out Loud ("TOL") and the Client named below for the performance described in this document.`, marginX, contentW, { size: 9.5 });
   y += 1;
@@ -12577,7 +12586,7 @@ function openNewLeadModal(opts = {}) {
             <label style="margin-top:8px;">Advance received now (optional)</label>
             <div class="row-2">
               <input id="mComboAdvanceAmount" type="number" placeholder="e.g. 20000" />
-              <input id="mComboAdvanceDate" type="date" value="${new Date().toISOString().slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" />
+              <input id="mComboAdvanceDate" type="date" value="${todayYmd()}" max="${todayYmd()}" />
             </div>
             <select id="mComboAdvanceMode" style="margin-top:8px;">
               <option value="">Mode —</option>
@@ -12746,7 +12755,7 @@ function openQuickConfirmModal() {
             </div>
             <div class="row-2">
               <div><label>Format</label><select id="qcType">${CONFIG.packages.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}</select></div>
-              <div><label>New event date</label><input id="qcDate" type="date" min="${new Date().toISOString().slice(0, 10)}" /></div>
+              <div><label>New event date</label><input id="qcDate" type="date" min="${todayYmd()}" /></div>
             </div>
             <div class="row-2">
               <div><label>City</label><input id="qcCity" /></div>
@@ -14452,7 +14461,7 @@ async function handleLogout() {
 async function renderMyRevenue(main) {
   main.innerHTML = `<div class="view-head"><div><h2>My Revenue</h2><p class="muted">Your own fees for every event — past and upcoming.</p></div></div><p class="muted">Loading…</p>`;
   const { items } = await api("/api/my/revenue");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmd();
   const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;");
   const withFee = items.filter((i) => i.amount != null);
   const sum = (arr) => arr.reduce((t, i) => t + Number(i.amount || 0), 0);
@@ -14532,7 +14541,7 @@ async function renderMyCash(main) {
   const KINDS = { income: ["Income", "#1C7A80"], expense: ["Expense", "#A6432B"], investment: ["Investment", "#6B4FA0"], savings: ["Savings", "#B6752C"] };
   const tot = (k) => rows.filter((r) => r.kind === k).reduce((t, r) => t + r.amount, 0);
   const inflow = tot("income"), out = tot("expense") + tot("investment") + tot("savings");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmd();
   main.innerHTML = `
     <div class="view-head"><div><h2>My Cash</h2><p class="muted">🔒 Private to you — nobody else, including admin, can see this. Track what comes in and where it goes.</p></div></div>
     <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px;">
@@ -14571,7 +14580,7 @@ async function renderMyCash(main) {
 async function renderMyEvents(main) {
   main.innerHTML = `<div class="view-head"><div><h2>My Events</h2><p class="muted">Your own assigned events — accept/decline, artist fee, and pay status.</p></div></div><p class="muted">Loading your events…</p>`;
   const allEvents = await api("/api/my/events");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmd();
   const sixtyDaysAgo = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
   const events = allEvents.filter((e) => e.date >= today);
   // Upcoming events need the full accept/decline workflow; past ones are just
@@ -14803,7 +14812,7 @@ function renderPerformerTabContent() {
   const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined", cancel_requested: "Cancellation requested" };
   const statusColor = { pending: "#B6752C", accepted: "#1C7A80", declined: "#A6432B", cancel_requested: "#B6752C" };
   const activeEvents = events.filter((e) => e.stage !== "Cancelled");
-  const today0 = new Date().toISOString().slice(0, 10);
+  const today0 = todayYmd();
   // "Your events" below is a flat upcoming list, not a browsable calendar, so
   // past/completed gigs are dropped here (the Calendar section above still
   // shows everything, since browsing past months there is legitimate).
