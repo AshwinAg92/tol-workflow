@@ -4863,6 +4863,7 @@ async function renderTeam(main, subTab = "team") {
           <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">
             <button class="btn-ghost" data-view-events="${m.id}" style="font-size:12px; padding:4px 9px;">\ud83d\udcc5 Events</button>
             ${hasAccountsAccess() && m.fee_history ? `<button class="btn-ghost" data-fee-history="${m.id}" style="font-size:12px; padding:4px 9px;">\ud83d\udcb0 Fee history</button>` : ""}
+            ${hasAccountsAccess() && CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost" data-pay-history="${m.id}" style="font-size:12px; padding:4px 9px;">🧾 Payments</button>` : ""}
             ${canAssignTeam() ? `<button class="btn-ghost" data-artist-link="${m.id}" style="font-size:12px; padding:4px 9px;">\ud83d\udd17 My-events link</button>` : ""}
             ${canManage ? `<button class="btn-ghost" data-edit-member="${m.id}" style="font-size:12px; padding:4px 9px;">Edit</button>` : ""}
             ${canManage && !teamIdsWithLogin.has(m.id) ? `<button class="btn-ghost" data-add-login="${m.id}" style="font-size:12px; padding:4px 9px;">${m.kind === "freelance" ? "Give a login anyway" : "+ Add login"}</button>` : ""}
@@ -4880,6 +4881,7 @@ async function renderTeam(main, subTab = "team") {
     card.querySelector(`[data-view-events="${m.id}"]`).addEventListener("click", () => openTeamMemberEventsModal(m));
     const feeBtn = card.querySelector(`[data-fee-history="${m.id}"]`);
     if (feeBtn) feeBtn.addEventListener("click", () => openFeeHistoryModal(m, () => renderTeam(main)));
+    card.querySelector(`[data-pay-history="${m.id}"]`)?.addEventListener("click", () => openArtistPaymentHistory(m.id));
     const linkBtn = card.querySelector(`[data-artist-link="${m.id}"]`);
     if (linkBtn) linkBtn.addEventListener("click", () => openArtistLinkModal(m));
     card.dataset.search = [m.name, m.role, m.specialty, m.instruments, m.base_city, m.phone, m.email].filter(Boolean).join(" ").toLowerCase();
@@ -10109,6 +10111,54 @@ async function renderTeamPay(main) {
   }
 }
 
+// Every payment made to one artist: date, amount, how, and what each one covered (part payments shown as such),
+// plus anything marked paid by hand outside Team Pay. Read-only; paying and undoing happen in the pay sheet.
+async function openArtistPaymentHistory(teamId, opts = {}) {
+  const root = document.getElementById("modalRoot");
+  const member = TEAM.find((m) => m.id === teamId);
+  root.innerHTML = `<div class="modal-overlay" id="overlay"><div class="modal-card"><div class="modal-body"><p class="muted">Loading…</p></div></div></div>`;
+  let data;
+  try { data = await api("/api/team-pay"); } catch (err) { root.innerHTML = ""; return alert(err.message); }
+  const a = data.artists.find((x) => x.id === teamId) || { name: member?.name || "Artist", items: [], payouts: [], owedNow: 0, upcoming: 0, paidTotal: 0 };
+  const covered = (p) => (p.covers && p.covers.length
+    ? p.covers.map((c) => ({ i: a.items.find((x) => x.id === c.expenseId), amount: c.amount })).filter((x) => x.i)
+    : a.items.filter((i) => i.payoutId === p.id).map((i) => ({ i, amount: i.amount })));
+  const byHand = a.items.filter((i) => i.paid && !i.payoutId && !a.payouts.some((p) => (p.covers || []).some((c) => c.expenseId === i.id)));
+  // One list, newest first: Team Pay payments and items marked paid by hand.
+  const entries = [
+    ...a.payouts.map((p) => ({ date: p.paidOn, amount: p.amount, how: [p.mode, p.reference ? `ref ${p.reference}` : ""].filter(Boolean).join(" · "), note: p.note, lines: covered(p) })),
+    ...byHand.map((i) => ({ date: i.paymentDate, amount: i.amount, how: [i.mode, "marked paid by hand"].filter(Boolean).join(" · "), lines: [{ i, amount: i.amount }] })),
+  ].sort((x, y) => String(y.date || "").localeCompare(String(x.date || "")));
+  const years = {};
+  entries.forEach((e) => { const y = String(e.date || "").slice(0, 4) || "—"; years[y] = (years[y] || 0) + e.amount; });
+  const close = () => { root.innerHTML = ""; if (opts.onClose) opts.onClose(); };
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal-card" style="width:560px; max-width:96vw;">
+        <div class="modal-head"><h3>🧾 Payment history — ${escH(a.name)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+        <div class="modal-body">
+          <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:10px;">
+            <div class="card summary-card summary-card-compact"><div class="muted">Paid so far</div><div class="mono big" style="color:var(--success);">${inr(a.paidTotal)}</div></div>
+            <div class="card summary-card summary-card-compact"><div class="muted">Owed now</div><div class="mono big" style="color:${a.owedNow ? "var(--danger)" : "inherit"};">${inr(a.owedNow)}</div></div>
+            <div class="card summary-card summary-card-compact"><div class="muted">Coming up</div><div class="mono big">${inr(a.upcoming)}</div></div>
+          </div>
+          ${Object.keys(years).length > 1 ? `<p class="muted small" style="margin:0 0 10px;">${Object.entries(years).sort((x, y) => y[0].localeCompare(x[0])).map(([y, t]) => `${y}: ${inr(t)}`).join(" · ")}</p>` : ""}
+          ${entries.length ? entries.map((e) => `
+            <div class="tp-history">
+              <div style="display:flex; justify-content:space-between; gap:8px; align-items:baseline;"><b class="mono">${inr(e.amount)}</b><span class="muted small">${e.date ? fmtDate(e.date) : "date not noted"}${e.how ? ` · ${escH(e.how)}` : ""}</span></div>
+              <div class="muted small">${e.lines.map(({ i, amount }) => escH(teamPayItemLabel(i).title) + (amount < i.amount ? ` — ${inr(amount)} of ${inr(i.amount)}` : "")).join("; ")}${e.note ? ` · ${escH(e.note)}` : ""}</div>
+            </div>`).join("") : `<p class="muted small">No payments to ${escH(a.name.split(" ")[0])} yet.</p>`}
+          <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;">
+            ${a.owedNow || a.upcoming ? `<button class="btn-primary" id="phPay">💸 Pay ${escH(a.name.split(" ")[0])}</button>` : ""}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  root.querySelector("#phPay")?.addEventListener("click", () => { root.innerHTML = ""; const full = data.artists.find((x) => x.id === teamId); if (full) openArtistPayModal(full, data, opts.onClose ? { onClose: opts.onClose } : {}); });
+}
+
 function openArtistPayModal(artist, data, opts = {}) {
   const root = document.getElementById("modalRoot");
   // What one payment covered: its own record of amounts per item (older payments: the items stamped with it).
@@ -10156,7 +10206,7 @@ function openArtistPayModal(artist, data, opts = {}) {
       <div class="modal-card" style="width:560px; max-width:96vw;">
         <div class="modal-head"><h3>Pay ${escH(artist.name)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
         <div class="modal-body" id="tpBody">
-          <div style="display:flex; justify-content:flex-end; margin-bottom:4px;"><button class="btn-ghost" id="tpAddDueBtn" style="font-size:12.5px; padding:4px 10px;">+ Add amount owed</button></div>
+          <div style="display:flex; justify-content:flex-end; gap:6px; margin-bottom:4px; flex-wrap:wrap;"><button class="btn-ghost" id="tpHistoryBtn" style="font-size:12.5px; padding:4px 10px;">🧾 Payment history</button><button class="btn-ghost" id="tpAddDueBtn" style="font-size:12.5px; padding:4px 10px;">+ Add amount owed</button></div>
           <div class="card" id="tpAddDue" hidden style="padding:10px 12px; margin-bottom:10px;">
             <div class="muted small" style="margin-bottom:6px;">Anything we owe ${escH(artist.name.split(" ")[0])} that isn't a fee on a line-up — e.g. old dues from before the CRM. It's added to what's due now.</div>
             <div class="row-2">
@@ -10281,6 +10331,7 @@ function openArtistPayModal(artist, data, opts = {}) {
   });
   // Correcting a paid amount reloads Team Pay with this artist open, so every total is redrawn.
   const reopen = () => { if (opts.onClose) return close(); teamPayOpenArtist = artist.id; root.innerHTML = ""; renderMain(); };
+  q("#tpHistoryBtn").addEventListener("click", () => openArtistPaymentHistory(artist.id, { onClose: () => openArtistPayModal(artist, data, opts) }));
   q("#tpAddDueBtn").addEventListener("click", () => { q("#tpAddDue").hidden = false; q("#tpAddDueBtn").hidden = true; q("#tpDueAmt").focus(); });
   q("#tpDueCancel").addEventListener("click", () => { q("#tpAddDue").hidden = true; q("#tpAddDueBtn").hidden = false; });
   q("#tpDueSave").addEventListener("click", async (e) => {
