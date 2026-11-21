@@ -5980,6 +5980,24 @@ async function openLeadPaymentsModal(leadId) {
     const grandTotal = total + totalReimbursements;
     const balance = grandTotal - received;
     const allReceipts = [...feePayments, ...reimbursementsReceived].sort((p, q) => String(p.payment_date || "").localeCompare(String(q.payment_date || "")));
+    // A reimbursement an artist paid: the client owes it to us, and we owe it to the artist (Team Pay, with their fee).
+    const reimbRow = (p) => {
+      const ex = p.expense_id ? expenses.find((e) => e.id === p.expense_id && e.category === "reimbursement") : null;
+      const artist = ex ? (TEAM.find((m) => m.id === ex.team_id)?.name || "the artist") : "";
+      const owed = !ex ? "" : ex.paid ? `<span style="color:#1C7A80;">paid back to ${escH(artist)} ✓</span>`
+        : Number(ex.paid_amount) > 0 ? `${inr(ex.paid_amount)} of ${inr(ex.amount)} paid back to ${escH(artist)}`
+        : `<span style="color:#B6752C;">owed to ${escH(artist)} in Team Pay</span>`;
+      return `
+          <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+            <div>
+              <div class="mono">${inr(p.amount)}</div>
+              <div class="muted small">${escH(p.notes || "Reimbursement")}</div>
+              ${owed ? `<div class="small" style="margin-top:2px;">💸 ${owed}</div>` : ""}
+            </div>
+            <button class="icon-btn" data-delete-payment="${p.id}" title="Remove">${ICON_X}</button>
+          </div>`;
+    };
+    const payerList = [...TEAM].filter((m) => !m.archived).sort((a, b) => a.name.localeCompare(b.name));
     body.innerHTML = `
       <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:8px; gap:8px;">
         <div class="card summary-card summary-card-compact"><div class="muted">Total</div><div class="mono big">${inr(grandTotal)}</div></div>
@@ -6012,15 +6030,7 @@ async function openLeadPaymentsModal(leadId) {
       <div class="section-label">Reimbursements${reimbursements.length ? ` — ${inr(totalReimbursements)}` : ""}</div>
       <p class="muted small" style="margin-top:-6px;">Travel or other costs billed to the client. They are added to the total above — just record whatever the client pays under "Payments received".</p>
       <div style="margin-bottom:10px;">
-        ${reimbursements.length === 0 ? `<p class="muted small">None recorded yet.</p>` : reimbursements.map((p) => `
-          <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-            <div>
-              <div class="mono">${inr(p.amount)}</div>
-              <div class="muted small">${p.notes || "Reimbursement"}</div>
-            </div>
-            <button class="icon-btn" data-delete-payment="${p.id}">${ICON_X}</button>
-          </div>
-        `).join("")}
+        ${reimbursements.length === 0 ? `<p class="muted small">None recorded yet.</p>` : reimbursements.map(reimbRow).join("")}
       </div>
 
       <div class="row-2">
@@ -6041,6 +6051,13 @@ async function openLeadPaymentsModal(leadId) {
         </select>
       </div>
       <input id="lpNotes" placeholder="Bank account it was received from (e.g. HDFC - Gopi Gogoi)" style="margin-top:8px;" />
+      <div id="lpPaidByWrap" style="margin-top:8px;">
+        <label class="muted small" for="lpPaidBy" style="display:block;">Who paid it?</label>
+        <select id="lpPaidBy">
+          <option value="">Team TOL</option>
+          ${payerList.map((m) => `<option value="${escH(m.id)}">${escH(m.name)} — we pay them back in Team Pay</option>`).join("")}
+        </select>
+      </div>
       <button class="btn-primary full" id="lpAddBtn" style="margin-top:10px;">Add</button>
     `;
 
@@ -6053,6 +6070,7 @@ async function openLeadPaymentsModal(leadId) {
         : modeSelect.value === "TDS" ? "TDS details (e.g. 194J, Form 16A awaited)"
         : "Bank account it was received from (e.g. HDFC - Gopi Gogoi)";
       modeSelect.style.display = isReimbursement ? "none" : "";
+      body.querySelector("#lpPaidByWrap").style.display = isReimbursement ? "" : "none";
     }
     typeSelect.addEventListener("change", refreshPaymentFormFields);
     modeSelect.addEventListener("change", refreshPaymentFormFields);
@@ -6095,7 +6113,7 @@ async function openLeadPaymentsModal(leadId) {
     }
     body.querySelectorAll("[data-delete-payment]").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        if (!confirm("Remove this payment?")) return;
+        if (!confirm("Remove this? (If an artist paid it, what we owe them goes too.)")) return;
         btn.disabled = true;
         try {
           await api(`/api/payments/${btn.dataset.deletePayment}`, { method: "DELETE" });
@@ -6130,6 +6148,7 @@ async function openLeadPaymentsModal(leadId) {
             amount: Number(amount), date, mode,
             type, status,
             notes: body.querySelector("#lpNotes").value.trim() || null,
+            paidByTeamId: type === "client_reimbursement" ? (body.querySelector("#lpPaidBy").value || null) : null,
           }),
         });
         await refreshLeads();
@@ -6721,7 +6740,6 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                       ${e.notes && e.category !== "reimbursement" ? `<div class="muted small" style="margin-top:2px;">📝 ${e.notes}</div>` : ""}
                     </div>
                     <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
-                      <button class="btn-ghost exp-bill-btn" data-expense-id="${e.id}" data-on="${e.billed_status ? 1 : 0}" ${e.billed_status === "received" ? "disabled" : ""} title="${e.billed_status ? "Stop billing this to the client" : "Bill this to the client"}" style="font-size:12px; padding:4px 8px;">${e.billed_status ? "Unbill" : "Bill client"}</button>
                       ${e.category === "reimbursement" ? "" : `<button class="btn-ghost edit-expense-payment-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 8px;">Edit</button>`}
                       <button class="btn-ghost remove-other-expense-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 9px; color:#A6432B;">🗑</button>
                     </div>
@@ -6734,20 +6752,15 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
               <input id="otherExpenseHead" placeholder="e.g. Travel, Venue rental, Decor" />
               <input id="otherExpenseAmount" type="number" placeholder="Amount ₹" />
             </div>
-            <label class="muted small" for="otherExpenseMode" style="display:block; margin-top:8px;">Who paid?</label>
-            <select id="otherExpenseMode">
+            <select id="otherExpenseMode" style="margin-top:8px;">
               <optgroup label="Team TOL">
                 <option value="UPI">We paid · UPI</option>
                 <option value="Cash">We paid · Cash</option>
                 <option value="Card">We paid · Card</option>
                 <option value="">We'll pay · not paid yet</option>
               </optgroup>
-              <optgroup label="A team member paid (we owe them, in Team Pay)">
-                ${payerOptions.map((m) => `<option value="member:${escH(m.id)}">${escH(m.name)}${lineupIds.has(m.id) ? "" : " (not on this line-up)"}</option>`).join("")}
-              </optgroup>
             </select>
-            <label style="display:flex; align-items:center; gap:8px; margin-top:8px; font-size:13.5px; cursor:pointer;"><input type="checkbox" id="otherExpenseBill" style="width:auto;" /> Client pays this back <span class="muted small">(added to what the client owes)</span></label>
-            <div id="otherExpenseSlipWrap" style="display:none; margin-top:6px;"><label class="muted small" style="display:block;">📎 Slip (optional)</label><input id="otherExpenseSlip" type="file" accept="image/*,application/pdf" /></div>
+            <p class="muted small" style="margin:6px 0 0;">Something an artist paid that the client pays back? Add it in 💰 Payments &amp; receipts → Add a reimbursement → Who paid.</p>
             <button class="btn-ghost full" id="addOtherExpenseBtn" style="margin-top:8px;">+ Add expense</button>
           ` : ""}
 

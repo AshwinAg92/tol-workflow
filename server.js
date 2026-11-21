@@ -4443,6 +4443,7 @@ app.get("/api/leads/:id/payments", requireAuth, requireSection("accounts"), asyn
 });
 
 app.post("/api/leads/:id/payments", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const eventId = req.params.id; // the date it happened on (a combo's payments still sit on its main date)
   req.params.id = await comboMainId(req.params.id); // a combo's payments always sit on its main date
   const lead = (await pool.query("SELECT * FROM leads WHERE id = $1", [req.params.id])).rows[0];
   if (!lead) return res.status(404).json({ error: "Lead not found" });
@@ -4462,12 +4463,27 @@ app.post("/api/leads/:id/payments", requireAuth, requireSection("accounts"), req
   // received (e.g. the client paid it back on the spot).
   const finalStatus = finalType === "payment" ? "received" : (status === "received" ? "received" : "due");
   const id = uuid();
+  // A reimbursement the client owes for something an artist paid out of their own pocket: the artist is owed it
+  // too, in Team Pay with their fee. One entry does both, linked so they stay together.
+  let paidById = null, paidByName = null;
+  if (finalType === "client_reimbursement" && req.body.paidByTeamId) {
+    const m = (await pool.query("SELECT id, name FROM team WHERE id = $1", [req.body.paidByTeamId])).rows[0];
+    if (!m) return res.status(400).json({ error: "Choose who paid it." });
+    paidById = m.id; paidByName = m.name;
+  }
+  let expenseId = null;
+  if (paidById) {
+    expenseId = uuid();
+    await pool.query(`INSERT INTO expenses (id, lead_id, team_id, head, amount, paid, notes, created_at, category, approved, requested_by)
+      VALUES ($1, $2, $3, $4, $5, 0, $6, $7, 'reimbursement', 1, $8)`,
+      [expenseId, eventId, paidById, `Reimbursement — ${paidByName}`, Number(amount), notes || "Reimbursement", new Date().toISOString(), await actorName(req.user)]);
+  }
   await pool.query(`
-    INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, type, status, created_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-  `, [id, req.params.id, Number(amount), date, finalStatus === "received" ? (mode || null) : null, notes || null, finalType, finalStatus, new Date().toISOString()]);
+    INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, type, status, created_at, expense_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+  `, [id, req.params.id, Number(amount), date, finalStatus === "received" ? (mode || null) : null, paidById ? `${notes || "Reimbursement"} (paid by ${paidByName})` : (notes || null), finalType, finalStatus, new Date().toISOString(), expenseId]);
   res.status(201).json((await pool.query("SELECT * FROM payments WHERE id = $1", [id])).rows[0]);
-  logActivity(req, `${finalType === "client_reimbursement" ? `Reimbursement ${finalStatus === "due" ? "logged as due" : "recorded"}` : "Payment recorded"} for ${lead.name}: ₹${Number(amount).toLocaleString("en-IN")}${finalStatus === "received" && mode ? ` via ${mode}` : ""}`, lead.id);
+  logActivity(req, `${finalType === "client_reimbursement" ? `Reimbursement ${finalStatus === "due" ? "logged as due" : "recorded"}` : "Payment recorded"} for ${lead.name}: ₹${Number(amount).toLocaleString("en-IN")}${finalStatus === "received" && mode ? ` via ${mode}` : ""}${paidByName ? ` — paid by ${paidByName}, owed to them in Team Pay` : ""}`, lead.id);
 });
 
 // ---------- Shared travel costs ----------
@@ -4702,6 +4718,15 @@ app.patch("/api/payments/:id", requireAuth, requireSection("accounts"), requireA
 });
 
 app.delete("/api/payments/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  // A reimbursement an artist paid: removing it also removes what we owe them — unless we've already paid them
+  // something for it, in which case that has to be undone in Team Pay first.
+  const p = (await pool.query("SELECT p.expense_id, e.category, e.paid, e.paid_amount FROM payments p LEFT JOIN expenses e ON e.id = p.expense_id WHERE p.id = $1", [req.params.id])).rows[0];
+  if (p && p.expense_id && p.category === "reimbursement") {
+    if (p.paid || Number(p.paid_amount) > 0) return res.status(400).json({ error: "The artist has already been paid for this in Team Pay. Undo that payment there first." });
+    await pool.query("DELETE FROM payments WHERE id = $1", [req.params.id]);
+    await pool.query("DELETE FROM expenses WHERE id = $1", [p.expense_id]);
+    return res.status(204).end();
+  }
   await pool.query("DELETE FROM payments WHERE id = $1", [req.params.id]);
   res.status(204).end();
 });
