@@ -6427,13 +6427,25 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   // this only ever contains their own fee (if any), scoped server-side —
   // never anyone else's.
   const feeExpenseByTeamId = {};
-  leadExpenses.forEach((e) => { if (e.team_id && !feeExpenseByTeamId[e.team_id]) feeExpenseByTeamId[e.team_id] = e; });
+  leadExpenses.forEach((e) => { if (e.team_id && e.category !== "reimbursement" && !feeExpenseByTeamId[e.team_id]) feeExpenseByTeamId[e.team_id] = e; });
   if (!isAdmin && myOwnFee && CURRENT_USER?.teamId) {
     feeExpenseByTeamId[CURRENT_USER.teamId] = myOwnFee;
   }
   // Anything logged against this event that isn't an artist fee — travel,
   // venue rental, decor, etc. — shown as its own list in the modal.
-  const otherExpenses = leadExpenses.filter((e) => !e.team_id);
+  // …plus anything a team member paid from their own pocket (owed back to them through Team Pay).
+  const otherExpenses = leadExpenses.filter((e) => !e.team_id || e.category === "reimbursement");
+  const lineupIds = new Set(assignments.filter((a) => a.status !== "declined").map((a) => a.team_id));
+  const payerOptions = [...TEAM].sort((a, b) => (lineupIds.has(b.id) - lineupIds.has(a.id)) || a.name.localeCompare(b.name));
+  // "Paid by Souvik · ₹100 of ₹170 paid back" and "Client pays back · due" for one expense row.
+  const expenseStatusHtml = (e) => {
+    const member = e.category === "reimbursement" ? (TEAM.find((m) => m.id === e.team_id)?.name || e.head.replace(/^Reimbursement — /, "")) : "";
+    const pay = member
+      ? `Paid by <b>${escH(member)}</b> · ${e.paid ? `<span style="color:var(--success);">paid back${e.payment_date ? ` ${fmtDate(e.payment_date)}` : ""}</span>` : Number(e.paid_amount) > 0 ? `${inr(e.paid_amount)} of ${inr(e.amount)} paid back` : `<span style="color:#B6752C;">owed to them in Team Pay</span>`}`
+      : `${e.paid ? `Paid${e.payment_mode ? ` · ${e.payment_mode}` : ""}` : "Pending"}`;
+    const bill = e.billed_status ? ` · 🔁 Client pays back · ${e.billed_status === "due" ? `<span style="color:#B6752C;">due</span>` : `<span style="color:var(--success);">received ✓</span>`}` : "";
+    return pay + bill;
+  };
   // Everything spent on this event — artist fees and other costs together —
   // so it's clear at a glance what's gone out, without having to add up
   // every row or go check Accounts.
@@ -6644,9 +6656,9 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                       </label>
                       ${isAdmin
                         ? `<div style="flex-shrink:0; text-align:right;">
-                            <input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : (suggestedFee || "")}" style="width:88px; font-size:12.5px; padding:4px 6px;" ${existingFee && existingFee.paid ? `disabled title="Already paid — correct it in Team Pay"` : ""} />
+                            <input type="number" class="member-fee-input" data-team-id="${m.id}" placeholder="Fee ₹" value="${existingFee ? existingFee.amount : (suggestedFee || "")}" style="width:88px; font-size:12.5px; padding:4px 6px;" ${existingFee && (existingFee.paid || Number(existingFee.paid_amount) > 0) ? `disabled title="Already paid (in part or full) — correct it in Team Pay"` : ""} />
                             ${existingFee ? `
-                              <div class="muted small" style="margin-top:3px;">${existingFee.paid ? `Paid${existingFee.payment_mode ? ` · ${existingFee.payment_mode}` : ""}` : "Not paid yet"}</div>
+                              <div class="muted small" style="margin-top:3px;">${existingFee.paid ? `Paid${existingFee.payment_mode ? ` · ${existingFee.payment_mode}` : ""}` : Number(existingFee.paid_amount) > 0 ? `${inr(existingFee.paid_amount)} paid so far` : "Not paid yet"}</div>
                               ${existingFee.paid ? "" : `<button class="btn-ghost open-team-pay-btn" data-team-id="${m.id}" style="margin-top:2px; font-size:11px; padding:2px 7px;">Pay in Team Pay</button>`}
                             ` : ""}
                           </div>`
@@ -6686,11 +6698,11 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
               const rows = teamPayData.artists.flatMap((a) => a.items.filter((i) => i.leadId === leadId).map((i) => ({ a, i })));
               const noFee = (teamPayData.needsFee || []).filter((n) => n.leadId === leadId);
               if (!rows.length && !noFee.length) return "";
-              const due = rows.filter((r) => !r.i.paid).reduce((t, r) => t + r.i.amount, 0);
+              const due = rows.filter((r) => !r.i.paid).reduce((t, r) => t + (r.i.left ?? r.i.amount), 0);
               return `<div class="card ev-card" data-tab="money">
                 <div class="section-label" style="margin-top:0; display:flex; justify-content:space-between;">Team payments<span>${due ? `<span style="color:var(--danger);">${inr(due)} to pay</span>` : rows.length ? `<span style="color:var(--success);">All paid ✓</span>` : ""}</span></div>
                 ${rows.map(({ a, i }) => `<div class="tp-ev-row">
-                  <span class="today-row-main"><b>${escH(a.name)}</b><span class="muted small">${i.kind === "reimbursement" ? "Reimbursement" : "Fee"}${i.paid ? ` · paid${i.paymentDate ? ` ${fmtDate(i.paymentDate)}` : ""}${i.mode ? ` · ${escH(i.mode)}` : ""}` : i.due ? " · due" : " · after the event"}</span></span>
+                  <span class="today-row-main"><b>${escH(a.name)}</b><span class="muted small">${i.kind === "reimbursement" ? `Reimbursement${i.notes ? ` — ${escH(i.notes)}` : ""}${i.billed ? " · 🔁 billed to client" : ""}` : "Fee"}${i.paid ? ` · paid${i.paymentDate ? ` ${fmtDate(i.paymentDate)}` : ""}${i.mode ? ` · ${escH(i.mode)}` : ""}` : i.paidAmount > 0 ? ` · ${inr(i.paidAmount)} paid, ${inr(i.left)} left` : i.due ? " · due" : " · after the event"}</span></span>
                   <b class="mono">${inr(i.amount)}</b>
                   ${i.paid ? `<span class="tag" style="color:var(--success);">Paid</span>` : `<button class="btn-ghost ev-pay-artist" data-team-id="${escH(a.id)}">Pay</button>`}
                 </div>`).join("")}
@@ -6698,22 +6710,23 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                 <button class="link small" id="evOpenTeamPay" style="margin-top:8px;">All artists in Team Pay ›</button>
               </div>`;
             })() : ""}
-            <div class="section-label" style="margin-top:20px;">Other event expenses (travel, venue, decor, etc.)</div>
+            <div class="section-label" style="margin-top:20px;">Event expenses (travel, cabs, venue, decor…)</div>
             <div id="otherExpensesList">
               ${otherExpenses.length === 0 ? `<p class="muted small">None added yet.</p>` : otherExpenses.map((e) => `
                 <div class="card" style="margin-bottom:8px; padding:10px 14px;">
                   <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
                     <div style="min-width:0;">
-                      <div class="mono" style="font-size:16px; font-weight:700;">${inr(e.amount)}</div>
-                      <div class="muted small">${e.head} · ${e.paid ? `Paid${e.payment_mode ? ` · ${e.payment_mode}` : ""}` : "Pending"}</div>
-                      ${e.notes ? `<div class="muted small" style="margin-top:2px;">📝 ${e.notes}</div>` : ""}
+                      <div class="mono" style="font-size:16px; font-weight:700;">${inr(e.amount)} <span style="font-family:inherit; font-size:13px; font-weight:600;">${escH(e.category === "reimbursement" ? (e.notes || "Expense") : e.head)}</span></div>
+                      <div class="muted small">${expenseStatusHtml(e)}</div>
+                      ${e.notes && e.category !== "reimbursement" ? `<div class="muted small" style="margin-top:2px;">📝 ${e.notes}</div>` : ""}
                     </div>
                     <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
-                      <button class="btn-ghost edit-expense-payment-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 8px;">Edit</button>
+                      <button class="btn-ghost exp-bill-btn" data-expense-id="${e.id}" data-on="${e.billed_status ? 1 : 0}" ${e.billed_status === "received" ? "disabled" : ""} title="${e.billed_status ? "Stop billing this to the client" : "Bill this to the client"}" style="font-size:12px; padding:4px 8px;">${e.billed_status ? "Unbill" : "Bill client"}</button>
+                      ${e.category === "reimbursement" ? "" : `<button class="btn-ghost edit-expense-payment-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 8px;">Edit</button>`}
                       <button class="btn-ghost remove-other-expense-btn" data-expense-id="${e.id}" style="font-size:12px; padding:4px 9px; color:#A6432B;">🗑</button>
                     </div>
                   </div>
-                  ${expensePaymentForm(e, { editHeadAmount: true })}
+                  ${e.category === "reimbursement" ? "" : expensePaymentForm(e, { editHeadAmount: true })}
                 </div>
               `).join("")}
             </div>
@@ -6721,16 +6734,25 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
               <input id="otherExpenseHead" placeholder="e.g. Travel, Venue rental, Decor" />
               <input id="otherExpenseAmount" type="number" placeholder="Amount ₹" />
             </div>
-            <select id="otherExpenseMode" style="margin-top:8px;">
-              <option value="UPI">Paid · UPI</option>
-              <option value="Cash">Paid · Cash</option>
-              <option value="Card">Paid · Card</option>
-              <option value="">Not paid yet</option>
+            <label class="muted small" for="otherExpenseMode" style="display:block; margin-top:8px;">Who paid?</label>
+            <select id="otherExpenseMode">
+              <optgroup label="Team TOL">
+                <option value="UPI">We paid · UPI</option>
+                <option value="Cash">We paid · Cash</option>
+                <option value="Card">We paid · Card</option>
+                <option value="">We'll pay · not paid yet</option>
+              </optgroup>
+              <optgroup label="A team member paid (we owe them, in Team Pay)">
+                ${payerOptions.map((m) => `<option value="member:${escH(m.id)}">${escH(m.name)}${lineupIds.has(m.id) ? "" : " (not on this line-up)"}</option>`).join("")}
+              </optgroup>
             </select>
+            <label style="display:flex; align-items:center; gap:8px; margin-top:8px; font-size:13.5px; cursor:pointer;"><input type="checkbox" id="otherExpenseBill" style="width:auto;" /> Client pays this back <span class="muted small">(added to what the client owes)</span></label>
+            <div id="otherExpenseSlipWrap" style="display:none; margin-top:6px;"><label class="muted small" style="display:block;">📎 Slip (optional)</label><input id="otherExpenseSlip" type="file" accept="image/*,application/pdf" /></div>
             <button class="btn-ghost full" id="addOtherExpenseBtn" style="margin-top:8px;">+ Add expense</button>
           ` : ""}
 
-          <div class="section-label" style="margin-top:16px;">Artist reimbursements</div>
+          <div class="section-label" style="margin-top:16px;">${isAdmin ? "Claims from artists — waiting for you" : "Artist reimbursements"}</div>
+          ${isAdmin && !adminPending.length ? `<p class="muted small" style="margin:0 0 8px;">None waiting. Artists claim from their own link; anything a team member paid can also be added above under Event expenses → Who paid.</p>` : ""}
           ${isAdmin && adminPending.length ? `
             <div id="reimbApprovals" style="margin-bottom:8px;">
               ${adminPending.map((r) => `
@@ -6738,13 +6760,13 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
                   <div>${r.head.replace(/^Reimbursement — /, "")}${r.notes ? ` <span class="muted small">— ${r.notes}</span>` : ""}</div>
                   <div class="muted small">requested by ${r.requested_by || "—"} · <span style="color:#B6752C;">Pending approval</span></div>
                   <div class="small" style="margin-top:4px;">${(r.receipts || []).length ? r.receipts.map((x, i) => /^image\//.test(x.mime || "") ? `<a href="/api/reimbursement-receipts/${x.id}/file" target="_blank" rel="noopener" title="Open full size"><img src="/api/reimbursement-receipts/${x.id}/file" alt="Slip ${i + 1}" class="slip-thumb" loading="lazy" /></a>` : `<a href="/api/reimbursement-receipts/${x.id}/file" target="_blank" rel="noopener">📎 Receipt ${i + 1}</a>`).join(" ") : `<span style="color:#B6752C;">⚠ No receipt attached</span>`}</div>
-                  <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px;">
-                    <input type="number" class="ra-amount" data-id="${r.id}" value="${r.amount}" style="width:90px;" />
-                    <input type="date" class="ra-date" data-id="${r.id}" max="${new Date().toISOString().slice(0, 10)}" style="flex:1; min-width:130px;" />
-                    <select class="ra-mode" data-id="${r.id}" style="width:100px;"><option value="">Mode —</option><option value="Cash">Cash</option><option value="UPI">UPI</option></select>
-                    <button class="btn-ghost ra-approve" data-id="${r.id}" style="padding:5px 10px; font-size:12.5px;">Approve</button>
+                  <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px;">
+                    <input type="number" class="ra-amount" data-id="${r.id}" value="${r.amount}" style="width:100px;" aria-label="Amount to approve" />
+                    <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;"><input type="checkbox" class="ra-bill" data-id="${r.id}" style="width:auto;" /> Client pays this back</label>
+                    <button class="btn-primary ra-approve" data-id="${r.id}" style="padding:5px 12px; font-size:12.5px;">Approve</button>
                     <button class="icon-btn ra-reject" data-id="${r.id}">${ICON_X}</button>
                   </div>
+                  <div class="muted small" style="margin-top:4px;">Approved claims are owed to them in Team Pay.</div>
                 </div>`).join("")}
             </div>
           ` : ""}
@@ -6760,6 +6782,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
               `).join("")}
             </div>
           ` : ""}
+          <div ${isAdmin ? "hidden" : ""}>
           <div class="row-2" style="margin-top:8px;">
             <select id="reimbTeamId">
               <option value="">Choose artist…</option>
@@ -6774,6 +6797,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
           <input id="reimbReceipt" type="file" accept="image/*,application/pdf" multiple style="margin-top:2px;" />
           <button class="btn-ghost full" id="addReimbursementBtn" style="margin-top:8px;">+ Submit reimbursement</button>
           <p class="muted small" style="margin-top:4px;">Sent to admin for approval and payment — this is separate from the artist's performance fee.</p>
+          </div>
         </div>
         <div class="modal-foot">
           <button class="btn-ghost" id="openChatBtn">💬 Event chat</button>
@@ -6897,7 +6921,16 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       addOtherExpenseBtn.disabled = true;
       try {
         const mode = root.querySelector("#otherExpenseMode")?.value || "";
-        await api("/api/expenses", { method: "POST", body: JSON.stringify({ leadId, head, amount, paid: !!mode, paymentMode: mode || null }) });
+        const billToClient = !!root.querySelector("#otherExpenseBill")?.checked;
+        const member = mode.startsWith("member:") ? mode.slice(7) : null;
+        const created = await api("/api/expenses", { method: "POST", body: JSON.stringify(member
+          ? { leadId, head, amount, paidByTeamId: member, billToClient }
+          : { leadId, head, amount, paid: !!mode, paymentMode: mode || null, billToClient }) });
+        const slip = root.querySelector("#otherExpenseSlip")?.files?.[0];
+        if (member && slip && created?.id) {
+          const fd = new FormData(); fd.append("file", slip);
+          await fetch(`/api/reimbursements/${created.id}/receipt`, { method: "POST", body: fd, credentials: "same-origin" }).catch(() => {});
+        }
         openAssignTeamModal(leadId);
       } catch (err) {
         alert(err.message);
@@ -6905,6 +6938,16 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
       }
     });
   }
+  root.querySelector("#otherExpenseMode")?.addEventListener("change", (e) => {
+    const w = root.querySelector("#otherExpenseSlipWrap"); if (w) w.style.display = e.target.value.startsWith("member:") ? "block" : "none";
+  });
+  root.querySelectorAll(".exp-bill-btn").forEach((btn) => btn.addEventListener("click", async () => {
+    const on = btn.dataset.on === "1";
+    if (on && !confirm("Stop billing this to the client? The reimbursement due from them is removed.")) return;
+    btn.disabled = true;
+    try { await api(`/api/expenses/${btn.dataset.expenseId}`, { method: "PATCH", body: JSON.stringify({ billToClient: !on }) }); openAssignTeamModal(leadId); }
+    catch (err) { alert(err.message); btn.disabled = false; }
+  }));
   root.querySelectorAll(".remove-other-expense-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       if (!confirm("Remove this expense?")) return;
@@ -6959,12 +7002,10 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
   root.querySelectorAll(".ra-approve").forEach((btn) => btn.addEventListener("click", async () => {
     if (btn.disabled) return;
     const id = btn.dataset.id, q = (c) => root.querySelector(`.${c}[data-id="${id}"]`);
-    const date = q("ra-date").value;
-    const markPaid = confirm("Mark this reimbursement as paid now? Cancel to approve it as unpaid (settle later).");
-    if (markPaid && !date) return alert("Enter the payment date before marking this paid.");
     btn.disabled = true;
     try {
-      await api(`/api/reimbursements/${id}/approve`, { method: "POST", body: JSON.stringify({ amount: q("ra-amount").value, paid: markPaid, paymentDate: date || null, paymentMode: q("ra-mode").value || null }) });
+      // Approved = owed to them; paid (in full or in parts) from Team Pay.
+      await api(`/api/reimbursements/${id}/approve`, { method: "POST", body: JSON.stringify({ amount: q("ra-amount").value, paid: false, billToClient: !!q("ra-bill")?.checked }) });
       openAssignTeamModal(leadId);
     } catch (err) { alert(err.message); btn.disabled = false; }
   }));
@@ -9932,7 +9973,9 @@ async function renderTeamPay(main) {
   const rest = data.artists.filter((a) => !a.owedNow && (a.upcoming > 0 || a.items.length));
   const owedTotal = owing.reduce((s, a) => s + a.owedNow, 0);
   const upcomingTotal = data.artists.reduce((s, a) => s + a.upcoming, 0);
-  const paidThisMonth = data.artists.reduce((s, a) => s + a.items.filter((i) => i.paid && (i.paymentDate || "").startsWith(month)).reduce((t, i) => t + i.amount, 0), 0);
+  // Money actually sent this month (part payments included), plus anything marked paid by hand outside Team Pay.
+  const paidThisMonth = data.artists.reduce((s, a) => s + a.payouts.filter((p) => (p.paidOn || "").startsWith(month)).reduce((t, p) => t + p.amount, 0)
+    + a.items.filter((i) => i.paid && !i.payoutId && (i.paymentDate || "").startsWith(month)).reduce((t, i) => t + i.amount, 0), 0);
   const artistRow = (a) => {
     const due = a.items.filter((i) => !i.paid && i.due);
     const oldest = due.map((i) => i.date).filter(Boolean).sort()[0];
@@ -9998,6 +10041,10 @@ async function renderTeamPay(main) {
 
 function openArtistPayModal(artist, data, opts = {}) {
   const root = document.getElementById("modalRoot");
+  // What one payment covered: its own record of amounts per item (older payments: the items stamped with it).
+  const coveredBy = (p) => (p.covers && p.covers.length
+    ? p.covers.map((c) => ({ i: artist.items.find((x) => x.id === c.expenseId), amount: c.amount })).filter((x) => x.i)
+    : artist.items.filter((i) => i.payoutId === p.id).map((i) => ({ i, amount: i.amount })));
   const dueItems = artist.items.filter((i) => !i.paid && i.due);
   const laterItems = artist.items.filter((i) => !i.paid && !i.due);
   const paidItems = artist.items.filter((i) => i.paid).sort((x, y) => (y.date || y.paymentDate || "").localeCompare(x.date || x.paymentDate || ""));
@@ -10022,12 +10069,14 @@ function openArtistPayModal(artist, data, opts = {}) {
   const byId = Object.fromEntries(artist.items.map((i) => [i.id, i]));
   const firstName = artist.name.split(" ")[0];
   const digits = (artist.phone || "").replace(/\D/g, "");
+  const leftOf = (i) => (i.left ?? i.amount);
   const itemRow = (i) => {
     const { title, sub } = teamPayItemLabel(i);
+    const part = i.paidAmount > 0 ? `${inr(i.paidAmount)} of ${inr(i.amount)} paid · ${inr(i.left)} left` : "";
     return `<label class="tp-item">
       <input type="checkbox" class="tp-pick" data-id="${escH(i.id)}" ${selected.has(i.id) ? "checked" : ""} />
-      <span class="today-row-main"><b>${escH(title)}</b>${sub ? `<span class="muted small">${escH(sub)}</span>` : ""}</span>
-      ${i.kind === "fee" ? `<input type="number" min="1" inputmode="numeric" class="tp-amount" data-id="${escH(i.id)}" value="${i.amount}" aria-label="Fee for ${escH(title)}" />` : `<span class="mono tp-amount-fixed">${inr(i.amount)}</span>`}
+      <span class="today-row-main"><b>${escH(title)}</b>${sub || part ? `<span class="muted small">${escH([sub, part].filter(Boolean).join(" · "))}</span>` : ""}</span>
+      ${i.kind === "fee" && !(i.paidAmount > 0) ? `<input type="number" min="1" inputmode="numeric" class="tp-amount" data-id="${escH(i.id)}" value="${i.amount}" aria-label="Fee for ${escH(title)}" />` : `<span class="mono tp-amount-fixed">${inr(leftOf(i))}</span>`}
     </label>`;
   };
   const close = () => { root.innerHTML = ""; if (opts.onClose) opts.onClose(); else renderMain(); };
@@ -10042,6 +10091,9 @@ function openArtistPayModal(artist, data, opts = {}) {
           ${dueItems.length || laterItems.length ? `
             <div class="card tp-pay-card">
               <div class="tp-total"><span id="tpCount"></span><b class="mono" id="tpTotal"></b></div>
+              <label class="muted small" for="tpAmountNow" style="display:block; margin-top:6px;">Paying now (₹) — less is fine, the rest stays due</label>
+              <input type="number" id="tpAmountNow" min="1" inputmode="numeric" style="font-size:18px; font-weight:700;" />
+              <div class="small" id="tpLeftNote" style="margin:4px 0 8px; color:#9A5E12;"></div>
               <div class="row-2">
                 <div><label class="muted small" for="tpDate">Paid on</label><input type="date" id="tpDate" value="${data.today}" max="${data.today}" data-no-clear /></div>
                 <div><label class="muted small" for="tpMode">Paid by</label><select id="tpMode">${data.modes.map((m) => `<option value="${m}">${m}</option>`).join("")}</select></div>
@@ -10055,10 +10107,10 @@ function openArtistPayModal(artist, data, opts = {}) {
           ${paidItems.length ? `<div class="section-label">Paid (${paidItems.length}) — every event and reimbursement</div>${paidItems.map(paidRow).join("")}` : ""}
           ${artist.payouts.length ? `<div class="section-label">Payments made</div>` : ""}
           ${artist.payouts.map((p) => {
-            const covered = artist.items.filter((i) => i.payoutId === p.id);
+            const covered = coveredBy(p);
             return `<div class="tp-history">
               <div style="display:flex; justify-content:space-between; gap:8px; align-items:baseline;"><b class="mono">${inr(p.amount)}</b><span class="muted small">${fmtDate(p.paidOn)} · ${escH(p.mode || "")}${p.reference ? ` · ref ${escH(p.reference)}` : ""}</span></div>
-              <div class="muted small">${covered.map((i) => escH(teamPayItemLabel(i).title)).join("; ")}${p.note ? ` · ${escH(p.note)}` : ""}</div>
+              <div class="muted small">${covered.map(({ i, amount }) => escH(teamPayItemLabel(i).title) + (amount < i.amount ? ` (${inr(amount)} of ${inr(i.amount)})` : "")).join("; ")}${p.note ? ` · ${escH(p.note)}` : ""}</div>
               <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
                 ${digits ? `<button class="btn-ghost tp-wa" data-payout="${escH(p.id)}" style="font-size:12px; padding:4px 10px;">💬 Send summary</button>` : ""}
                 <button class="btn-ghost tp-undo" data-payout="${escH(p.id)}" style="font-size:12px; padding:4px 10px; color:var(--danger);">Undo</button>
@@ -10072,22 +10124,30 @@ function openArtistPayModal(artist, data, opts = {}) {
   q("#closeModal").addEventListener("click", close);
   q("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
 
-  const summaryText = (items, p) => {
-    const lines = items.map((i) => `• ${teamPayItemLabel(i).title}: ${inr(i.amount)}`);
-    return `Hi ${firstName}, we've sent you ${inr(p.amount)} by ${p.mode} on ${fmtDate(p.paidOn)}${p.reference ? ` (ref ${p.reference})` : ""}.\n\nThis covers:\n${lines.join("\n")}\n\nThank you for playing with Together, Out Loud 🎶`;
+  const summaryText = (covered, p, stillOwed) => {
+    const lines = covered.map(({ i, amount }) => `• ${teamPayItemLabel(i).title}: ${inr(amount)}${amount < i.amount ? ` (part of ${inr(i.amount)})` : ""}`);
+    return `Hi ${firstName}, we've sent you ${inr(p.amount)} by ${p.mode} on ${fmtDate(p.paidOn)}${p.reference ? ` (ref ${p.reference})` : ""}.\n\nThis covers:\n${lines.join("\n")}${stillOwed > 0 ? `\n\nBalance still to come for this: ${inr(stillOwed)}` : ""}\n\nThank you for playing with Together, Out Loud 🎶`;
   };
-  const sendSummary = (items, p) => goWhatsApp(`https://wa.me/${digits}?text=${encodeURIComponent(summaryText(items, p))}`);
+  const sendSummary = (covered, p, stillOwed) => goWhatsApp(`https://wa.me/${digits}?text=${encodeURIComponent(summaryText(covered, p, stillOwed))}`);
 
+  // The amount box follows the ticked total until you type your own (smaller) amount.
+  let amountTyped = false;
+  const selectedTotal = () => [...selected].map((id) => byId[id]).reduce((s, i) => s + leftOf(i), 0);
   const refreshTotal = () => {
     const btn = q("#tpPayBtn");
     if (!btn) return;
     const items = [...selected].map((id) => byId[id]);
-    const total = items.reduce((s, i) => s + i.amount, 0);
-    q("#tpCount").textContent = items.length ? `${items.length} item${items.length > 1 ? "s" : ""} selected` : "Tick what you're paying for";
+    const total = selectedTotal();
+    const box = q("#tpAmountNow");
+    if (!amountTyped || Number(box.value) > total) box.value = total || "";
+    const now = Math.round(Number(box.value)) || 0;
+    q("#tpCount").textContent = items.length ? `${items.length} item${items.length > 1 ? "s" : ""} · total due` : "Tick what you're paying for";
     q("#tpTotal").textContent = inr(total);
-    btn.textContent = items.length ? `Pay ${inr(total)}` : "Pay";
-    btn.disabled = !items.length;
+    q("#tpLeftNote").textContent = items.length && now > 0 && now < total ? `${inr(total - now)} will still be due — out-of-pocket reimbursements are cleared first, then fees.` : "";
+    btn.textContent = items.length && now > 0 ? `Pay ${inr(Math.min(now, total))}` : "Pay";
+    btn.disabled = !items.length || !(now > 0) || now > total;
   };
+  q("#tpAmountNow")?.addEventListener("input", () => { amountTyped = true; refreshTotal(); });
   refreshTotal();
   root.querySelectorAll(".tp-pick").forEach((cb) => cb.addEventListener("change", () => {
     if (cb.checked) selected.add(cb.dataset.id); else selected.delete(cb.dataset.id);
@@ -10110,21 +10170,27 @@ function openArtistPayModal(artist, data, opts = {}) {
     const btn = e.currentTarget;
     const items = [...selected].map((id) => byId[id]);
     if (!items.length) return;
-    const body = { teamId: artist.id, expenseIds: items.map((i) => i.id), paidOn: q("#tpDate").value, mode: q("#tpMode").value, reference: q("#tpRef").value, note: q("#tpNote").value };
+    const body = { teamId: artist.id, expenseIds: items.map((i) => i.id), amount: Math.round(Number(q("#tpAmountNow").value)), paidOn: q("#tpDate").value, mode: q("#tpMode").value, reference: q("#tpRef").value, note: q("#tpNote").value };
     btn.disabled = true;
     btn.textContent = "Saving…";
     try {
       const res = await api("/api/team-pay/payouts", { method: "POST", body: JSON.stringify(body) });
       const p = { amount: res.amount, mode: body.mode, paidOn: body.paidOn, reference: body.reference.trim() };
+      const leftHere = Math.max(0, items.reduce((t, i) => t + leftOf(i), 0) - res.amount); // still due on what was ticked
+      // What this payment covered, in the same order the server applied it (reimbursements first, then fees, oldest first).
+      const order = { reimbursement: 0, fee: 1 };
+      let rest = res.amount;
+      const covered = [...items].sort((x, y) => (order[x.kind] - order[y.kind]) || String(x.date || "9999").localeCompare(String(y.date || "9999")))
+        .map((i) => { const amount = Math.min(rest, leftOf(i)); rest -= amount; return { i, amount }; }).filter((x) => x.amount > 0);
       q("#tpBody").innerHTML = `
         <div class="tp-done">
           <div class="today-clear-icon" aria-hidden="true">✅</div>
           <b>Paid ${inr(res.amount)} to ${escH(artist.name)}</b>
-          <p class="muted small">${res.count} item${res.count > 1 ? "s" : ""} marked paid · ${escH(body.mode)} · ${fmtDate(body.paidOn)}. ${escH(firstName)} can see it in their app.</p>
+          <p class="muted small">${escH(body.mode)} · ${fmtDate(body.paidOn)}${leftHere > 0 ? ` · <b style="color:#9A5E12;">${inr(leftHere)} of this still due</b>` : " · all of this is paid"}. ${escH(firstName)} can see it in their app.</p>
           ${digits ? `<button class="btn-primary" id="tpSendWa">💬 Send ${escH(firstName)} a summary</button>` : `<p class="muted small">No phone number on file to send a summary.</p>`}
           <button class="btn-ghost" id="tpDone" style="margin-top:8px;">Done</button>
         </div>`;
-      q("#tpSendWa")?.addEventListener("click", () => sendSummary(items, p));
+      q("#tpSendWa")?.addEventListener("click", () => sendSummary(covered, p, leftHere));
       q("#tpDone").addEventListener("click", close);
     } catch (err) {
       btn.disabled = false;
@@ -10157,11 +10223,11 @@ function openArtistPayModal(artist, data, opts = {}) {
   }));
   root.querySelectorAll(".tp-wa").forEach((b) => b.addEventListener("click", () => {
     const p = artist.payouts.find((x) => x.id === b.dataset.payout);
-    sendSummary(artist.items.filter((i) => i.payoutId === p.id), p);
+    sendSummary(coveredBy(p), p, 0);
   }));
   root.querySelectorAll(".tp-undo").forEach((b) => b.addEventListener("click", async () => {
     const p = artist.payouts.find((x) => x.id === b.dataset.payout);
-    if (!confirm(`Undo the ${inr(p.amount)} payment to ${artist.name} on ${fmtDate(p.paidOn)}? Everything it covered goes back to unpaid.`)) return;
+    if (!confirm(`Undo the ${inr(p.amount)} payment to ${artist.name} on ${fmtDate(p.paidOn)}? What it paid goes back to owed.`)) return;
     b.disabled = true;
     try {
       await api(`/api/team-pay/payouts/${p.id}`, { method: "DELETE" });

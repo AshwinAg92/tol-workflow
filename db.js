@@ -1024,6 +1024,26 @@ async function setup() {
   )`);
   await pool.query(`ALTER TABLE travel_share_files ADD COLUMN IF NOT EXISTS leg_id TEXT`);
   await pool.query(`ALTER TABLE travel_share_files ADD COLUMN IF NOT EXISTS document_id TEXT`);
+  // Part payments to the team: how much of a fee/reimbursement has been paid so far ("paid" stays = fully paid),
+  // and which payout paid how much of which item.
+  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS paid_amount INTEGER NOT NULL DEFAULT 0`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS team_payout_items (
+    payout_id TEXT NOT NULL REFERENCES team_payouts(id) ON DELETE CASCADE,
+    expense_id TEXT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+    amount INTEGER NOT NULL,
+    PRIMARY KEY (payout_id, expense_id)
+  )`);
+  // A cost billed to the client: the client's reimbursement-due row points back at the expense it covers.
+  await pool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS expense_id TEXT REFERENCES expenses(id) ON DELETE SET NULL`);
+  {
+    const f = (await pool.query("SELECT 1 FROM message_templates WHERE key = 'part_pay_v1'")).rows[0];
+    if (!f) {
+      await pool.query("UPDATE expenses SET paid_amount = amount WHERE paid = 1");
+      await pool.query(`INSERT INTO team_payout_items (payout_id, expense_id, amount)
+        SELECT payout_id, id, amount FROM expenses WHERE payout_id IS NOT NULL ON CONFLICT DO NOTHING`);
+      await pool.query(`INSERT INTO message_templates (key, template, updated_at) VALUES ('part_pay_v1', '1', $1) ON CONFLICT (key) DO NOTHING`, [new Date().toISOString()]);
+    }
+  }
   // Tickets we book: can they be cancelled, until when, and at what charge.
   // cancel_policy: 'free' (free cancellation), 'charge' (cancellable with charges), 'none' (non-refundable).
   await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS cancel_policy TEXT`);

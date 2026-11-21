@@ -90,7 +90,7 @@
       const ackHtml = e.past || !legsSorted.length || ack.state === "none" ? "" : ack.state === "seen"
         ? `<div class="muted" style="margin-top:8px;">✓ You confirmed this plan on ${esc(fmtDate(ack.at))}</div>`
         : `${ack.state === "changed" ? `<div class="muted" style="margin-top:8px; color:#A6432B;">Your travel plan changed after you confirmed it. Please check it again.</div>` : ""}<button class="save" data-ack="${i}" style="background:#E4F1F1; color:#1C7A80;">✓ Got it — I've seen my travel plan</button>`;
-      const pay = e.pay ? `<div class="sec">Payment</div><span class="pill ${e.pay.paid ? "p-paid" : "p-pending"}">${e.pay.paid ? "Paid" : "Payment pending"}</span>${e.pay.paid && e.pay.date ? `<span class="muted">${esc(fmtDate(e.pay.date))}${e.pay.mode ? " · " + esc(e.pay.mode) : ""}</span>` : ""}${e.pay.amount ? `<div class="muted">₹${e.pay.amount.toLocaleString("en-IN")}</div>` : ""}` : "";
+      const pay = e.pay ? `<div class="sec">Payment</div><span class="pill ${e.pay.paid ? "p-paid" : "p-pending"}">${e.pay.paid ? "Paid" : e.pay.paidSoFar > 0 ? "Part paid" : "Payment pending"}</span>${e.pay.paid && e.pay.date ? `<span class="muted">${esc(fmtDate(e.pay.date))}${e.pay.mode ? " · " + esc(e.pay.mode) : ""}</span>` : ""}${e.pay.amount ? `<div class="muted">₹${e.pay.amount.toLocaleString("en-IN")}${!e.pay.paid && e.pay.paidSoFar > 0 ? ` · ₹${e.pay.paidSoFar.toLocaleString("en-IN")} paid so far, ₹${(e.pay.amount - e.pay.paidSoFar).toLocaleString("en-IN")} to come` : ""}</div>` : ""}` : "";
       const respond = !e.past && e.status !== "cancel_requested" ? `
         <div class="btns">
           <button class="act b-acc" data-i="${i}" data-s="accepted" ${e.status === "accepted" ? "disabled" : ""}>✓ Accept</button>
@@ -99,9 +99,9 @@
         ${e.status === "accepted" ? `<div class="muted" style="margin-top:6px;">Need to make a change? Please contact Team Together, Out Loud directly.</div>` : ""}
         <textarea data-note="${i}" placeholder="Note for the organizer (optional) — e.g. running a bit late">${esc(e.note || "")}</textarea>
         <button class="save" data-save="${i}">Save note</button>` : "";
-      const STATUS = { waiting: ["p-pending", "Waiting for approval"], approved: ["p-accepted", "Approved"], paid: ["p-paid", "Paid"] };
+      const STATUS = { waiting: ["p-pending", "Waiting for approval"], approved: ["p-accepted", "Approved"], paid: ["p-paid", "Paid"], "part paid": ["p-accepted", "Part paid"] };
       const claims = e.status === "declined" ? "" : `<div class="sec">Reimbursements</div>
-        ${(e.claims || []).map((c) => `<div class="claim"><div><b>₹${c.amount.toLocaleString("en-IN")}</b> — ${esc(c.what)}<div class="muted">${esc(fmtDate(c.at))}${c.receipts ? " · 📎 slip attached" : " · no slip"}</div></div><span class="pill ${STATUS[c.status][0]}" style="align-self:flex-start;">${STATUS[c.status][1]}${c.status === "paid" && c.paidOn ? " · " + esc(fmtDate(c.paidOn)) : ""}</span></div>`).join("")}
+        ${(e.claims || []).map((c) => `<div class="claim"><div><b>₹${c.amount.toLocaleString("en-IN")}</b> — ${esc(c.what)}<div class="muted">${esc(fmtDate(c.at))}${c.receipts ? " · 📎 slip attached" : " · no slip"}</div></div><span class="pill ${STATUS[c.status][0]}" style="align-self:flex-start;">${STATUS[c.status][1]}${c.status === "part paid" ? " · ₹" + c.paidSoFar.toLocaleString("en-IN") : ""}${c.status === "paid" && c.paidOn ? " · " + esc(fmtDate(c.paidOn)) : ""}</span></div>`).join("")}
         ${openClaim === i ? `<form class="claim-form" data-claim-form="${i}">
           <input type="number" name="amount" inputmode="numeric" placeholder="Amount you spent (₹)" required />
           <input type="text" name="what" maxlength="200" placeholder="What for — e.g. cab to the venue" required />

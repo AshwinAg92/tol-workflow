@@ -563,7 +563,7 @@ app.get("/api/feed/money", async (req, res) => {
       WHERE p.status = 'received' AND COALESCE(p.payment_mode, '') <> 'Travel fare adjustment'
       ORDER BY p.payment_date`)).rows;
     const outRows = (await pool.query(`
-      SELECT e.id, COALESCE(e.payment_date, LEFT(e.created_at, 10)) AS date, e.amount, e.category, e.head, e.paid,
+      SELECT e.id, COALESCE(e.payment_date, LEFT(e.created_at, 10)) AS date, e.amount, e.category, e.head, e.paid, e.paid_amount,
              l.id AS event_id, l.name AS event_name, l.date AS event_date, l.city
       FROM expenses e LEFT JOIN leads l ON l.id = e.lead_id
       LEFT JOIN shared_travel_costs s ON s.id = e.shared_cost_id
@@ -581,8 +581,22 @@ app.get("/api/feed/money", async (req, res) => {
     const sumBy = async (sql) => Object.fromEntries((await pool.query(sql, [ids])).rows.map((r) => [r.lead_id, Number(r.total)]));
     const feePaid = await sumBy(`SELECT lead_id, SUM(amount) AS total FROM payments WHERE lead_id = ANY($1::text[]) AND status = 'received' AND type = 'payment' GROUP BY lead_id`);
     const reimbDue = await sumBy(`SELECT lead_id, SUM(amount) AS total FROM payments WHERE lead_id = ANY($1::text[]) AND status = 'due' AND type = 'client_reimbursement' GROUP BY lead_id`);
+    // Team payments made in parts: each part is cash out on its own day.
+    const parts = (await pool.query(`SELECT i.expense_id, i.amount, p.paid_on FROM team_payout_items i JOIN team_payouts p ON p.id = i.payout_id`)).rows;
+    const partsBy = {};
+    parts.forEach((x) => (partsBy[x.expense_id] ||= []).push(x));
+    const outflowRows = [], owedRows = [];
+    for (const r of outRows) {
+      const amt = Number(r.amount) || 0;
+      const paidAmt = Number(r.paid) === 1 ? amt : Math.min(amt, Number(r.paid_amount) || 0);
+      const ps = partsBy[r.id] || [];
+      let fromParts = 0;
+      ps.forEach((x, i) => { fromParts += Number(x.amount); outflowRows.push({ ...r, id: ps.length === 1 && Number(x.amount) === amt ? r.id : `${r.id}:${i}`, date: x.paid_on, amount: Number(x.amount) }); });
+      if (paidAmt - fromParts > 0) outflowRows.push({ ...r, amount: paidAmt - fromParts });
+      if (amt - paidAmt > 0) owedRows.push({ ...r, id: paidAmt > 0 ? `${r.id}:left` : r.id, amount: amt - paidAmt });
+    }
     const costsDue = {};
-    outRows.filter((r) => Number(r.paid) !== 1 && r.event_id).forEach((r) => { costsDue[r.event_id] = (costsDue[r.event_id] || 0) + (Number(r.amount) || 0); });
+    owedRows.filter((r) => r.event_id).forEach((r) => { costsDue[r.event_id] = (costsDue[r.event_id] || 0) + (Number(r.amount) || 0); });
     // Team members on the line-up with no fee entered yet — the real cost will be higher.
     const missing = {};
     (await pool.query(`SELECT ea.lead_id, COUNT(*) AS n FROM event_assignments ea
@@ -613,8 +627,8 @@ app.get("/api/feed/money", async (req, res) => {
     res.json({
       generatedAt: new Date().toISOString(),
       inflows: inflows.map(shape),
-      outflows: outRows.filter((r) => Number(r.paid) === 1).map(({ paid, ...r }) => shape(r)),
-      owed: outRows.filter((r) => Number(r.paid) !== 1).map(({ paid, ...r }) => shape(r)),
+      outflows: outflowRows.map(({ paid, paid_amount, ...r }) => shape(r)),
+      owed: owedRows.map(({ paid, paid_amount, ...r }) => shape(r)),
       receivables,
     });
   } catch (err) {
@@ -3178,7 +3192,7 @@ app.get("/api/wrapup", requireAuth, requireSection("accounts"), requireAdmin, as
         COALESCE(SUM(amount) FILTER (WHERE type = 'payment' AND status = 'received'), 0) AS received,
         COALESCE(SUM(amount) FILTER (WHERE type = 'client_reimbursement' AND status = 'due'), 0) AS reimb_due
       FROM payments WHERE lead_id = ANY($1::text[]) GROUP BY lead_id`, [ids]).then((r) => r.rows),
-    pool.query(`SELECT lead_id, COUNT(DISTINCT team_id) FILTER (WHERE paid = 0) AS unpaid_artists, COALESCE(SUM(amount) FILTER (WHERE paid = 0), 0) AS unpaid
+    pool.query(`SELECT lead_id, COUNT(DISTINCT team_id) FILTER (WHERE paid = 0) AS unpaid_artists, COALESCE(SUM(amount - paid_amount) FILTER (WHERE paid = 0), 0) AS unpaid
       FROM expenses WHERE lead_id = ANY($1::text[]) AND team_id IS NOT NULL AND approved = 1 AND category IN ('artist_fee', 'reimbursement') GROUP BY lead_id`, [ids]).then((r) => r.rows),
     pool.query("SELECT lead_id, rating FROM feedback WHERE lead_id = ANY($1::text[])", [ids]).then((r) => r.rows),
   ]);
@@ -4754,8 +4768,8 @@ app.get("/api/expenses", requireAuth, requireSection("accounts"), async (req, re
   // Unapproved reimbursements live in their own approval queue (/api/reimbursements/pending)
   // rather than mixing into the general expenses list until an admin signs off on them.
   const { rows } = leadId
-    ? await pool.query("SELECT * FROM expenses WHERE lead_id = $1 AND approved = 1 ORDER BY created_at DESC", [leadId])
-    : await pool.query("SELECT * FROM expenses WHERE approved = 1 ORDER BY created_at DESC");
+    ? await pool.query("SELECT e.*, (SELECT p.status FROM payments p WHERE p.expense_id = e.id LIMIT 1) AS billed_status FROM expenses e WHERE e.lead_id = $1 AND e.approved = 1 ORDER BY e.created_at DESC", [leadId])
+    : await pool.query("SELECT e.*, (SELECT p.status FROM payments p WHERE p.expense_id = e.id LIMIT 1) AS billed_status FROM expenses e WHERE e.approved = 1 ORDER BY e.created_at DESC");
   res.json(rows);
 });
 
@@ -4772,26 +4786,60 @@ app.get("/api/my/artist-fee", requireAuth, async (req, res) => {
   res.json(row || null);
 });
 
+// A cost the client pays back: one 'client_reimbursement' due on the event's (combo's main) payments, linked to the
+// expense so it follows it. Called when an expense is billed to the client, or a claim is approved that way.
+async function billExpenseToClient(expenseId) {
+  const e = (await pool.query("SELECT e.*, t.name AS member FROM expenses e LEFT JOIN team t ON t.id = e.team_id WHERE e.id = $1", [expenseId])).rows[0];
+  if (!e || !e.lead_id) return null;
+  const have = (await pool.query("SELECT id FROM payments WHERE expense_id = $1", [expenseId])).rows[0];
+  if (have) return have.id;
+  const what = e.category === "reimbursement" ? `${e.notes || "Expense"} (paid by ${e.member || "a team member"})` : e.head;
+  const id = uuid();
+  await pool.query(`INSERT INTO payments (id, lead_id, amount, payment_date, payment_mode, notes, type, status, created_at, expense_id)
+    VALUES ($1,$2,$3,$4,NULL,$5,'client_reimbursement','due',$6,$7)`, [id, await comboMainId(e.lead_id), Number(e.amount), todayIST(), what, new Date().toISOString(), expenseId]);
+  return id;
+}
+// Stop billing it: a reimbursement still due goes; one the client already paid stays (unlinked) as a record.
+async function unbillExpense(expenseId) {
+  await pool.query("DELETE FROM payments WHERE expense_id = $1 AND status = 'due'", [expenseId]);
+  await pool.query("UPDATE payments SET expense_id = NULL WHERE expense_id = $1", [expenseId]);
+}
+
 app.post("/api/expenses", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
-  const { leadId, teamId, head, amount, paid, notes, paymentDate, paymentMode } = req.body;
+  const { leadId, teamId, head, amount, paid, notes, paymentDate, paymentMode, paidByTeamId, billToClient } = req.body;
   if (!head || amount === undefined) return res.status(400).json({ error: "head and amount are required" });
+  if (!(Number(amount) > 0)) return res.status(400).json({ error: "Enter the amount." });
+  // Paid out of a team member's pocket: they're owed it, through Team Pay.
+  if (paidByTeamId) {
+    const m = (await pool.query("SELECT name FROM team WHERE id = $1", [paidByTeamId])).rows[0];
+    if (!m) return res.status(400).json({ error: "Choose who paid it." });
+    const rid = uuid();
+    await pool.query(`INSERT INTO expenses (id, lead_id, team_id, head, amount, paid, notes, created_at, category, approved, requested_by)
+      VALUES ($1, $2, $3, $4, $5, 0, $6, $7, 'reimbursement', 1, $8)`, [rid, leadId || null, paidByTeamId, `Reimbursement — ${m.name}`, Number(amount), String(head).trim(), new Date().toISOString(), await actorName(req.user)]);
+    if (billToClient && leadId) await billExpenseToClient(rid);
+    logActivity(req, `Expense paid by ${m.name}: ${head} ₹${Number(amount).toLocaleString("en-IN")}${billToClient ? " — billed to the client" : ""}`, leadId || null);
+    return res.status(201).json((await pool.query("SELECT * FROM expenses WHERE id = $1", [rid])).rows[0]);
+  }
   const id = uuid();
   const category = teamId && /^Artist fee/i.test(head) ? "artist_fee" : "expense";
   await pool.query(`
-    INSERT INTO expenses (id, lead_id, team_id, head, amount, paid, notes, created_at, payment_date, payment_mode, category)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    INSERT INTO expenses (id, lead_id, team_id, head, amount, paid, notes, created_at, payment_date, payment_mode, category, paid_amount)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
   `, [
     id, leadId || null, teamId || null, head, Number(amount), paid ? 1 : 0, notes || null, new Date().toISOString(),
     paid ? (paymentDate || new Date().toISOString().slice(0, 10)) : (paymentDate || null),
-    paymentMode || null, category,
+    paymentMode || null, category, paid ? Number(amount) : 0,
   ]);
+  if (billToClient && leadId && category === "expense") await billExpenseToClient(id);
   res.status(201).json((await pool.query("SELECT * FROM expenses WHERE id = $1", [id])).rows[0]);
 });
 
 app.patch("/api/expenses/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   const exp = (await pool.query("SELECT * FROM expenses WHERE id = $1", [req.params.id])).rows[0];
   if (!exp) return res.status(404).json({ error: "Expense not found" });
-  const { head, amount, paid, notes, paymentDate, paymentMode } = req.body;
+  const { head, amount, paid, notes, paymentDate, paymentMode, billToClient } = req.body;
+  const partPaid = !exp.paid && Number(exp.paid_amount || 0) > 0;
+  if (partPaid && paid !== undefined && !paid) return res.status(400).json({ error: "Part of this was paid through Team Pay. Undo that payment there instead." });
   // A paid amount can be corrected (the record only — no money moves); a Team Pay payment's
   // total follows its items. Unpaying one, though, means undoing that payout as a whole.
   const correctingPaid = exp.paid && amount !== undefined && Number(amount) !== Number(exp.amount);
@@ -4804,17 +4852,28 @@ app.patch("/api/expenses/:id", requireAuth, requireSection("accounts"), requireA
   const resolvedPaymentDate = paymentDate !== undefined
     ? paymentDate
     : (nowPaid && !exp.payment_date ? new Date().toISOString().slice(0, 10) : exp.payment_date);
-  await pool.query(`UPDATE expenses SET head = $1, amount = $2, paid = $3, notes = $4, payment_date = $5, payment_mode = $6 WHERE id = $7`, [
+  const newAmount = amount !== undefined ? Number(amount) : Number(exp.amount);
+  // paid_amount follows: marked paid = all of it; unpaid = none; a corrected amount on a paid item = the new amount.
+  const newPaidAmount = nowPaid ? newAmount : (paid !== undefined && !paid ? 0 : Math.min(Number(exp.paid_amount || 0), newAmount));
+  await pool.query(`UPDATE expenses SET head = $1, amount = $2, paid = $3, notes = $4, payment_date = $5, payment_mode = $6, paid_amount = $8 WHERE id = $7`, [
     head !== undefined ? head : exp.head,
-    amount !== undefined ? Number(amount) : exp.amount,
-    nowPaid,
+    newAmount,
+    nowPaid || (newPaidAmount >= newAmount && newAmount > 0 ? 1 : 0),
     notes !== undefined ? notes : exp.notes,
     resolvedPaymentDate,
     paymentMode !== undefined ? paymentMode : exp.payment_mode,
     exp.id,
+    newPaidAmount,
   ]);
+  // A billed cost keeps the client's reimbursement in step (while it's still due).
+  if (amount !== undefined) await pool.query("UPDATE payments SET amount = $1 WHERE expense_id = $2 AND status = 'due'", [newAmount, exp.id]);
+  if (billToClient === true) await billExpenseToClient(exp.id);
+  if (billToClient === false) await unbillExpense(exp.id);
   if (correctingPaid) {
-    if (exp.payout_id) await pool.query("UPDATE team_payouts SET amount = (SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE payout_id = $1) WHERE id = $1", [exp.payout_id]);
+    if (exp.payout_id) {
+      await pool.query("UPDATE team_payout_items SET amount = $1 WHERE payout_id = $2 AND expense_id = $3", [newAmount, exp.payout_id, exp.id]);
+      await pool.query("UPDATE team_payouts SET amount = (SELECT COALESCE(SUM(amount), 0) FROM team_payout_items WHERE payout_id = $1) WHERE id = $1", [exp.payout_id]);
+    }
     logActivity(req, `Corrected a paid amount: ${exp.head} ₹${Number(exp.amount).toLocaleString("en-IN")} → ₹${Number(amount).toLocaleString("en-IN")}`, exp.lead_id);
   }
   // Tell the artist when their own fee is marked paid.
@@ -4828,8 +4887,9 @@ app.patch("/api/expenses/:id", requireAuth, requireSection("accounts"), requireA
 });
 
 app.delete("/api/expenses/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
-  const exp = (await pool.query("SELECT payout_id FROM expenses WHERE id = $1", [req.params.id])).rows[0];
-  if (exp && exp.payout_id) return res.status(400).json({ error: "This was paid through Team Pay. Undo that payment there before removing it." });
+  const exp = (await pool.query("SELECT payout_id, paid_amount, paid FROM expenses WHERE id = $1", [req.params.id])).rows[0];
+  if (exp && (exp.payout_id || (!exp.paid && Number(exp.paid_amount) > 0))) return res.status(400).json({ error: "This was paid through Team Pay. Undo that payment there before removing it." });
+  await unbillExpense(req.params.id);
   await pool.query("DELETE FROM expenses WHERE id = $1", [req.params.id]);
   res.status(204).end();
 });
@@ -4926,26 +4986,30 @@ app.get("/api/reimbursements/pending", requireAuth, requireSection("accounts"), 
 app.post("/api/reimbursements/:id/approve", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   const exp = (await pool.query("SELECT * FROM expenses WHERE id = $1 AND category = 'reimbursement'", [req.params.id])).rows[0];
   if (!exp) return res.status(404).json({ error: "Reimbursement not found" });
-  const { paid, paymentDate, paymentMode, amount } = req.body;
+  const { paid, paymentDate, paymentMode, amount, billToClient } = req.body;
   const nowPaid = paid ? 1 : 0;
+  const amt = amount !== undefined && amount !== null && amount !== "" ? Number(amount) : Number(exp.amount);
   await pool.query(`
-    UPDATE expenses SET approved = 1, amount = $1, paid = $2, payment_date = $3, payment_mode = $4 WHERE id = $5
+    UPDATE expenses SET approved = 1, amount = $1, paid = $2, payment_date = $3, payment_mode = $4, paid_amount = $6 WHERE id = $5
   `, [
-    amount !== undefined && amount !== null && amount !== "" ? Number(amount) : exp.amount,
+    amt,
     nowPaid,
     nowPaid ? (paymentDate || new Date().toISOString().slice(0, 10)) : (paymentDate || null),
     paymentMode || null,
     exp.id,
+    nowPaid ? amt : 0,
   ]);
+  if (billToClient && exp.lead_id) await billExpenseToClient(exp.id);
   const updated = (await pool.query("SELECT * FROM expenses WHERE id = $1", [exp.id])).rows[0];
   res.json(updated);
-  logActivity(req, `Approved reimbursement: ${exp.head} — ₹${Number(updated.amount).toLocaleString("en-IN")}${nowPaid ? " (paid)" : ""}`, exp.lead_id);
+  logActivity(req, `Approved reimbursement: ${exp.head} — ₹${Number(updated.amount).toLocaleString("en-IN")}${nowPaid ? " (paid)" : ""}${billToClient ? " — billed to the client" : ""}`, exp.lead_id);
 });
 
 // Admin rejects a reimbursement request outright — just removes it.
 app.delete("/api/reimbursements/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   const exp = (await pool.query("SELECT * FROM expenses WHERE id = $1 AND category = 'reimbursement'", [req.params.id])).rows[0];
   if (!exp) return res.status(404).json({ error: "Reimbursement not found" });
+  await unbillExpense(exp.id);
   await pool.query("DELETE FROM expenses WHERE id = $1", [exp.id]);
   res.status(204).end();
   logActivity(req, `Rejected reimbursement request: ${exp.head} — ₹${Number(exp.amount).toLocaleString("en-IN")}`, exp.lead_id);
@@ -4964,13 +5028,15 @@ app.get("/api/team-pay", requireAuth, requireSection("accounts"), requireAdmin, 
   const [members, rows, payouts, missing, history, pendingApprovals] = await Promise.all([
     pool.query("SELECT id, name, phone, kind, base_city, local_fee, outstation_fee FROM team").then((r) => r.rows),
     pool.query(`
-      SELECT e.id, e.team_id, e.category, e.amount, e.paid, e.payment_date, e.payment_mode, e.payout_id, e.member_received, e.notes,
+      SELECT e.id, e.team_id, e.category, e.amount, e.paid, e.paid_amount, e.payment_date, e.payment_mode, e.payout_id, e.member_received, e.notes,
+        (SELECT p.id FROM payments p WHERE p.expense_id = e.id LIMIT 1) AS billed_payment,
         l.id AS lead_id, l.date, l.city, l.venue, l.stage, l.event_type
       FROM expenses e LEFT JOIN leads l ON l.id = e.lead_id
       WHERE e.team_id IS NOT NULL AND e.approved = 1 AND e.category IN ('artist_fee', 'reimbursement')
         AND (l.id IS NULL OR l.stage <> 'Cancelled' OR e.paid = 1)
       ORDER BY l.date ASC NULLS LAST, e.created_at ASC`).then((r) => r.rows),
-    pool.query("SELECT * FROM team_payouts ORDER BY paid_on DESC, created_at DESC").then((r) => r.rows),
+    pool.query(`SELECT p.*, COALESCE((SELECT json_agg(json_build_object('expenseId', i.expense_id, 'amount', i.amount)) FROM team_payout_items i WHERE i.payout_id = p.id), '[]') AS covers
+      FROM team_payouts p ORDER BY paid_on DESC, created_at DESC`).then((r) => r.rows),
     pool.query(`
       SELECT ea.lead_id, ea.team_id, ea.status, l.name AS lead_name, l.date, l.city, l.venue, l.event_type
       FROM event_assignments ea JOIN leads l ON l.id = ea.lead_id
@@ -4998,14 +5064,17 @@ app.get("/api/team-pay", requireAuth, requireSection("accounts"), requireAdmin, 
     const due = r.category === "reimbursement" || !r.date || r.date < today || r.stage === "Completed";
     const a = artistOf(r.team_id);
     const amount = Number(r.amount);
+    const paidAmount = r.paid ? amount : Math.min(amount, Number(r.paid_amount || 0));
+    const left = amount - paidAmount;
     a.items.push({
-      id: r.id, kind: r.category === "reimbursement" ? "reimbursement" : "fee", amount, paid: !!r.paid,
+      id: r.id, kind: r.category === "reimbursement" ? "reimbursement" : "fee", amount, paid: !!r.paid, paidAmount, left, billed: !!r.billed_payment,
       paymentDate: r.payment_date, mode: r.payment_mode, payoutId: r.payout_id, confirmed: !!r.member_received,
       leadId: r.lead_id, place: r.lead_id ? placeOf(r) : "General", date: r.date, eventType: r.event_type, stage: r.stage, due, notes: r.notes,
     });
-    if (r.paid) a.paidTotal += amount; else if (due) a.owedNow += amount; else a.upcoming += amount;
+    a.paidTotal += paidAmount;
+    if (left > 0) { if (due) a.owedNow += left; else a.upcoming += left; }
   }
-  for (const p of payouts) artistOf(p.team_id).payouts.push({ id: p.id, amount: Number(p.amount), paidOn: p.paid_on, mode: p.mode, reference: p.reference, note: p.note, createdBy: p.created_by });
+  for (const p of payouts) artistOf(p.team_id).payouts.push({ id: p.id, amount: Number(p.amount), paidOn: p.paid_on, mode: p.mode, reference: p.reference, note: p.note, createdBy: p.created_by, covers: (p.covers || []).map((c) => ({ expenseId: c.expenseId, amount: Number(c.amount) })) });
   const needsFee = missing.filter((r) => !founders.has(r.team_id)).map((r) => ({
     leadId: r.lead_id, teamId: r.team_id, artist: byId[r.team_id]?.name || "Unknown", leadName: r.lead_name, place: placeOf(r),
     date: r.date, eventType: r.event_type, suggested: suggestedFee(r.team_id, r.date, r.city),
@@ -5029,10 +5098,13 @@ app.post("/api/team-pay/fees", requireAuth, requireSection("accounts"), requireA
   res.status(201).json({ id });
 });
 
-// Pay an artist for any number of their unpaid fees/reimbursements in one go.
+// Pay an artist: any amount, taken off what they're owed. It clears the ticked items (or everything owed when
+// none are ticked) in order — out-of-pocket reimbursements first, then fees, oldest event first; whatever's left
+// stays due. Each item records how much of it this payment covered.
 app.post("/api/team-pay/payouts", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   const { teamId } = req.body;
-  const ids = [...new Set(Array.isArray(req.body.expenseIds) ? req.body.expenseIds.map(String) : [])];
+  let ids = [...new Set(Array.isArray(req.body.expenseIds) ? req.body.expenseIds.map(String) : [])];
+  if (!ids.length) ids = (await pool.query("SELECT id FROM expenses WHERE team_id = $1 AND approved = 1 AND paid = 0 AND category IN ('artist_fee', 'reimbursement')", [teamId])).rows.map((r) => r.id);
   const paidOn = String(req.body.paidOn || todayIST());
   const mode = TEAM_PAY_MODES.includes(req.body.mode) ? req.body.mode : null;
   const reference = cleanText(req.body.reference, 80);
@@ -5046,25 +5118,47 @@ app.post("/api/team-pay/payouts", requireAuth, requireSection("accounts"), requi
   let payoutId, total, items;
   try {
     await client.query("BEGIN");
-    items = (await client.query(`SELECT e.id, e.amount, e.team_id, e.paid, e.approved, e.category, e.lead_id, l.venue, l.city, l.date
+    items = (await client.query(`SELECT e.id, e.amount, e.paid_amount, e.team_id, e.paid, e.approved, e.category, e.lead_id, e.created_at, l.venue, l.city, l.date
       FROM expenses e LEFT JOIN leads l ON l.id = e.lead_id WHERE e.id = ANY($1::text[]) FOR UPDATE OF e`, [ids])).rows;
     const bad = items.length !== ids.length || items.some((e) => e.team_id !== teamId || e.paid || !e.approved || !["artist_fee", "reimbursement"].includes(e.category));
     if (bad) {
       await client.query("ROLLBACK");
       return res.status(409).json({ error: "Some of these were already paid or changed. Refresh and try again." });
     }
-    total = items.reduce((s, e) => s + Number(e.amount), 0);
+    const leftOf = (e) => Number(e.amount) - Number(e.paid_amount || 0);
+    const owed = items.reduce((s, e) => s + leftOf(e), 0);
+    const want = req.body.amount === undefined || req.body.amount === null || req.body.amount === "" ? owed : Math.round(Number(req.body.amount));
+    if (!(want > 0)) { await client.query("ROLLBACK"); return res.status(400).json({ error: "Enter the amount you're paying." }); }
+    if (want > owed) { await client.query("ROLLBACK"); return res.status(400).json({ error: `That's more than what's owed (₹${owed.toLocaleString("en-IN")}).` }); }
+    const order = { reimbursement: 0, artist_fee: 1 };
+    items.sort((x, y) => (order[x.category] - order[y.category]) || String(x.date || "9999").localeCompare(String(y.date || "9999")) || String(x.created_at).localeCompare(String(y.created_at)));
+    total = want;
     payoutId = uuid();
     await client.query("INSERT INTO team_payouts (id, team_id, amount, paid_on, mode, reference, note, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
       [payoutId, teamId, total, paidOn, mode, reference, note, await actorName(req.user), new Date().toISOString()]);
-    await client.query("UPDATE expenses SET paid = 1, payment_date = $1, payment_mode = $2, payout_id = $3 WHERE id = ANY($4::text[])", [paidOn, mode, payoutId, ids]);
+    let rest = want;
+    const covered = [];
+    for (const e of items) {
+      if (rest <= 0) break;
+      const take = Math.min(rest, leftOf(e));
+      if (take <= 0) continue;
+      rest -= take;
+      const full = Number(e.paid_amount || 0) + take >= Number(e.amount);
+      await client.query("INSERT INTO team_payout_items (payout_id, expense_id, amount) VALUES ($1,$2,$3)", [payoutId, e.id, take]);
+      await client.query(`UPDATE expenses SET paid_amount = paid_amount + $1, paid = $2, payout_id = $3,
+        payment_date = CASE WHEN $2 = 1 THEN $4 ELSE payment_date END, payment_mode = CASE WHEN $2 = 1 THEN $5 ELSE payment_mode END WHERE id = $6`,
+        [take, full ? 1 : 0, payoutId, paidOn, mode, e.id]);
+      covered.push(e);
+    }
+    items = covered;
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("Team Pay payout failed:", err.message);
     return res.status(500).json({ error: "Couldn't record the payment. Nothing was changed — please try again." });
   } finally { client.release(); }
-  res.status(201).json({ id: payoutId, amount: total, count: items.length });
+  const stillOwed = (await pool.query("SELECT COALESCE(SUM(amount - paid_amount), 0)::int AS n FROM expenses WHERE team_id = $1 AND approved = 1 AND paid = 0 AND category IN ('artist_fee', 'reimbursement')", [teamId])).rows[0].n;
+  res.status(201).json({ id: payoutId, amount: total, count: items.length, stillOwed });
   const places = [...new Set(items.filter((e) => e.lead_id).map((e) => placeOf(e)))];
   await addTeamNotification(teamId, `Payment sent: ₹${total.toLocaleString("en-IN")} by ${mode}${reference ? ` (ref ${reference})` : ""} for ${places.length ? places.slice(0, 3).join("; ") + (places.length > 3 ? ` and ${places.length - 3} more` : "") : "your reimbursement"}.`).catch(() => {});
   logActivity(req, `Paid ${member.name} ₹${total.toLocaleString("en-IN")} by ${mode} for ${items.length} item${items.length > 1 ? "s" : ""}`, null);
@@ -5077,7 +5171,14 @@ app.delete("/api/team-pay/payouts/:id", requireAuth, requireSection("accounts"),
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query("UPDATE expenses SET paid = 0, payment_date = NULL, payment_mode = NULL, payout_id = NULL, member_received = 0, member_received_at = NULL WHERE payout_id = $1", [p.id]);
+    const covered = (await client.query("SELECT expense_id, amount FROM team_payout_items WHERE payout_id = $1", [p.id])).rows;
+    for (const c of covered) {
+      await client.query(`UPDATE expenses SET paid_amount = GREATEST(0, paid_amount - $1), paid = 0, payment_date = NULL, payment_mode = NULL, member_received = 0, member_received_at = NULL,
+        payout_id = (SELECT i.payout_id FROM team_payout_items i JOIN team_payouts tp ON tp.id = i.payout_id WHERE i.expense_id = $2 AND i.payout_id <> $3 ORDER BY tp.paid_on DESC, tp.created_at DESC LIMIT 1)
+        WHERE id = $2`, [c.amount, c.expense_id, p.id]);
+    }
+    // Older payments recorded before part payments existed have no item rows.
+    await client.query("UPDATE expenses SET paid = 0, paid_amount = 0, payment_date = NULL, payment_mode = NULL, payout_id = NULL, member_received = 0, member_received_at = NULL WHERE payout_id = $1", [p.id]);
     await client.query("DELETE FROM team_payouts WHERE id = $1", [p.id]);
     await client.query("COMMIT");
   } catch (err) {
@@ -6082,7 +6183,7 @@ async function loadArtistPortal(token) {
     SELECT ea.id AS assignment_id, ea.status, ea.note, ea.confirm_token,
            leads.id AS lead_id, leads.name AS client_name, leads.event_type, leads.city, leads.date, leads.venue,
            leads.event_time, leads.soundcheck_time, leads.pcs, leads.stage, leads.combo_group_id, leads.drums,
-           ex.paid AS pay_paid, ex.amount AS pay_amount, ex.payment_date, ex.payment_mode
+           ex.paid AS pay_paid, ex.amount AS pay_amount, ex.paid_amount AS pay_paid_amount, ex.payment_date, ex.payment_mode
     FROM event_assignments ea
     JOIN leads ON leads.id = ea.lead_id
     LEFT JOIN expenses ex ON ex.team_id = ea.team_id AND ex.lead_id = ea.lead_id AND ex.category = 'artist_fee'
@@ -6129,7 +6230,7 @@ app.get("/api/public/me/:token", async (req, res) => {
       venue: r.venue, eventTime: r.event_time, soundcheckTime: r.soundcheck_time, pcs: r.pcs, tentative: r.stage === "Tentative", past: isPast,
       drumNote: /drum/i.test(p.member.role || "") ? DRUM_NOTE_FOR_DRUMMER[r.drums] || null : null,
       travel: mine, travelAck: null,
-      pay: isPast ? { paid: !!r.pay_paid, amount: r.pay_amount != null ? Number(r.pay_amount) : null, date: r.payment_date, mode: r.payment_mode } : null,
+      pay: isPast ? { paid: !!r.pay_paid, amount: r.pay_amount != null ? Number(r.pay_amount) : null, paidSoFar: r.pay_paid ? Number(r.pay_amount) : Number(r.pay_paid_amount || 0), date: r.payment_date, mode: r.payment_mode } : null,
     };
   });
   for (const e of events) { const row = p.rows.find((r) => r.confirm_token === e.confirmToken); e.travelAck = e.travel.length && row ? await travelAckState(row.lead_id, p.member.id) : { state: "none", at: null }; }
@@ -6140,7 +6241,7 @@ app.get("/api/public/me/:token", async (req, res) => {
     const row = p.rows.find((r) => r.confirm_token === e.confirmToken);
     e.claims = claimRows.filter((c) => row && c.lead_id === row.lead_id).map((c) => ({
       amount: Number(c.amount), what: c.notes || "", at: String(c.created_at).slice(0, 10), receipts: (c.receipts || []).length,
-      status: !c.approved ? "waiting" : c.paid ? "paid" : "approved", paidOn: c.payment_date || null,
+      status: !c.approved ? "waiting" : c.paid ? "paid" : Number(c.paid_amount) > 0 ? "part paid" : "approved", paidSoFar: Number(c.paid_amount || 0), paidOn: c.payment_date || null,
     }));
   }
   const login = (await pool.query("SELECT username FROM users WHERE team_id = $1 LIMIT 1", [p.member.id])).rows[0];
