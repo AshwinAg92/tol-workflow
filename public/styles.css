@@ -555,3 +555,8 @@ select.ev-stage { width:auto; padding:4px 26px 4px 10px; font-size:13.5px; font-
 
 /* Travel Calendar: a journey that double-books someone */
 .cal-event.cal-double { outline:2px solid #FFD27A; outline-offset:-2px; box-shadow:0 0 0 2px #A6432B; }
+
+/* Tickets on the event's Travel tab: tap to open */
+.ev-tickets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.ev-ticket { display: inline-flex; align-items: center; max-width: 100%; padding: 3px 10px; border: 1px solid var(--line, #E8E2D4); border-radius: 999px; font-size: 12.5px; color: var(--accent, #B5541C); background: #FFFDF8; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-ticket:hover { background: #FFF3DC; }

@@ -4094,10 +4094,12 @@ function eventTravelHtml(lead, legsAll, assignments, opts = {}) {
     let g = groups.get(key);
     if (!g) {
       const forName = type === "onward" && l.lead_id !== lead.id ? (LEADS.find((e) => e.id === l.lead_id)?.name || "next event") : "";
-      g = { date: x.date, type, from, to, mode: l.mode, people: [], tickets: 0, forName };
+      g = { date: x.date, type, from, to, mode: l.mode, people: [], tickets: [], forName };
       groups.set(key, g);
     }
-    if (!g.people.some((p) => p.name === nameOf(a))) { g.people.push({ name: nameOf(a), status: l.status }); g.tickets += (l.tickets || []).length; }
+    if (!g.people.some((p) => p.name === nameOf(a))) g.people.push({ name: nameOf(a), status: l.status });
+    // Every ticket uploaded on the journeys in this line, once each — opened straight from here.
+    (l.tickets || []).forEach((t) => { if (!g.tickets.some((x) => x.id === t.id)) g.tickets.push(t); });
   };
   info.forEach((a) => {
     if (a.local) return;
@@ -4114,9 +4116,10 @@ function eventTravelHtml(lead, legsAll, assignments, opts = {}) {
       ? statusHtml(sts[0])
       : sts.map((st) => `${statusHtml(st)}: ${esc(g.people.filter((p) => p.status === st).map((p) => p.name).join(", "))}`).join(" · ");
     return `<div style="padding:7px 0; border-bottom:1px solid var(--line, #E8E2D4);">
-      <div class="small">${legTypeBadge(g.type)}<b>${dayShort(g.date)}</b> · <b>${esc(route)}</b> · ${esc(TRAVEL_MODE_LABELS[g.mode] || "mode not set")}${g.tickets ? ` · 🎫 ${g.tickets}` : ""}${g.forName ? ` · <span class="muted">for ${esc(g.forName)}</span>` : ""}</div>
+      <div class="small">${legTypeBadge(g.type)}<b>${dayShort(g.date)}</b> · <b>${esc(route)}</b> · ${esc(TRAVEL_MODE_LABELS[g.mode] || "mode not set")}${g.forName ? ` · <span class="muted">for ${esc(g.forName)}</span>` : ""}</div>
       <div style="margin-top:3px;">👥 <b>${names}</b> <span class="muted small">(${g.people.length})</span></div>
       <div class="small" style="margin-top:2px;">${statusLine}</div>
+      ${g.tickets.length ? `<div class="ev-tickets">${g.tickets.map((t) => `<a class="ev-ticket" href="${esc(t.url)}" target="_blank" rel="noopener" title="Open ticket">🎫 ${esc(t.original_name || "Ticket")}</a>`).join("")}</div>` : ""}
     </div>`;
   }).join("");
 
