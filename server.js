@@ -4686,6 +4686,59 @@ app.get("/api/leads/:id/history", requireAuth, async (req, res) => {
 // Marks a due reimbursement as actually received from the client (or
 // reverts a received one back to due, if it was marked by mistake) — the
 // same "due → paid" transition the expenses table already has for artist fees.
+// Who can have paid an event's costs out of pocket: the artists on its line-up (every date of a combo), not
+// declined. Founders aren't listed — what they pay is TOL's own money.
+app.get("/api/leads/:id/payers", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const { rows } = await pool.query(`SELECT DISTINCT t.id, t.name FROM event_assignments ea JOIN team t ON t.id = ea.team_id
+    WHERE ea.lead_id = ANY($1) AND ea.status <> 'declined'
+      AND t.id NOT IN (SELECT team_id FROM users WHERE access_level = 'admin' AND team_id IS NOT NULL)
+    ORDER BY t.name ASC`, [await comboLeadIds(req.params.id)]);
+  res.json(rows);
+});
+
+// Edit a client reimbursement: amount, what it was for, and who paid it (Team TOL or an artist, who is then owed
+// it in Team Pay). Anything already paid back to the artist can't be moved or cut below what's been paid.
+app.patch("/api/payments/:id/reimbursement", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const p = (await pool.query("SELECT * FROM payments WHERE id = $1 AND type = 'client_reimbursement'", [req.params.id])).rows[0];
+  if (!p) return res.status(404).json({ error: "Reimbursement not found" });
+  const ex = p.expense_id ? (await pool.query("SELECT * FROM expenses WHERE id = $1 AND category = 'reimbursement'", [p.expense_id])).rows[0] : null;
+  const amount = req.body.amount !== undefined ? Math.round(Number(req.body.amount)) : Number(p.amount);
+  if (!(amount > 0)) return res.status(400).json({ error: "Enter the amount." });
+  const baseNotes = req.body.notes !== undefined ? String(req.body.notes || "").trim().slice(0, 300) : String(p.notes || "").replace(/\s*\(paid by [^)]*\)\s*$/, "");
+  const wantPayer = req.body.paidByTeamId !== undefined ? (req.body.paidByTeamId || null) : (ex ? ex.team_id : null);
+  const paidBack = ex ? (ex.paid ? Number(ex.amount) : Number(ex.paid_amount || 0)) : 0;
+  if (ex && paidBack > 0) {
+    if (wantPayer !== ex.team_id) return res.status(400).json({ error: "The artist has already been paid for this in Team Pay — undo that payment there before changing who paid." });
+    if (amount < paidBack) return res.status(400).json({ error: `₹${paidBack.toLocaleString("en-IN")} has already been paid back to the artist — the amount can't be less than that.` });
+  }
+  let payerName = null;
+  if (wantPayer) {
+    const m = (await pool.query("SELECT name FROM team WHERE id = $1", [wantPayer])).rows[0];
+    if (!m) return res.status(400).json({ error: "Choose who paid it." });
+    payerName = m.name;
+  }
+  let expenseId = ex ? ex.id : null;
+  if (ex && !wantPayer) {
+    await pool.query("UPDATE payments SET expense_id = NULL WHERE id = $1", [p.id]);
+    await pool.query("DELETE FROM expenses WHERE id = $1", [ex.id]);
+    expenseId = null;
+  } else if (ex) {
+    const full = paidBack >= amount;
+    await pool.query("UPDATE expenses SET team_id = $1, head = $2, amount = $3, notes = $4, paid = $5, paid_amount = LEAST(paid_amount, $3) WHERE id = $6",
+      [wantPayer, `Reimbursement — ${payerName}`, amount, baseNotes || "Reimbursement", full && paidBack > 0 ? 1 : 0, ex.id]);
+  } else if (wantPayer) {
+    expenseId = uuid();
+    const eventId = (await pool.query("SELECT lead_id FROM payments WHERE id = $1", [p.id])).rows[0].lead_id;
+    await pool.query(`INSERT INTO expenses (id, lead_id, team_id, head, amount, paid, notes, created_at, category, approved, requested_by)
+      VALUES ($1, $2, $3, $4, $5, 0, $6, $7, 'reimbursement', 1, $8)`,
+      [expenseId, eventId, wantPayer, `Reimbursement — ${payerName}`, amount, baseNotes || "Reimbursement", new Date().toISOString(), await actorName(req.user)]);
+  }
+  await pool.query("UPDATE payments SET amount = $1, notes = $2, expense_id = $3 WHERE id = $4",
+    [amount, payerName ? `${baseNotes || "Reimbursement"} (paid by ${payerName})` : (baseNotes || null), expenseId, p.id]);
+  logActivity(req, `Edited a reimbursement: ₹${amount.toLocaleString("en-IN")} — ${baseNotes || "Reimbursement"}${payerName ? ` (paid by ${payerName})` : " (paid by Team TOL)"}`, p.lead_id);
+  res.json((await pool.query("SELECT * FROM payments WHERE id = $1", [p.id])).rows[0]);
+});
+
 app.patch("/api/payments/:id", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   const payment = (await pool.query("SELECT * FROM payments WHERE id = $1", [req.params.id])).rows[0];
   if (!payment) return res.status(404).json({ error: "Payment not found" });

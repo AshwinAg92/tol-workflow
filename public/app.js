@@ -5951,10 +5951,19 @@ async function openLeadPaymentsModal(leadId) {
   root.querySelector("#cancelModal").addEventListener("click", close);
   root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
 
+  // Artists on this event's line-up (every date of a combo) — the only ones who can have paid a cost for it.
+  let payers = [];
   const [payments, expenses] = await Promise.all([
     api(`/api/leads/${leadId}/payments`),
     api(`/api/expenses?leadId=${leadId}`),
+    api(`/api/leads/${leadId}/payers`).then((r) => { payers = r; }).catch(() => {}),
   ]);
+  let editingReimbId = null;
+  const redraw = async () => {
+    await refreshLeads();
+    const [p2, e2] = await Promise.all([api(`/api/leads/${leadId}/payments`), api(`/api/expenses?leadId=${leadId}`)]);
+    draw(p2, e2);
+  };
   draw(payments, expenses);
 
   function draw(payments, expenses) {
@@ -5987,6 +5996,27 @@ async function openLeadPaymentsModal(leadId) {
       const owed = !ex ? "" : ex.paid ? `<span style="color:#1C7A80;">paid back to ${escH(artist)} ✓</span>`
         : Number(ex.paid_amount) > 0 ? `${inr(ex.paid_amount)} of ${inr(ex.amount)} paid back to ${escH(artist)}`
         : `<span style="color:#B6752C;">owed to ${escH(artist)} in Team Pay</span>`;
+      if (editingReimbId === p.id) {
+        const what = String(p.notes || "").replace(/\s*\(paid by [^)]*\)\s*$/, "");
+        // The current payer stays in the list even if they've since left the line-up.
+        const opts = [...payerList];
+        if (ex && !opts.some((m) => m.id === ex.team_id)) opts.push({ id: ex.team_id, name: artist });
+        return `
+          <div class="dash-list-item">
+            <div class="row-2">
+              <input type="number" class="re-amount" value="${p.amount}" aria-label="Amount" />
+              <select class="re-payer" aria-label="Who paid it">
+                <option value="">Team TOL</option>
+                ${opts.map((m) => `<option value="${escH(m.id)}" ${ex && ex.team_id === m.id ? "selected" : ""}>${escH(m.name)}</option>`).join("")}
+              </select>
+            </div>
+            <input class="re-notes" value="${escH(what)}" placeholder="What's this reimbursement for?" style="margin-top:6px;" />
+            <div style="display:flex; gap:8px; margin-top:6px;">
+              <button class="btn-primary re-save" data-id="${p.id}" style="font-size:12.5px; padding:5px 12px;">Save</button>
+              <button class="btn-ghost re-cancel" style="font-size:12.5px; padding:5px 12px;">Cancel</button>
+            </div>
+          </div>`;
+      }
       return `
           <div class="dash-list-item" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
             <div>
@@ -5994,10 +6024,13 @@ async function openLeadPaymentsModal(leadId) {
               <div class="muted small">${escH(p.notes || "Reimbursement")}</div>
               ${owed ? `<div class="small" style="margin-top:2px;">💸 ${owed}</div>` : ""}
             </div>
-            <button class="icon-btn" data-delete-payment="${p.id}" title="Remove">${ICON_X}</button>
+            <span style="display:flex; gap:6px; align-items:center; flex-shrink:0;">
+              <button class="btn-ghost re-edit" data-id="${p.id}" style="font-size:12px; padding:3px 9px;">Edit</button>
+              <button class="icon-btn" data-delete-payment="${p.id}" title="Remove">${ICON_X}</button>
+            </span>
           </div>`;
     };
-    const payerList = [...TEAM].filter((m) => !m.archived).sort((a, b) => a.name.localeCompare(b.name));
+    const payerList = payers;
     body.innerHTML = `
       <div class="dash-stats" style="grid-template-columns:repeat(3,1fr); margin-bottom:8px; gap:8px;">
         <div class="card summary-card summary-card-compact"><div class="muted">Total</div><div class="mono big">${inr(grandTotal)}</div></div>
@@ -6055,8 +6088,9 @@ async function openLeadPaymentsModal(leadId) {
         <label class="muted small" for="lpPaidBy" style="display:block;">Who paid it?</label>
         <select id="lpPaidBy">
           <option value="">Team TOL</option>
-          ${payerList.map((m) => `<option value="${escH(m.id)}">${escH(m.name)} — we pay them back in Team Pay</option>`).join("")}
+          ${payerList.map((m) => `<option value="${escH(m.id)}">${escH(m.name)}</option>`).join("")}
         </select>
+        <div class="muted small" style="margin-top:3px;">${payerList.length ? "Pick the artist who paid — we pay them back in Team Pay, with their fee." : "No artists on this event's line-up yet."}</div>
       </div>
       <button class="btn-primary full" id="lpAddBtn" style="margin-top:10px;">Add</button>
     `;
@@ -6111,6 +6145,19 @@ async function openLeadPaymentsModal(leadId) {
         }
       });
     }
+    body.querySelectorAll(".re-edit").forEach((b) => b.addEventListener("click", () => { editingReimbId = b.dataset.id; draw(payments, expenses); }));
+    body.querySelector(".re-cancel")?.addEventListener("click", () => { editingReimbId = null; draw(payments, expenses); });
+    body.querySelector(".re-save")?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget, row = btn.closest(".dash-list-item");
+      const amount = Number(row.querySelector(".re-amount").value);
+      if (!(amount > 0)) return alert("Enter the amount.");
+      btn.disabled = true;
+      try {
+        await api(`/api/payments/${btn.dataset.id}/reimbursement`, { method: "PATCH", body: JSON.stringify({ amount, notes: row.querySelector(".re-notes").value.trim(), paidByTeamId: row.querySelector(".re-payer").value || null }) });
+        editingReimbId = null;
+        await redraw();
+      } catch (err) { alert(err.message); btn.disabled = false; }
+    });
     body.querySelectorAll("[data-delete-payment]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         if (!confirm("Remove this? (If an artist paid it, what we owe them goes too.)")) return;
