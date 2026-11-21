@@ -5129,7 +5129,7 @@ app.get("/api/team-pay", requireAuth, requireSection("accounts"), requireAdmin, 
   const [members, rows, payouts, missing, history, pendingApprovals] = await Promise.all([
     pool.query("SELECT id, name, phone, kind, base_city, local_fee, outstation_fee FROM team").then((r) => r.rows),
     pool.query(`
-      SELECT e.id, e.team_id, e.category, e.amount, e.paid, e.paid_amount, e.payment_date, e.payment_mode, e.payout_id, e.member_received, e.notes,
+      SELECT e.id, e.team_id, e.category, e.head, e.amount, e.paid, e.paid_amount, e.payment_date, e.payment_mode, e.payout_id, e.member_received, e.notes,
         (SELECT p.id FROM payments p WHERE p.expense_id = e.id LIMIT 1) AS billed_payment,
         l.id AS lead_id, l.date, l.city, l.venue, l.stage, l.event_type
       FROM expenses e LEFT JOIN leads l ON l.id = e.lead_id
@@ -5168,7 +5168,7 @@ app.get("/api/team-pay", requireAuth, requireSection("accounts"), requireAdmin, 
     const paidAmount = r.paid ? amount : Math.min(amount, Number(r.paid_amount || 0));
     const left = amount - paidAmount;
     a.items.push({
-      id: r.id, kind: r.category === "reimbursement" ? "reimbursement" : "fee", amount, paid: !!r.paid, paidAmount, left, billed: !!r.billed_payment,
+      id: r.id, kind: r.category === "reimbursement" ? (/^Amount owed/.test(r.head || "") ? "due" : "reimbursement") : "fee", amount, paid: !!r.paid, paidAmount, left, billed: !!r.billed_payment,
       paymentDate: r.payment_date, mode: r.payment_mode, payoutId: r.payout_id, confirmed: !!r.member_received,
       leadId: r.lead_id, place: r.lead_id ? placeOf(r) : "General", date: r.date, eventType: r.event_type, stage: r.stage, due, notes: r.notes,
     });
@@ -5181,6 +5181,25 @@ app.get("/api/team-pay", requireAuth, requireSection("accounts"), requireAdmin, 
     date: r.date, eventType: r.event_type, suggested: suggestedFee(r.team_id, r.date, r.city),
   }));
   res.json({ today, modes: TEAM_PAY_MODES, artists: Object.values(artists).sort((x, y) => y.owedNow - x.owedNow || y.upcoming - x.upcoming || x.name.localeCompare(y.name)), needsFee, pendingApprovals });
+});
+
+// Money owed to an artist that isn't a fee on a current line-up or a claim — e.g. old dues from before the CRM, or an
+// event they weren't listed on. Owed right away (shows with their other dues) and paid like anything else.
+app.post("/api/team-pay/dues", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
+  const { teamId } = req.body;
+  const amount = Math.round(Number(req.body.amount));
+  const what = cleanText(req.body.what, 200);
+  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: "Enter the amount owed." });
+  if (!what) return res.status(400).json({ error: "Say what it's for — e.g. dues from the March event." });
+  const m = (await pool.query("SELECT name FROM team WHERE id = $1", [teamId])).rows[0];
+  if (!m) return res.status(404).json({ error: "Artist not found" });
+  const leadId = req.body.leadId ? String(req.body.leadId) : null;
+  if (leadId && !(await pool.query("SELECT 1 FROM leads WHERE id = $1", [leadId])).rows.length) return res.status(400).json({ error: "That event wasn't found." });
+  const id = uuid();
+  await pool.query(`INSERT INTO expenses (id, lead_id, team_id, head, amount, paid, notes, created_at, category, approved, requested_by)
+    VALUES ($1, $2, $3, $4, $5, 0, $6, $7, 'reimbursement', 1, $8)`, [id, leadId, teamId, `Amount owed — ${m.name}`, amount, what, new Date().toISOString(), await actorName(req.user)]);
+  logActivity(req, `Added an amount owed to ${m.name}: ₹${amount.toLocaleString("en-IN")} — ${what}`, leadId);
+  res.status(201).json({ id });
 });
 
 // Set a fee for an artist on an event that doesn't have one yet.
