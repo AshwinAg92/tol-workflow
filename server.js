@@ -5175,6 +5175,10 @@ app.get("/api/team-pay", requireAuth, requireSection("accounts"), requireAdmin, 
     a.paidTotal += paidAmount;
     if (left > 0) { if (due) a.owedNow += left; else a.upcoming += left; }
   }
+  // Each artist's own played events (on the line-up, not declined) — for tying an amount owed to one of them.
+  const played = (await pool.query(`SELECT ea.team_id, l.id, l.name, l.date FROM event_assignments ea JOIN leads l ON l.id = ea.lead_id
+    WHERE ea.status <> 'declined' AND l.stage IN ('Confirmed', 'Completed') AND l.date <= $1 ORDER BY l.date DESC`, [today])).rows;
+  for (const e of played) if (artists[e.team_id]) (artists[e.team_id].events ||= []).push({ leadId: e.id, name: e.name, date: e.date });
   for (const p of payouts) artistOf(p.team_id).payouts.push({ id: p.id, amount: Number(p.amount), paidOn: p.paid_on, mode: p.mode, reference: p.reference, note: p.note, createdBy: p.created_by, covers: (p.covers || []).map((c) => ({ expenseId: c.expenseId, amount: Number(c.amount) })) });
   const needsFee = missing.filter((r) => !founders.has(r.team_id)).map((r) => ({
     leadId: r.lead_id, teamId: r.team_id, artist: byId[r.team_id]?.name || "Unknown", leadName: r.lead_name, place: placeOf(r),

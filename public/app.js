@@ -10161,7 +10161,7 @@ function openArtistPayModal(artist, data, opts = {}) {
             <div class="muted small" style="margin-bottom:6px;">Anything we owe ${escH(artist.name.split(" ")[0])} that isn't a fee on a line-up — e.g. old dues from before the CRM. It's added to what's due now.</div>
             <div class="row-2">
               <input type="number" id="tpDueAmt" min="1" inputmode="numeric" placeholder="Amount ₹" />
-              <select id="tpDueLead"><option value="">No particular event</option>${LEADS.filter((l) => ["Confirmed", "Completed"].includes(l.stage) && l.date && l.date <= todayYmd()).sort((a, b) => b.date.localeCompare(a.date)).map((l) => `<option value="${escH(l.id)}">${fmtDate(l.date)} · ${escH(l.name)}</option>`).join("")}</select>
+              <select id="tpDueLead"><option value="">No particular event</option>${(artist.events || []).map((l) => `<option value="${escH(l.leadId)}">${fmtDate(l.date)} · ${escH(l.name)}</option>`).join("")}</select>
             </div>
             <input id="tpDueWhat" maxlength="200" placeholder="What's it for? e.g. Dues from the March event" style="margin-top:6px;" />
             <div style="display:flex; gap:8px; margin-top:8px;"><button class="btn-primary" id="tpDueSave" style="font-size:12.5px; padding:5px 12px;">Add</button><button class="btn-ghost" id="tpDueCancel" style="font-size:12.5px; padding:5px 12px;">Cancel</button></div>
