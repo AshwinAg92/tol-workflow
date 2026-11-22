@@ -68,6 +68,7 @@
     const MODE = { flight: "Flight", train: "Train", bus: "Bus", car: "Car", cab: "Cab" };
     const ST = { booked: "Booked", not_booked: "Not booked yet" };
     let data = null, tab = "upcoming", openClaim = null;
+    const inr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
 
     function eventCard(e, i) {
       const rows = [ ["🕒", e.eventTime ? "Event time: " + e.eventTime : ""], ["🎶", e.soundcheckTime ? "Sound check: " + e.soundcheckTime : ""], ["🎸", e.pcs ? e.pcs + " pcs" : ""], ["🥁", e.drumNote || ""]].filter((r) => r[1]);
@@ -114,16 +115,33 @@
         <div class="title">${esc(e.place)}</div>
         <div class="muted">${esc(e.experience)}</div>
         <span class="pill ${pill[0]}">${pill[1]}</span>${e.tentative ? `<span class="pill p-tent">Tentative</span>` : ""}
-        <div style="margin-top:6px;">${rows.map((r) => `<div class="row"><div class="ic">${r[0]}</div><div>${esc(r[1])}</div></div>`).join("")}</div>
+        <div style="margin-top:6px;">${rows.map((r) => `<div class="row"><div class="ic">${r[0]}</div><div>${esc(r[1])}</div></div>`).join("")}
+          ${e.venue || e.city ? `<div class="row"><div class="ic">📍</div><div>${esc(e.venue || e.city)} · <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([e.venue, e.city].filter(Boolean).join(", "))}" target="_blank" rel="noopener">Open in Maps</a></div></div>` : ""}
+          ${e.fee != null && !e.past ? `<div class="row"><div class="ic">💰</div><div>Your fee: ${inr(e.fee)} <span class="muted">(paid after the event)</span></div></div>` : ""}</div>
+        ${(e.contacts || []).length ? `<div class="sec">On-site contacts</div>${e.contacts.map((c) => { const d = String(c.phone || "").replace(/\D/g, ""); return `<div class="row"><div class="ic">📞</div><div><b>${esc(c.name || c.role)}</b>${c.name ? ` <span class="muted">${esc(c.role)}</span>` : ""}${d ? ` · <a href="tel:${esc(c.phone)}">${esc(c.phone)}</a>` : ""}</div></div>`; }).join("")}` : ""}
+        ${(e.lineup || []).length ? `<div class="sec">Playing with you</div><div>${e.lineup.map((x) => esc(x.name) + (x.confirmed ? "" : " <span class='muted'>(not confirmed yet)</span>")).join(", ")}</div>` : ""}
         <div class="sec">Travel</div>${travel}${ackHtml}${pay}${claims}${respond}
         <div class="msg" id="msg${i}"></div></div>`;
+    }
+    // What we owe you, what's coming, and every payment we've made (part payments shown as such).
+    function moneyHtml() {
+      const m = data.money || { items: [], history: [], owedNow: 0, upcoming: 0, received: 0 };
+      const byId = Object.fromEntries(m.items.map((i) => [i.id, i]));
+      const label = (i) => (i.kind === "fee" ? `Fee · ${i.place || "event"}${i.date ? " · " + fmtDate(i.date) : ""}` : `${i.kind === "due" ? "Amount owed" : "Reimbursement"}${i.what ? " · " + i.what : ""}${i.place ? " · " + i.place : ""}`);
+      const line = (i) => `<div class="claim"><div><b>${esc(label(i))}</b>${i.paidAmount > 0 ? `<div class="muted">${inr(i.paidAmount)} of ${inr(i.amount)} paid</div>` : ""}</div><b>${inr(i.left)}</b></div>`;
+      const owed = m.items.filter((i) => i.due && i.left > 0), later = m.items.filter((i) => !i.due && i.left > 0);
+      return `<div class="card"><div class="muted">Owed to you now</div><div class="title" style="color:${m.owedNow ? "#A6432B" : "#1C7A80"};">${inr(m.owedNow)}</div>
+          <div class="muted" style="margin-top:6px;">Coming up after events: <b>${inr(m.upcoming)}</b> · Received in all: <b>${inr(m.received)}</b></div></div>
+        <div class="card"><div class="sec" style="margin-top:0;">Owed to you now</div>${owed.length ? owed.map(line).join("") : `<div class="muted">Nothing owed right now. 🎉</div>`}
+          ${later.length ? `<div class="sec">Coming up — after the events</div>${later.map(line).join("")}` : ""}</div>
+        <div class="card"><div class="sec" style="margin-top:0;">Payments you've received</div>${m.history.length ? m.history.map((h) => `<div class="claim" style="display:block;"><div style="display:flex; justify-content:space-between;"><b>${inr(h.amount)}</b><span class="muted">${esc(fmtDate(h.paidOn))}${h.mode ? " · " + esc(h.mode) : ""}</span></div><div class="muted">${h.covers.map((c) => byId[c.expenseId] ? esc(label(byId[c.expenseId])) + (c.amount < byId[c.expenseId].amount ? ` (${inr(c.amount)} of ${inr(byId[c.expenseId].amount)})` : "") : "").filter(Boolean).join("; ")}</div></div>`).join("") : `<div class="muted">No payments yet.</div>`}</div>`;
     }
     function render() {
       const list = tab === "upcoming" ? data.upcoming : data.past;
       app.innerHTML = `<div class="hello">Hi ${esc(data.name.split(" ")[0])} 👋</div>
         ${data.hasLogin ? `<div class="card" style="padding:12px 16px;"><div class="muted">You also have a login for the full app${data.username ? ` (username: <b>${esc(data.username)}</b>)` : ""}.</div><a href="/login" style="display:inline-block; margin-top:8px; padding:10px 16px; border-radius:10px; background:#C7401E; color:#fff; font-weight:700; text-decoration:none;">Log in to the app</a></div>` : ""}
-        <div class="tabs"><button class="tab ${tab === "upcoming" ? "on" : ""}" data-tab="upcoming">Upcoming (${data.upcoming.length})</button><button class="tab ${tab === "past" ? "on" : ""}" data-tab="past">Past (${data.past.length})</button></div>
-        ${list.length ? list.map(eventCard).join("") : `<div class="card"><div class="muted">${tab === "upcoming" ? "No upcoming events yet — we'll add them here as soon as you're booked." : "Nothing here yet."}</div></div>`}`;
+        <div class="tabs"><button class="tab ${tab === "upcoming" ? "on" : ""}" data-tab="upcoming">Upcoming (${data.upcoming.length})</button><button class="tab ${tab === "past" ? "on" : ""}" data-tab="past">Past (${data.past.length})</button><button class="tab ${tab === "money" ? "on" : ""}" data-tab="money">Money</button></div>
+        ${tab === "money" ? moneyHtml() : list.length ? list.map(eventCard).join("") : `<div class="card"><div class="muted">${tab === "upcoming" ? "No upcoming events yet — we'll add them here as soon as you're booked." : "Nothing here yet."}</div></div>`}`;
       app.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; openClaim = null; render(); }));
       app.querySelectorAll("[data-claim-open]").forEach((b) => b.addEventListener("click", () => { openClaim = +b.dataset.claimOpen; render(); app.querySelector('[data-claim-form] input[name="amount"]')?.focus(); }));
       app.querySelectorAll("[data-claim-cancel]").forEach((b) => b.addEventListener("click", () => { openClaim = null; render(); }));
