@@ -14479,7 +14479,7 @@ function renderMain() {
   else if (currentTab === "team" || currentTab === "musicians") renderTeam(main, currentTab === "musicians" ? "musicians" : "team");
   else if (currentTab === "accounts") renderAccounts(main);
   else if (currentTab === "myevents") renderMyEvents(main);
-  else if (currentTab === "myrevenue") renderMyRevenue(main);
+  else if (currentTab === "myrevenue") renderMyEvents(main, "money");
   else if (currentTab === "mycash") renderMyCash(main);
   else if (currentTab === "settings") renderSettings(main);
   else if (currentTab === "travelcal") renderTravelCalendar(main);
@@ -14655,130 +14655,23 @@ async function renderMyCash(main) {
   }));
 }
 
-async function renderMyEvents(main) {
-  main.innerHTML = `<div class="view-head"><div><h2>My Events</h2><p class="muted">Your own assigned events — accept/decline, artist fee, and pay status.</p></div></div><p class="muted">Loading your events…</p>`;
-  const allEvents = await api("/api/my/events");
-  const today = todayYmd();
-  const sixtyDaysAgo = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
-  const events = allEvents.filter((e) => e.date >= today);
-  // Upcoming events need the full accept/decline workflow; past ones are just
-  // for checking "did I get paid for that gig" — so a lighter read-only card,
-  // capped to the last 60 days so this doesn't grow forever.
-  const recentPast = allEvents.filter((e) => e.date < today && e.date >= sixtyDaysAgo && e.stage !== "Cancelled").sort((a, b) => new Date(b.date) - new Date(a.date));
-  const statusLabel = { pending: "Awaiting your response", accepted: "Confirmed", declined: "Declined", cancel_requested: "Cancellation requested" };
-  const statusColor = { pending: "#B6752C", accepted: "#1C7A80", declined: "#A6432B", cancel_requested: "#B6752C" };
-
+// My Events / My Revenue for a manager or staff login who also plays: the same screens as the artist app
+// (Overview with calendar, Events, Money), inside the main CRM.
+async function renderMyEvents(main, startTab = "home") {
+  performerEmbedded = true;
+  const title = startTab === "money" ? "My Revenue" : "My Events";
   main.innerHTML = `
-    <div class="view-head"><div><h2>My Events</h2><p class="muted">Your own assigned events — accept/decline, artist fee, and pay status.</p></div></div>
-    ${events.length === 0 ? `<p class="muted small">No upcoming events assigned to you.</p>` : events.map((e) => `
-      <div class="card performer-event-card" style="margin-bottom:14px;">
-        <div class="performer-event-head">
-          <div>
-            <div class="team-name">${e.lead_name}</div>
-            <div class="muted small">${packageName(e.event_type)}${e.occasion ? ` · ${e.occasion}` : ""} · ${fmtDate(e.date)} · ${e.city || ""}</div>
-          </div>
-          ${e.stage === "Cancelled"
-            ? `<span class="tag" style="color:#A6432B; font-weight:700;">⚠ CANCELLED</span>`
-            : `<span class="tag" style="color:${statusColor[e.status]};">${statusLabel[e.status]}</span>`}
-        </div>
-        ${e.stage === "Cancelled" ? `<p class="muted small" style="color:#A6432B; margin-top:4px;">This event has been cancelled by the team — no action needed.</p>` : `
-        ${e.event_time || e.soundcheck_time ? `
-        <div class="performer-event-row">
-          <span class="muted small">Timing:</span>
-          <span>${e.soundcheck_time ? `Sound check ${fmtTimeHM(e.soundcheck_time)}` : ""}${e.soundcheck_time && e.event_time ? " · " : ""}${e.event_time ? `Event ${fmtTimeHM(e.event_time)}` : ""}</span>
-        </div>
-        ` : ""}
-        ${e.venue ? `
-        <div class="performer-event-row">
-          <span class="muted small">Venue:</span>
-          <span>${e.venue}</span>
-        </div>
-        ` : ""}
-        <div class="performer-event-row">
-          <span class="muted small">Artist fee:</span>
-          <span class="mono">${e.fee_amount ? inr(e.fee_amount) : "—"}</span>
-        </div>
-        <div class="performer-event-row">
-          <span class="muted small">Payment:</span>
-          <span class="tag" style="color:${e.paid ? "#1C7A80" : "#A6432B"};">${e.paid ? "Paid" : "Unpaid"}</span>
-          ${e.paid && e.payment_date ? `<span class="muted small">on ${fmtDate(e.payment_date)}${e.payment_mode ? ` via ${e.payment_mode}` : ""}</span>` : ""}
-        </div>
-        ${e.status === "cancel_requested" ? `
-          <p class="muted small" style="margin-top:8px;">Waiting on admin to review your cancellation request.</p>
-        ` : `
-          <div style="margin-top:10px;">
-            <label class="muted small">Your response</label>
-            <select class="respond-select" data-respond-select="${e.id}" ${e.status === "accepted" ? "disabled" : ""}>
-              ${e.status === "accepted" ? `<option value="accepted" selected>Accepted</option>` : `<option value="pending" ${e.status === "pending" ? "selected" : ""}>Pending — not responded yet</option>
-              <option value="accepted" ${e.status === "accepted" ? "selected" : ""}>Accept</option>
-              <option value="declined" ${e.status === "declined" ? "selected" : ""}>Decline</option>`}
-            </select>
-              ${e.status === "accepted" ? `<div class="muted small" style="margin-top:4px;">Already accepted — to back out, use “Request to cancel” below.</div>` : ""}
-          </div>
-        `}
-        ${e.status === "accepted" ? `
-          <button class="btn-ghost full" data-request-cancel="${e.id}" style="margin-top:8px; color:#A6432B;">Request to cancel</button>
-        ` : ""}
-        <button class="btn-ghost full" data-view-travel="${e.lead_id}" data-view-travel-name="${e.lead_name}" style="margin-top:8px;">🧳 Travel plan</button>
-        <button class="btn-ghost full" data-chat-lead="${e.lead_id}" data-chat-name="${e.lead_name}" style="margin-top:10px;">💬 Event chat</button>
-        `}
-      </div>
-    `).join("")}
-
-    ${recentPast.length > 0 ? `
-      <div class="section-label" style="margin-top:20px;">Recently completed — pay status</div>
-      ${recentPast.map((e) => `
-        <div class="card performer-event-card" style="margin-bottom:10px;">
-          <div class="performer-event-head">
-            <div>
-              <div class="team-name">${e.lead_name}</div>
-              <div class="muted small">${packageName(e.event_type)} · ${fmtDate(e.date)}</div>
-            </div>
-            <span class="tag" style="color:${e.paid ? "#1C7A80" : "#A6432B"};">${e.paid ? "Paid" : "Unpaid"}</span>
-          </div>
-          <div class="performer-event-row">
-            <span class="muted small">Artist fee:</span>
-            <span class="mono">${e.fee_amount ? inr(e.fee_amount) : "—"}</span>
-          </div>
-          ${e.paid && e.payment_date ? `<div class="muted small">Paid on ${fmtDate(e.payment_date)}${e.payment_mode ? ` via ${e.payment_mode}` : ""}</div>` : ""}
-        </div>
-      `).join("")}
-    ` : ""}
-  `;
-
-  main.querySelectorAll("[data-respond-select]").forEach((sel) => {
-    sel.addEventListener("change", async () => {
-      const value = sel.value;
-      if (value === "pending") { renderMyEvents(main); return; }
-      try {
-        await api(`/api/my/assignments/${sel.dataset.respondSelect}/respond`, { method: "POST", body: JSON.stringify({ status: value }) });
-        renderMyEvents(main);
-      } catch (err) {
-        alert(err.message);
-        renderMyEvents(main);
-      }
-    });
-  });
-  main.querySelectorAll("[data-request-cancel]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const reason = prompt("Why do you need to cancel this event? This goes to the admin for review.");
-      if (reason === null) return;
-      if (!reason.trim()) return alert("A reason is required.");
-      try {
-        await api(`/api/my/assignments/${btn.dataset.requestCancel}/request-cancel`, { method: "POST", body: JSON.stringify({ reason }) });
-        renderMyEvents(main);
-      } catch (err) {
-        alert(err.message);
-      }
-    });
-  });
-  main.querySelectorAll("[data-chat-lead]").forEach((btn) => {
-    btn.addEventListener("click", () => openEventChat(btn.dataset.chatLead, btn.dataset.chatName));
-  });
-  main.querySelectorAll("[data-view-travel]").forEach((btn) => {
-    btn.addEventListener("click", () => openTravelPlanViewModal(btn.dataset.viewTravel, btn.dataset.viewTravelName));
-  });
+    <div class="view-head"><div><h2>${title}</h2><p class="muted">Your own gigs — answer invitations, travel and tickets, pay and reimbursements.</p></div>
+      <div class="dash-head-actions"><button class="btn-ghost dash-head-btn" id="myevRefresh" title="Refresh">🔄 <span class="btn-label">Refresh</span></button></div></div>
+    <div class="performer-embedded"><div class="performer-tabs" id="performerTabs"></div><div class="performer-body" id="performerBody"><p class="muted">Loading your events…</p></div></div>`;
+  main.querySelector("#myevRefresh").addEventListener("click", () => reloadPerformer());
+  try { await refreshPerformerData(); }
+  catch (err) { const b = document.getElementById("performerBody"); if (b) b.innerHTML = `<p class="muted">Couldn't load your events — ${perfEsc(err.message)}</p>`; return; }
+  performerTab = startTab;
+  renderPerformerTabBar();
+  renderPerformerTabContent();
 }
+
 
 // ---------- Performer/photographer view (deliberately minimal) ----------
 // ---------- Artist app (performer logins) ----------
@@ -14787,6 +14680,7 @@ async function renderMyEvents(main) {
 // data the artist's my-events link uses — so both always agree.
 let performerTab = "home";
 let performerData = null;
+let performerEmbedded = false; // true when shown inside the main CRM (My Events) rather than the artist app
 let perfEventsView = "upcoming";
 let perfShowOldNotifs = false;
 
@@ -14888,6 +14782,7 @@ function perfEventRow(e) {
 }
 
 async function renderPerformerApp() {
+  performerEmbedded = false;
   const app = document.querySelector(".tol-app");
   app.innerHTML = `
     <div class="performer-app">
@@ -14930,7 +14825,11 @@ function renderPerformerTabBar() {
   if (!tabsEl || !performerData) return;
   const { portal, tasks, notifications, announcements } = performerData;
   const pending = portal.upcoming.filter((e) => e.status === "pending").length;
-  const tabs = [
+  const tabs = performerEmbedded ? [
+    { id: "home", label: "Overview" },
+    { id: "events", label: "Events", badge: pending },
+    { id: "money", label: "Money" },
+  ] : [
     { id: "home", label: "Home" },
     { id: "events", label: "Events", badge: pending },
     { id: "money", label: "Money" },
@@ -15027,7 +14926,7 @@ function renderPerformerTabContent() {
     body.querySelector("#homeMoney").addEventListener("click", () => perfGoTab("money"));
     body.querySelectorAll("[data-quick-respond]").forEach((b) => b.addEventListener("click", () => perfRespond(b.dataset.quickRespond, b.dataset.v)));
     wireCalendarGridPerformer(document.getElementById("perfCalCard"), all);
-    wirePushNotifBanner(body.querySelector("#pushNotifBanner"));
+    if (!performerEmbedded) wirePushNotifBanner(body.querySelector("#pushNotifBanner"));
     wireRows();
     return;
   }
