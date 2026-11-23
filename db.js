@@ -1051,6 +1051,55 @@ async function setup() {
   await pool.query(`ALTER TABLE travel_legs ADD COLUMN IF NOT EXISTS cancel_note TEXT`);
   // Drum kit for the event: 'venue_kit' (venue / sound vendor provides an acoustic kit), 'v_drums' (drummer carries V-drums), 'none'.
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS drums TEXT`);
+  // Outstation check-ins: an artist's photo at the station/airport, due 1 hour before departure (flights, trains, buses).
+  await pool.query(`CREATE TABLE IF NOT EXISTS travel_checkins (
+    id TEXT PRIMARY KEY,
+    leg_id TEXT NOT NULL REFERENCES travel_legs(id) ON DELETE CASCADE,
+    team_id TEXT NOT NULL REFERENCES team(id) ON DELETE CASCADE,
+    mime_type TEXT,
+    photo BYTEA,
+    taken_at TEXT NOT NULL,
+    due_at TEXT,
+    late INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (leg_id, team_id)
+  )`);
+  // A late or missed check-in: pending until an admin applies it (no travel reimbursement for that trip) or waives it.
+  await pool.query(`CREATE TABLE IF NOT EXISTS travel_penalties (
+    id TEXT PRIMARY KEY,
+    leg_id TEXT NOT NULL REFERENCES travel_legs(id) ON DELETE CASCADE,
+    team_id TEXT NOT NULL REFERENCES team(id) ON DELETE CASCADE,
+    lead_id TEXT REFERENCES leads(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    minutes_late INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL,
+    decided_at TEXT,
+    decided_by TEXT,
+    UNIQUE (leg_id, team_id)
+  )`);
+  // After every event, each artist rates the others on the line-up: 1-5 stars for performance, punctuality and attitude,
+  // with an optional note. Anonymous everywhere — no screen ever shows who gave a rating. A combo is rated once,
+  // keyed on its earliest date.
+  await pool.query(`CREATE TABLE IF NOT EXISTS artist_ratings (
+    id TEXT PRIMARY KEY,
+    lead_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    rater_team_id TEXT NOT NULL REFERENCES team(id) ON DELETE CASCADE,
+    ratee_team_id TEXT NOT NULL REFERENCES team(id) ON DELETE CASCADE,
+    performance INTEGER NOT NULL,
+    punctuality INTEGER NOT NULL,
+    attitude INTEGER NOT NULL,
+    note TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (lead_id, rater_team_id, ratee_team_id)
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS artist_ratings_ratee ON artist_ratings (ratee_team_id)`);
+  // A reimbursement held back by an applied penalty (the penalty's id); not owed while set.
+  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS withheld_by TEXT`);
+  // When check-ins and ratings started — nothing before this is ever marked missed or asked for.
+  await pool.query("INSERT INTO message_templates (key, template, updated_at) VALUES ('checkin_launch', $1, $1) ON CONFLICT (key) DO NOTHING", [new Date().toISOString()]);
+  await pool.query("INSERT INTO message_templates (key, template, updated_at) VALUES ('ratings_launch', $1, $1) ON CONFLICT (key) DO NOTHING", [new Date().toISOString()]);
+  // Food arrangements for the team on the day (logistics on the client page).
+  await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS food_notes TEXT`);
   // What the client wrote on their event page under "Anything specific?".
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS client_requests TEXT`);
   await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS client_updated_at TEXT`);

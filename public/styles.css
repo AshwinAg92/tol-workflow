@@ -595,3 +595,24 @@ select.ev-stage { width:auto; padding:4px 26px 4px 10px; font-size:13.5px; font-
 .perf-leg:last-of-type { border-bottom:0; }
 .perf-claim { margin-top:8px; padding:10px; border:1.5px dashed #EAD9BE; border-radius:10px; background:#FFFDFA; }
 @media (max-width: 420px) { .perf-money { grid-template-columns:1fr 1fr; } .perf-money b { font-size:15px; } }
+
+/* Outstation check-ins */
+.perf-checkin { margin-top: 6px; padding: 7px 10px; border-radius: 8px; background: #F4F0E8; font-size: 13px; }
+.perf-checkin.due { background: #F3ECF7; border: 1px solid #6B4488; }
+.perf-checkin.ok { background: #E8F3F1; color: #1C7A80; }
+.perf-checkin.warn { background: #FBF1E4; color: #8A5A1F; }
+.perf-checkin.bad { background: #FBEAE6; color: #A6432B; }
+.ci-row { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; border-top: 1px solid #EEE7DA; }
+.ci-thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; flex: none; display: inline-flex; align-items: center; justify-content: center; background: #F4F0E8; }
+.ci-none { opacity: .5; }
+
+/* Team ratings */
+.rate-person { margin-bottom: 10px; }
+.rate-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; border-radius: 6px; }
+.rate-row.missing { background: #FBEAE6; }
+.rate-row .stars { display: inline-flex; gap: 2px; }
+.star { background: none; border: none; font-size: 28px; line-height: 1; color: #D9D2C3; cursor: pointer; padding: 2px 3px; }
+.star.on { color: #E0A21B; }
+.rate-note { width: 100%; margin-top: 6px; }
+.stars-ro { color: #E0A21B; letter-spacing: 1px; }
+.stars-ro .off { color: #D9D2C3; }

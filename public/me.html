@@ -50,6 +50,14 @@
     .claim-form .file { display:block; margin-top:8px; padding:12px; border:1.5px solid #EAD9BE; border-radius:9px; background:#fff; text-align:center; font-weight:700; color:#1C7A80; cursor:pointer; }
     .claim-form .file input { display:none; }
     .b-claim { background:#C7401E; color:#fff; }
+    .ci { margin-top: 6px; padding: 7px 10px; border-radius: 8px; background: #F4F0E8; font-size: 13px; }
+    .ci.due { background: #F3ECF7; border: 1px solid #6B4488; } .ci.ok { background: #E8F3F1; color: #1C7A80; }
+    .ci.warn { background: #FBF1E4; color: #8A5A1F; } .ci.bad { background: #FBEAE6; color: #A6432B; }
+  .rrow { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; border-radius: 6px; }
+    .rrow.miss { background: #FBEAE6; }
+    .rstar { background: none; border: none; font-size: 28px; color: #D9D2C3; padding: 2px 3px; cursor: pointer; }
+    .rstar.on { color: #E0A21B; }
+    .rnote { width: 100%; margin-top: 6px; }
   </style>
 </head>
 <body>
@@ -69,6 +77,73 @@
     const ST = { booked: "Booked", not_booked: "Not booked yet" };
     let data = null, tab = "upcoming", openClaim = null;
     const inr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
+    // Check-in times come as ISO; show them in IST, with the date when it isn't today.
+    const istWhen = (iso) => { const t = new Date(Date.parse(iso) + 5.5 * 3600e3).toISOString(); const today = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10); return fmt12(t.slice(11, 16)) + (t.slice(0, 10) === today ? "" : ", " + fmtDate(t.slice(0, 10))); };
+    function checkinHtml(l) {
+      const c = l.checkin; if (!c) return "";
+      const pen = l.penalty;
+      const penLine = !pen ? "" : pen.status === "applied" ? "<div>Travel reimbursement for this trip is withheld.</div>" : pen.status === "waived" ? "<div>Penalty waived by Team TOL.</div>" : "<div>Team TOL will review this.</div>";
+      const btn = (t) => `<button class="save" data-ci="${esc(l.id)}" style="background:#6B4488; color:#fff;">${t}</button>`;
+      if (c.state === "done") return `<div class="ci ok">✓ Checked in at ${esc(istWhen(c.at))}</div>`;
+      if (c.state === "late") return `<div class="ci warn">Checked in late at ${esc(istWhen(c.at))} (due by ${esc(istWhen(c.dueAt))})${penLine}</div>`;
+      if (c.state === "missed") return `<div class="ci bad">✗ Check-in missed (due by ${esc(istWhen(c.dueAt))})${penLine}</div>`;
+      if (c.state === "upcoming") return `<div class="ci">📸 Check in at the station/airport by <b>${esc(istWhen(c.dueAt))}</b> — 1 hour before departure. Opens at ${esc(istWhen(c.opensAt))}.</div>`;
+      if (c.state === "open") return `<div class="ci due">📸 <b>Check in now</b> — a photo of yourself at the station/airport by <b>${esc(istWhen(c.dueAt))}</b>.${btn("📸 Check in")}</div>`;
+      return `<div class="ci bad">⚠️ <b>Check-in overdue</b> — it was due by ${esc(istWhen(c.dueAt))}. Upload now.${btn("📸 Check in now")}</div>`;
+    }
+    // ---- Team ratings: locks this page until done (the next event stays visible below) ----
+    const RK = [["performance", "Performance"], ["punctuality", "Punctuality"], ["attitude", "Attitude"]];
+    const starsRo = (v) => `<span style="color:#E0A21B;">${"★".repeat(Math.round(v))}</span><span style="color:#D9D2C3;">${"★".repeat(5 - Math.round(v))}</span> ${Number(v).toFixed(1)}`;
+    function ratingLockHtml() {
+      const ev = data.ratingsDue[0];
+      const nextI = data.upcoming.findIndex((e) => e.status === "accepted");
+      return `<div class="card" style="border:2px solid #C7401E;"><div class="title" style="font-size:18px;">⭐ Rate your team</div>
+        <div class="muted">${esc(ev.place)} · ${esc(fmtDate(ev.date))}. Three quick stars for each person. It's anonymous — no one sees who gave which stars. Your page opens again once you're done${data.ratingsDue.length > 1 ? ` (${data.ratingsDue.length} events to rate)` : ""}.</div></div>
+        ${ev.people.map((p) => `<div class="card" data-rp="${esc(p.teamId)}"><div class="title" style="font-size:16px;">${esc(p.name)} <span class="muted" style="font-weight:400;">${esc(p.role)}</span></div>
+          ${RK.map(([k, label]) => `<div class="rrow" data-k="${k}"><span>${label}</span><span>${[1, 2, 3, 4, 5].map((n) => `<button type="button" class="rstar" data-n="${n}">★</button>`).join("")}</span></div>`).join("")}
+          <textarea class="rnote" maxlength="500" placeholder="Anything to add? (optional)"></textarea></div>`).join("")}
+        <button class="save" id="rSend" style="background:#C7401E; color:#fff; width:100%; padding:12px;">Send ratings</button><div class="msg" id="rMsg"></div>
+        ${nextI >= 0 ? `<div class="sec" style="margin:18px 4px 6px;">Your next event</div>${eventCard(data.upcoming[nextI], nextI)}` : ""}`;
+    }
+    function wireRatingLock() {
+      app.querySelectorAll(".rrow").forEach((row) => row.querySelectorAll(".rstar").forEach((b) => b.addEventListener("click", () => {
+        row.dataset.v = b.dataset.n; row.classList.remove("miss");
+        row.querySelectorAll(".rstar").forEach((x) => x.classList.toggle("on", +x.dataset.n <= +b.dataset.n));
+      })));
+      app.querySelector("#rSend").addEventListener("click", async (evt) => {
+        let ok = true;
+        const ratings = [...app.querySelectorAll("[data-rp]")].map((c) => {
+          const r = { teamId: c.dataset.rp, note: c.querySelector(".rnote").value.trim() };
+          c.querySelectorAll(".rrow").forEach((row) => { if (!row.dataset.v) { ok = false; row.classList.add("miss"); } r[row.dataset.k] = +(row.dataset.v || 0); });
+          return r;
+        });
+        if (!ok) { app.querySelector("#rMsg").textContent = "Give every person stars for all three."; return; }
+        evt.currentTarget.disabled = true;
+        try { await call(`/api/public/me/${encodeURIComponent(token)}/ratings`, { leadId: data.ratingsDue[0].leadId, ratings }); window.scrollTo(0, 0); await reload(); }
+        catch (err) { app.querySelector("#rMsg").textContent = err.message; evt.currentTarget.disabled = false; }
+      });
+    }
+    async function reload() {
+      const r = await fetch(`/api/public/me/${encodeURIComponent(token)}`);
+      const j = await r.json();
+      if (r.ok) { data = j; render(); }
+    }
+    function checkinUpload(legId) {
+      const input = document.createElement("input");
+      input.type = "file"; input.accept = "image/*"; input.setAttribute("capture", "user");
+      input.addEventListener("change", async () => {
+        const file = input.files[0]; if (!file) return;
+        const fd = new FormData(); fd.append("photo", file);
+        try {
+          const r = await fetch(`/api/public/me/${encodeURIComponent(token)}/checkins/${encodeURIComponent(legId)}`, { method: "POST", body: fd });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j.error || "Couldn't upload the photo");
+          alert(j.late ? "Checked in — but it was after the 1-hour mark, so Team TOL will review it." : "✓ Checked in. Have a safe journey!");
+          reload();
+        } catch (err) { alert(err.message); }
+      });
+      input.click();
+    }
 
     function eventCard(e, i) {
       const rows = [ ["🕒", e.eventTime ? "Event time: " + e.eventTime : ""], ["🎶", e.soundcheckTime ? "Sound check: " + e.soundcheckTime : ""], ["🎸", e.pcs ? e.pcs + " pcs" : ""], ["🥁", e.drumNote || ""]].filter((r) => r[1]);
@@ -85,7 +160,7 @@
           ${l.tickets.map((t) => `<div><a href="/api/public/me/${encodeURIComponent(token)}/ticket/${t.id}" target="_blank" rel="noopener">🎫 ${esc(t.name)}</a></div>`).join("")}</div>`;
         return `${head}<div class="leg">${pos ? `<b>${pos}.</b> ` : ""}<b>${TYPE[l.type] || ""}</b> ${esc(MODE[l.mode] || "")} — ${esc(l.from || "?")} → ${esc(l.to || "?")}
           <div class="muted">${esc(when) || "Date not set"}${arr ? " · arrives " + esc(arr) : ""}${l.arrivalAt ? " · returns " + esc(fmtDate(l.arrivalAt)) : ""} · ${esc(ST[l.status] || l.status)}${l.ref ? " · Ref " + esc(l.ref) : ""}</div>
-          ${l.tickets.map((t) => `<div><a href="/api/public/me/${encodeURIComponent(token)}/ticket/${t.id}" target="_blank" rel="noopener">🎫 ${esc(t.name)}</a></div>`).join("")}</div>`;
+          ${l.tickets.map((t) => `<div><a href="/api/public/me/${encodeURIComponent(token)}/ticket/${t.id}" target="_blank" rel="noopener">🎫 ${esc(t.name)}</a></div>`).join("")}${checkinHtml(l)}</div>`;
       }).join("") : `<div class="muted">Travel not added yet.</div>`;
       const ack = e.travelAck || { state: "none" };
       const ackHtml = e.past || !legsSorted.length || ack.state === "none" ? "" : ack.state === "seen"
@@ -100,7 +175,7 @@
         ${e.status === "accepted" ? `<div class="muted" style="margin-top:6px;">Need to make a change? Please contact Team Together, Out Loud directly.</div>` : ""}
         <textarea data-note="${i}" placeholder="Note for the organizer (optional) — e.g. running a bit late">${esc(e.note || "")}</textarea>
         <button class="save" data-save="${i}">Save note</button>` : "";
-      const STATUS = { waiting: ["p-pending", "Waiting for approval"], approved: ["p-accepted", "Approved"], paid: ["p-paid", "Paid"], "part paid": ["p-accepted", "Part paid"] };
+      const STATUS = { waiting: ["p-pending", "Waiting for approval"], approved: ["p-accepted", "Approved"], paid: ["p-paid", "Paid"], "part paid": ["p-accepted", "Part paid"], withheld: ["p-declined", "Withheld — check-in"] };
       const claims = e.status === "declined" ? "" : `<div class="sec">Reimbursements</div>
         ${(e.claims || []).map((c) => `<div class="claim"><div><b>₹${c.amount.toLocaleString("en-IN")}</b> — ${esc(c.what)}<div class="muted">${esc(fmtDate(c.at))}${c.receipts ? " · 📎 slip attached" : " · no slip"}</div></div><span class="pill ${STATUS[c.status][0]}" style="align-self:flex-start;">${STATUS[c.status][1]}${c.status === "part paid" ? " · ₹" + c.paidSoFar.toLocaleString("en-IN") : ""}${c.status === "paid" && c.paidOn ? " · " + esc(fmtDate(c.paidOn)) : ""}</span></div>`).join("")}
         ${openClaim === i ? `<form class="claim-form" data-claim-form="${i}">
@@ -138,11 +213,20 @@
     }
     function render() {
       const list = tab === "upcoming" ? data.upcoming : data.past;
+      const cis = data.checkinsNow || [];
+      const locked = (data.ratingsDue || []).length > 0;
+      const mr = data.myRatings;
       app.innerHTML = `<div class="hello">Hi ${esc(data.name.split(" ")[0])} 👋</div>
+        ${locked ? ratingLockHtml() : ""}${locked ? "" : `
+        ${cis.map((c) => `<div class="card" style="border:2px solid #6B4488;"><div class="title" style="font-size:17px;">📸 ${c.state === "upcoming" ? "Check in today" : c.state === "overdue" ? "Check-in overdue" : "Check in now"}</div>
+          <div class="muted">${esc(MODE[c.mode] || "Travel")} ${esc(c.from || "")} → ${esc(c.to || "")} · photo of yourself at the station/airport ${c.state === "overdue" ? "was due" : "due"} by <b>${esc(istWhen(c.dueAt))}</b>${c.state === "upcoming" ? " · opens " + esc(istWhen(c.opensAt)) : ""}</div>
+          ${c.state === "upcoming" ? "" : `<button class="save" data-ci="${esc(c.legId)}" style="background:#6B4488; color:#fff;">📸 Check in</button>`}</div>`).join("")}
         ${data.hasLogin ? `<div class="card" style="padding:12px 16px;"><div class="muted">You also have a login for the full app${data.username ? ` (username: <b>${esc(data.username)}</b>)` : ""}.</div><a href="/login" style="display:inline-block; margin-top:8px; padding:10px 16px; border-radius:10px; background:#C7401E; color:#fff; font-weight:700; text-decoration:none;">Log in to the app</a></div>` : ""}
         <div class="tabs"><button class="tab ${tab === "upcoming" ? "on" : ""}" data-tab="upcoming">Upcoming (${data.upcoming.length})</button><button class="tab ${tab === "past" ? "on" : ""}" data-tab="past">Past (${data.past.length})</button><button class="tab ${tab === "money" ? "on" : ""}" data-tab="money">Money</button></div>
-        ${tab === "money" ? moneyHtml() : list.length ? list.map(eventCard).join("") : `<div class="card"><div class="muted">${tab === "upcoming" ? "No upcoming events yet — we'll add them here as soon as you're booked." : "Nothing here yet."}</div></div>`}`;
+        ${tab === "money" ? (mr && mr.shown ? `<div class="card"><div class="muted">How the team rates you (anonymous, ${mr.count} ratings)</div><div class="title" style="font-size:18px;">${starsRo(mr.overall)}</div>${RK.map(([k, l]) => `<div class="muted">${l}: ${starsRo(mr[k])}</div>`).join("")}</div>` : "") + moneyHtml() : list.length ? list.map(eventCard).join("") : `<div class="card"><div class="muted">${tab === "upcoming" ? "No upcoming events yet — we'll add them here as soon as you're booked." : "Nothing here yet."}</div></div>`}`}`;
+      if (locked) wireRatingLock();
       app.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; openClaim = null; render(); }));
+      app.querySelectorAll("[data-ci]").forEach((b) => b.addEventListener("click", () => checkinUpload(b.dataset.ci)));
       app.querySelectorAll("[data-claim-open]").forEach((b) => b.addEventListener("click", () => { openClaim = +b.dataset.claimOpen; render(); app.querySelector('[data-claim-form] input[name="amount"]')?.focus(); }));
       app.querySelectorAll("[data-claim-cancel]").forEach((b) => b.addEventListener("click", () => { openClaim = null; render(); }));
       app.querySelectorAll('[data-claim-form] input[type="file"]').forEach((f) => f.addEventListener("change", () => {

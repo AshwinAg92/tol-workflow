@@ -4755,6 +4755,7 @@ async function renderTeam(main, subTab = "team") {
     <div class="view-head">
       <div><h2>Team</h2><p class="muted">Everyone you work with \u2014 your core band and freelancers \u2014 in one list. Search or filter by city, instrument or type, and assign anyone to any event.</p></div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        ${isAdmin ? `<button class="btn-ghost" id="ratingsBtn">⭐ Ratings</button>` : ""}
         ${isAdmin ? `<button class="btn-ghost" id="regLinkBtn">\ud83d\udd17 Registration link</button>` : ""}
         ${canManage ? `<button class="btn-ghost" id="addMemberBtn">+ Add with login</button>` : ""}
         ${canManage ? `<button class="btn-primary" id="addPersonBtn">+ Add person</button>` : ""}
@@ -4764,6 +4765,7 @@ async function renderTeam(main, subTab = "team") {
   `;
 
   const content = main.querySelector("#teamSubContent");
+  main.querySelector("#ratingsBtn")?.addEventListener("click", () => openRatingsModal());
   const pendingRegs = isAdmin ? await api("/api/member-registrations").catch(() => []) : [];
   const users = canManage ? await api("/api/users") : [];
   const teamIdsWithLogin = new Set(users.map((u) => u.team_id).filter(Boolean));
@@ -4864,6 +4866,7 @@ async function renderTeam(main, subTab = "team") {
             <button class="btn-ghost" data-view-events="${m.id}" style="font-size:12px; padding:4px 9px;">\ud83d\udcc5 Events</button>
             ${hasAccountsAccess() && m.fee_history ? `<button class="btn-ghost" data-fee-history="${m.id}" style="font-size:12px; padding:4px 9px;">\ud83d\udcb0 Fee history</button>` : ""}
             ${hasAccountsAccess() && CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost" data-pay-history="${m.id}" style="font-size:12px; padding:4px 9px;">🧾 Payments</button>` : ""}
+            ${CURRENT_USER?.accessLevel === "admin" ? `<button class="btn-ghost" data-ratings-of="${m.id}" style="font-size:12px; padding:4px 9px;">⭐ Ratings</button>` : ""}
             ${canAssignTeam() ? `<button class="btn-ghost" data-artist-link="${m.id}" style="font-size:12px; padding:4px 9px;">\ud83d\udd17 My-events link</button>` : ""}
             ${canManage ? `<button class="btn-ghost" data-edit-member="${m.id}" style="font-size:12px; padding:4px 9px;">Edit</button>` : ""}
             ${canManage && !teamIdsWithLogin.has(m.id) ? `<button class="btn-ghost" data-add-login="${m.id}" style="font-size:12px; padding:4px 9px;">${m.kind === "freelance" ? "Give a login anyway" : "+ Add login"}</button>` : ""}
@@ -4882,6 +4885,7 @@ async function renderTeam(main, subTab = "team") {
     const feeBtn = card.querySelector(`[data-fee-history="${m.id}"]`);
     if (feeBtn) feeBtn.addEventListener("click", () => openFeeHistoryModal(m, () => renderTeam(main)));
     card.querySelector(`[data-pay-history="${m.id}"]`)?.addEventListener("click", () => openArtistPaymentHistory(m.id));
+    card.querySelector(`[data-ratings-of="${m.id}"]`)?.addEventListener("click", () => openRatingsModal(m.id));
     const linkBtn = card.querySelector(`[data-artist-link="${m.id}"]`);
     if (linkBtn) linkBtn.addEventListener("click", () => openArtistLinkModal(m));
     card.dataset.search = [m.name, m.role, m.specialty, m.instruments, m.base_city, m.phone, m.email].filter(Boolean).join(" ").toLowerCase();
@@ -6578,7 +6582,7 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
     if (startContacts.length === 0) startContacts.push({ role: "Sound manager", name: "", phone: "" }, { role: "Event manager", name: "", phone: "" });
   }
   const contactRowHtml = (c, n) => `
-    <div class="contact-row" style="margin-bottom:12px; padding-bottom:10px; border-bottom:1px dashed #E9DFCF;">
+    <div class="contact-row" data-extra="${esc(JSON.stringify({ ...(c.kind ? { kind: c.kind } : {}), ...(c.fromClient ? { fromClient: true } : {}), ...(c.address ? { address: c.address } : {}) }))}" style="margin-bottom:12px; padding-bottom:10px; border-bottom:1px dashed #E9DFCF;">
       <div style="display:flex; gap:8px; align-items:center;">
         <input class="ct-role" list="contactRoles" placeholder="Role (e.g. Sound manager)" value="${esc(c.role)}" style="font-weight:600;" />
         <button class="icon-btn ct-remove" title="Remove contact" type="button">${ICON_X}</button>
@@ -7301,9 +7305,10 @@ async function openAssignTeamModal(leadId, autoCheckTeamId = null) {
         role: row.querySelector(".ct-role").value.trim(),
         name: row.querySelector(".ct-name").value.trim(),
         phone: row.querySelector(".ct-phone").value.trim(),
+        ...(() => { try { return JSON.parse(row.dataset.extra || "{}"); } catch { return {}; } })(), // keep its tags
       })).filter((c) => c.name || c.phone);
       const contactsJson = JSON.stringify(contactList);
-      const prevContactsJson = JSON.stringify(startContacts.filter((c) => c.name || c.phone));
+      const prevContactsJson = JSON.stringify(startContacts.filter((c) => c.name || c.phone).map((c) => ({ role: c.role, name: c.name, phone: c.phone, ...(c.kind ? { kind: c.kind } : {}), ...(c.fromClient ? { fromClient: true } : {}), ...(c.address ? { address: c.address } : {}) })));
       if (contactsJson !== prevContactsJson || lead.contacts == null) {
         await api(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ contacts: contactsJson }) });
       }
@@ -7510,6 +7515,37 @@ function openRegistrationReviewModal(reg, onDone) {
 }
 
 // ---------- Send team IDs + travel details to the client (for ticket booking) ----------
+// Logistics on the day live in the event's contacts as tagged entries — same rules as the server.
+const LOGI_KINDS = { driver: "Local driver", hotel: "Hotel", sound: "Sound vendor", manager: "Event manager" };
+function contactListOfLead(lead) {
+  let list = null;
+  try { list = JSON.parse(lead.contacts || "null"); } catch { list = null; }
+  if (Array.isArray(list)) return list;
+  list = [];
+  if (lead.sound_manager_name || lead.sound_manager_phone) list.push({ role: "Sound manager", name: lead.sound_manager_name || "", phone: lead.sound_manager_phone || "" });
+  if (lead.coordinator_name || lead.coordinator_phone) list.push({ role: "Event coordinator", name: lead.coordinator_name || "", phone: lead.coordinator_phone || "" });
+  return list;
+}
+const logiKindOfContact = (c) => c.kind || Object.keys(LOGI_KINDS).find((k) => LOGI_KINDS[k] === c.role) || null;
+function logisticsOfLead(lead) {
+  const out = {};
+  for (const c of contactListOfLead(lead)) { const k = logiKindOfContact(c); if (k && !out[k]) out[k] = { name: c.name || "", phone: c.phone || "", address: c.address || "" }; }
+  return out;
+}
+function mergeLogistics(list, logi) {
+  const out = list.map((c) => ({ ...c }));
+  for (const k of Object.keys(LOGI_KINDS)) {
+    const v = logi[k];
+    if (!v || !(v.name || v.phone || v.address)) continue;
+    const i = out.findIndex((c) => logiKindOfContact(c) === k);
+    const old = i >= 0 ? out[i] : {};
+    const entry = { role: LOGI_KINDS[k], name: v.name || old.name || "", phone: v.phone || old.phone || "", kind: k };
+    if (k === "hotel" && (v.address || old.address)) entry.address = v.address || old.address;
+    if (i >= 0) out[i] = entry; else out.push(entry);
+  }
+  return out;
+}
+
 // The client's one page for a confirmed event: create/share the link, see what they filled in, and talk to them.
 async function openClientPageModal(leadId) {
   await refreshLeads();
@@ -7562,6 +7598,13 @@ async function openClientPageModal(leadId) {
               </div>
               <label>Anything specific</label>
               <textarea id="cpfReq" rows="2" placeholder="Songs, rituals, timings, dress code…">${escH(lead.client_requests || "")}</textarea>
+              <div class="small" style="margin-top:10px; font-weight:600;">Logistics on the day</div>
+              ${(() => { const lg = logisticsOfLead(lead); const pair = (k, label, ph) => `<label>${label}</label><div class="row-2"><input class="cpf-lg" data-k="${k}" data-f="name" placeholder="${ph}" value="${escH((lg[k] || {}).name || "")}" /><input class="cpf-lg" data-k="${k}" data-f="phone" type="tel" placeholder="Phone" value="${escH((lg[k] || {}).phone || "")}" /></div>`;
+                return pair("driver", "🚗 Local driver", "Driver's name") + pair("hotel", "🏨 Hotel", "Hotel name")
+                  + `<input class="cpf-lg" data-k="hotel" data-f="address" placeholder="Hotel address" value="${escH((lg.hotel || {}).address || "")}" style="margin-top:6px;" />`
+                  + pair("sound", "🔊 Sound vendor", "Sound vendor's name") + pair("manager", "📋 Event manager / coordinator", "Name"); })()}
+              <label>🍽 Food arrangements for the team</label>
+              <textarea id="cpfFood" rows="2" placeholder="e.g. Lunch at the hotel 1 pm, dinner at the venue">${escH(lead.food_notes || "")}</textarea>
               <div style="display:flex; gap:8px; align-items:center; margin-top:8px;"><button class="btn-primary" id="cpfSave" style="font-size:12.5px; padding:5px 12px;">Save details</button><span class="muted small" id="cpfMsg"></span></div>
             </div>
             <div class="section-label" style="margin-top:16px;">💬 Conversation with the client</div>
@@ -7592,14 +7635,19 @@ async function openClientPageModal(leadId) {
       }
       list = list.filter((c) => !c.fromClient);
       if (name || phone) list.push({ role: "On-site contact", name, phone, fromClient: true });
+      // Logistics (driver, hotel, sound vendor, event manager) go on every date of a combo; blank boxes keep what's there.
+      const logi = {};
+      root.querySelectorAll(".cpf-lg").forEach((i) => { (logi[i.dataset.k] ||= {})[i.dataset.f] = i.value.trim(); });
       root.querySelector("#cpfMsg").textContent = "Saving…";
       const timeOf = (cls, id) => (root.querySelector(`.${cls}[data-lead="${id}"]`)?.value || null);
       act(async () => {
         // The venue goes on every date of a combo; each date keeps its own times; contact and requests sit on the main date.
         for (const d of dates) {
+          const base = d.id === leadId ? list : contactListOfLead(d);
           await api(`/api/leads/${d.id}`, { method: "PATCH", body: JSON.stringify({
             venue: v("#cpfVenue") || null, eventTime: timeOf("cpf-time", d.id), soundcheckTime: timeOf("cpf-sc", d.id),
-            ...(d.id === leadId ? { clientRequests: v("#cpfReq") || null, contacts: JSON.stringify(list) } : {}),
+            foodNotes: v("#cpfFood") || null, contacts: JSON.stringify(mergeLogistics(base, logi)),
+            ...(d.id === leadId ? { clientRequests: v("#cpfReq") || null } : {}),
           }) });
         }
       }).then(() => { const m = root.querySelector("#cpfMsg"); if (m) m.textContent = "Saved ✓"; });
@@ -8176,6 +8224,32 @@ async function openTravelPlanModal(leadId) {
   let sendRows = null; // the "send plan" panel (null = closed)
   let acks = [];
   try { acks = await api(`/api/leads/${leadId}/travel-acks`); } catch { acks = []; }
+  let checkins = [];
+  const loadCheckins = async () => { try { checkins = await api(`/api/leads/${leadId}/checkins`); } catch { checkins = []; } };
+  await loadCheckins();
+  const ciTime = (iso) => { const t = new Date(Date.parse(iso) + 5.5 * 3600e3).toISOString(); return `${fmtTimeHM(t.slice(11, 16))}${t.slice(0, 10) === todayYmd() ? "" : ", " + fmtDate(t.slice(0, 10))}`; };
+  const checkinPanelHtml = () => {
+    if (!checkins.length) return "";
+    const person = (p) => {
+      const st = { done: ["✓ On time", "#1C7A80"], late: ["Late", "#B6752C"], missed: ["✗ Missed", "#A6432B"], open: ["Open now", "#6B4488"], overdue: ["Overdue", "#A6432B"], upcoming: ["Not yet", "#888"] }[p.state] || [p.state, "#888"];
+      const pen = p.penalty;
+      const penHtml = !pen ? "" : pen.status === "applied" ? `<span class="small" style="color:#A6432B;">Penalty applied — travel reimbursement withheld</span>${pen.canDecide ? ` <button class="btn-ghost" data-pen="${pen.id}" data-pen-act="waive" style="font-size:12px; padding:2px 8px;">Waive</button>` : ""}`
+        : pen.status === "waived" ? `<span class="small muted">Penalty waived${pen.decidedBy ? " by " + escH(pen.decidedBy) : ""}</span>${pen.canDecide ? ` <button class="btn-ghost" data-pen="${pen.id}" data-pen-act="apply" style="font-size:12px; padding:2px 8px;">Apply</button>` : ""}`
+        : pen.canDecide ? `<span class="small" style="color:#B6752C;">${pen.kind === "late" ? `${pen.minutesLate} min late` : "No check-in"} — no travel reimbursement?</span> <button class="btn-primary" data-pen="${pen.id}" data-pen-act="apply" style="font-size:12px; padding:2px 8px;">Apply penalty</button> <button class="btn-ghost" data-pen="${pen.id}" data-pen-act="waive" style="font-size:12px; padding:2px 8px;">Waive</button>`
+        : `<span class="small muted">Waiting for an admin to decide</span>`;
+      return `<div class="ci-row">
+        ${p.photoId ? `<a href="/api/checkins/${p.photoId}/photo" target="_blank" rel="noopener"><img src="/api/checkins/${p.photoId}/photo" alt="Check-in photo" class="ci-thumb" /></a>` : `<span class="ci-thumb ci-none">📷</span>`}
+        <div style="flex:1; min-width:0;"><b>${escH(p.name)}</b> <span class="small" style="color:${st[1]}; font-weight:600;">${st[0]}</span>
+          <div class="small muted">${p.at ? `Checked in ${ciTime(p.at)} · ` : ""}due by ${ciTime(p.dueAt)}</div>${penHtml ? `<div>${penHtml}</div>` : ""}</div>
+      </div>`;
+    };
+    return `<div class="card" style="margin-bottom:10px; padding:10px 12px;">
+      <div style="font-weight:600; margin-bottom:4px;">📸 Station / airport check-ins <span class="muted small" style="font-weight:400;">· photo due 1 hour before departure</span></div>
+      ${checkins.map((c) => `<div style="margin-top:8px;"><div class="small" style="font-weight:600;">${escH(c.what)} <span class="muted" style="font-weight:400;">· ${fmtDate(c.date)}${c.time ? " · " + fmtTimeHM(c.time) : ""}</span></div>${c.people.every((p) => p.state === "upcoming")
+        ? `<div class="small muted" style="padding:4px 0;">${c.people.map((p) => escH(p.name.split(" ")[0])).join(", ")} · photo due by ${ciTime(c.people[0].dueAt)} (opens 3 hours before departure)</div>`
+        : c.people.map(person).join("")}</div>`).join("")}
+    </div>`;
+  };
   let addingNew = false;
   let nextLegFrom = null; // the leg a new connecting leg continues from (same trip)
   let editingLegId = null;
@@ -8510,6 +8584,7 @@ async function openTravelPlanModal(leadId) {
             ${prevNoteHtml}
             ${comboBannerHtml()}
             ${acks && acks.length ? `<div class="small" style="margin-bottom:10px; padding:8px 12px; background:#F4F0E8; border-radius:8px;"><b>Seen by artists:</b> ${acks.map((a) => a.state === "seen" ? `<span style="color:#1C7A80;">✓ ${escH(a.name.split(" ")[0])}</span>` : a.state === "changed" ? `<span style="color:#B6752C;">⟳ ${escH(a.name.split(" ")[0])} (plan changed)</span>` : `<span class="muted">○ ${escH(a.name.split(" ")[0])} (not yet)</span>`).join(" &nbsp; ")}</div>` : ""}
+            ${checkinPanelHtml()}
             ${legs.length === 0 && !addingNew && !linkingExisting ? `<p class="muted small">No travel added yet.</p>` : ""}
             ${(() => { const loose = sortLegsForDisplay(legs).filter((x) => !x.group_id && !x.linked_from_other); const nc = (c) => String(c || "").trim().toLowerCase(); const roundTrip = loose.length === 2 && nc(loose[0].from_city) === nc(loose[1].to_city) && nc(loose[0].to_city) === nc(loose[1].from_city); if (loose.length < 2 || roundTrip || addingNew || nextLegFrom) return ""; if (!combineOpen) return `<div style="margin-bottom:10px;"><button class="btn-ghost" id="combineOpenBtn" style="font-size:12px; padding:3px 10px;">🔀 Combine journeys into one trip</button></div>`; return `<div class="card" style="margin-bottom:12px; background:#F6F0FA; border-color:#8A5FA8;"><div style="font-weight:600; margin-bottom:6px;">Tick the journeys that form one trip</div>${loose.map((x) => `<label style="display:flex; gap:8px; align-items:center; padding:3px 0;"><input type="checkbox" data-combine-pick="${x.id}" style="width:auto;" /> <span class="small">${escH([x.from_city, x.to_city].filter(Boolean).join(" → ") || "Route not set")} · ${TRAVEL_MODE_LABELS[x.mode] || "Mode not set"}${x.departure_at ? " · " + fmtDate(x.departure_at) : ""}</span></label>`).join("")}<div style="display:flex; gap:8px; margin-top:8px;"><button class="btn-primary" id="combineBtn">Combine</button><button class="btn-ghost" id="combineCancelBtn">Cancel</button></div></div>`; })()}
             ${renderLegsGrouped(sortLegsForDisplay(legs))}
@@ -8687,6 +8762,13 @@ async function openTravelPlanModal(leadId) {
     root.querySelectorAll("[data-move-leg]").forEach((b) => b.addEventListener("click", async () => {
       try { await api(`/api/travel-legs/${b.dataset.moveLeg}/move`, { method: "POST", body: JSON.stringify({ dir: Number(b.dataset.dir) }) }); } catch (e) { return alert(e.message); }
       const updated = await api(`/api/leads/${leadId}/travel-legs`); legs.length = 0; legs.push(...updated); renderModal();
+    }));
+    root.querySelectorAll("[data-pen]").forEach((b) => b.addEventListener("click", async () => {
+      const act = b.dataset.penAct;
+      if (act === "apply" && !confirm("Apply the penalty? This artist's travel reimbursements for this trip are withheld, and they can't claim new ones for it. You can waive it later.")) return;
+      b.disabled = true;
+      try { await api(`/api/travel-penalties/${b.dataset.pen}`, { method: "PATCH", body: JSON.stringify({ action: act }) }); await loadCheckins(); renderModal(); }
+      catch (err) { alert(err.message); b.disabled = false; }
     }));
     const sendBtn = root.querySelector("#sendPlanBtn");
     if (sendBtn) sendBtn.addEventListener("click", async () => {
@@ -14824,6 +14906,7 @@ function renderPerformerTabBar() {
   const tabsEl = document.getElementById("performerTabs");
   if (!tabsEl || !performerData) return;
   const { portal, tasks, notifications, announcements } = performerData;
+  if (!performerEmbedded && (portal.ratingsDue || []).length) { tabsEl.innerHTML = ""; return; }
   const pending = portal.upcoming.filter((e) => e.status === "pending").length;
   const tabs = performerEmbedded ? [
     { id: "home", label: "Overview" },
@@ -14849,16 +14932,28 @@ function renderPerformerTabContent() {
   const money = portal.money;
   const all = perfAllEvents();
   const wireRows = () => body.querySelectorAll("[data-open-event]").forEach((b) => b.addEventListener("click", () => openPerformerEvent(b.dataset.openEvent)));
+  if (!performerEmbedded && (portal.ratingsDue || []).length) return renderPerformerRatingLock(body, portal);
 
   if (performerTab === "home") {
     const pending = portal.upcoming.filter((e) => e.status === "pending");
     const travelToSee = portal.upcoming.filter((e) => e.status === "accepted" && ["unseen", "changed"].includes(e.travelAck?.state));
     const next = portal.upcoming.find((e) => e.status === "accepted");
     const nextLeg = next && next.travel.find((l) => !l.departureAt || l.departureAt >= todayYmd());
+    const checkins = portal.checkinsNow || [];
+    const toRate = portal.ratingsDue || [];
     body.innerHTML = `
-      ${pending.length || travelToSee.length ? `
+      ${pending.length || travelToSee.length || checkins.length || toRate.length ? `
         <div class="section-label">Needs you</div>
         <div class="card" style="margin-bottom:16px; border-color:#C1602B;">
+          ${toRate.map((r, i) => `<div class="perf-need">
+            <div>⭐ <b>Rate your team</b> <span class="muted small">· ${perfEsc(r.place)}, ${fmtDate(r.date)}</span></div>
+            <div class="perf-need-btns"><button class="btn-primary" data-rate-open="${i}">Rate</button></div>
+          </div>`).join("")}
+          ${checkins.map((c) => `<div class="perf-need">
+            <div>📸 <b>${c.state === "upcoming" ? "Check in today" : c.state === "overdue" ? "Check-in overdue" : "Check in now"}</b> <span class="muted small">· ${perfEsc(TRAVEL_MODE_LABELS[c.mode] || "Travel")} ${perfEsc(c.from || "")} → ${perfEsc(c.to || "")}</span>
+              <div class="muted small">${c.state === "upcoming" ? `Photo at the station/airport by ${istWhen(c.dueAt)} · opens ${istWhen(c.opensAt)}` : `Photo at the station/airport ${c.state === "overdue" ? "was due" : "due"} by ${istWhen(c.dueAt)}`}</div></div>
+            <div class="perf-need-btns">${c.state === "upcoming" ? "" : `<button class="btn-primary" data-home-checkin="${perfEsc(c.legId)}">📸 Check in</button>`}</div>
+          </div>`).join("")}
           ${pending.map((e) => `<div class="perf-need">
             <div><b>${perfEsc(e.place)}</b> <span class="muted small">· ${fmtDate(e.date)} · ${perfEsc(e.experience)}</span>${e.fee != null ? `<div class="muted small">Your fee: ${inr(e.fee)}</div>` : ""}</div>
             <div class="perf-need-btns"><button class="btn-primary" data-quick-respond="${e.assignmentId}" data-v="accepted">Accept</button><button class="btn-ghost" data-quick-respond="${e.assignmentId}" data-v="declined">Decline</button><button class="btn-ghost" data-open-event="${perfEsc(e.leadId)}">Details</button></div>
@@ -14882,6 +14977,11 @@ function renderPerformerTabContent() {
         <span><span class="muted small">Coming up</span><b class="mono">${inr(money.upcoming)}</b></span>
         <span><span class="muted small">Received this month</span><b class="mono" style="color:#1C7A80;">${inr(money.receivedThisMonth)}</b></span>
       </button>
+      ${portal.myRatings && portal.myRatings.count ? `<div class="section-label" style="margin-top:16px;">How the team rates you</div>
+      <div class="card perf-detail" style="margin-bottom:0;">${portal.myRatings.shown ? `
+        <div style="font-size:17px;"><b>${starsText(portal.myRatings.overall)}</b> <span class="muted small">overall · ${portal.myRatings.count} ratings</span></div>
+        ${RATING_KEYS.map(([k, label]) => `<div><span class="muted">${label}</span> ${starsText(portal.myRatings[k])}</div>`).join("")}
+        <div class="muted small">Anonymous — averaged from your teammates' ratings after each event.</div>` : `<div class="muted small">Your averages show here after ${3} ratings (${portal.myRatings.count} so far).</div>`}</div>` : ""}
       <div class="section-label" style="margin-top:16px;">Calendar</div>
       <div class="card" id="perfCalCard" style="margin-bottom:16px;">${performerCalendarMarkup(all)}</div>
       <div class="section-label">Days I'm not available</div>
@@ -14927,6 +15027,8 @@ function renderPerformerTabContent() {
     body.querySelectorAll("[data-quick-respond]").forEach((b) => b.addEventListener("click", () => perfRespond(b.dataset.quickRespond, b.dataset.v)));
     wireCalendarGridPerformer(document.getElementById("perfCalCard"), all);
     if (!performerEmbedded) wirePushNotifBanner(body.querySelector("#pushNotifBanner"));
+    body.querySelectorAll("[data-home-checkin]").forEach((b) => b.addEventListener("click", () => perfCheckinUpload(b.dataset.homeCheckin, null, () => reloadPerformer())));
+    body.querySelectorAll("[data-rate-open]").forEach((b) => b.addEventListener("click", () => openPerformerRatingModal(toRate[Number(b.dataset.rateOpen)])));
     wireRows();
     return;
   }
@@ -15053,6 +15155,156 @@ async function perfRespond(assignmentId, value) {
 
 // Everything about one event, in one sheet: answer, details, contacts, who's playing, travel and tickets,
 // pay, reimbursements, chat.
+// ---------- Team ratings (admin) ----------
+// Every artist's averages from their teammates, how each recent event went, the anonymous notes, and who still has to rate.
+async function openRatingsModal(focusTeamId) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `<div class="modal-overlay" id="overlay"><div class="modal-card" style="width:680px; max-width:96vw;">
+    <div class="modal-head"><h3>⭐ Artist ratings</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+    <div class="modal-body" id="ratingsBody"><p class="muted">Loading…</p></div></div></div>`;
+  const close = () => { root.innerHTML = ""; };
+  root.querySelector("#closeModal").addEventListener("click", close);
+  root.querySelector("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") close(); });
+  let data;
+  try { data = await api("/api/ratings"); } catch (err) { root.querySelector("#ratingsBody").innerHTML = `<p class="muted">${escH(err.message)}</p>`; return; }
+  let open = focusTeamId || null;
+  const body = root.querySelector("#ratingsBody");
+  const sc = (v) => `<span class="stars-ro">★</span> ${Number(v).toFixed(1)}`;
+  const render = () => {
+    const focusMissing = focusTeamId && !data.artists.some((a) => a.teamId === focusTeamId);
+    body.innerHTML = `
+      <p class="muted small" style="margin-top:0;">After every event (from ${fmtDate(data.launch)}), each artist rates the others on the line-up — performance, punctuality, attitude. Anonymous: no screen shows who gave a rating. Artists see their own averages after ${data.minToShow} ratings.</p>
+      ${data.pending.length ? `<div class="section-label">Still to rate (${data.pending.length})</div><div class="card" style="margin-bottom:12px;">${data.pending.map((p) => `<div class="small" style="padding:3px 0;"><b>${escH(p.name)}</b> · ${escH(p.place)}, ${fmtDate(p.date)} <span class="muted">· app locked, reminded daily</span></div>`).join("")}</div>` : ""}
+      ${focusMissing ? `<p class="muted small">No ratings for this artist yet.</p>` : ""}
+      <div class="section-label">Averages</div>
+      ${data.artists.length ? data.artists.map((a) => `<div class="card rate-artist${open === a.teamId ? " open" : ""}" data-artist="${a.teamId}" style="margin-bottom:8px; padding:10px 12px;">
+        <div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; cursor:pointer;" data-toggle>
+          <span><b>${escH(a.name)}</b> <span class="muted small">${escH(a.role)}</span></span>
+          <span class="small"><b>${sc(a.overall)}</b> <span class="muted">· Perf ${a.performance.toFixed(1)} · Punct ${a.punctuality.toFixed(1)} · Att ${a.attitude.toFixed(1)} · ${a.count} rating${a.count === 1 ? "" : "s"}</span></span>
+        </div>
+        ${open === a.teamId ? `<div style="margin-top:8px;">
+          <div class="small" style="font-weight:600;">By event</div>
+          ${a.events.map((e) => `<div class="small" style="display:flex; justify-content:space-between; gap:8px; padding:2px 0; border-top:1px solid #EEE7DA;"><span>${fmtDate(e.date)} · ${escH(e.place)}</span><span>${sc(e.overall)} <span class="muted">(P ${e.performance.toFixed(1)} · Pu ${e.punctuality.toFixed(1)} · A ${e.attitude.toFixed(1)} · ${e.n})</span></span></div>`).join("")}
+          ${a.notes.length ? `<div class="small" style="font-weight:600; margin-top:8px;">Notes (anonymous)</div>${a.notes.map((n) => `<div class="small" style="padding:4px 0; border-top:1px solid #EEE7DA;">“${escH(n.note)}” <span class="muted">— ${escH(n.place)}, ${fmtDate(n.date)}</span></div>`).join("")}` : ""}
+        </div>` : ""}
+      </div>`).join("") : `<p class="muted small">No ratings yet — they come in the morning after each event.</p>`}`;
+    body.querySelectorAll("[data-toggle]").forEach((t) => t.addEventListener("click", () => { const id = t.closest("[data-artist]").dataset.artist; open = open === id ? null : id; render(); }));
+  };
+  render();
+  if (focusTeamId) body.querySelector(`[data-artist="${focusTeamId}"]`)?.scrollIntoView({ block: "center" });
+}
+
+// ---------- Team ratings (artist side) ----------
+const RATING_KEYS = [["performance", "Performance"], ["punctuality", "Punctuality"], ["attitude", "Attitude"]];
+function ratingFormHtml(ev) {
+  return `<div class="rate-form">
+    ${ev.people.map((p) => `<div class="card rate-person" data-rate-person="${perfEsc(p.teamId)}">
+      <div style="font-weight:600; font-size:16px;">${perfEsc(p.name)}${p.role ? ` <span class="muted small" style="font-weight:400;">${perfEsc(p.role)}</span>` : ""}</div>
+      ${RATING_KEYS.map(([k, label]) => `<div class="rate-row" data-k="${k}"><span>${label}</span><span class="stars">${[1, 2, 3, 4, 5].map((n) => `<button type="button" class="star" data-n="${n}" aria-label="${n} star${n > 1 ? "s" : ""}">★</button>`).join("")}</span></div>`).join("")}
+      <textarea class="rate-note" rows="2" maxlength="500" placeholder="Anything to add? (optional)"></textarea>
+    </div>`).join("")}
+  </div>`;
+}
+// Stars light up on tap; on send, every person needs all three. Returns the list for the server, or null.
+function wireRatingForm(container) {
+  container.querySelectorAll(".rate-row").forEach((row) => row.querySelectorAll(".star").forEach((b) => b.addEventListener("click", () => {
+    row.dataset.v = b.dataset.n;
+    row.classList.remove("missing");
+    row.querySelectorAll(".star").forEach((x) => x.classList.toggle("on", Number(x.dataset.n) <= Number(b.dataset.n)));
+  })));
+  return () => {
+    let ok = true;
+    const list = [...container.querySelectorAll("[data-rate-person]")].map((card) => {
+      const r = { teamId: card.dataset.ratePerson, note: card.querySelector(".rate-note").value.trim() };
+      card.querySelectorAll(".rate-row").forEach((row) => { if (!row.dataset.v) { ok = false; row.classList.add("missing"); } r[row.dataset.k] = Number(row.dataset.v || 0); });
+      return r;
+    });
+    return ok ? list : null;
+  };
+}
+// The artist app is locked on this screen until the team is rated (the next event's travel and tickets stay reachable).
+function renderPerformerRatingLock(body, portal) {
+  const ev = portal.ratingsDue[0];
+  const next = portal.upcoming.find((e) => e.status === "accepted");
+  body.innerHTML = `
+    <div class="card" style="border-color:#C1602B; margin-bottom:12px;">
+      <div style="font-weight:700; font-size:17px;">⭐ Rate your team</div>
+      <div class="muted small" style="margin-top:4px;">${perfEsc(ev.place)} · ${fmtDate(ev.date)}${ev.lastDate && ev.lastDate !== ev.date ? ` – ${fmtDate(ev.lastDate)}` : ""}. Three quick stars for each person. It's anonymous — no one sees who gave which stars.
+      The app opens again once you're done${portal.ratingsDue.length > 1 ? ` (${portal.ratingsDue.length} events to rate)` : ""}.</div>
+    </div>
+    ${ratingFormHtml(ev)}
+    <button class="btn-primary full" id="rateSend" style="margin-top:6px;">Send ratings</button>
+    <div class="small" id="rateMsg" style="margin-top:6px; color:#A6432B;"></div>
+    ${next ? `<button class="btn-ghost full" id="rateNextEvent" style="margin-top:16px;">🧳 Next event — travel & tickets (${perfEsc(next.place)}, ${fmtDate(next.date)})</button>` : ""}`;
+  const collect = wireRatingForm(body);
+  body.querySelector("#rateNextEvent")?.addEventListener("click", () => openPerformerEvent(next.leadId));
+  body.querySelector("#rateSend").addEventListener("click", async (evt) => {
+    const ratings = collect();
+    if (!ratings) { body.querySelector("#rateMsg").textContent = "Give every person stars for all three."; return; }
+    evt.currentTarget.disabled = true;
+    try { await api("/api/my/ratings", { method: "POST", body: JSON.stringify({ leadId: ev.leadId, ratings }) }); window.scrollTo(0, 0); reloadPerformer(); }
+    catch (err) { body.querySelector("#rateMsg").textContent = err.message; evt.currentTarget.disabled = false; }
+  });
+}
+function openPerformerRatingModal(ev) {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `<div class="modal-overlay" id="overlay"><div class="modal-card perf-sheet" style="width:560px; max-width:96vw;">
+    <div class="modal-head"><h3>⭐ Rate your team — ${perfEsc(ev.place)}</h3><button class="icon-btn" id="closeModal">${ICON_X}</button></div>
+    <div class="modal-body"><p class="muted small" style="margin-top:0;">${fmtDate(ev.date)} · three quick stars for each person. Anonymous — no one sees who gave which stars.</p>
+      ${ratingFormHtml(ev)}<button class="btn-primary" id="rateSend">Send ratings</button><div class="small" id="rateMsg" style="margin-top:6px; color:#A6432B;"></div></div></div></div>`;
+  const close = () => { root.innerHTML = ""; };
+  root.querySelector("#closeModal").addEventListener("click", close);
+  const collect = wireRatingForm(root);
+  root.querySelector("#rateSend").addEventListener("click", async (evt) => {
+    const ratings = collect();
+    if (!ratings) { root.querySelector("#rateMsg").textContent = "Give every person stars for all three."; return; }
+    evt.currentTarget.disabled = true;
+    try { await api("/api/my/ratings", { method: "POST", body: JSON.stringify({ leadId: ev.leadId, ratings }) }); close(); reloadPerformer(); }
+    catch (err) { root.querySelector("#rateMsg").textContent = err.message; evt.currentTarget.disabled = false; }
+  });
+}
+const starsText = (v) => `<span class="stars-ro">${"★".repeat(Math.round(v))}<span class="off">${"★".repeat(5 - Math.round(v))}</span></span> ${Number(v).toFixed(1)}`;
+
+// ---------- Outstation check-ins (artist side) ----------
+// A time from the server (ISO) shown in IST, with the date when it isn't today.
+function istWhen(iso) {
+  const t = new Date(Date.parse(iso) + 5.5 * 3600e3).toISOString();
+  const day = t.slice(0, 10), hm = fmtTimeHM(t.slice(11, 16));
+  return day === todayYmd() ? hm : `${hm}, ${fmtDate(day)}`;
+}
+function perfCheckinHtml(l) {
+  const c = l.checkin;
+  if (!c) return "";
+  const pen = l.penalty;
+  const penLine = !pen ? "" : pen.status === "applied" ? `<div class="small" style="color:#A6432B;">Travel reimbursement for this trip is withheld.</div>`
+    : pen.status === "waived" ? `<div class="small muted">Penalty waived by Team TOL.</div>` : `<div class="small muted">Team TOL will review this.</div>`;
+  const btn = (label, cls = "btn-primary") => `<button class="${cls}" data-checkin="${perfEsc(l.id)}" style="margin-top:6px;">${label}</button>`;
+  if (c.state === "done") return `<div class="perf-checkin ok">✓ Checked in at ${istWhen(c.at)}</div>`;
+  if (c.state === "late") return `<div class="perf-checkin warn">Checked in late at ${istWhen(c.at)} (was due by ${istWhen(c.dueAt)})${penLine}</div>`;
+  if (c.state === "missed") return `<div class="perf-checkin bad">✗ Check-in missed (was due by ${istWhen(c.dueAt)})${penLine}</div>`;
+  if (c.state === "upcoming") return `<div class="perf-checkin">📸 Check in at the station/airport by <b>${istWhen(c.dueAt)}</b> — 1 hour before departure. Opens at ${istWhen(c.opensAt)}.</div>`;
+  if (c.state === "open") return `<div class="perf-checkin due">📸 <b>Check in now</b> — upload a photo of yourself at the station/airport by <b>${istWhen(c.dueAt)}</b>.<br>${btn("📸 Check in")}</div>`;
+  return `<div class="perf-checkin bad">⚠️ <b>Check-in overdue</b> — it was due by ${istWhen(c.dueAt)}. Upload now; a late check-in can mean no travel reimbursement for this trip.<br>${btn("📸 Check in now")}</div>`;
+}
+// Opens the camera (front camera on phones) and uploads the photo for one journey.
+function perfCheckinUpload(legId, url, onDone) {
+  const input = document.createElement("input");
+  input.type = "file"; input.accept = "image/*"; input.setAttribute("capture", "user");
+  input.addEventListener("change", async () => {
+    const file = input.files[0];
+    if (!file) return;
+    const fd = new FormData(); fd.append("photo", file);
+    try {
+      const r = await fetch(url || `/api/my/checkins/${encodeURIComponent(legId)}`, { method: "POST", body: fd, credentials: "same-origin" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "Couldn't upload the photo");
+      alert(j.late ? "Checked in — but it was after the 1-hour mark, so Team TOL will review it." : "✓ Checked in. Have a safe journey!");
+      onDone && onDone();
+    } catch (err) { alert(err.message); }
+  });
+  input.click();
+}
+
 function openPerformerEvent(leadId) {
   const e = perfEventByLead(leadId);
   if (!e) return;
@@ -15078,11 +15330,12 @@ function openPerformerEvent(leadId) {
             ${e.duration ? `<div><span class="muted">Duration</span> ${perfEsc(e.duration)}</div>` : ""}
             ${e.pcs ? `<div><span class="muted">Band</span> ${perfEsc(e.pcs)} pcs</div>` : ""}
             ${e.drumNote ? `<div>🥁 <b>${perfEsc(e.drumNote)}</b></div>` : ""}
+            ${e.food ? `<div><span class="muted">Food</span> ${perfEsc(e.food)}</div>` : ""}
           </div>
 
           ${e.contacts.length ? `<div class="section-label">On-site contacts</div><div class="card perf-detail">${e.contacts.map((c) => {
             const dg = String(c.phone || "").replace(/\D/g, ""), wa = dg.length === 10 ? "91" + dg : dg;
-            return `<div style="display:flex; justify-content:space-between; gap:8px; align-items:center; flex-wrap:wrap;"><span><b>${perfEsc(c.name || c.role)}</b>${c.name ? ` <span class="muted small">${perfEsc(c.role)}</span>` : ""}</span>${dg ? `<span style="display:flex; gap:6px;"><a class="btn-ghost" href="tel:${perfEsc(c.phone)}" style="font-size:12px; padding:3px 9px;">📞 Call</a><a class="btn-ghost" href="https://wa.me/${wa}" target="_blank" rel="noopener" style="font-size:12px; padding:3px 9px;">💬</a></span>` : ""}</div>`;
+            return `<div style="display:flex; justify-content:space-between; gap:8px; align-items:center; flex-wrap:wrap;"><span><b>${perfEsc(c.name || c.role)}</b>${c.name ? ` <span class="muted small">${perfEsc(c.role)}</span>` : ""}${c.address ? `<br><span class="muted small">${perfEsc(c.address)} · <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.address)}" target="_blank" rel="noopener">Maps</a></span>` : ""}</span>${dg ? `<span style="display:flex; gap:6px;"><a class="btn-ghost" href="tel:${perfEsc(c.phone)}" style="font-size:12px; padding:3px 9px;">📞 Call</a><a class="btn-ghost" href="https://wa.me/${wa}" target="_blank" rel="noopener" style="font-size:12px; padding:3px 9px;">💬</a></span>` : ""}</div>`;
           }).join("")}</div>` : ""}
 
           ${e.lineup.length ? `<div class="section-label">Playing with you</div><div class="card perf-detail"><div>${e.lineup.map((p) => `${perfEsc(p.name)}${p.role && p.role !== "Admin" ? ` <span class="muted small">(${perfEsc(p.role)})</span>` : ""}${p.confirmed ? "" : ` <span class="muted small">· not confirmed yet</span>`}`).join("<br>")}</div></div>` : ""}
@@ -15093,6 +15346,7 @@ function openPerformerEvent(leadId) {
               <b>${perfEsc(TRAVEL_MODE_LABELS[l.mode] || "Travel")}${l.from || l.to ? ` · ${perfEsc(l.from || "?")} → ${perfEsc(l.to || "?")}` : ""}</b>
               <div class="muted small">${[perfLegWhen(l), l.arrivalTime ? `arrives ${fmtTimeHM(l.arrivalTime)}` : "", l.service ? perfEsc(l.service) : "", l.travelClass ? perfEsc(l.travelClass) : "", l.ref ? `Ref ${perfEsc(l.ref)}` : "", TRAVEL_STATUS_LABELS[l.status] || ""].filter(Boolean).join(" · ")}</div>
               ${l.tickets.map((t) => `<a href="/api/documents/${encodeURIComponent(t.id)}/file" target="_blank" rel="noopener" class="ev-ticket" style="margin-top:4px;">🎫 ${perfEsc(t.name)}</a>`).join(" ")}
+              ${perfCheckinHtml(l)}
             </div>`).join("") : `<span class="muted">Not added yet — the team will add it.</span>`}
             ${e.travel.length && (ack.state === "unseen" || ack.state === "changed") ? `${ack.state === "changed" ? `<div class="small" style="color:#A6432B; margin-top:6px;">Your travel changed since you last confirmed it.</div>` : ""}<button class="btn-primary full" id="perfAck" style="margin-top:8px;">✓ Got it — I've seen my travel plan</button>` : ack.state === "seen" ? `<div class="muted small" style="margin-top:6px;">✓ You confirmed this plan${ack.at ? ` on ${fmtDate(String(ack.at).slice(0, 10))}` : ""}</div>` : ""}
           </div>
@@ -15102,7 +15356,7 @@ function openPerformerEvent(leadId) {
 
           ${e.status !== "declined" ? `<div class="section-label">Reimbursements</div>
           <div class="card perf-detail">
-            ${(e.claims || []).map((c) => `<div style="display:flex; justify-content:space-between; gap:8px;"><span><b>${inr(c.amount)}</b> — ${perfEsc(c.what)}<span class="muted small"> · ${c.receipts ? "📎 slip" : "no slip"}</span></span><span class="perf-pill" style="color:${c.status === "paid" ? "#1C7A80" : c.status === "waiting" ? "#B6752C" : "#6B4488"};">${{ waiting: "Waiting for approval", approved: "Approved", "part paid": `Part paid · ${inr(c.paidSoFar)}`, paid: "Paid" }[c.status] || c.status}</span></div>`).join("")}
+            ${(e.claims || []).map((c) => `<div style="display:flex; justify-content:space-between; gap:8px;"><span><b>${inr(c.amount)}</b> — ${perfEsc(c.what)}<span class="muted small"> · ${c.receipts ? "📎 slip" : "no slip"}</span></span><span class="perf-pill" style="color:${c.status === "paid" ? "#1C7A80" : c.status === "waiting" ? "#B6752C" : "#6B4488"};">${{ waiting: "Waiting for approval", approved: "Approved", "part paid": `Part paid · ${inr(c.paidSoFar)}`, paid: "Paid", withheld: "Withheld — check-in" }[c.status] || c.status}</span></div>`).join("")}
             ${claimOpen ? `<div class="perf-claim">
               <input type="number" id="clAmt" inputmode="numeric" placeholder="Amount you spent ₹" />
               <input id="clWhat" maxlength="200" placeholder="What for — e.g. cab to the venue" style="margin-top:6px;" />
@@ -15123,6 +15377,9 @@ function openPerformerEvent(leadId) {
     root.querySelector("#closeModal").addEventListener("click", close);
     root.querySelector("#overlay").addEventListener("click", (ev) => { if (ev.target.id === "overlay") close(); });
     root.querySelectorAll("[data-respond]").forEach((b) => b.addEventListener("click", () => perfRespond(e.assignmentId, b.dataset.respond)));
+    root.querySelectorAll("[data-checkin]").forEach((b) => b.addEventListener("click", () => perfCheckinUpload(b.dataset.checkin, null, async () => {
+      await refreshPerformerData(); Object.assign(e, perfEventByLead(e.leadId)); render(); renderPerformerTabBar(); renderPerformerTabContent();
+    })));
     root.querySelector("#perfAck")?.addEventListener("click", async (ev) => {
       ev.currentTarget.disabled = true;
       try { const r = await api(`/api/my/events/${e.leadId}/travel-ack`, { method: "POST" }); e.travelAck = r.ack; render(); refreshPerformerData().then(() => { renderPerformerTabBar(); renderPerformerTabContent(); }); }

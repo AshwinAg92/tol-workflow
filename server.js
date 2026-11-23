@@ -2577,7 +2577,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
     "name", "phone", "email", "city", "event_type", "occasion", "guest_range", "pcs", "duration", "whatsapp_number",
     "cancellation_reason", "cancelled_by", "snooze_until", "state", "rate_type", "rate_note", "rate_inclusions", "occasion_other", "not_interested_reason", "is_b2b", "thanked_at", "balance_due_date",
   ];
-  const sharedFields = ["event_time", "soundcheck_time", "venue", "sound_manager_name", "sound_manager_phone", "coordinator_name", "coordinator_phone", "contacts", "drums", "client_requests"];
+  const sharedFields = ["event_time", "soundcheck_time", "venue", "sound_manager_name", "sound_manager_phone", "coordinator_name", "coordinator_phone", "contacts", "drums", "client_requests", "food_notes"];
   if (req.body.drums !== undefined) req.body.drums = cleanDrums(req.body.drums);
   if (!hasLeads) {
     const keyFor = (f) => (f === "assigned_to" ? "assignedTo" : f === "advance_date" ? "advanceDate" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f === "not_interested_reason" ? "notInterestedReason" : f === "is_b2b" ? "isB2b" : f === "thanked_at" ? "thankedAt" : f === "cancelled_by" ? "cancelledBy" : f);
@@ -2618,7 +2618,7 @@ app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   const updates = [];
   const values = [];
   fields.forEach((f) => {
-    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f === "not_interested_reason" ? "notInterestedReason" : f === "is_b2b" ? "isB2b" : f === "thanked_at" ? "thankedAt" : f === "balance_due_date" ? "balanceDueDate" : f === "client_requests" ? "clientRequests" : f;
+    const key = f === "assigned_to" ? "assignedTo" : f === "quote_amount" ? "quoteAmount" : f === "final_amount" ? "finalAmount" : f === "advance_date" ? "advanceDate" : f === "event_time" ? "eventTime" : f === "soundcheck_time" ? "soundcheckTime" : f === "event_type" ? "eventType" : f === "guest_range" ? "guestRange" : f === "whatsapp_number" ? "whatsappNumber" : f === "snooze_until" ? "snoozeUntil" : f === "rate_type" ? "rateType" : f === "rate_note" ? "rateNote" : f === "rate_inclusions" ? "rateInclusions" : f === "occasion_other" ? "occasionOther" : f === "not_interested_reason" ? "notInterestedReason" : f === "is_b2b" ? "isB2b" : f === "thanked_at" ? "thankedAt" : f === "balance_due_date" ? "balanceDueDate" : f === "client_requests" ? "clientRequests" : f === "food_notes" ? "foodNotes" : f;
     if (req.body[key] !== undefined) {
       values.push(f === "is_b2b" ? (req.body[key] ? 1 : 0) : req.body[key]);
       updates.push(`${f} = $${values.length}`);
@@ -5134,7 +5134,7 @@ app.get("/api/team-pay", requireAuth, requireSection("accounts"), requireAdmin, 
         l.id AS lead_id, l.date, l.city, l.venue, l.stage, l.event_type
       FROM expenses e LEFT JOIN leads l ON l.id = e.lead_id
       WHERE e.team_id IS NOT NULL AND e.approved = 1 AND e.category IN ('artist_fee', 'reimbursement')
-        AND (l.id IS NULL OR l.stage <> 'Cancelled' OR e.paid = 1)
+        AND (l.id IS NULL OR l.stage <> 'Cancelled' OR e.paid = 1) AND e.withheld_by IS NULL
       ORDER BY l.date ASC NULLS LAST, e.created_at ASC`).then((r) => r.rows),
     pool.query(`SELECT p.*, COALESCE((SELECT json_agg(json_build_object('expenseId', i.expense_id, 'amount', i.amount)) FROM team_payout_items i WHERE i.payout_id = p.id), '[]') AS covers
       FROM team_payouts p ORDER BY paid_on DESC, created_at DESC`).then((r) => r.rows),
@@ -5228,7 +5228,7 @@ app.post("/api/team-pay/fees", requireAuth, requireSection("accounts"), requireA
 app.post("/api/team-pay/payouts", requireAuth, requireSection("accounts"), requireAdmin, async (req, res) => {
   const { teamId } = req.body;
   let ids = [...new Set(Array.isArray(req.body.expenseIds) ? req.body.expenseIds.map(String) : [])];
-  if (!ids.length) ids = (await pool.query("SELECT id FROM expenses WHERE team_id = $1 AND approved = 1 AND paid = 0 AND category IN ('artist_fee', 'reimbursement')", [teamId])).rows.map((r) => r.id);
+  if (!ids.length) ids = (await pool.query("SELECT id FROM expenses WHERE team_id = $1 AND approved = 1 AND paid = 0 AND withheld_by IS NULL AND category IN ('artist_fee', 'reimbursement')", [teamId])).rows.map((r) => r.id);
   const paidOn = String(req.body.paidOn || todayIST());
   const mode = TEAM_PAY_MODES.includes(req.body.mode) ? req.body.mode : null;
   const reference = cleanText(req.body.reference, 80);
@@ -5242,9 +5242,9 @@ app.post("/api/team-pay/payouts", requireAuth, requireSection("accounts"), requi
   let payoutId, total, items;
   try {
     await client.query("BEGIN");
-    items = (await client.query(`SELECT e.id, e.amount, e.paid_amount, e.team_id, e.paid, e.approved, e.category, e.lead_id, e.created_at, l.venue, l.city, l.date
+    items = (await client.query(`SELECT e.id, e.amount, e.paid_amount, e.team_id, e.paid, e.approved, e.category, e.lead_id, e.created_at, e.withheld_by, l.venue, l.city, l.date
       FROM expenses e LEFT JOIN leads l ON l.id = e.lead_id WHERE e.id = ANY($1::text[]) FOR UPDATE OF e`, [ids])).rows;
-    const bad = items.length !== ids.length || items.some((e) => e.team_id !== teamId || e.paid || !e.approved || !["artist_fee", "reimbursement"].includes(e.category));
+    const bad = items.length !== ids.length || items.some((e) => e.team_id !== teamId || e.paid || !e.approved || e.withheld_by || !["artist_fee", "reimbursement"].includes(e.category));
     if (bad) {
       await client.query("ROLLBACK");
       return res.status(409).json({ error: "Some of these were already paid or changed. Refresh and try again." });
@@ -5883,6 +5883,44 @@ function contactsWithClientContact(lead, contact) {
   if (contact) list.push({ role: "On-site contact", name: contact.name, phone: contact.phone, fromClient: true });
   return JSON.stringify(list);
 }
+// Logistics on the day: one tagged entry each in the event's contacts (so they show wherever contacts do).
+const LOGI_KINDS = { driver: "Local driver", hotel: "Hotel", sound: "Sound vendor", manager: "Event manager" };
+function contactListOf(lead) {
+  let list = null;
+  try { list = JSON.parse(lead.contacts || "null"); } catch { list = null; }
+  if (Array.isArray(list)) return list;
+  list = [];
+  if (lead.sound_manager_name || lead.sound_manager_phone) list.push({ role: "Sound manager", name: lead.sound_manager_name || "", phone: lead.sound_manager_phone || "" });
+  if (lead.coordinator_name || lead.coordinator_phone) list.push({ role: "Event coordinator", name: lead.coordinator_name || "", phone: lead.coordinator_phone || "" });
+  return list;
+}
+const logiKindOf = (c) => c.kind || Object.keys(LOGI_KINDS).find((k) => LOGI_KINDS[k] === c.role) || null;
+function logisticsOf(lead) {
+  const out = {};
+  for (const c of contactListOf(lead)) { const k = logiKindOf(c); if (k && !out[k]) out[k] = { name: c.name || "", phone: c.phone || "", address: c.address || "" }; }
+  return out;
+}
+// Merge what was typed (blank boxes never wipe what's there); returns the new contacts JSON, or null if nothing changed.
+function contactsWithLogistics(lead, logi) {
+  const list = contactListOf(lead), before = JSON.stringify(list);
+  for (const k of Object.keys(LOGI_KINDS)) {
+    const v = logi && logi[k];
+    if (!v || !(v.name || v.phone || v.address)) continue;
+    const i = list.findIndex((c) => logiKindOf(c) === k);
+    const old = i >= 0 ? list[i] : {};
+    const entry = { role: LOGI_KINDS[k], name: v.name || old.name || "", phone: v.phone || old.phone || "", kind: k };
+    if (k === "hotel" && (v.address || old.address)) entry.address = v.address || old.address;
+    if (i >= 0) list[i] = entry; else list.push(entry);
+  }
+  const after = JSON.stringify(list);
+  return after === before ? null : after;
+}
+const cleanLogistics = (raw) => {
+  const t = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
+  const out = {};
+  for (const k of Object.keys(LOGI_KINDS)) { const v = (raw || {})[k] || {}; out[k] = { name: t(v.name, 80), phone: t(v.phone, 30), address: k === "hotel" ? t(v.address, 300) : "" }; }
+  return out;
+};
 const clientContactOf = (lead) => { try { const l = JSON.parse(lead.contacts || "null"); return Array.isArray(l) ? l.find((c) => c.fromClient) || null : null; } catch { return null; } };
 
 app.post("/event/:token/details", async (req, res) => {
@@ -5899,7 +5937,8 @@ app.post("/event/:token/details", async (req, res) => {
   const sets = [], vals = [], changed = [];
   const put = (col, v, label) => { if (v && v !== (lead[col] || "")) { vals.push(v); sets.push(`${col} = $${vals.length}`); changed.push(label); } };
   // A combo: the venue goes on every date; each date has its own times.
-  const others = (await pool.query("SELECT id, date, venue, event_time, soundcheck_time FROM leads WHERE id = ANY($1) AND id <> $2 AND stage <> 'Cancelled'", [await comboLeadIds(s.lead_id), s.lead_id])).rows;
+  const others = (await pool.query("SELECT id, date, venue, event_time, soundcheck_time, contacts, food_notes, sound_manager_name, sound_manager_phone, coordinator_name, coordinator_phone FROM leads WHERE id = ANY($1) AND id <> $2 AND stage <> 'Cancelled'", [await comboLeadIds(s.lead_id), s.lead_id])).rows;
+  const logi = cleanLogistics(req.body.logistics), food = txt(req.body.food, 600);
   const perDate = req.body.times && typeof req.body.times === "object" ? req.body.times : {};
   for (const o of others) {
     const t = perDate[o.id] || {};
@@ -5908,6 +5947,9 @@ app.post("/event/:token/details", async (req, res) => {
     oPut("venue", venue, "venue");
     oPut("event_time", cleanTime(t.eventTime), "event time");
     oPut("soundcheck_time", cleanTime(t.soundcheckTime), "sound check time");
+    oPut("food_notes", food, "food arrangements");
+    const oc = contactsWithLogistics(o, logi);
+    if (oc) { oVals.push(oc); oSets.push(`contacts = $${oVals.length}`); if (!changed.includes("logistics")) changed.push("logistics"); }
     if (oSets.length) { oVals.push(o.id); await pool.query(`UPDATE leads SET ${oSets.join(", ")} WHERE id = $${oVals.length}`, oVals); }
   }
   const mine = perDate[s.lead_id] || {};
@@ -5915,10 +5957,15 @@ app.post("/event/:token/details", async (req, res) => {
   put("event_time", cleanTime(mine.eventTime) || eventTime, "event time");
   put("soundcheck_time", cleanTime(mine.soundcheckTime) || scTime, "sound check time");
   put("client_requests", notes, "special requests");
+  put("food_notes", food, "food arrangements");
   const oldC = clientContactOf(lead);
+  let working = lead;
   if ((cName || cPhone) && (!oldC || oldC.name !== cName || oldC.phone !== cPhone)) {
-    vals.push(contactsWithClientContact(lead, { name: cName, phone: cPhone })); sets.push(`contacts = $${vals.length}`); changed.push("on-site contact");
+    working = { ...lead, contacts: contactsWithClientContact(lead, { name: cName, phone: cPhone }) }; changed.push("on-site contact");
   }
+  const withLogi = contactsWithLogistics(working, logi);
+  if (withLogi) { working = { ...working, contacts: withLogi }; if (!changed.includes("logistics")) changed.push("logistics"); }
+  if (working !== lead) { vals.push(working.contacts); sets.push(`contacts = $${vals.length}`); }
   if (!sets.length && !changed.length) return res.json({ ok: true, changed: [] });
   vals.push(new Date().toISOString()); sets.push(`client_updated_at = $${vals.length}`);
   vals.push(s.lead_id);
@@ -5976,6 +6023,15 @@ app.get("/event/:token", async (req, res) => {
       <div><label for="cpCPhone">&nbsp;</label><input class="f" id="cpCPhone" type="tel" placeholder="Phone" value="${v(cc.phone)}"></div></div>
       <label for="cpReq">Anything specific we should know? <span class="m">(songs, rituals, timings, dress code…)</span></label>
       <textarea class="f" id="cpReq" rows="3" placeholder="Anything at all">${v(lead.client_requests)}</textarea>
+      <h2 style="margin-top:18px">Logistics on the day</h2>
+      <div class="m">Whatever you've arranged for the team — fill what you know, the rest later.</div>
+      ${(() => { const lg = logisticsOf(lead); const pair = (k, label, ph) => `<label>${label}</label><div class="two"><div><input class="f lg" data-k="${k}" data-f="name" placeholder="${ph}" value="${v((lg[k] || {}).name)}"></div><div><input class="f lg" data-k="${k}" data-f="phone" type="tel" placeholder="Phone" value="${v((lg[k] || {}).phone)}"></div></div>`;
+        return pair("driver", "🚗 Local driver (pick-ups and drops)", "Driver's name")
+          + pair("hotel", "🏨 Hotel", "Hotel name") + `<input class="f lg" data-k="hotel" data-f="address" placeholder="Hotel address" value="${v((lg.hotel || {}).address)}" style="margin-top:8px">`
+          + pair("sound", "🔊 Sound vendor", "Sound vendor's name")
+          + pair("manager", "📋 Event manager / coordinator", "Name"); })()}
+      <label for="cpFood">🍽 Food arrangements for the team</label>
+      <textarea class="f" id="cpFood" rows="2" placeholder="e.g. Lunch at the hotel 1 pm, dinner at the venue after the show">${v(lead.food_notes)}</textarea>
       <div style="margin-top:12px"><button class="btn" id="cpSave" type="button">Save details</button> <span class="m" id="cpMsg"></span></div>
     </form>
     ${rider || riderPdf || drumsLine ? `<h2>${rider || riderPdf ? "Tech rider" : "Sound setup"}</h2><div class="c">${riderPdf ? `<div>Everything we need on the day — stage, drums, power, sound, lights, hotel and travel. <b>Please share it with your event manager and your sound vendor.</b></div><div style="margin-top:10px"><a class="btn" href="/api/documents/${encodeURIComponent(riderPdf.id)}/file" target="_blank" rel="noopener">📄 Technical rider</a></div>` : ""}${rider ? `<div style="margin-top:${riderPdf ? 14 : 0}px">${riderPdf ? "This event's own sound sheet (exact channel list for this line-up)" : "Sound, mics and monitors"} — <b>for your sound vendor</b>.</div><div style="margin-top:10px"><a class="btn" href="/rider/${encodeURIComponent(rider.token)}" target="_blank" rel="noopener">🎛 ${riderPdf ? "Sound sheet for this event" : "Technical rider (sound vendor)"}</a></div>` : ""}${drumsLine ? `<div style="margin-top:${rider || riderPdf ? 12 : 0}px">${drumsLine}</div>` : ""}</div>` : ""}
@@ -5987,7 +6043,8 @@ app.get("/event/:token", async (req, res) => {
   var $=function(id){return document.getElementById(id)};
   $("cpSave").onclick=function(){
     var times={}; document.querySelectorAll(".cp-time").forEach(function(i){times[i.getAttribute("data-lead")]={eventTime:i.value}}); document.querySelectorAll(".cp-sc").forEach(function(i){var k=i.getAttribute("data-lead"); times[k]=times[k]||{}; times[k].soundcheckTime=i.value});
-    var body={venue:$("cpVenue").value,times:times,contactName:$("cpCName").value,contactPhone:$("cpCPhone").value,requests:$("cpReq").value};
+    var logistics={}; document.querySelectorAll(".lg").forEach(function(i){var k=i.getAttribute("data-k"); logistics[k]=logistics[k]||{}; logistics[k][i.getAttribute("data-f")]=i.value;});
+    var body={venue:$("cpVenue").value,times:times,contactName:$("cpCName").value,contactPhone:$("cpCPhone").value,requests:$("cpReq").value,logistics:logistics,food:$("cpFood").value};
     $("cpSave").disabled=true; $("cpMsg").textContent="Saving…";
     fetch(base+"/details",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)})
       .then(function(r){return r.json().then(function(j){if(!r.ok) throw new Error(j.error||"Could not save"); return j;})})
@@ -6260,7 +6317,205 @@ app.post("/api/leads/:id/no-travel", requireAuth, requireCapability("assign_team
 app.get("/api/travel-desk", requireAuth, requireCapability("assign_team"), async (req, res) => { res.json(await buildTravelDesk(req.user)); });
 
 // ---------- Travel-day reminders to artists, and one alert to the organiser when travel is still unbooked close to the date ----------
+// ---------- Outstation check-ins ----------
+// Flights, trains and buses: the artist uploads a photo at the station/airport at least 1 hour before departure.
+// Check-in opens 3 hours before departure and closes 2 hours after; late = after the 1-hour mark, missed = never.
+const CHECKIN_MODES = new Set(["flight", "train", "bus"]);
+const CHECKIN_OPEN_MS = 3 * 3600e3, CHECKIN_DUE_MS = 3600e3, CHECKIN_CLOSE_MS = 2 * 3600e3;
+let checkinLaunchCache = null;
+async function checkinLaunchMs() {
+  if (checkinLaunchCache) return checkinLaunchCache;
+  const r = (await pool.query("SELECT template FROM message_templates WHERE key = 'checkin_launch'")).rows[0];
+  checkinLaunchCache = r ? Date.parse(r.template) || Date.now() : Date.now();
+  return checkinLaunchCache;
+}
+// Departure as a moment in time (IST), or null when the date or time isn't set.
+function legDepartMs(leg) {
+  const day = String(leg.departure_at || "").slice(0, 10);
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(leg.departure_time || ""));
+  if (!isDayString(day) || !m) return null;
+  return Date.parse(`${day}T${m[1].padStart(2, "0")}:${m[2]}:00+05:30`);
+}
+// Where one artist stands on one journey: null when no check-in is needed.
+function checkinInfo(leg, ci, launchMs, now = Date.now()) {
+  if (!CHECKIN_MODES.has(leg.mode) || !["booked", "self_arranged"].includes(leg.status)) return null;
+  const dep = legDepartMs(leg);
+  if (!dep || dep < launchMs) return null;
+  const due = dep - CHECKIN_DUE_MS, opens = dep - CHECKIN_OPEN_MS, closes = dep + CHECKIN_CLOSE_MS;
+  let state;
+  if (ci) state = ci.late ? "late" : "done";
+  else if (now < opens) state = "upcoming";
+  else if (now <= due) state = "open";
+  else if (now <= closes) state = "overdue";
+  else state = "missed";
+  const iso = (t) => new Date(t).toISOString();
+  return { state, departAt: iso(dep), dueAt: iso(due), opensAt: iso(opens), closesAt: iso(closes), at: ci ? ci.taken_at : null };
+}
+const legWhat = (l) => `${({ flight: "Flight", train: "Train", bus: "Bus" })[l.mode] || "Travel"} ${[l.from_city, l.to_city].filter(Boolean).join(" → ")}`.trim();
+const istClock = (iso) => new Date(Date.parse(iso) + 5.5 * 3600e3).toISOString().slice(11, 16);
+const shortDay = (ymd) => new Date(ymd + "T00:00:00Z").toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" });
+// "6:30 PM", or "6:30 PM on 24 Nov" when it isn't today (IST).
+const istWhenText = (iso) => { const t = new Date(Date.parse(iso) + 5.5 * 3600e3).toISOString(); return fmt12(t.slice(11, 16)) + (t.slice(0, 10) === todayIST() ? "" : " on " + shortDay(t.slice(0, 10))); };
+async function founderTeamIds() {
+  return new Set((await pool.query("SELECT team_id FROM users WHERE access_level = 'admin' AND team_id IS NOT NULL")).rows.map((r) => r.team_id));
+}
+// A late or missed check-in: recorded once per journey and artist, then the admin decides.
+async function raiseCheckinPenalty(leg, teamId, kind, minutesLate) {
+  const id = uuid(), now = new Date().toISOString();
+  const won = await pool.query(`INSERT INTO travel_penalties (id, leg_id, team_id, lead_id, kind, minutes_late, status, created_at)
+    VALUES ($1,$2,$3,$4,$5,$6,'pending',$7) ON CONFLICT (leg_id, team_id) DO NOTHING RETURNING id`, [id, leg.id, teamId, leg.lead_id, kind, minutesLate || null, now]);
+  if (!won.rows.length) return;
+  const who = (await pool.query("SELECT name FROM team WHERE id = $1", [teamId])).rows[0]?.name || "An artist";
+  const lead = (await pool.query("SELECT name, date FROM leads WHERE id = $1", [leg.lead_id])).rows[0] || {};
+  const what = kind === "late" ? `checked in ${minutesLate} min late` : "didn't check in";
+  await pool.query("INSERT INTO admin_notifications (id, message, assignment_id, audience, created_at) VALUES ($1,$2,NULL,'admin',$3)",
+    [uuid(), `📸 ${escHtml(who)} ${what} for ${escHtml(legWhat(leg))} (${escHtml(lead.name || "")}, ${escHtml(lead.date || "")}). Apply or waive the penalty in the event's Travel plan.`, now]);
+  sendPushToAll("📸 Check-in " + (kind === "late" ? "late" : "missed"), `${who} — ${legWhat(leg)}`, "/login", { adminOnly: true }).catch(() => {});
+}
+// Save one artist's check-in photo for a journey.
+async function saveCheckin(teamId, legId, file) {
+  const leg = (await pool.query(`SELECT tl.* FROM travel_legs tl JOIN travel_leg_members tm ON tm.leg_id = tl.id AND tm.team_id = $2 WHERE tl.id = $1`, [legId, teamId])).rows[0];
+  if (!leg) return { status: 404, error: "That journey isn't on your plan." };
+  if ((await founderTeamIds()).has(teamId)) return { status: 400, error: "Check-ins aren't needed for you." };
+  const now = Date.now();
+  const info = checkinInfo(leg, null, await checkinLaunchMs(), now);
+  if (!info) return { status: 400, error: "This journey doesn't need a check-in." };
+  if ((await pool.query("SELECT 1 FROM travel_checkins WHERE leg_id = $1 AND team_id = $2", [legId, teamId])).rows.length) return { status: 409, error: "You've already checked in for this journey." };
+  if (info.state === "upcoming") return { status: 400, error: `Check-in opens 3 hours before departure — from ${istWhenText(info.opensAt)}.` };
+  if (info.state === "missed") return { status: 400, error: "Check-in for this journey has closed." };
+  if (!file || !/^image\//.test(file.mimetype || "")) return { status: 400, error: "Take a photo of yourself at the station or airport." };
+  const late = now > Date.parse(info.dueAt);
+  const takenAt = new Date(now).toISOString();
+  await pool.query("INSERT INTO travel_checkins (id, leg_id, team_id, mime_type, photo, taken_at, due_at, late) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+    [uuid(), legId, teamId, file.mimetype, file.buffer, takenAt, info.dueAt, late ? 1 : 0]);
+  if (late) await raiseCheckinPenalty(leg, teamId, "late", Math.max(1, Math.round((now - Date.parse(info.dueAt)) / 60000)));
+  return { ok: true, late, at: takenAt };
+}
+// An applied penalty for this artist on any date of this event's combo: no reimbursement claims for that trip.
+async function claimBlockedByPenalty(teamId, leadId) {
+  const ids = await comboLeadIds(leadId);
+  return !!(await pool.query("SELECT 1 FROM travel_penalties WHERE team_id = $1 AND lead_id = ANY($2) AND status = 'applied' LIMIT 1", [teamId, ids])).rows.length;
+}
+// Reminders to check in, and missed check-ins once a journey's check-in has closed (runs with the travel reminders).
+async function runCheckinWatch() {
+  const launch = await checkinLaunchMs();
+  const founders = await founderTeamIds();
+  const from = new Date(launch + 5.5 * 3600e3).toISOString().slice(0, 10);
+  const to = new Date(Date.now() + 5.5 * 3600e3 + 86400e3).toISOString().slice(0, 10);
+  const { rows } = await pool.query(`
+    SELECT tl.*, tm.team_id, c.taken_at, c.late
+    FROM travel_legs tl JOIN travel_leg_members tm ON tm.leg_id = tl.id JOIN leads l ON l.id = tl.lead_id
+    LEFT JOIN travel_checkins c ON c.leg_id = tl.id AND c.team_id = tm.team_id
+    WHERE tl.mode IN ('flight','train','bus') AND tl.status IN ('booked','self_arranged') AND l.stage IN ('Confirmed','Completed')
+      AND LEFT(tl.departure_at, 10) >= $1 AND LEFT(tl.departure_at, 10) <= $2
+      AND EXISTS (SELECT 1 FROM event_assignments ea WHERE ea.team_id = tm.team_id AND ea.status <> 'declined'
+        AND ea.lead_id IN (tl.lead_id, COALESCE(tl.to_lead_id, tl.lead_id), COALESCE(tl.from_lead_id, tl.lead_id)))`, [from, to]);
+  const flag = async (key) => (await pool.query("INSERT INTO app_flags (key, done_at) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING key", [key, new Date().toISOString()])).rows.length > 0;
+  for (const r of rows) {
+    if (founders.has(r.team_id)) continue;
+    const info = checkinInfo(r, r.taken_at ? r : null, launch);
+    if (!info) continue;
+    if (info.state === "open" && await flag(`checkinopen:${r.id}:${r.team_id}`)) {
+      await addTeamNotification(r.team_id, `📸 Check in for your ${legWhat(r)}: upload a photo at the station/airport by ${istWhenText(info.dueAt)} (1 hour before departure). Open your event → Travel → Check in. Late check-in means no travel reimbursement for this trip.`);
+    }
+    if (info.state === "overdue" && await flag(`checkinlate:${r.id}:${r.team_id}`)) {
+      await addTeamNotification(r.team_id, `⚠️ You haven't checked in for your ${legWhat(r)} yet — it was due at ${istWhenText(info.dueAt)}. Upload your photo now.`);
+    }
+    if (info.state === "missed") await raiseCheckinPenalty(r, r.team_id, "missed", null);
+  }
+}
+
+// ---------- Team ratings after every event ----------
+const RATING_MIN_TO_SHOW = 3; // an artist sees their own averages once this many ratings are in
+let ratingsLaunchDay = null;
+async function ratingsLaunch() {
+  if (ratingsLaunchDay) return ratingsLaunchDay;
+  const r = (await pool.query("SELECT template FROM message_templates WHERE key = 'ratings_launch'")).rows[0];
+  ratingsLaunchDay = new Date((r ? Date.parse(r.template) || Date.now() : Date.now()) + 5.5 * 3600e3).toISOString().slice(0, 10);
+  return ratingsLaunchDay;
+}
+// The events one artist still has to rate: played (accepted), over (the last date of a combo has passed), on or after
+// the launch day, with at least one other artist on the line-up. Founders neither rate nor get rated.
+async function ratingsDueFor(teamId, founders) {
+  founders = founders || await founderTeamIds();
+  if (founders.has(teamId)) return [];
+  const today = todayIST(), launch = await ratingsLaunch();
+  const mine = (await pool.query(`SELECT l.id, l.date, l.combo_group_id FROM event_assignments ea JOIN leads l ON l.id = ea.lead_id
+    WHERE ea.team_id = $1 AND ea.status = 'accepted' AND l.stage IN ('Confirmed', 'Completed') AND l.date >= $2 AND l.date < $3 ORDER BY l.date ASC`, [teamId, launch, today])).rows;
+  const groups = new Map();
+  for (const r of mine) { const g = r.combo_group_id || r.id; if (!groups.has(g)) groups.set(g, r); }
+  const out = [];
+  for (const [g, first] of groups) {
+    const dates = first.combo_group_id
+      ? (await pool.query("SELECT id, date, venue, city FROM leads WHERE combo_group_id = $1 AND stage IN ('Confirmed', 'Completed') ORDER BY date ASC, id ASC", [first.combo_group_id])).rows
+      : (await pool.query("SELECT id, date, venue, city FROM leads WHERE id = $1", [first.id])).rows;
+    if (!dates.length || dates[dates.length - 1].date >= today) continue;
+    const key = dates[0].id;
+    if ((await pool.query("SELECT 1 FROM artist_ratings WHERE lead_id = $1 AND rater_team_id = $2 LIMIT 1", [key, teamId])).rows.length) continue;
+    const people = (await pool.query(`SELECT DISTINCT t.id, t.name, t.role FROM event_assignments ea JOIN team t ON t.id = ea.team_id
+      WHERE ea.lead_id = ANY($1) AND ea.status = 'accepted' AND ea.team_id <> $2 ORDER BY t.name`, [dates.map((d) => d.id), teamId])).rows
+      .filter((p) => !founders.has(p.id)).map((p) => ({ teamId: p.id, name: p.name, role: p.role || "" }));
+    if (!people.length) continue;
+    out.push({ leadId: key, place: placeOf(dates[0]), date: dates[0].date, lastDate: dates[dates.length - 1].date, people });
+  }
+  return out;
+}
+// An artist's own averages (only once enough ratings are in, so no single rating can be traced back).
+async function myRatingSummary(teamId) {
+  const r = (await pool.query(`SELECT COUNT(*)::int AS n, AVG(performance) AS p, AVG(punctuality) AS u, AVG(attitude) AS a
+    FROM artist_ratings WHERE ratee_team_id = $1`, [teamId])).rows[0];
+  if (!r || r.n < RATING_MIN_TO_SHOW) return { count: r ? r.n : 0, shown: false };
+  const f = (x) => Math.round(Number(x) * 10) / 10;
+  return { count: r.n, shown: true, performance: f(r.p), punctuality: f(r.u), attitude: f(r.a), overall: f((Number(r.p) + Number(r.u) + Number(r.a)) / 3) };
+}
+async function saveRatings(teamId, body) {
+  const due = await ratingsDueFor(teamId);
+  const ev = due.find((d) => d.leadId === String(body.leadId || ""));
+  if (!ev) return { status: 404, error: "Nothing to rate for that event — it may already be done." };
+  const list = Array.isArray(body.ratings) ? body.ratings : [];
+  const star = (v) => { const n = Math.round(Number(v)); return n >= 1 && n <= 5 ? n : null; };
+  const rows = [];
+  for (const p of ev.people) {
+    const r = list.find((x) => x && x.teamId === p.teamId);
+    const s = r && { performance: star(r.performance), punctuality: star(r.punctuality), attitude: star(r.attitude) };
+    if (!s || !s.performance || !s.punctuality || !s.attitude) return { status: 400, error: `Give ${p.name} stars for performance, punctuality and attitude.` };
+    rows.push({ ratee: p.teamId, ...s, note: cleanText(r.note, 500) || null });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const now = new Date().toISOString();
+    for (const r of rows) {
+      await client.query(`INSERT INTO artist_ratings (id, lead_id, rater_team_id, ratee_team_id, performance, punctuality, attitude, note, created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (lead_id, rater_team_id, ratee_team_id) DO NOTHING`,
+        [uuid(), ev.leadId, teamId, r.ratee, r.performance, r.punctuality, r.attitude, r.note, now]);
+    }
+    await client.query("COMMIT");
+  } catch (err) { await client.query("ROLLBACK").catch(() => {}); throw err; }
+  finally { client.release(); }
+  return { ok: true };
+}
+// Every morning from 9 AM: one reminder a day to each artist who still has ratings to give.
+async function runRatingReminders() {
+  const ist = new Date(Date.now() + 5.5 * 3600e3);
+  if (ist.getUTCHours() < 9) return;
+  const today = ist.toISOString().slice(0, 10), launch = await ratingsLaunch();
+  const founders = await founderTeamIds();
+  const raters = (await pool.query(`SELECT DISTINCT ea.team_id FROM event_assignments ea JOIN leads l ON l.id = ea.lead_id
+    WHERE ea.status = 'accepted' AND l.stage IN ('Confirmed', 'Completed') AND l.date >= $1 AND l.date < $2`, [launch, today])).rows.map((r) => r.team_id);
+  for (const t of raters) {
+    if (founders.has(t)) continue;
+    const due = await ratingsDueFor(t, founders);
+    if (!due.length) continue;
+    const won = await pool.query("INSERT INTO app_flags (key, done_at) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING key", [`ratingrem:${t}:${today}`, new Date().toISOString()]);
+    if (!won.rows.length) continue;
+    await addTeamNotification(t, `⭐ Please rate your team for ${due.map((d) => `${d.place} (${shortDay(d.date)})`).join(", ")} — 3 quick stars each, anonymous. The app stays locked until you do.`);
+  }
+}
+
 async function sendTravelReminders() {
+  try { await runRatingReminders(); } catch (err) { console.error("Rating reminders failed (not fatal):", err.message); }
+  try { await runCheckinWatch(); } catch (err) { console.error("Check-in watch failed (not fatal):", err.message); }
   try {
     const ist = new Date(Date.now() + 5.5 * 3600e3);
     const hour = ist.getUTCHours();
@@ -6310,7 +6565,7 @@ async function loadArtistPortalFor(m) {
     SELECT ea.id AS assignment_id, ea.status, ea.note, ea.confirm_token,
            leads.id AS lead_id, leads.name AS client_name, leads.event_type, leads.city, leads.date, leads.venue,
            leads.event_time, leads.soundcheck_time, leads.pcs, leads.stage, leads.combo_group_id, leads.drums, leads.duration,
-           leads.contacts, leads.sound_manager_name, leads.sound_manager_phone, leads.coordinator_name, leads.coordinator_phone,
+           leads.contacts, leads.food_notes, leads.sound_manager_name, leads.sound_manager_phone, leads.coordinator_name, leads.coordinator_phone,
            ex.id AS fee_id, ex.member_received,
            ex.paid AS pay_paid, ex.amount AS pay_amount, ex.paid_amount AS pay_paid_amount, ex.payment_date, ex.payment_mode
     FROM event_assignments ea
@@ -6335,7 +6590,10 @@ async function loadArtistPortalFor(m) {
   `, [m.id, leadIds])).rows : [];
   const legIds = legs.map((l) => l.id);
   const docs = legIds.length ? (await pool.query("SELECT id, original_name, travel_leg_id FROM documents WHERE travel_leg_id = ANY($1) ORDER BY uploaded_at ASC", [legIds])).rows : [];
-  return { member: m, rows, legs, docs, comboSibs };
+  const checkins = legIds.length ? (await pool.query("SELECT leg_id, taken_at, late FROM travel_checkins WHERE team_id = $1 AND leg_id = ANY($2)", [m.id, legIds])).rows : [];
+  const penalties = legIds.length ? (await pool.query("SELECT leg_id, kind, status, minutes_late FROM travel_penalties WHERE team_id = $1 AND leg_id = ANY($2)", [m.id, legIds])).rows : [];
+  const exempt = (await founderTeamIds()).has(m.id);
+  return { member: m, rows, legs, docs, comboSibs, checkins, penalties, exempt, launchMs: await checkinLaunchMs() };
 }
 app.get("/api/public/me/:token", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -6361,7 +6619,7 @@ function artistContacts(r) {
     if (r.sound_manager_name || r.sound_manager_phone) list.push({ role: "Sound manager", name: r.sound_manager_name || "", phone: r.sound_manager_phone || "" });
     if (r.coordinator_name || r.coordinator_phone) list.push({ role: "Event coordinator", name: r.coordinator_name || "", phone: r.coordinator_phone || "" });
   }
-  return list.filter((c) => c && !c.fromClient && !/client/i.test(c.role || "") && (c.phone || c.name)).map((c) => ({ role: c.role || "Contact", name: c.name || "", phone: c.phone || "" }));
+  return list.filter((c) => c && !c.fromClient && !/client/i.test(c.role || "") && (c.phone || c.name)).map((c) => ({ role: c.role || "Contact", name: c.name || "", phone: c.phone || "", address: c.address || "" }));
 }
 
 // Everything one artist sees: their events (details, travel, line-up, pay, claims) and their money with us.
@@ -6376,6 +6634,9 @@ async function buildArtistPortal(p) {
         groupId: l.group_id || null, tripOrder: l.trip_order, type, mode: l.mode, from: l.from_city, to: l.to_city, departureAt: l.departure_at ? String(l.departure_at).slice(0, 10) : null, arrivalAt: l.arrival_at ? String(l.arrival_at).slice(0, 10) : null,
         departureTime: l.departure_time, arrivalTime: l.arrival_time, status: l.status, ref: l.booking_ref, service: l.preferred_service, travelClass: l.travel_class,
         tickets: p.docs.filter((d) => d.travel_leg_id === l.id).map((d) => ({ id: d.id, name: d.original_name })),
+        id: l.id,
+        checkin: p.exempt || r.status === "declined" ? null : checkinInfo(l, (p.checkins || []).find((c) => c.leg_id === l.id) || null, p.launchMs),
+        penalty: (() => { const x = (p.penalties || []).find((q) => q.leg_id === l.id); return x ? { kind: x.kind, status: x.status, minutesLate: x.minutes_late } : null; })(),
       };
     });
     const isPast = r.date < today;
@@ -6383,7 +6644,7 @@ async function buildArtistPortal(p) {
       confirmToken: r.confirm_token, status: r.status, note: r.note, place: placeOf({ venue: r.venue, city: r.city }), experience: packageName(r.event_type), city: r.city, date: r.date,
       venue: r.venue, eventTime: r.event_time, soundcheckTime: r.soundcheck_time, pcs: r.pcs, tentative: r.stage === "Tentative", past: isPast,
       leadId: r.lead_id, assignmentId: r.assignment_id, duration: r.duration || null,
-      contacts: artistContacts(r), lineup: [],
+      contacts: artistContacts(r), lineup: [], food: r.food_notes || null,
       fee: r.pay_amount != null ? Number(r.pay_amount) : null, feeId: r.fee_id || null, memberReceived: !!r.member_received,
       drumNote: /drum/i.test(p.member.role || "") ? DRUM_NOTE_FOR_DRUMMER[r.drums] || null : null,
       travel: mine, travelAck: null,
@@ -6403,11 +6664,18 @@ async function buildArtistPortal(p) {
     const row = p.rows.find((r) => r.confirm_token === e.confirmToken);
     e.claims = claimRows.filter((c) => row && c.lead_id === row.lead_id).map((c) => ({
       amount: Number(c.amount), what: c.notes || "", at: String(c.created_at).slice(0, 10), receipts: (c.receipts || []).length,
-      status: !c.approved ? "waiting" : c.paid ? "paid" : Number(c.paid_amount) > 0 ? "part paid" : "approved", paidSoFar: Number(c.paid_amount || 0), paidOn: c.payment_date || null,
+      status: c.withheld_by ? "withheld" : !c.approved ? "waiting" : c.paid ? "paid" : Number(c.paid_amount) > 0 ? "part paid" : "approved", paidSoFar: Number(c.paid_amount || 0), paidOn: c.payment_date || null,
     }));
   }
   const login = (await pool.query("SELECT username FROM users WHERE team_id = $1 LIMIT 1", [p.member.id])).rows[0];
-  return { name: p.member.name, hasLogin: !!login, username: login ? login.username : null, upcoming: events.filter((e) => !e.past), past: events.filter((e) => e.past).reverse(), money: await artistMoney(p.member.id) };
+  const seenLeg = new Set(), checkinsNow = [];
+  for (const e of events) for (const l of e.travel) {
+    if (!l.checkin || seenLeg.has(l.id) || !["open", "overdue"].includes(l.checkin.state) && !(l.checkin.state === "upcoming" && Date.parse(l.checkin.opensAt) - Date.now() < 12 * 3600e3)) continue;
+    seenLeg.add(l.id);
+    checkinsNow.push({ legId: l.id, leadId: e.leadId, confirmToken: e.confirmToken, mode: l.mode, from: l.from, to: l.to, place: e.place, ...l.checkin });
+  }
+  return { name: p.member.name, hasLogin: !!login, username: login ? login.username : null, upcoming: events.filter((e) => !e.past), past: events.filter((e) => e.past).reverse(), money: await artistMoney(p.member.id), checkinsNow,
+    ratingsDue: await ratingsDueFor(p.member.id), myRatings: await myRatingSummary(p.member.id) };
 }
 
 // An artist's money with us: what's owed now, coming up and received (part payments counted), each item,
@@ -6418,6 +6686,7 @@ async function artistMoney(teamId) {
       l.id AS lead_id, l.date, l.venue, l.city, l.stage
     FROM expenses e LEFT JOIN leads l ON l.id = e.lead_id
     WHERE e.team_id = $1 AND e.approved = 1 AND e.category IN ('artist_fee', 'reimbursement') AND (l.id IS NULL OR l.stage <> 'Cancelled' OR e.paid = 1)
+      AND e.withheld_by IS NULL
     ORDER BY l.date ASC NULLS LAST, e.created_at ASC`, [teamId])).rows;
   const items = rows.map((r) => {
     const amount = Number(r.amount), paidAmount = r.paid ? amount : Math.min(amount, Number(r.paid_amount || 0));
@@ -6448,6 +6717,7 @@ app.post("/api/my/claims", requireAuth, upload.single("file"), async (req, res) 
     WHERE ea.team_id = $1 AND ea.lead_id = $2`, [req.user.team_id, String(req.body.leadId || "")])).rows[0];
   if (!m || !a) return res.status(404).json({ error: "That event isn't on your list." });
   if (a.status === "declined") return res.status(400).json({ error: "You declined this event." });
+  if (await claimBlockedByPenalty(m.id, a.lead_id)) return res.status(400).json({ error: "Travel reimbursement for this trip is withheld because of a late or missed check-in. Talk to Team TOL if you think this is wrong." });
   const amount = Math.round(Number(String(req.body.amount || "").replace(/[,₹\s]/g, "")));
   if (!(amount > 0 && amount <= 500000)) return res.status(400).json({ error: "Enter the amount you spent." });
   const what = String(req.body.what || "").trim().slice(0, 200);
@@ -6468,6 +6738,122 @@ app.post("/api/my/claims", requireAuth, upload.single("file"), async (req, res) 
   sendPushToAll("🧾 Reimbursement to check", `${m.name} — ₹${amount.toLocaleString("en-IN")} for ${what}`, "/login", { adminOnly: true }).catch(() => {});
 });
 
+// Check in for a journey: a photo at the station/airport (from the app, or from the my-events link).
+app.post("/api/my/checkins/:legId", requireAuth, upload.single("photo"), async (req, res) => {
+  if (!req.user.team_id) return res.status(400).json({ error: "Your login isn't linked to a team member." });
+  const r = await saveCheckin(req.user.team_id, String(req.params.legId), req.file);
+  if (r.error) return res.status(r.status).json({ error: r.error });
+  res.status(201).json(r);
+});
+app.post("/api/public/me/:token/checkins/:legId", upload.single("photo"), async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const p = await loadArtistPortal(req.params.token);
+  if (!p) return res.status(404).json({ error: "This link isn't valid — ask Team TOL for a fresh one." });
+  const r = await saveCheckin(p.member.id, String(req.params.legId), req.file);
+  if (r.error) return res.status(r.status).json({ error: r.error });
+  res.status(201).json(r);
+});
+// Rate the team after an event (app login or the my-events link).
+app.post("/api/my/ratings", requireAuth, async (req, res) => {
+  if (!req.user.team_id) return res.status(400).json({ error: "Your login isn't linked to a team member." });
+  const r = await saveRatings(req.user.team_id, req.body || {});
+  if (r.error) return res.status(r.status).json({ error: r.error });
+  res.status(201).json(r);
+});
+app.post("/api/public/me/:token/ratings", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const p = await loadArtistPortal(req.params.token);
+  if (!p) return res.status(404).json({ error: "This link isn't valid — ask Team TOL for a fresh one." });
+  const r = await saveRatings(p.member.id, req.body || {});
+  if (r.error) return res.status(r.status).json({ error: r.error });
+  res.status(201).json(r);
+});
+// Admin: every artist's averages, their recent events and anonymous notes, and who still has to rate.
+app.get("/api/ratings", requireAuth, requireAdmin, async (req, res) => {
+  const founders = await founderTeamIds();
+  const rows = (await pool.query(`SELECT r.ratee_team_id, r.lead_id, r.performance, r.punctuality, r.attitude, r.note, l.date, l.venue, l.city, t.name, t.role
+    FROM artist_ratings r JOIN leads l ON l.id = r.lead_id JOIN team t ON t.id = r.ratee_team_id ORDER BY l.date DESC`)).rows;
+  const f = (x) => Math.round(x * 10) / 10;
+  const avg = (list, k) => list.reduce((s, r) => s + Number(r[k]), 0) / list.length;
+  const by = new Map();
+  for (const r of rows) { if (!by.has(r.ratee_team_id)) by.set(r.ratee_team_id, []); by.get(r.ratee_team_id).push(r); }
+  const artists = [...by.entries()].map(([teamId, list]) => {
+    const events = new Map();
+    for (const r of list) { if (!events.has(r.lead_id)) events.set(r.lead_id, []); events.get(r.lead_id).push(r); }
+    const sc = (l) => ({ performance: f(avg(l, "performance")), punctuality: f(avg(l, "punctuality")), attitude: f(avg(l, "attitude")), overall: f((avg(l, "performance") + avg(l, "punctuality") + avg(l, "attitude")) / 3) });
+    return { teamId, name: list[0].name, role: list[0].role || "", count: list.length, ...sc(list),
+      events: [...events.values()].map((l) => ({ date: l[0].date, place: placeOf(l[0]), n: l.length, ...sc(l) })),
+      // notes never carry the rater
+      notes: list.filter((r) => r.note).map((r) => ({ date: r.date, place: placeOf(r), note: r.note })) };
+  }).sort((a, b) => b.overall - a.overall || b.count - a.count);
+  const pending = [];
+  const today = todayIST(), launch = await ratingsLaunch();
+  const raters = (await pool.query(`SELECT DISTINCT t.id, t.name FROM event_assignments ea JOIN leads l ON l.id = ea.lead_id JOIN team t ON t.id = ea.team_id
+    WHERE ea.status = 'accepted' AND l.stage IN ('Confirmed', 'Completed') AND l.date >= $1 AND l.date < $2`, [launch, today])).rows;
+  for (const t of raters) for (const d of await ratingsDueFor(t.id, founders)) pending.push({ teamId: t.id, name: t.name, place: d.place, date: d.date, lastDate: d.lastDate });
+  pending.sort((a, b) => String(a.lastDate).localeCompare(String(b.lastDate)));
+  res.json({ artists, pending, launch, minToShow: RATING_MIN_TO_SHOW });
+});
+// For the event's Travel plan: every journey that needs a check-in, each traveller's photo and any penalty.
+app.get("/api/leads/:id/checkins", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  if (!(await leadInManagerScope(req.user, req.params.id))) return scopeDeny(res);
+  const launch = await checkinLaunchMs(), founders = await founderTeamIds();
+  const legs = (await pool.query("SELECT tl.* FROM travel_legs tl WHERE " + COMBO_LEG_WHERE("tl.") + " AND tl.mode IN ('flight','train','bus')", [req.params.id])).rows;
+  const ids = legs.map((l) => l.id);
+  if (!ids.length) return res.json([]);
+  const [members, cis, pens] = await Promise.all([
+    pool.query("SELECT m.leg_id, t.id AS team_id, t.name FROM travel_leg_members m JOIN team t ON t.id = m.team_id WHERE m.leg_id = ANY($1) ORDER BY t.name", [ids]).then((r) => r.rows),
+    pool.query("SELECT id, leg_id, team_id, taken_at, late FROM travel_checkins WHERE leg_id = ANY($1)", [ids]).then((r) => r.rows),
+    pool.query("SELECT * FROM travel_penalties WHERE leg_id = ANY($1)", [ids]).then((r) => r.rows),
+  ]);
+  const isAdmin = req.user.access_level === "admin";
+  const out = [];
+  for (const l of legs.sort((a, b) => (legDepartMs(a) || 0) - (legDepartMs(b) || 0))) {
+    const people = members.filter((m) => m.leg_id === l.id && !founders.has(m.team_id)).map((m) => {
+      const ci = cis.find((c) => c.leg_id === l.id && c.team_id === m.team_id) || null;
+      const info = checkinInfo(l, ci, launch);
+      if (!info) return null;
+      const pen = pens.find((x) => x.leg_id === l.id && x.team_id === m.team_id);
+      return { teamId: m.team_id, name: m.name, ...info, photoId: ci ? ci.id : null,
+        penalty: pen ? { id: pen.id, kind: pen.kind, status: pen.status, minutesLate: pen.minutes_late, decidedBy: pen.decided_by, decidedAt: pen.decided_at, canDecide: isAdmin } : null };
+    }).filter(Boolean);
+    if (people.length) out.push({ legId: l.id, what: legWhat(l), date: String(l.departure_at || "").slice(0, 10), time: l.departure_time, people });
+  }
+  res.json(out);
+});
+app.get("/api/checkins/:id/photo", requireAuth, requireCapability("assign_team"), async (req, res) => {
+  const c = (await pool.query("SELECT c.mime_type, c.photo, tl.lead_id FROM travel_checkins c JOIN travel_legs tl ON tl.id = c.leg_id WHERE c.id = $1", [req.params.id])).rows[0];
+  if (!c) return res.status(404).send("Not found");
+  if (!(await leadInManagerScope(req.user, c.lead_id))) return scopeDeny(res);
+  res.setHeader("Content-Type", c.mime_type || "image/jpeg");
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  res.send(c.photo);
+});
+// Apply a penalty (the artist's travel reimbursements for that trip are withheld and new claims blocked) or waive it.
+app.patch("/api/travel-penalties/:id", requireAuth, requireAdmin, async (req, res) => {
+  const pen = (await pool.query("SELECT p.*, t.name FROM travel_penalties p JOIN team t ON t.id = p.team_id WHERE p.id = $1", [req.params.id])).rows[0];
+  if (!pen) return res.status(404).json({ error: "Not found" });
+  const action = req.body.action;
+  if (!["apply", "waive"].includes(action)) return res.status(400).json({ error: "Choose apply or waive." });
+  const leg = (await pool.query("SELECT * FROM travel_legs WHERE id = $1", [pen.leg_id])).rows[0];
+  const ids = pen.lead_id ? await comboLeadIds(pen.lead_id) : [];
+  const who = await actorName(req.user), now = new Date().toISOString();
+  if (action === "apply") {
+    await pool.query("UPDATE travel_penalties SET status = 'applied', decided_at = $2, decided_by = $3 WHERE id = $1", [pen.id, now, who]);
+    const held = (await pool.query(`UPDATE expenses SET withheld_by = $1 WHERE team_id = $2 AND lead_id = ANY($3) AND category = 'reimbursement'
+      AND head NOT LIKE 'Amount owed%' AND paid = 0 AND COALESCE(paid_amount, 0) = 0 AND withheld_by IS NULL RETURNING amount`, [pen.id, pen.team_id, ids])).rows;
+    const sum = held.reduce((s, r) => s + Number(r.amount), 0);
+    await addTeamNotification(pen.team_id, `Your check-in for ${leg ? legWhat(leg) : "your journey"} was ${pen.kind === "late" ? "late" : "missed"}, so travel reimbursement for this trip is withheld${sum ? ` (${"₹" + sum.toLocaleString("en-IN")})` : ""}. Please check in at least 1 hour before departure.`);
+    logActivity(req, `Check-in penalty applied for ${pen.name}${sum ? ` — ₹${sum.toLocaleString("en-IN")} reimbursement withheld` : ""}`, pen.lead_id);
+    return res.json({ ok: true, withheld: sum });
+  }
+  await pool.query("UPDATE travel_penalties SET status = 'waived', decided_at = $2, decided_by = $3 WHERE id = $1", [pen.id, now, who]);
+  await pool.query("UPDATE expenses SET withheld_by = NULL WHERE withheld_by = $1", [pen.id]);
+  if (pen.status === "applied") await addTeamNotification(pen.team_id, `Good news — the check-in penalty for ${leg ? legWhat(leg) : "your journey"} was waived. Your travel reimbursement for this trip is back.`);
+  logActivity(req, `Check-in penalty waived for ${pen.name}`, pen.lead_id);
+  res.json({ ok: true });
+});
+
 app.post("/api/public/me/:token/claims", upload.single("file"), async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   const p = await loadArtistPortal(req.params.token);
@@ -6475,6 +6861,7 @@ app.post("/api/public/me/:token/claims", upload.single("file"), async (req, res)
   const row = p.rows.find((r) => r.confirm_token && r.confirm_token === String(req.body.confirmToken || ""));
   if (!row) return res.status(404).json({ error: "That event isn't on your list." });
   if (row.status === "declined") return res.status(400).json({ error: "You declined this event." });
+  if (await claimBlockedByPenalty(p.member.id, row.lead_id)) return res.status(400).json({ error: "Travel reimbursement for this trip is withheld because of a late or missed check-in. Talk to Team TOL if you think this is wrong." });
   const amount = Math.round(Number(String(req.body.amount || "").replace(/[,₹\s]/g, "")));
   if (!(amount > 0 && amount <= 500000)) return res.status(400).json({ error: "Enter the amount you spent." });
   const what = String(req.body.what || "").trim().slice(0, 200);
@@ -7375,6 +7762,7 @@ ready.then(() => {
   setInterval(sendDayBeforeReminders, 30 * 60 * 1000);
   sendTravelReminders();
   setInterval(sendTravelReminders, 30 * 60 * 1000);
+  setInterval(() => runCheckinWatch().catch((err) => console.error("Check-in watch failed (not fatal):", err.message)), 10 * 60 * 1000);
   // One-time catch-up: revisions saved before "apply to already-assigned events" existed only changed the suggested
   // rate. Apply them once to unpaid fees of events on/after each artist's earliest revision date.
   (async () => {
